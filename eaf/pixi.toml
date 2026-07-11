@@ -38,6 +38,7 @@ scikit-learn = "*"
 matplotlib = "*"
 mplhep = "*"
 mlflow = ">=2.14"
+coffea = ">=2024.10"
 keras = ">=3.5"
 tensorflow = { version = ">=2.16,<2.20", extras = ["and-cuda"] }
 quantizers = "*"
