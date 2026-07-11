@@ -1,0 +1,38 @@
+model: DeepSetHGQ2
+experiment: ngtagger
+
+run_config:
+  verbose: 2
+
+data_config:
+  n_constituents: 16
+  feature_set: baseline   # or 'extended' for track/HGC-cluster augmented inputs
+
+model_config:
+  name: deepset_hgq2_baseline
+  conv1d_layers: [10, 10]
+  conv1d_parallelisation_factor: [16, 16]
+  classification_layers: [32, 16]
+  regression_layers: [10]
+  beta: 1.0e-8
+
+quantization_config:
+  pt_output_quantization: [16, 6]
+
+training_config:
+  weight_method: onlyclass     # none | ptref | onlyclass
+  validation_split: 0.1
+  epochs: 150
+  batch_size: 2048
+  learning_rate: 0.01
+  loss_weights: [1.0, 1.0]
+  EarlyStopping_patience: 15
+  ReduceLROnPlateau_factor: 0.5
+  ReduceLROnPlateau_patience: 5
+  ReduceLROnPlateau_min_lr: 1.0e-5
+
+firmware_config:
+  backend: Vitis
+  clock_period: 2.5
+  fpga_part: xcvu13p-flga2577-2-e
+  project_name: L1TSC4NGJetModel_ngt

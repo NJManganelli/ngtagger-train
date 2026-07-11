@@ -1,0 +1,49 @@
+# =============================================================================
+# Elastic Analysis Facility (linux-64 + NVIDIA GPU) environment stub.
+# Run from this directory on the EAF node:
+#   cd eaf && pixi install && pixi run train ...
+# The ngtagger package is pulled from the parent directory (editable).
+# =============================================================================
+[workspace]
+name = "ngtagger-train-eaf"
+version = "0.1.0"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[system-requirements]
+cuda = "12"
+
+[tasks]
+train = "python -m ngtagger.cli train"
+multishot = "python -m ngtagger.cli multishot"
+export = "python -m ngtagger.cli export"
+mlflow-ui = "mlflow ui --backend-store-uri file://$PIXI_PROJECT_ROOT/../mlruns"
+
+[dependencies]
+python = "3.12.*"
+pip = "*"
+numpy = "<2.1"
+pytest = "*"
+
+[pypi-dependencies]
+ngtagger = { path = "..", editable = true }
+uproot = ">=5.3"
+awkward = ">=2.6"
+vector = "*"
+fsspec-xrootd = "*"
+pyyaml = "*"
+schema = "*"
+tqdm = "*"
+scikit-learn = "*"
+matplotlib = "*"
+mplhep = "*"
+mlflow = ">=2.14"
+keras = ">=3.5"
+tensorflow = { version = ">=2.16,<2.20", extras = ["and-cuda"] }
+quantizers = "*"
+hgq2 = { git = "https://github.com/calad0i/HGQ2" }
+da4ml = ">=0.3"
+hls4ml = { git = "https://github.com/CMS-L1T-Jet-Tagging/hls4ml", branch = "jet_tagger_hls4ml_update" }
+ray = { version = "*", extras = ["tune"] }
+# torch backend option for Keras3 (mirrors upstream TrainTagger GPU env):
+# torch = { version = "==2.9.*", index = "https://download.pytorch.org/whl/cu128" }
