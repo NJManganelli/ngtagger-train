@@ -60,6 +60,12 @@ def main(argv=None):
     p_vtx.add_argument("--epochs", type=int, default=30)
     p_vtx.add_argument("--max-events", type=int, default=None)
 
+    p_dv = sub.add_parser("train-dispvtx", help="retrain the displaced-vertex GBDT")
+    p_dv.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen L1TrkNano files")
+    p_dv.add_argument("-o", "--output", required=True)
+    p_dv.add_argument("--max-events", type=int, default=None)
+    p_dv.add_argument("--conifer", action="store_true")
+
     p_ins = sub.add_parser("inspect-nano", help="print tagger-relevant tables of a nano file")
     p_ins.add_argument("file")
 
@@ -103,6 +109,12 @@ def main(argv=None):
         train_nnvtx(args.inputs, args.output, track_table=args.track_table,
                     extra_features=args.extra_features, max_events=args.max_events,
                     epochs=args.epochs)
+    elif args.cmd == "train-dispvtx":
+        from ngtagger.train.dispvtx import export_conifer, train_dispvtx
+
+        train_dispvtx(args.inputs, args.output, max_events=args.max_events)
+        if args.conifer:
+            export_conifer(args.output)
     elif args.cmd == "inspect-nano":
         import uproot
 

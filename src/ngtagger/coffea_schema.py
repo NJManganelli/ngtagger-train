@@ -85,6 +85,21 @@ class L1SC4JetCandLink(_JetCandLinkBase):
     _cand_target = "L1PuppiCand"
 
 
+@awkward.mixin_class(behavior)
+class L1DispVtx(base.NanoCollection):
+    """GTT displaced vertex: track-pair accessors via first/secondIndexTrk."""
+
+    @property
+    def first_track(self):
+        """higher-pt track of the pair"""
+        return self._events().L1TExtTrack._apply_global_index(self.firstIndexTrkG)
+
+    @property
+    def second_track(self):
+        """lower-pt track of the pair"""
+        return self._events().L1TExtTrack._apply_global_index(self.secondIndexTrkG)
+
+
 class _L1PFCandBase(candidate.PtEtaPhiMCandidate, base.NanoCollection):
     """L1 PF/Puppi candidates: matched-object accessors + uniform truth."""
 
@@ -189,6 +204,7 @@ class L1NanoSchema(NanoAODSchema):
         "L1HGCCluster": "NanoCollection",
         "L1puppiJetSC4NG": "NanoCollection",
         "L1puppiJetSC4": "NanoCollection",
+        "L1DispVertex": "L1DispVtx",
     }
 
     all_cross_references = {
@@ -205,6 +221,9 @@ class L1NanoSchema(NanoAODSchema):
         "L1ExtPuppiCand_jetIdx": "L1puppiJetSC4NG",
         "L1ExtPuppiCand_l1TrackIdx": "L1TExtTrack",
         "L1ExtPuppiCand_hgcClusterIdx": "L1HGCCluster",
+        # displaced vertex track-pair crossrefs
+        "L1DispVertex_firstIndexTrk": "L1TExtTrack",
+        "L1DispVertex_secondIndexTrk": "L1TExtTrack",
     }
 
     @classmethod
