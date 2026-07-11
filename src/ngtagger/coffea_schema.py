@@ -100,6 +100,106 @@ class L1DispVtx(base.NanoCollection):
         return self._events().L1TExtTrack._apply_global_index(self.secondIndexTrkG)
 
 
+# ---------------------------------------------------------------------------
+# Track-word hw -> float on-demand decoding
+# Constants transcribed from DataFormats/L1TrackTrigger/interface/
+# TTTrack_TrackWord.h; the hw columns in the file stay exactly as produced
+# (raw unsigned bit fields) and these properties compute the undigitized
+# double values only when accessed (with a lazy/virtual backend, accessing a
+# property loads only the needed hw branch). All ops are vectorized numpy
+# over the raw integer columns.
+# ---------------------------------------------------------------------------
+_TW_MIN_RINV = 0.006
+_TW_MIN_PHI0 = 0.7853981696
+_TW_MIN_Z0 = 20.46912512
+_TW_STEPS = {
+    "hwRinv": (15, 2.0 * _TW_MIN_RINV / (1 << 15)),
+    "hwPhi": (12, 2.0 * _TW_MIN_PHI0 / (1 << 12)),
+    "hwTanl": (16, 1.0 / (1 << 12)),
+    "hwZ0": (12, 2.0 * _TW_MIN_Z0 / (1 << 12)),
+    "hwD0": (13, 1.0 / (1 << 8)),
+}
+_TW_BINS = {
+    "hwChi2RPhi": numpy.array(
+        [0.0, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 5.0, 6.0, 10.0, 15.0, 20.0, 35.0, 60.0, 200.0]),
+    "hwChi2RZ": numpy.array(
+        [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 6.0, 8.0, 10.0, 20.0, 50.0]),
+    "hwBendChi2": numpy.array([0.0, 0.75, 1.0, 1.5, 2.25, 3.5, 5.0, 20.0]),
+    "hwMVAQuality": numpy.array([0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.750, 0.875]),
+}
+
+
+def _undigitize_signed(bits, n_bits, lsb, offset=0.5):
+    """TTTrack_TrackWord::undigitizeSignedValue: two's complement decode,
+    then (value + offset) * lsb."""
+    v = awkward.values_astype(bits, numpy.int64)
+    signed = awkward.where(v >= (1 << (n_bits - 1)), v - (1 << n_bits), v)
+    return (awkward.values_astype(signed, numpy.float64) + offset) * lsb
+
+
+def _bin_lookup(bits, bins):
+    def apply(layout, **kwargs):
+        if layout.is_numpy:
+            return awkward.contents.NumpyArray(bins[numpy.asarray(layout.data, dtype=numpy.int64)])
+
+    return awkward.transform(apply, bits)
+
+
+class L1TrackWordDecoded(base.NanoCollection):
+    """L1 track table behavior: raw hw fields as stored, plus on-demand
+    float decoding mirroring the TTTrack_TrackWord get* methods."""
+
+    @property
+    def rinvFromHw(self):
+        """1/R [1/cm] undigitized from hwRinv"""
+        return _undigitize_signed(self.hwRinv, *_TW_STEPS["hwRinv"])
+
+    @property
+    def phiFromHw(self):
+        """local phi (relative to sector center) undigitized from hwPhi"""
+        return _undigitize_signed(self.hwPhi, *_TW_STEPS["hwPhi"])
+
+    @property
+    def tanlFromHw(self):
+        """tan(lambda) undigitized from hwTanl"""
+        return _undigitize_signed(self.hwTanl, *_TW_STEPS["hwTanl"])
+
+    @property
+    def z0FromHw(self):
+        """z0 [cm] undigitized from hwZ0"""
+        return _undigitize_signed(self.hwZ0, *_TW_STEPS["hwZ0"])
+
+    @property
+    def d0FromHw(self):
+        """d0 [cm] undigitized from hwD0"""
+        return _undigitize_signed(self.hwD0, *_TW_STEPS["hwD0"])
+
+    @property
+    def chi2RPhiFromHw(self):
+        """chi2 r-phi bin value from hwChi2RPhi"""
+        return _bin_lookup(self.hwChi2RPhi, _TW_BINS["hwChi2RPhi"])
+
+    @property
+    def chi2RZFromHw(self):
+        """chi2 r-z bin value from hwChi2RZ"""
+        return _bin_lookup(self.hwChi2RZ, _TW_BINS["hwChi2RZ"])
+
+    @property
+    def bendChi2FromHw(self):
+        """bend chi2 bin value from hwBendChi2"""
+        return _bin_lookup(self.hwBendChi2, _TW_BINS["hwBendChi2"])
+
+    @property
+    def mvaQualityFromHw(self):
+        """track-quality MVA bin value from hwMVAQuality"""
+        return _bin_lookup(self.hwMVAQuality, _TW_BINS["hwMVAQuality"])
+
+
+@awkward.mixin_class(behavior)
+class L1TrackWord(L1TrackWordDecoded):
+    pass
+
+
 class _L1PFCandBase(candidate.PtEtaPhiMCandidate, base.NanoCollection):
     """L1 PF/Puppi candidates: matched-object accessors + uniform truth."""
 
@@ -199,8 +299,8 @@ class L1NanoSchema(NanoAODSchema):
         "L1PuppiCand": "L1PuppiCandidate",
         "L1ExtPuppiCand": "L1ExtPuppiCandidate",
         "L1PFCand": "PtEtaPhiMCandidate",
-        "L1TTrack": "NanoCollection",
-        "L1TExtTrack": "NanoCollection",
+        "L1TTrack": "L1TrackWord",
+        "L1TExtTrack": "L1TrackWord",
         "L1HGCCluster": "NanoCollection",
         "L1puppiJetSC4NG": "NanoCollection",
         "L1puppiJetSC4": "NanoCollection",
