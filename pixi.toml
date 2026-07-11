@@ -37,6 +37,8 @@ mlflow = ">=2.14"
 keras = ">=3.5"
 tensorflow = ">=2.16,<2.20"
 quantizers = "*"
+xgboost = ">=2"
+conifer = "*"
 hgq2 = { git = "https://github.com/calad0i/HGQ2" }
 da4ml = ">=0.3"
 # hls4ml: CMS jet-tagging fork with HGQ2/da4ml support (mirrors upstream TrainTagger Keras_v3)

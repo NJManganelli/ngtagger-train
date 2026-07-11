@@ -6,7 +6,8 @@ run_config:
 
 data_config:
   n_constituents: 16
-  feature_set: baseline   # or 'extended' for track/HGC-cluster augmented inputs
+  # composable groups: baseline | track | trkquality (BDT score) | cluster
+  feature_groups: [baseline]
 
 model_config:
   name: deepset_hgq2_baseline

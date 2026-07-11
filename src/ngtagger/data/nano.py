@@ -114,7 +114,7 @@ def crossref_gather(cands: ak.Array, other: ak.Array, nested_idx: ak.Array, idx_
 def load_jets(
     files: list[str],
     n_const: int = 16,
-    feature_set: str = "baseline",
+    feature_groups: list[str] | None = None,
     with_gen: bool = True,
     max_events: int | None = None,
     jet_table: str = "L1puppiJetSC4NG",
@@ -138,15 +138,17 @@ def load_jets(
         max_events=max_events,
     )
 
+    groups = feature_groups or ["baseline"]
     nested_idx = group_constituents(events, jet_table, link_table, n_const=n_const)
     cands = events[cand_table]
 
     const = {name: gather(cands, nested_idx, name) for name in CAND_BRANCHES}
-    if feature_set == "extended":
+    if "track" in groups or "trkquality" in groups:
         tracks = events[track_table]
-        clusters = events[cluster_table]
         for name in TRACK_BRANCHES:
             const[f"trk_{name}"] = crossref_gather(cands, tracks, nested_idx, "l1TrackIdx", name)
+    if "cluster" in groups:
+        clusters = events[cluster_table]
         for name in CLUSTER_BRANCHES:
             const[f"cl_{name}"] = crossref_gather(cands, clusters, nested_idx, "hgcClusterIdx", name)
 

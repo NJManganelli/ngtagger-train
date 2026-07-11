@@ -25,6 +25,29 @@ The reader uses the jet-constituent association table
 Truth labels (b/c/uds/g/tau+/tau-/mu/e) are built in-pipeline from
 `GenJet` flavour + `GenVisTau`/`GenPart` deltaR matching.
 
+Constituent features are **composable groups** (`data_config.feature_groups`):
+
+| group        | content                                                        |
+|--------------|----------------------------------------------------------------|
+| `baseline`   | the upstream hardware inputs (pt, deta, dphi, id one-hots, ...) |
+| `track`      | track-word floats via `l1TrackIdx` (rInv, tanL, z0, d0, chi2s) |
+| `trkquality` | the track-quality BDT score (`trkMVA1`) as a separate option   |
+| `cluster`    | HGCal multicluster shapes via `hgcClusterIdx`                  |
+
+## Track-quality GBDT retraining
+
+Retrains the CMSSW `TrackerTFP` TrackQuality GBDT (features: tanl, z0,
+bendchi2/chi2rphi/chi2rz bins, nstub, nlaymiss_interior) with
+genuine-vs-fake labels from the `L1TTrack_genuine` truth columns
+(requires withGen L1TrkNano produced with the TTTrackAssociator running):
+
+```bash
+pixi run python -m ngtagger.cli train-trkquality -i nano.root -o output/trkq --conifer
+```
+
+`--conifer` exports the conifer GBDT json (the same format CMSSW loads via
+`TrackQuality_params.Model`) and a cpp validation project.
+
 ## Training
 
 ```bash
