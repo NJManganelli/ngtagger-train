@@ -36,14 +36,14 @@ def class_pt_weights(y: np.ndarray, reco_pt: np.ndarray, method: str = "onlyclas
     return weights
 
 
-def prepare_dataset(files: list[str], n_const: int = 16, feature_set: str = "baseline",
+def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[str] | None = None,
                     max_events: int | None = None, test_fraction: float = 0.1, seed: int = 0):
     """nano files -> train/test numpy tensors. No intermediate formats."""
-    jets, constituents, gen = load_jets(files, n_const=n_const, feature_set=feature_set,
+    jets, constituents, gen = load_jets(files, n_const=n_const, feature_groups=feature_groups,
                                         max_events=max_events)
     label, target_pt, target_pt_phys, keep = label_jets(jets, gen)
 
-    X, feature_names = build_features(jets, constituents, n_const=n_const, feature_set=feature_set)
+    X, feature_names = build_features(jets, constituents, n_const=n_const, feature_groups=feature_groups)
     flat_label = ak.to_numpy(ak.flatten(label))
     flat_keep = ak.to_numpy(ak.flatten(keep))
     flat_pt_phys = ak.to_numpy(ak.flatten(target_pt_phys))
@@ -82,7 +82,7 @@ def run_training(config_path: str, files: list[str], output_dir: str, seed: int 
     ds = dataset or prepare_dataset(
         files,
         n_const=config.get("data_config", {}).get("n_constituents", 16),
-        feature_set=config.get("data_config", {}).get("feature_set", "baseline"),
+        feature_groups=config.get("data_config", {}).get("feature_groups", ["baseline"]),
         max_events=max_events,
         seed=seed,
     )

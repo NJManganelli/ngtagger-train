@@ -11,18 +11,37 @@ from __future__ import annotations
 import awkward as ak
 import numpy as np
 
-BASELINE_FEATURES = [
-    "pt", "pt_rel", "pt_log", "deta", "dphi", "mass",
-    "isPhoton", "isElectronPlus", "isElectronMinus", "isMuonPlus", "isMuonMinus",
-    "isNeutralHadron", "isChargedHadronPlus", "isChargedHadronMinus",
-    "z0", "dxy", "isfilled", "puppiweight", "emid", "quality",
-]
+# Composable feature groups: select via data_config.feature_groups, e.g.
+#   feature_groups: [baseline]                      # upstream hardware inputs
+#   feature_groups: [baseline, track]               # + track-word floats
+#   feature_groups: [baseline, track, trkquality]   # + trkquality BDT score
+#   feature_groups: [baseline, cluster]             # + HGCal cluster shapes
+FEATURE_GROUPS = {
+    "baseline": [
+        "pt", "pt_rel", "pt_log", "deta", "dphi", "mass",
+        "isPhoton", "isElectronPlus", "isElectronMinus", "isMuonPlus", "isMuonMinus",
+        "isNeutralHadron", "isChargedHadronPlus", "isChargedHadronMinus",
+        "z0", "dxy", "isfilled", "puppiweight", "emid", "quality",
+    ],
+    "track": [
+        "trk_rInv", "trk_tanL", "trk_z0", "trk_d0",
+        "trk_chi2XYRed", "trk_chi2ZRed", "trk_chi2BendRed",
+    ],
+    # the track-quality GBDT score as a separate, composable input option
+    "trkquality": ["trk_trkMVA1"],
+    "cluster": ["cl_hOverE", "cl_sigmaRRTot", "cl_absZBarycenter", "cl_eMax", "cl_sigmaZZ"],
+}
 
-EXTENDED_FEATURES = BASELINE_FEATURES + [
-    "trk_rInv", "trk_tanL", "trk_z0", "trk_d0",
-    "trk_chi2XYRed", "trk_chi2ZRed", "trk_chi2BendRed", "trk_trkMVA1",
-    "cl_hOverE", "cl_sigmaRRTot", "cl_absZBarycenter", "cl_eMax", "cl_sigmaZZ",
-]
+
+def resolve_feature_groups(groups: list[str]) -> list[str]:
+    names: list[str] = []
+    for g in groups:
+        if g not in FEATURE_GROUPS:
+            raise KeyError(f"unknown feature group '{g}'; known: {sorted(FEATURE_GROUPS)}")
+        for n in FEATURE_GROUPS[g]:
+            if n not in names:
+                names.append(n)
+    return names
 
 
 def _dphi(phi1, phi2):
@@ -30,12 +49,14 @@ def _dphi(phi1, phi2):
     return (d + np.pi) % (2 * np.pi) - np.pi
 
 
-def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16, feature_set: str = "baseline"):
+def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16,
+                   feature_groups: list[str] | None = None):
     """Build the (n_jets, n_const, n_features) tensor.
 
     jets: (event, jet) records; constituents: (event, jet, cand) records
     aligned with jets. Returns (X float32 array, feature name list).
     """
+    names = resolve_feature_groups(feature_groups or ["baseline"])
     c = constituents
     pid = c["id"]
     charge = c["charge"]
@@ -61,14 +82,12 @@ def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16, fe
         "emid": c.hwEmID,
         "quality": c.hwTkQuality,
     }
-    names = EXTENDED_FEATURES if feature_set == "extended" else BASELINE_FEATURES
-    if feature_set == "extended":
-        for n in names:
-            if n.startswith("trk_") or n.startswith("cl_"):
-                if n == "cl_absZBarycenter":
-                    feats[n] = abs(c["cl_zBarycenter"])
-                else:
-                    feats[n] = c[n]
+    for n in names:
+        if n.startswith("trk_") or n.startswith("cl_"):
+            if n == "cl_absZBarycenter":
+                feats[n] = abs(c["cl_zBarycenter"])
+            else:
+                feats[n] = c[n]
 
     # flatten jets across events, pad candidate axis to n_const
     n_feat = len([n for n in names if n != "isfilled"])

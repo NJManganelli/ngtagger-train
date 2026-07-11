@@ -43,6 +43,14 @@ def main(argv=None):
                        help="cms-hls4ml L1TSC4NGJetModel checkout to package into")
     p_exp.add_argument("--version-tag", default="L1TSC4NGJetModel_dev")
 
+    p_tq = sub.add_parser("train-trkquality", help="retrain the track-quality GBDT")
+    p_tq.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen L1TrkNano files")
+    p_tq.add_argument("-o", "--output", required=True)
+    p_tq.add_argument("--track-table", default="L1TTrack", help="L1TTrack or L1TExtTrack")
+    p_tq.add_argument("--label", default="genuine", choices=["genuine", "looselyGenuine"])
+    p_tq.add_argument("--max-events", type=int, default=None)
+    p_tq.add_argument("--conifer", action="store_true", help="export conifer model json (+cpp project)")
+
     p_ins = sub.add_parser("inspect-nano", help="print tagger-relevant tables of a nano file")
     p_ins.add_argument("file")
 
@@ -73,6 +81,13 @@ def main(argv=None):
             project = model.firmware_config.get("project_name", "L1TSC4NGJetModel")
             package_for_emulator(os.path.join(args.output, project),
                                  args.emulator_repo, args.version_tag)
+    elif args.cmd == "train-trkquality":
+        from ngtagger.train.trkquality import export_conifer, train_trkquality
+
+        train_trkquality(args.inputs, args.output, track_table=args.track_table,
+                         label=args.label, max_events=args.max_events)
+        if args.conifer:
+            export_conifer(args.output)
     elif args.cmd == "inspect-nano":
         import uproot
 

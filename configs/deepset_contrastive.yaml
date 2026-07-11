@@ -6,7 +6,7 @@ run_config:
 
 data_config:
   n_constituents: 16
-  feature_set: baseline
+  feature_groups: [baseline]
 
 model_config:
   name: deepset_contrastive
