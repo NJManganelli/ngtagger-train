@@ -50,6 +50,19 @@ def nlaymiss_interior(hitpattern: np.ndarray, width: int = 7) -> np.ndarray:
     return out
 
 
+def twos_complement(bits: np.ndarray, width: int) -> np.ndarray:
+    """Decode raw track-word bit fields into signed integers (the track word
+    stores tanl and z0 as two's-complement; the nano hw columns are the raw
+    unsigned bits)."""
+    v = bits.astype(np.int64)
+    return np.where(v >= (1 << (width - 1)), v - (1 << width), v)
+
+
+# TTTrack_TrackWord bit widths (DataFormats/L1TrackTrigger/TTTrack_TrackWord.h)
+K_TANL_SIZE = 16
+K_Z0_SIZE = 12
+
+
 def load_tracks(files: list[str], track_table: str = "L1TTrack",
                 max_events: int | None = None) -> ak.Array:
     branches = [f"{track_table}_{b}" for b in _BRANCHES]
@@ -68,8 +81,8 @@ def build_trkq_dataset(tracks: ak.Array, label: str = "genuine",
         pass  # leave validation to the caller; unknown-only files mean no associator
 
     X = np.stack([
-        flat["hwTanl"].astype(np.float32),
-        flat["hwZ0"].astype(np.float32),
+        twos_complement(flat["hwTanl"], K_TANL_SIZE).astype(np.float32),
+        twos_complement(flat["hwZ0"], K_Z0_SIZE).astype(np.float32),
         flat["hwBendChi2"].astype(np.float32),
         flat["nStubs"].astype(np.float32),
         nlaymiss_interior(flat["hitPattern"]).astype(np.float32),
