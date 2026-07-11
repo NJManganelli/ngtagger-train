@@ -51,6 +51,15 @@ def main(argv=None):
     p_tq.add_argument("--max-events", type=int, default=None)
     p_tq.add_argument("--conifer", action="store_true", help="export conifer model json (+cpp project)")
 
+    p_vtx = sub.add_parser("train-nnvtx", help="retrain the E2E NNVtx + association networks")
+    p_vtx.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen L1PFTrkNano files")
+    p_vtx.add_argument("-o", "--output", required=True)
+    p_vtx.add_argument("--track-table", default="L1TTrack")
+    p_vtx.add_argument("--extra-features", nargs="*", default=[],
+                       help="additional branch names or computed features (see COMPUTED_FEATURES)")
+    p_vtx.add_argument("--epochs", type=int, default=30)
+    p_vtx.add_argument("--max-events", type=int, default=None)
+
     p_ins = sub.add_parser("inspect-nano", help="print tagger-relevant tables of a nano file")
     p_ins.add_argument("file")
 
@@ -88,6 +97,12 @@ def main(argv=None):
                          label=args.label, max_events=args.max_events)
         if args.conifer:
             export_conifer(args.output)
+    elif args.cmd == "train-nnvtx":
+        from ngtagger.train.nnvtx import train_nnvtx
+
+        train_nnvtx(args.inputs, args.output, track_table=args.track_table,
+                    extra_features=args.extra_features, max_events=args.max_events,
+                    epochs=args.epochs)
     elif args.cmd == "inspect-nano":
         import uproot
 
