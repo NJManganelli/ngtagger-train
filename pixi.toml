@@ -1,0 +1,65 @@
+[workspace]
+name = "ngtagger-train"
+version = "0.1.0"
+description = "NG jet tagger training pipeline reading L1PFTrkNano directly (no intermediate formats)"
+authors = ["Nick Manganelli <nickmanganelli@gmail.com>"]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]  # linux-64 + CUDA variant: see eaf/pixi.toml
+
+[tasks]
+train = "python -m ngtagger.cli train"
+multishot = "python -m ngtagger.cli multishot"
+export = "python -m ngtagger.cli export"
+inspect-nano = "python -m ngtagger.cli inspect-nano"
+test = "pytest tests -x -q"
+mlflow-ui = "mlflow ui --backend-store-uri file://$PIXI_PROJECT_ROOT/mlruns"
+
+[dependencies]
+python = "3.12.*"
+pip = "*"
+numpy = "<2.1"
+pytest = "*"
+
+[pypi-dependencies]
+ngtagger = { path = ".", editable = true }
+uproot = ">=5.3"
+awkward = ">=2.6"
+vector = "*"
+fsspec-xrootd = "*"
+pyyaml = "*"
+schema = "*"
+tqdm = "*"
+scikit-learn = "*"
+matplotlib = "*"
+mplhep = "*"
+mlflow = ">=2.14"
+# Keras 3 multi-backend + quantization-aware-training stack (upstream Keras_v3 line)
+keras = ">=3.5"
+tensorflow = ">=2.16,<2.20"
+quantizers = "*"
+hgq2 = { git = "https://github.com/calad0i/HGQ2" }
+da4ml = ">=0.3"
+# hls4ml: CMS jet-tagging fork with HGQ2/da4ml support (mirrors upstream TrainTagger Keras_v3)
+hls4ml = { git = "https://github.com/CMS-L1T-Jet-Tagging/hls4ml", branch = "jet_tagger_hls4ml_update" }
+
+# --------------------------------------------------------------------------
+# osx (M-series) : Metal acceleration for local parallel training
+# --------------------------------------------------------------------------
+[feature.metal]
+platforms = ["osx-arm64"]
+[feature.metal.pypi-dependencies]
+tensorflow-metal = "*"
+
+# --------------------------------------------------------------------------
+# hyperparameter scans / parallel multishot with ray (optional, heavier)
+# --------------------------------------------------------------------------
+[feature.tune.pypi-dependencies]
+ray = { version = "*", extras = ["tune"] }
+
+# NOTE: the linux + nvidia GPU (Elastic Analysis Facility) variant lives in
+# eaf/pixi.toml (linux-64-only workspace; cross-platform pypi solving of the
+# git-sourced QAT stack is not possible from macOS).
+
+[environments]
+default = ["metal"]
+tune = ["metal", "tune"]

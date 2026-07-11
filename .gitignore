@@ -1,0 +1,7 @@
+.pixi/
+mlruns/
+output/
+firmware/
+__pycache__/
+*.egg-info/
+.pytest_cache/
