@@ -85,6 +85,20 @@ class L1SC4JetCandLink(_JetCandLinkBase):
     _cand_target = "L1PuppiCand"
 
 
+class _SmartPixelsRefitHitBase(base.NanoCollection):
+    """SmartPixels per-hit refit link table: one row per accepted refit hit,
+    with a `trackIdx` crossref into the matching variant track table (the same
+    row index also indexes the reference L1TTrack/L1TExtTrack, 1:1 aligned).
+    Concrete subclasses bind `_track_target` per digiRefit config/variant."""
+
+    _track_target = None
+
+    @property
+    def track(self):
+        """refit variant track this hit belongs to (via trackIdx)"""
+        return self._events()[self._track_target]._apply_global_index(self.trackIdxG)
+
+
 @awkward.mixin_class(behavior)
 class L1DispVtx(base.NanoCollection):
     """GTT displaced vertex: track-pair accessors via first/secondIndexTrk."""
@@ -200,6 +214,41 @@ class L1TrackWord(L1TrackWordDecoded):
     pass
 
 
+# ---------------------------------------------------------------------------
+# SmartPixels digiRefit variant tables (Phase-3 tier-2 refit study).
+# Track tables L1TSmartPixelsTrack*/L1TSmartPixelsExtTrack* are track-like:
+# they carry the same hw track-word columns as L1TTrack (reuse the hw-decode
+# mixin) plus the spx* refit-status extension columns, and are 1:1 row-aligned
+# with the reference L1TTrack/L1TExtTrack. Hit tables
+# L1TSmartPixelsRefitHit*/L1TSmartPixelsExtRefitHit* are link tables (one row
+# per accepted refit hit) with a trackIdx crossref into the matching variant
+# track table. Registered dynamically for the four activeSP configs
+# (AIII/AAII/AAAI/AAAA) x {prompt, Ext}.
+# ---------------------------------------------------------------------------
+SMARTPIXELS_CONFIGS = ("AIII", "AAII", "AAAI", "AAAA")
+
+# name -> mixin-class name, filled by the loop below and merged into the schema
+_SMARTPIXELS_MIXINS = {}
+# crossref column -> target table, merged into all_cross_references
+_SMARTPIXELS_CROSSREFS = {}
+
+for _pfx, _trk_base in (("L1TSmartPixels", "L1TSmartPixelsTrackDigiRefit"),
+                        ("L1TSmartPixelsExt", "L1TSmartPixelsExtTrackDigiRefit")):
+    _hit_base = _trk_base.replace("Track", "RefitHit")
+    for _cfg in SMARTPIXELS_CONFIGS:
+        _trk_tbl = f"{_trk_base}{_cfg}"
+        _hit_tbl = _hit_base + _cfg
+        # track table: reuse the track-word hw decoder mixin
+        _SMARTPIXELS_MIXINS[_trk_tbl] = "L1TrackWord"
+        # hit link table: dedicated mixin bound to its variant track target
+        _hit_cls = f"L1SmartPixelsRefitHit{'Ext' if 'Ext' in _pfx else ''}{_cfg}Link"
+        _cls = type(_hit_cls, (_SmartPixelsRefitHitBase,), {"_track_target": _trk_tbl})
+        _cls = awkward.mixin_class(behavior)(_cls)
+        globals()[_hit_cls] = _cls
+        _SMARTPIXELS_MIXINS[_hit_tbl] = _hit_cls
+        _SMARTPIXELS_CROSSREFS[f"{_hit_tbl}_trackIdx"] = _trk_tbl
+
+
 class _L1PFCandBase(candidate.PtEtaPhiMCandidate, base.NanoCollection):
     """L1 PF/Puppi candidates: matched-object accessors + uniform truth."""
 
@@ -305,6 +354,7 @@ class L1NanoSchema(NanoAODSchema):
         "L1puppiJetSC4NG": "NanoCollection",
         "L1puppiJetSC4": "NanoCollection",
         "L1DispVertex": "L1DispVtx",
+        **_SMARTPIXELS_MIXINS,
     }
 
     all_cross_references = {
@@ -324,6 +374,8 @@ class L1NanoSchema(NanoAODSchema):
         # displaced vertex track-pair crossrefs
         "L1DispVertex_firstIndexTrk": "L1TExtTrack",
         "L1DispVertex_secondIndexTrk": "L1TExtTrack",
+        # SmartPixels refit-hit -> variant track crossrefs
+        **_SMARTPIXELS_CROSSREFS,
     }
 
     @classmethod

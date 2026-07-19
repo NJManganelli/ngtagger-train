@@ -51,6 +51,22 @@ def main(argv=None):
     p_tq.add_argument("--max-events", type=int, default=None)
     p_tq.add_argument("--conifer", action="store_true", help="export conifer model json (+cpp project)")
 
+    p_rq = sub.add_parser("train-refitquality",
+                          help="refit-aware track-quality BDT study (SmartPixels digiRefit)")
+    p_rq.add_argument("-i", "--inputs", nargs="+", required=True,
+                      help="withGen SmartPixels digiRefit nano files")
+    p_rq.add_argument("-o", "--output", required=True)
+    p_rq.add_argument("--tier", choices=["A", "B", "C", "D", "matrix"], default="matrix",
+                      help="single tier, or 'matrix' for the full 13-cell A/B/C/D x config run")
+    p_rq.add_argument("--config", choices=["AIII", "AAII", "AAAI", "AAAA"], default="AAAA",
+                      help="digiRefit config (ignored for tier A; used for a single B/C/D run)")
+    p_rq.add_argument("--track-table", default="L1TTrack", help="L1TTrack or L1TExtTrack")
+    p_rq.add_argument("--label", default="genuine", choices=["genuine", "looselyGenuine"])
+    p_rq.add_argument("--max-events", type=int, default=None)
+    p_rq.add_argument("--seed", type=int, default=0)
+    p_rq.add_argument("--conifer", action="store_true",
+                      help="export conifer model json for the trained cell(s)")
+
     p_vtx = sub.add_parser("train-nnvtx", help="retrain the E2E NNVtx + association networks")
     p_vtx.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen L1PFTrkNano files")
     p_vtx.add_argument("-o", "--output", required=True)
@@ -103,6 +119,26 @@ def main(argv=None):
                          label=args.label, max_events=args.max_events)
         if args.conifer:
             export_conifer(args.output)
+    elif args.cmd == "train-refitquality":
+        from ngtagger.train.refitquality import (
+            export_conifer, load_refit_tables, train_matrix, train_one)
+
+        if args.tier == "matrix":
+            train_matrix(args.inputs, args.output, track_table=args.track_table,
+                         label=args.label, max_events=args.max_events, seed=args.seed)
+            if args.conifer:
+                for tag in ["A", "B-AIII", "B-AAII", "B-AAAI", "B-AAAA",
+                            "C-AIII", "C-AAII", "C-AAAI", "C-AAAA",
+                            "D-AIII", "D-AAII", "D-AAAI", "D-AAAA"]:
+                    export_conifer(args.output, tag)
+        else:
+            ref, var, hits = load_refit_tables(args.inputs, args.config,
+                                               args.track_table, args.max_events)
+            train_one(ref, var, hits, args.tier, args.config, args.output,
+                      label=args.label, seed=args.seed)
+            if args.conifer:
+                tag = "A" if args.tier == "A" else f"{args.tier}-{args.config}"
+                export_conifer(args.output, tag)
     elif args.cmd == "train-nnvtx":
         from ngtagger.train.nnvtx import train_nnvtx
 
