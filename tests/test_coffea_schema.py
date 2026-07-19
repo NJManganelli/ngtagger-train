@@ -116,6 +116,50 @@ def test_track_only_tier_silent(tmp_path):
     assert ak.all(events.L1TExtTrack.pt[0] == [9.0, 7.5])
 
 
+def _write_smartpixels(tmp_path, name):
+    """Reference L1TTrack + one digiRefit variant track table (row-aligned)
+    + its per-hit link table with a trackIdx crossref. Two events, 3 tracks."""
+    tree = {
+        "run": np.array([1, 1], dtype=np.uint32),
+        "luminosityBlock": np.array([1, 1], dtype=np.uint32),
+        "event": np.array([1, 2], dtype=np.uint64),
+    }
+    tree["L1TTrack"] = ak.zip({
+        "pt": [[10.0, 5.0, 8.0]] * 2, "genuine": [[True, False, True]] * 2,
+        "hwTanl": [[100, 200, 300]] * 2,
+    })
+    tree["L1TSmartPixelsTrackDigiRefitAAAA"] = ak.zip({
+        "pt": [[10.1, 5.2, 8.05]] * 2, "hwTanl": [[100, 200, 300]] * 2,
+        "spxRefitPerformed": [[True, False, True]] * 2,
+        "spxNKFUpdates": [[2, 0, 3]] * 2,
+    })
+    tree["L1TSmartPixelsRefitHitDigiRefitAAAA"] = ak.zip({
+        "trackIdx": [[0, 0, 2]] * 2, "layer": [[1, 2, 1]] * 2,
+        "pullX": [[0.3, -0.2, 0.1]] * 2, "hitAccepted": [[True, True, True]] * 2,
+    })
+    f = uproot.recreate(tmp_path / name)
+    types = {k: (v.type if isinstance(v, ak.Array) else v.dtype) for k, v in tree.items()}
+    f.mktree("Events", types, counter_name=lambda n: "n" + n,
+             field_name=lambda outer, inner: inner if outer == "" else outer + "_" + inner)
+    f["Events"].extend(tree)
+    f.close()
+    return str(tmp_path / name)
+
+
+def test_smartpixels_track_and_hit_crossref(tmp_path):
+    events = _events(_write_smartpixels(tmp_path, "spx.root"))
+    trk = events.L1TSmartPixelsTrackDigiRefitAAAA
+    # track-word hw decode reused from L1TrackWord mixin
+    assert hasattr(trk, "tanlFromHw")
+    assert ak.all(trk.spxRefitPerformed[0] == [True, False, True])
+
+    # per-hit link table resolves trackIdx crossref back to the variant track
+    hit = events.L1TSmartPixelsRefitHitDigiRefitAAAA
+    linked = hit.track
+    assert ak.all(linked.pt[0] == [10.1, 10.1, 8.05])  # trackIdx 0,0,2
+    assert ak.all(abs(hit.pullX[0] - np.array([0.3, -0.2, 0.1])) < 1e-6)
+
+
 def test_jet_constituents_grouping(tmp_path):
     from ngtagger.coffea_schema import jet_constituents
 
