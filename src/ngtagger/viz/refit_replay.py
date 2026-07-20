@@ -319,10 +319,9 @@ def build_figure(data, picks, radii, seed_sigmas):
     DEF_CFG, DEF_AM = "1111", "alphaBeta"
     tracks_menu = dict(
         buttons=[dict(label=track_labels[ti], method="update",
-                      args=[{"visible": visibility(combo_id(ti, DEF_CFG, DEF_AM))},
-                            {"title": _title(picks[ti])}])
+                      args=[{"visible": visibility(combo_id(ti, DEF_CFG, DEF_AM))}])
                  for ti in range(len(tracks))],
-        direction="down", showactive=True, x=0.0, xanchor="left", y=1.16, yanchor="top",
+        direction="down", showactive=True, x=0.0, xanchor="left", y=1.15, yanchor="top",
         pad={"r": 4, "t": 4}, bgcolor="#eef4fb",
     )
     config_menu = dict(
@@ -330,24 +329,23 @@ def build_figure(data, picks, radii, seed_sigmas):
                       method="update",
                       args=[{"visible": visibility(combo_id(0, cfg, DEF_AM))}])
                  for cfg in ALL_CONFIGS],
-        direction="down", showactive=True, x=0.22, xanchor="left", y=1.16, yanchor="top",
+        direction="down", showactive=True, x=0.22, xanchor="left", y=1.15, yanchor="top",
         pad={"r": 4, "t": 4}, bgcolor="#f0f0f0",
     )
     angle_menu = dict(
         buttons=[dict(label=f"angles: {am}", method="update",
                       args=[{"visible": visibility(combo_id(0, DEF_CFG, am))}])
                  for am in ANGLE_MODES],
-        direction="down", showactive=True, x=0.44, xanchor="left", y=1.16, yanchor="top",
+        direction="down", showactive=True, x=0.44, xanchor="left", y=1.15, yanchor="top",
         pad={"r": 4, "t": 4}, bgcolor="#eefbf0",
     )
     full_menu = dict(
         buttons=[dict(label=f"{['clean','wrong','fake','tk3'][ti] if ti < 4 else 'tk'+str(ti)}"
                             f" | {cfg} | {am}",
                       method="update",
-                      args=[{"visible": visibility(combo_id(ti, cfg, am))},
-                            {"title": _title(picks[ti])}])
+                      args=[{"visible": visibility(combo_id(ti, cfg, am))}])
                  for (ti, cfg, am) in combos],
-        direction="down", showactive=True, x=0.66, xanchor="left", y=1.16, yanchor="top",
+        direction="down", showactive=True, x=0.66, xanchor="left", y=1.15, yanchor="top",
         pad={"r": 4, "t": 4}, bgcolor="#f7f0fb",
     )
     fig.update_layout(updatemenus=[tracks_menu, config_menu, angle_menu, full_menu])
@@ -359,19 +357,31 @@ def build_figure(data, picks, radii, seed_sigmas):
     fig.update_yaxes(title_text="r [cm]", row=1, col=2, range=[0, 18])
 
     fig.update_layout(
-        title=_title(picks[0]),
-        height=900, width=1180,
-        margin=dict(t=150, b=30, l=60, r=20),
-        legend=dict(orientation="h", x=0.0, y=1.02, yanchor="bottom"),
+        # Vertical zones (top->bottom): title 1.30 · labels 1.205 · menus 1.15 ·
+        # legend 1.02 · plots 1.0. Clear separation so nothing collides.
+        height=960, width=1180,
+        margin=dict(t=235, b=70, l=60, r=20),
+        legend=dict(orientation="h", x=0.0, y=1.02, yanchor="bottom", xanchor="left"),
         annotations=list(fig.layout.annotations) + [
-            dict(text="track", x=0.0, y=1.20, xref="paper", yref="paper",
+            dict(text=("<b>SmartPixels digiRefit replay</b>  —  step-by-step Kalman "
+                       "refit of an L1 track against SmartPixels hits"),
+                 x=0.5, y=1.30, xref="paper", yref="paper", showarrow=False,
+                 font=dict(size=16), xanchor="center"),
+            dict(text="track", x=0.0, y=1.205, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=11), xanchor="left"),
-            dict(text="config (* = produced/real)", x=0.22, y=1.20, xref="paper", yref="paper",
+            dict(text="config (* = produced/real)", x=0.22, y=1.205, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=11), xanchor="left"),
-            dict(text="angle mode", x=0.44, y=1.20, xref="paper", yref="paper",
+            dict(text="angle mode", x=0.44, y=1.205, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=11), xanchor="left"),
-            dict(text="full combo (authoritative)", x=0.66, y=1.20, xref="paper", yref="paper",
+            dict(text="full combo (authoritative)", x=0.66, y=1.205, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=11), xanchor="left"),
+            # Static fidelity key, as a caption BELOW the table (not crammed on top).
+            dict(text=("<span style='color:#d62728'>REAL</span> = produced "
+                       "(AIII/AAII/AAAI/AAAA @ alphaBeta, chi2/pulls bit-exact) &nbsp;·&nbsp; "
+                       "else <span style='color:#7f7f7f'>REPLAY</span> "
+                       "(rInv/phi0/d0 faithful, tanL/z0 illustrative — parametrized seed cov)"),
+                 x=0.5, y=-0.11, xref="paper", yref="paper", showarrow=False,
+                 font=dict(size=11), xanchor="center"),
         ],
     )
     return fig
@@ -382,12 +392,11 @@ def _title(pick):
     truth = tr.truth
     badge_true = "GENUINE" if truth["genuine"] else ("looseGen" if truth["looselyGenuine"] else "FAKE/unmatched")
     hard = "hardInt" if truth["fromHard"] else "PU/other"
-    return (f"<b>SmartPixels digiRefit replay</b> &nbsp; [{arch}] ev{tr.event} trk{tr.idx} &nbsp; "
-            f"<span style='font-size:12px'>truth: {badge_true} ({hard}, tpPt={truth['tpPt']:.1f}, "
-            f"nStubs={truth['nStubs']}) &nbsp;|&nbsp; "
-            f"<span style='color:#d62728'>REAL</span>=produced (AIII/AAII/AAAI/AAAA @ alphaBeta), "
-            f"else <span style='color:#7f7f7f'>REPLAY</span>; "
-            f"rInv/phi0/d0 faithful, tanL/z0 illustrative</span>")
+    # Identity + truth only (the static REAL/REPLAY fidelity key is a caption
+    # under the table, so the title stays one clean line clear of the menus).
+    return (f"<b>SmartPixels digiRefit replay</b>  ·  [{arch}] ev{tr.event} trk{tr.idx}"
+            f"<span style='font-size:12px'>  ·  truth: {badge_true} ({hard}, "
+            f"tpPt={truth['tpPt']:.1f}, nStubs={truth['nStubs']})</span>")
 
 
 # --------------------------------------------------------------------------
