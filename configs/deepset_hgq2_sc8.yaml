@@ -2,12 +2,19 @@
 # SC4 baseline, pointed at the SC8 jet/link tables via the data_config table
 # knobs (the pipeline is table-name parametrized; no code fork).
 #
-# PRODUCTION-SIDE GAP (2026-07-19): current nanos carry only the plain
-# L1puppiJetSC8 kinematic table (pt/eta/phi/et/mass). The NG-tagged SC8 jet
-# table and its jet<->constituent link table (names below assume the SC4
-# convention) require the cmssw side to schedule an SC8 NG tagger producer +
-# an SC8 L1JetCandLinkTableProducer clone in the L1PFNano flavors. Until
-# then this config fails loudly at read time (missing branches).
+# PRODUCTION-SIDE STATUS (2026-07-19, updated by SC8 nano-extension work):
+# The cmssw side now emits the PLAIN SC8 jet + jet<->constituent link tables
+# (no NG-tagged SC8 collection is needed for training: labels come from gen
+# matching in-pipeline; the "NG SC8" collection only exists after a model is
+# deployed via the future cloned tagger). Table names below are the PLAIN-SC8
+# pattern (mirror of L1SC4JetCands, NOT the NG L1SC4NGJetCands):
+#   jet_table  L1puppiJetSC8    kinematic SC8 SeededCone jets (pt/eta/phi/et/mass)
+#   link_table L1SC8JetCands    jetIdx / candIdx / slot / inTagger
+#   cand_table L1PuppiCand      deregionized (plain) Puppi candidates
+#   track_table L1TTrack        plain tracklet tracks (crossref via l1TrackIdx)
+# These require the L1PFNano flavor to re-emulate the deregionizer + SC8
+# SeededCone jets in-job (see L1Trigger/Phase3SmartPixels/doc/ProcurementKeeps.md
+# and DPGAnalysis/Phase3SmartPixelsNanoAOD reemulateJetSideForPFTier).
 model: DeepSetHGQ2
 experiment: ngtagger-sc8
 
@@ -19,10 +26,10 @@ data_config:
   # Revisit against the actual SC8 firmware tagger window when it exists.
   n_constituents: 32
   feature_groups: [baseline]
-  jet_table: L1puppiJetSC8NG
-  link_table: L1SC8NGJetCands
-  cand_table: L1ExtPuppiCand
-  track_table: L1TExtTrack
+  jet_table: L1puppiJetSC8
+  link_table: L1SC8JetCands
+  cand_table: L1PuppiCand
+  track_table: L1TTrack
   cluster_table: L1HGCCluster
   # gen matching follows the jet radius (0.8 for SC8; 0.4 default for SC4)
   gen_match_dr: 0.8
