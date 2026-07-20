@@ -50,19 +50,39 @@ def _synth_hits(rng, n_layers=4):
     return hits
 
 
+def _synth_stubs(rng, n=6):
+    """A few real-style OT barrel stubs (x/y/z, r, layer, isBarrel)."""
+    radii = [25.0, 37.2, 52.2, 68.7, 86.0, 108.6]
+    out = []
+    for L in range(1, n + 1):
+        r = radii[L - 1]
+        ph = float(rng.uniform(-0.5, 0.5))
+        out.append(dict(layer=L, isBarrel=True, r=r,
+                        x=r * float(np.cos(ph)), y=r * float(np.sin(ph)),
+                        z=float(rng.uniform(-20, 20))))
+    return out
+
+
 def _synth_track(rng, event=0, idx=0, genuine=True, n_layers=4):
     seed = dict(rInv=float(rng.uniform(-0.004, 0.004)), phi0=float(rng.uniform(-0.5, 0.5)),
                 tanL=float(rng.uniform(-1.5, 1.5)), z0=float(rng.uniform(-3, 3)),
                 d0=float(rng.uniform(-0.05, 0.05)), pt=float(rng.uniform(3, 10)),
-                eta=0.5)
+                eta=0.5, chi2XYRed=float(rng.uniform(0.1, 2.0)),
+                chi2ZRed=float(rng.uniform(0.1, 2.0)))
     truth = dict(genuine=genuine, looselyGenuine=genuine, tpPt=seed["pt"] if genuine else -1.0,
-                 fromHard=genuine, pdgId=211, nStubs=6, hitPattern=0b0111111)
+                 tpEta=0.5 if genuine else 0.0, fromHard=genuine, pdgId=211, nStubs=6,
+                 hitPattern=0b0111111)
     hits = _synth_hits(rng, n_layers)
     real = {v: dict(rInv=seed["rInv"], phi0=seed["phi0"], tanL=seed["tanL"], z0=seed["z0"],
-                    d0=seed["d0"], pt=seed["pt"], nAcc=n_layers, layerMask=(1 << n_layers) - 1,
-                    chi2RPhiTot=0.0, chi2RZTot=0.0, refitPerformed=True, maxWinMult=3)
+                    d0=seed["d0"], pt=seed["pt"], chi2XYRed=seed["chi2XYRed"],
+                    chi2ZRed=seed["chi2ZRed"], nAcc=n_layers, nUpd=n_layers,
+                    layerMask=(1 << n_layers) - 1, chi2RPhiTot=0.0, chi2RZTot=0.0,
+                    refitPerformed=True, maxWinMult=3)
             for v in PRODUCED_CONFIGS.values()}
-    return TrackRecord(event=event, idx=idx, seed=seed, truth=truth, hits=hits, real=real)
+    genvtx = dict(x=float(rng.normal(0, 0.002)), y=float(rng.normal(0, 0.002)),
+                  z=float(rng.uniform(-8, 8)))
+    return TrackRecord(event=event, idx=idx, seed=seed, truth=truth, hits=hits,
+                       stubs=_synth_stubs(rng), real=real, genvtx=genvtx)
 
 
 def _synth_data(n=12, seed=1):
@@ -127,23 +147,56 @@ def test_config_subset_feeds_fewer_layers():
     assert len(r1["states"]) >= 1
 
 
-def test_ot_hitpattern_decode():
-    """hitPattern popcount == nStubs, and each set bit maps to an OT barrel radius
-    (LSB=OT-L1). Bit 6 is a forward-disk slot placed schematically."""
-    from ngtagger.viz._dataio import OT_BARREL_RADII, ot_stub_radii
+def test_truth_d0_sign_and_source():
+    """d0_true = GenVtx_x*sin(phi) - GenVtx_y*cos(phi) (matches L1TTrack_d0 sign
+    convention); z0_true = GenVtx_z. Source is GenVtx(PV) when no matched-TP params,
+    and prompt-only in that case."""
+    from ngtagger.viz._truth import track_truth, truth_is_prompt_only
 
-    assert len(OT_BARREL_RADII) == 6
-    # 0b0111111 = 6 barrel layers
-    stubs = ot_stub_radii(0b0111111)
-    assert len(stubs) == 6
-    assert [r for r, _ in stubs] == list(OT_BARREL_RADII)
-    # 0b0011011 = 4 stubs (bits 0,1,3,4)
-    stubs = ot_stub_radii(0b0011011)
-    assert [lab for _, lab in stubs] == ["OT-L1", "OT-L2", "OT-L4", "OT-L5"]
-    # bit 6 set -> disk slot, radius clamped to outermost barrel
-    stubs = ot_stub_radii(0b1000000)
-    assert stubs[0][1].startswith("OT-disk")
-    assert stubs[0][0] == OT_BARREL_RADII[-1]
+    seed = dict(phi0=0.0)
+    truth = dict(tpPt=5.0, tpEta=0.7)
+    gv = dict(x=0.03, y=0.05, z=1.234)
+    tt = track_truth(seed, truth, gv)
+    # phi=0 -> d0 = x*sin(0) - y*cos(0) = -y
+    assert tt["d0"] == pytest.approx(-gv["y"], abs=1e-9)
+    assert tt["z0"] == pytest.approx(gv["z"], abs=1e-9)
+    assert tt["pt"] == pytest.approx(5.0) and tt["eta"] == pytest.approx(0.7)
+    assert tt["d0_source"] == "GenVtx(PV)" and truth_is_prompt_only(tt)
+    # phi=pi/2 -> d0 = x
+    tt2 = track_truth(dict(phi0=np.pi / 2), truth, gv)
+    assert tt2["d0"] == pytest.approx(gv["x"], abs=1e-6)
+
+
+def test_truth_swaps_to_matched_tp():
+    """When the richer nano provides matched-TP d0/z0, track_truth uses them (valid
+    for displaced tracks) instead of the GenVtx(PV) interim truth."""
+    from ngtagger.viz._truth import track_truth, truth_is_prompt_only
+
+    seed = dict(phi0=0.3)
+    truth = dict(tpPt=5.0, tpEta=0.7, tpD0=0.42, tpZ0=-3.1)
+    gv = dict(x=0.03, y=0.05, z=1.234)
+    tt = track_truth(seed, truth, gv)
+    assert tt["d0"] == pytest.approx(0.42) and tt["z0"] == pytest.approx(-3.1)
+    assert tt["d0_source"] == "matched-TP" and not truth_is_prompt_only(tt)
+
+
+def test_reduced_chi2_running_starts_from_ot_anchor():
+    """The running reduced chi2 seed value equals the OT-only reduced z-fit chi2
+    (chi2ZRed), and each IT r-z increment grows the numerator while ndof grows by the
+    per-hit dof; alphaBeta mode adds one more dof per hit than 'none'."""
+    from ngtagger.viz.refit_replay import _reduced_chi2_running
+
+    rng = np.random.default_rng(11)
+    tr = _synth_track(rng)
+    inc = [1.0, 2.0, 0.5]
+    red_ab, ndof_ab = _reduced_chi2_running(tr, inc, "alphaBeta")
+    red_none, ndof_none = _reduced_chi2_running(tr, inc, "none")
+    # seed value is the OT-only reduced z chi2
+    assert red_ab[0] == pytest.approx(tr.seed["chi2ZRed"], rel=1e-9)
+    assert red_none[0] == pytest.approx(tr.seed["chi2ZRed"], rel=1e-9)
+    # ndof grows faster in alphaBeta (position + angle dof per hit)
+    assert ndof_ab[-1] > ndof_none[-1]
+    assert len(red_ab) == len(inc) + 1
 
 
 def test_replay_never_reads_answer():
@@ -231,8 +284,11 @@ def test_html_builds_from_real_nano(tmp_path):
     from ngtagger.viz.refit_replay import build_refit_viz
 
     out = tmp_path / "refit_replay.html"
-    res = build_refit_viz(_NANO, out_html=str(out), n_each=(2, 1, 1), max_events=6)
+    res = build_refit_viz(_NANO, out_html=str(out), n_each=(2, 1, 1, 1), max_events=6)
     assert res["html_path"] and out.exists()
-    assert len(res["picks"]) == 4
+    # clean/wrong/displaced/fake curation on the prime-target sample
+    assert 3 <= len(res["picks"]) <= 5
+    archs = {a for _, _, a in res["picks"]}
+    assert archs <= {"clean", "wrong", "displaced", "fake"}
     html = out.read_text()
     assert "Plotly.newPlot" in html and '<script src="' not in html
