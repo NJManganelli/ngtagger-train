@@ -67,9 +67,13 @@ def main(argv=None):
     p_rq.add_argument("--conifer", action="store_true",
                       help="export conifer model json for the trained cell(s)")
     p_rq.add_argument("--export-conifer", action="store_true",
-                      help="SPEC-ORDER path: train the producer-contract 17-feature "
-                           "REFIT_BDT_FEATURES v0 model and export a deployable conifer JSON "
-                           "(refitq_conifer_v0.json). Uses --config; ignores --tier.")
+                      help="SPEC-ORDER path: train the producer-contract REFIT_BDT_FEATURES "
+                           "model and export a deployable conifer JSON. Uses --config and "
+                           "--spec-version; ignores --tier.")
+    p_rq.add_argument("--spec-version", type=int, choices=[0, 1], default=0,
+                      help="SPEC-ORDER feature vector version: 0 = v0 (17 features), "
+                           "1 = v1 (24 features: v0 + the classic-7 TrackQuality hw features "
+                           "of the input track). The producer selects the assembly by n_features.")
     p_rq.add_argument("--conifer-name", default="refitq_conifer_v0",
                       help="basename for the SPEC-ORDER conifer JSON + metadata")
     p_rq.add_argument("--provenance", default="",
@@ -137,7 +141,8 @@ def main(argv=None):
             train_refitq_spec(args.inputs, args.output, config=args.config,
                               track_table=args.track_table, label=args.label,
                               max_events=args.max_events, seed=args.seed,
-                              conifer_name=args.conifer_name, provenance=args.provenance)
+                              conifer_name=args.conifer_name, provenance=args.provenance,
+                              spec_version=args.spec_version)
         elif args.tier == "matrix":
             train_matrix(args.inputs, args.output, track_table=args.track_table,
                          label=args.label, max_events=args.max_events, seed=args.seed)

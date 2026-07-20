@@ -87,7 +87,17 @@ REFIT_SPEC_FEATURES = [
     "sumPullBeta2", "chi2IncRPhiTot", "chi2IncRZTot",
     "dRinv", "dPhi", "dTanl", "dZ0", "dD0", "seedTrkMVA1",
 ]
-REFIT_SPEC_VERSION = 0  # REFIT_BDT_FEATURES v0 (spec §6a)
+# REFIT_BDT_FEATURES v1 (spec §6a v1): the v0 17 plus the classic-7 TrackQuality
+# hw features of the INPUT (reference) track at indices 17-23, decoded EXACTLY as
+# trkquality.py does on the raw nano hw columns (two's-complement for signed
+# fields, raw bin index for the binned chi2 quantities, nStubs, interior-missed
+# layers over the hit pattern). Mirrors the producer's in-flight v1 assembly
+# bit-for-bit (the producer calls getTanlBits()/getZ0Bits()/... = these nano
+# columns and the same decode helpers). Order == TRKQ_FEATURES.
+REFIT_SPEC_FEATURES_V1 = REFIT_SPEC_FEATURES + list(TRKQ_FEATURES)  # 17 + 7 = 24
+REFIT_SPEC_VERSION = 0    # REFIT_BDT_FEATURES v0 (spec §6a); 17 features
+REFIT_SPEC_VERSION_V1 = 1  # REFIT_BDT_FEATURES v1 (spec §6a v1); 24 features
+_SPEC_NFEAT = {0: 17, 1: 24}
 
 _SENTINEL = -900.0  # values <= this are the -999 fill; test with (x > _SENTINEL)
 
@@ -487,10 +497,14 @@ def export_conifer(model_dir: str, tag: str, output_dir: str | None = None, back
 
 def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
                        refit_only: bool = True, require_truth: bool = True,
-                       seed_npar: int = 5, track_npar: int | None = None):
-    """Build the SPEC-ORDER (RefitSidecarSpec §6a) 17-feature matrix that the
-    producer evaluates in-flight. Returns (X float32 [N,17], y int64 [N],
-    names, aux) where aux carries the refit-performed mask and truth columns.
+                       seed_npar: int = 5, track_npar: int | None = None,
+                       spec_version: int = 0):
+    """Build the SPEC-ORDER (RefitSidecarSpec §6a) feature matrix that the
+    producer evaluates in-flight. spec_version=0 -> the 17-feature v0 vector;
+    spec_version=1 -> the 24-feature v1 vector (v0 + the classic-7 TrackQuality
+    hw features of the reference track, indices 17-23, decoded exactly as
+    trkquality.py). Returns (X float32 [N,nfeat], y int64 [N], names, aux) where
+    aux carries the refit-performed mask and truth columns.
 
     Row order is the shared reference/variant per-event flatten order; the
     per-hit link table's trackIdx indexes into it (global-offset applied). When
@@ -571,6 +585,28 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
         ref_flat["trkMVA1"].astype(np.float32),               # 16 seedTrkMVA1
     ]
     X = np.stack(cols, axis=1).astype(np.float32)
+    names = list(REFIT_SPEC_FEATURES)
+
+    # v1 (spec §6a v1): append the reference track's classic-7 TRKQ_FEATURES at
+    # indices 17-23, decoded EXACTLY as trkquality.py (same helpers, imported at
+    # top). This is bit-for-bit the producer's in-flight v1 vector: the producer
+    # reads getTanlBits()/getZ0Bits()/getBendChi2Bits()/getChi2RPhiBits()/
+    # getChi2RZBits() = these raw nano hw columns, nStubs = getStubRefs().size(),
+    # and hitPattern() for the interior-missed-layer count.
+    if spec_version == 1:
+        v1cols = [
+            twos_complement(ref_flat["hwTanl"], K_TANL_SIZE).astype(np.float32),  # 17 tanl
+            twos_complement(ref_flat["hwZ0"], K_Z0_SIZE).astype(np.float32),      # 18 z0_scaled
+            ref_flat["hwBendChi2"].astype(np.float32),                            # 19 bendchi2_bin
+            ref_flat["nStubs"].astype(np.float32),                                # 20 nstub
+            nlaymiss_interior(ref_flat["hitPattern"]).astype(np.float32),         # 21 nlaymiss_interior
+            ref_flat["hwChi2RPhi"].astype(np.float32),                            # 22 chi2rphi_bin
+            ref_flat["hwChi2RZ"].astype(np.float32),                              # 23 chi2rz_bin
+        ]
+        X = np.concatenate([X, np.stack(v1cols, axis=1).astype(np.float32)], axis=1)
+        names = list(REFIT_SPEC_FEATURES_V1)
+    elif spec_version != 0:
+        raise ValueError(f"build_spec_dataset: spec_version must be 0 or 1, got {spec_version}")
 
     refit_mask = (var_flat["spxRefitPerformed"].astype(np.int64) == 1)
     aux = {"refit_mask": refit_mask, "n_tracks": n_tracks,
@@ -585,7 +621,7 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
         for k in ("tpFromHardInteraction", "genuine", "unknown", "pt", "eta"):
             aux[k] = aux[k][refit_mask]
         aux["n_selected"] = int(refit_mask.sum())
-    return X, y, list(REFIT_SPEC_FEATURES), aux
+    return X, y, names, aux
 
 
 def conifer_json_walk(model_json: dict, X: np.ndarray) -> np.ndarray:
@@ -651,9 +687,15 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
                       seed: int = 0, xgb_params: dict | None = None,
                       export_conifer: bool = True,
                       conifer_name: str = "refitq_conifer_v0",
-                      provenance: str = "", scale_pos_weight: bool = True):
-    """Train the SPEC-ORDER 17-feature refit-quality BDT and export it in
-    conifer JSON matching the producer contract (n_features==17).
+                      provenance: str = "", scale_pos_weight: bool = True,
+                      spec_version: int = 0,
+                      seed_npar: int = 5, track_npar: int | None = None):
+    """Train the SPEC-ORDER refit-quality BDT and export it in conifer JSON
+    matching the producer contract. spec_version=0 -> the 17-feature v0 vector;
+    spec_version=1 -> the 24-feature v1 vector (v0 + the classic-7 TrackQuality hw
+    features of the reference track). The exported n_features (17 or 24) is
+    validated against the version; the producer accepts both and selects the
+    assembly by the model's n_features.
 
     Writes: <conifer_name>.json (deployable conifer model, raw-margin/logit),
     <conifer_name>_meta.json (feature order + spec version + provenance),
@@ -663,10 +705,15 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
     import xgboost as xgb
     from sklearn.metrics import roc_auc_score
 
+    if spec_version not in _SPEC_NFEAT:
+        raise ValueError(f"spec_version must be 0 or 1, got {spec_version}")
+    nfeat_expected = _SPEC_NFEAT[spec_version]
     os.makedirs(output_dir, exist_ok=True)
     ref, var, hits = load_refit_tables(files, config, track_table, max_events)
-    X, y, names, aux = build_spec_dataset(ref, var, hits, config, label=label)
-    assert len(names) == 17, f"spec feature count {len(names)} != 17"
+    X, y, names, aux = build_spec_dataset(ref, var, hits, config, label=label,
+                                          seed_npar=seed_npar, track_npar=track_npar,
+                                          spec_version=spec_version)
+    assert len(names) == nfeat_expected, f"spec feature count {len(names)} != {nfeat_expected}"
 
     train, test = _split(len(X), test_fraction, seed)
     params = _spec_xgb_params(xgb_params)
@@ -682,8 +729,8 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
 
     n_pos = int(y.sum())
     n_neg = int((y == 0).sum())
-    print(f"refitq[SPEC v{REFIT_SPEC_VERSION}]: test AUC = {auc:.4f}  "
-          f"(config={config}, nfeat=17, n_refit={len(X)}, "
+    print(f"refitq[SPEC v{spec_version}]: test AUC = {auc:.4f}  "
+          f"(config={config}, nfeat={nfeat_expected}, n_refit={len(X)}, "
           f"n_train={len(train)}, n_test={len(test)}, pos={n_pos}, neg={n_neg})")
 
     xgb_path = os.path.join(output_dir, "refitq_spec_xgb.json")
@@ -702,10 +749,10 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
         # validate the exported JSON against the producer contract at export time
         with open(conifer_json_path) as f:
             cj = json.load(f)
-        if int(cj.get("n_features", -1)) != 17:
+        if int(cj.get("n_features", -1)) != nfeat_expected:
             raise RuntimeError(
-                f"exported conifer n_features={cj.get('n_features')} != 17; "
-                "producer would reject this model.")
+                f"exported conifer n_features={cj.get('n_features')} != {nfeat_expected} "
+                f"(spec v{spec_version}); producer would reject this model.")
         # offline-margin self-check: python conifer walk vs the raw BOOSTER
         # margin (which is what conifer converts and what conifer.h/the producer
         # compute). NB: the sklearn XGBClassifier.predict(output_margin=True)
@@ -721,8 +768,8 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
         print(f"  margin self-check max|walk - booster_margin| = {max_walk_diff:.3e} (float32)")
 
     meta = {
-        "spec": "RefitSidecarSpec.md REFIT_BDT_FEATURES", "spec_version": REFIT_SPEC_VERSION,
-        "n_features": 17, "features": names, "config": config, "activeSP": CONFIG_ACTIVESP[config],
+        "spec": "RefitSidecarSpec.md REFIT_BDT_FEATURES", "spec_version": spec_version,
+        "n_features": nfeat_expected, "features": names, "config": config, "activeSP": CONFIG_ACTIVESP[config],
         "label": label, "track_table": track_table, "margin_semantics": "raw_logit_margin",
         "conifer_decision_function": "sum(tree_values)+init_predict, then *norm (float32)",
         "test_auc": auc, "n_refit_tracks": len(X), "n_pos": n_pos, "n_neg": n_neg,

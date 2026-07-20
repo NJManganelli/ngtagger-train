@@ -132,6 +132,55 @@ def test_train_one_smoke(tmp_path):
     assert aucs["D"] >= aucs["A"] - 0.05
 
 
+def test_spec_dataset_v0_v1_shapes_and_decode():
+    """The SPEC-ORDER dataset builder yields 17 features for v0 and 24 for v1,
+    and the v1 tail (indices 17-23) must be the classic-7 TRKQ_FEATURES decoded
+    EXACTLY as trkquality does (bit-for-bit the producer's in-flight v1 vector)."""
+    pytest.importorskip("awkward")
+    import awkward as ak
+    from ngtagger.train.refitquality import (
+        build_spec_dataset, REFIT_SPEC_FEATURES, REFIT_SPEC_FEATURES_V1)
+    from ngtagger.train.trkquality import (
+        TRKQ_FEATURES, K_TANL_SIZE, K_Z0_SIZE, twos_complement, nlaymiss_interior)
+
+    ref, var, hits = _synth(n_events=6, tracks_per_event=10, seed=7)
+
+    x0, y0, n0, aux0 = build_spec_dataset(ref, var, hits, "AAAA", refit_only=False,
+                                          spec_version=0)
+    assert x0.shape[1] == 17 and n0 == list(REFIT_SPEC_FEATURES)
+
+    x1, y1, n1, aux1 = build_spec_dataset(ref, var, hits, "AAAA", refit_only=False,
+                                          spec_version=1)
+    assert x1.shape[1] == 24 and n1 == list(REFIT_SPEC_FEATURES_V1)
+    assert n1[17:] == list(TRKQ_FEATURES)
+    # v1's first 17 columns are byte-identical to the v0 vector (append-only).
+    assert np.array_equal(x1[:, :17], x0)
+    assert (y1 == y0).all()
+
+    # v1 tail decode matches trkquality's on the flattened reference hw columns.
+    ref_flat = {b: ak.to_numpy(ak.flatten(ref[b]))
+                for b in ("hwTanl", "hwZ0", "hwBendChi2", "hwChi2RPhi", "hwChi2RZ",
+                          "hitPattern", "nStubs")}
+    expected = np.stack([
+        twos_complement(ref_flat["hwTanl"], K_TANL_SIZE).astype(np.float32),
+        twos_complement(ref_flat["hwZ0"], K_Z0_SIZE).astype(np.float32),
+        ref_flat["hwBendChi2"].astype(np.float32),
+        ref_flat["nStubs"].astype(np.float32),
+        nlaymiss_interior(ref_flat["hitPattern"]).astype(np.float32),
+        ref_flat["hwChi2RPhi"].astype(np.float32),
+        ref_flat["hwChi2RZ"].astype(np.float32),
+    ], axis=1)
+    assert np.array_equal(x1[:, 17:], expected)
+
+
+def test_spec_dataset_rejects_bad_version():
+    pytest.importorskip("awkward")
+    from ngtagger.train.refitquality import build_spec_dataset
+    ref, var, hits = _synth(n_events=3, tracks_per_event=6, seed=2)
+    with pytest.raises(ValueError):
+        build_spec_dataset(ref, var, hits, "AAAA", refit_only=False, spec_version=2)
+
+
 def test_require_truth_fails_loudly():
     """Truth-required mode must throw, not silently degrade, when no positives."""
     import awkward as ak
