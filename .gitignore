@@ -5,3 +5,16 @@ firmware/
 __pycache__/
 *.egg-info/
 .pytest_cache/
+
+# transient run outputs (never source, never committed study artifacts)
+.DS_Store
+mlflow.db
+# large intermediate feature dumps land at the repo root
+/*.parquet
+# generated xgboost model checkpoints from a train_matrix run (the committed
+# study artifacts under eval_refitq/vtxdxy/ and eval_refitq/modelspace/ are NOT
+# ignored -- only this generated checkpoint dir is)
+eval_refitq/models/
+# model checkpoints / frozen graphs
+*.keras
+*.pb

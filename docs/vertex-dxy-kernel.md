@@ -176,12 +176,21 @@ verdict.
 
 ## Open items / TODO
 
-- **CLI wiring (TODO, left deliberately un-wired):** a `vtx-study` / kernel-scan
-  entry point in `cli.py` was NOT added — `cli.py` is under concurrent edit by
-  another effort. Run the study scripts directly
-  (`pixi run python eval_refitq/vtxdxy/kernel_scan.py`,
-  `... realdata_smoke.py [file]`) for now, and add the CLI subcommands once the
-  refitquality/CLI work lands.
+- **CLI wiring (done):** both studies are wired into `ngtagger vtx-study`. The
+  reusable compute lives in the package (`src/ngtagger/train/vtxstudy.py`:
+  `run_kernel_scan`, `run_vertex_dxy_smoke`); the `eval_refitq/vtxdxy/*.py`
+  scripts are thin wrappers over it (and still run directly:
+  `pixi run python eval_refitq/vtxdxy/kernel_scan.py`,
+  `... realdata_smoke.py [file]`). CLI usage:
+
+      ngtagger vtx-study --kernel-scan [--outdir DIR] [--seed N] [--no-plot]
+      ngtagger vtx-study --realdata FILE [FILE ...] [--outdir DIR] \
+                         [--track-table L1TExtTrack] [--d0-gate 0.15] [--no-plot]
+
+  `--kernel-scan` and `--realdata` are mutually exclusive (exactly one is
+  required). `--outdir` defaults to `eval_refitq/vtxdxy` (the committed study
+  artifacts); point it elsewhere to avoid overwriting them. Both write the same
+  `kernel_scan.json`/`realdata_smoke.json` (+ `.png`) as the scripts.
 - **NNVtx comparison hook:** the real kernel study should compare the flat/kernel
   arg-max against a trained convolution via `nnvtx.compare_vertex_scores`
   (NNVtx effectively learns the kernel). Left as a documented hook — needs the

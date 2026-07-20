@@ -401,3 +401,56 @@ def test_load_jets_vertexdxy_missing_track_pt_raises(tmp_path):
     with pytest.raises((KeyError, ak.errors.FieldNotFoundError)):
         load_jets([path], n_const=8, feature_groups=["baseline", "vertexdxy"],
                   cand_table="L1PuppiCand", track_table="L1TTrack")
+
+
+# --------------------------------------------------------------------------
+# vtx-study drivers (importable package functions + CLI wiring)
+# --------------------------------------------------------------------------
+
+
+def test_run_kernel_scan_keys_and_flat_vs_triangular(tmp_path):
+    """run_kernel_scan writes the expected JSON schema, and the committed
+    finding holds: the flat kernel's mean midpoint-pick rate is >= the
+    triangular kernel's (a taper reduces midpoint picks). Small grid to keep
+    the unit test cheap; the seed makes it deterministic."""
+    import json
+
+    from ngtagger.train.vtxstudy import run_kernel_scan
+
+    payload = run_kernel_scan(str(tmp_path), seps=(2, 3), ratios=(0.8, 1.0),
+                              n_events=120, seed=0, make_plot=False)
+    out = tmp_path / "kernel_scan.json"
+    assert out.exists()
+    on_disk = json.loads(out.read_text())
+    assert on_disk == payload
+    for key in ("config", "grid", "results", "single_vertex", "headline"):
+        assert key in payload
+    for k in ("flat", "triangular", "epanechnikov", "gaussian"):
+        assert set(payload["results"][k]) == {"midpoint_rate", "wrong_rate"}
+        assert k in payload["single_vertex"]
+    h = payload["headline"]
+    for key in ("flat_mean_midpoint_rate", "taper_mean_midpoint_rate",
+                "best_taper", "midpoint_reduction_vs_flat",
+                "single_vertex_res_penalty_cm"):
+        assert key in h
+    # committed finding: flat picks the midpoint at least as often as triangular
+    assert h["flat_mean_midpoint_rate"] >= h["taper_mean_midpoint_rate"]["triangular"]
+
+
+def test_vtx_study_cli_dispatches_kernel_scan(tmp_path):
+    """The `vtx-study --kernel-scan` subcommand parses and dispatches to the
+    package driver (real, but tiny, so it stays argparse-level cheap)."""
+    from ngtagger.cli import main
+
+    rc = main(["vtx-study", "--kernel-scan", "--outdir", str(tmp_path),
+               "--no-plot"])
+    assert rc == 0
+    assert (tmp_path / "kernel_scan.json").exists()
+
+
+def test_vtx_study_cli_requires_a_mode():
+    """--kernel-scan / --realdata are a required mutually-exclusive group."""
+    from ngtagger.cli import main
+
+    with pytest.raises(SystemExit):
+        main(["vtx-study", "--outdir", "unused"])
