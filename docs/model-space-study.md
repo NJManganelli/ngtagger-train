@@ -9,6 +9,15 @@ Hard framing constraint applied throughout: **L1 trigger hardware budgets**
 conifer tree-depth/count limits). Where a direction exceeds plausible budgets
 it is explicitly labeled an offline / upper-bound study.
 
+**Two budget regimes** (see Part D for the full upgrade-path analysis): the
+directions above are costed against the *current* VU13P-class boards on which
+the stock NGT tagger runs (the conservative regime). A future SmartPixels
+system would also re-spin the correlator/GTT processing boards to
+2–3-generations-newer silicon (VU13P → Versal Gen 2 class), opening a second,
+much larger budget regime. Part D defines two concrete complexity **targets**
+(T1, T2) and re-reads the recommendations against them: several directions
+that are "offline/upper-bound only" today become deployable at T1/T2.
+
 ## 0. Data, statistics, and method
 
 Single study sample: `nano_pu100_TrkSmartPix_withGen.root` — 100 PU events,
@@ -506,6 +515,231 @@ eaf/linux env for this study's scope.
 
 ---
 
+## Part D — FPGA upgrade paths and two complexity targets
+
+A SmartPixels-era system does not just change the detector; it re-spins the
+L1 processing boards. The models above are sized against boards the stock NGT
+tagger runs on today; this section establishes what a 2–3-generation FPGA
+upgrade actually buys, resource-wise, and turns that into concrete targets so
+"larger" models can be justified rather than hand-waved.
+
+### D.0 The current baseline (what we are upgrading FROM)
+
+The Phase-2 correlator/GTT/muon processing boards are **Xilinx Virtex
+UltraScale+ VU13P**-class:
+
+- CTL2 (the correlator second layer, where the NGT jet tagger lives) is **30
+  VU13P FPGAs**, 5 slices × 6 nodes, on Serenity ATCA blades (arXiv 2509.24371).
+- APx production boards (Calorimeter + half of Global Track/Correlator): **76
+  boards, VU13P**, 124× 25G optics.
+- Muon **X2O** boards: **36 VU13P** boards (6 OMTF, 12 EMTF, 18 GMT) in the
+  TDR-era design, 25 Gb/s optics.
+
+The stock DeepSets NGT tagger, deployed on ONE VU13P (Serenity), consumes
+(arXiv 2509.24371 / CMS DPS): **~13% LUT, ~8% FF, ~14% DSP, ~0.6% BRAM** at
+**360 MHz**, with **234 ns** tagging latency inside a ~1 µs correlator budget
+(total chain 1.011 µs). This is the anchor: the tagger today lives in ~1/7 of
+one VU13P and ~1/4 of the latency budget. That headroom is the real ceiling
+today, not the device size.
+
+A VU13P (xcvu13p, confirmed from DS890 v4.10): **4 SLRs, 1 728 000 LUTs,
+12 288 DSP48E2, 94.5 Mb BRAM + 360.0 Mb URAM, 128× GTY @ 32.75 Gb/s, TSMC
+16 nm, no AI Engines, no hardened NoC.** (Notably the highest DSP count in the
+entire UltraScale+ FPGA line — a Versal migration does NOT automatically win
+on raw DSP slices, see the table.)
+
+### D.1 The upgrade landscape (what we upgrade TO)
+
+Intra-CMS precedent already exists that this is a live path, not speculation:
+the muon group has an **X2O board revision built around a Versal device**
+(used for the GMT) alongside the standard VU13P X2O variant elsewhere in the
+muon subsystems. So a Versal migration of a processing board is already being
+engineered inside CMS — the correlator/GTT following suit for a SmartPixels
+re-spin is a natural extrapolation, not a new board program from zero.
+(The exact Versal part on the GMT X2O revision is not clearly public; treat
+the specific SKU as TBD and the *class* as the design input.)
+
+CRITICAL SKU CLARIFICATION (this trips up planning — the AMD naming is
+misleading): **AI Engines are NOT a property of "the biggest Versal Premium".**
+Concretely (AMD PSGs XMP463/XMP510/XMP452, DS890, cross-checked):
+
+- The largest-*logic* Gen1 Versal Premium parts, **VP1902 and VP1802, have
+  ZERO AI Engine tiles.** VP1902 is a fabric monster (8.46M LUTs, 4 SLRs,
+  858 Mb BRAM+URAM, hardened NoC, 7 nm) but no AIE. VP1802 has the most
+  DSP58 of any Gen1 Premium (14 352) — also no AIE.
+- The Gen1 Premium parts that DO carry AI Engines are **VP2502 / VP2802**
+  (472 AIE tiles, 157 peak INT8 TOPS).
+- **Versal Premium *Gen 2* ALSO has zero AIE tiles** — its compute is DSP58 +
+  Arm. The AIE-ML silicon lives in the **AI Core / AI Edge** lines, e.g.
+  **VC2802** (AI Core Gen1: 304 AIE-ML tiles, 202 INT8 TOPS, 16.6 AIE
+  TFLOPS FP32). ("Versal AI Core Gen 2" does not exist as an announced product
+  yet; the newest AIE-ML-v2 parts are AI Edge Gen 2.)
+
+So the real upgrade menu is TWO different axes, and a board choice picks a
+point on both:
+
+- **Fabric / NoC / node axis** (any Versal, incl. no-AIE parts): hardened
+  **NoC**, **DSP58** (native INT8/INT16 + hardened FP, absent on DSP48E2),
+  7 nm (Gen1) → 4 nm-class (Gen2), and — for the emulation-class parts —
+  several× the LUT/URAM of a VU13P. This is what a *fabric-firmware* tagger
+  (the current da4ml/HGQ2 style) actually consumes.
+- **AI Engine axis** (only VP2502/2802 or the AI Core/Edge lines): tens-to-
+  hundreds of INT8 TOPS in a dedicated VLIW-SIMD MAC array — only useful for a
+  *dense-matmul* model style.
+
+AMD's headline "~4× signal-processing / 5.8× AI-inference vs VU13P" figure is
+the AI-Engine axis (Premium-with-AIE, i.e. VP2802-class), and is **the wrong
+yardstick for the current tagger**: the firmware line is da4ml/HGQ2
+**distributed-arithmetic, multiplier-free** — JEDI-linear (arXiv 2508.15468)
+shows an L1 tagger at **<60 ns with ZERO DSPs** and 6.2× lower LUT than GNN
+baselines. The current models deliberately avoid the DSP/MAC path the AI
+Engines accelerate, so they ride the *fabric/NoC/Fmax* axis, not the TOPS
+axis. AI Engines only pay off if we adopt a dense-matmul model style
+(attention / mixer / wide embedding trunk). Both axes are captured in the two
+targets below.
+
+Sourced resource comparison (maxima, from the cited AMD PSGs / DS890):
+
+| device | role | SLRs | LUTs | DSP | BRAM+URAM (Mb) | AIE tiles | NoC | max SerDes | node |
+|---|---|---|---|---|---|---|---|---|---|
+| **VU13P** | current L1 board | 4 | 1.73M | 12 288 DSP48E2 | 454.5 | 0 | no | 128×32.75G | 16nm |
+| VU9P | current L1 board | 3 | 1.18M | 6 840 DSP48E2 | 345.9 | 0 | no | 120×32.75G | 16nm |
+| VP1902 | Versal Prem Gen1 (max logic, no AIE) | 4 | 8.46M | 6 864 DSP58 | 858 | 0 | yes | GTM 112G | 7nm |
+| VP1802 | Versal Prem Gen1 (max DSP, no AIE) | 4 | 3.36M | 14 352 DSP58 | 891 | 0 | yes | GTM 112G | 7nm |
+| VP2802 | Versal Prem Gen1 **with AIE** | — | (Prem-class) | DSP58 | — | **472** (157 INT8 TOPS) | yes | GTM 112G | 7nm |
+| 2VP3602 | Versal Prem **Gen2** (no AIE) | n/p | 1.50M | 7 616 DSP58 | 281 | 0 | yes | 72×GTM2 112G | ~4nm |
+| VC2802 | Versal **AI Core** (AIE-ML) | 1 | 0.52M | 1 312 DSP58 | 95 | **304** (202 INT8 TOPS, 16.6 FP32 TFLOPS) | yes | 32×GTYP | 7nm |
+
+(— = not published in the fetched PSG table; n/p = the Gen2 PSG omits an SLR
+row. Note the tension the table makes explicit: the parts with the most
+*fabric* have NO AI Engines, and the AI-Core part with the most *TOPS* has
+~1/3 the LUTs of a VU13P. A single die rarely maximizes both axes — a real
+board pick is a deliberate trade, and the correlator's PF+clustering
+co-tenants push toward a fabric-heavy part.)
+
+### D.2 Two concrete complexity targets
+
+Both are stated as **multipliers on the current tagger's footprint** (the
+~13% LUT / 14% DSP / 234 ns / 360 MHz anchor), so any candidate model can be
+checked against them directly.
+
+**Target T1 — "same board slot, fabric-axis Versal" (conservative,
+near-certain).** Assume the correlator board is re-spun to a fabric-heavy
+Versal Premium-class device with a **hardened NoC and DSP58, no AI Engines
+required** (VP18xx/VP19xx-class or Gen2 Premium — the natural correlator
+choice, since the biggest-fabric Versal parts are precisely the no-AIE ones,
+and PF+clustering co-tenants want fabric not TOPS). The device-table numbers
+make the headroom concrete: VP1902 carries **~4.9× the LUTs and ~1.9× the
+BRAM+URAM of a VU13P** on 7 nm with a NoC. Budget the tagger to the SAME
+fraction of the device it uses today and take the realistic combined gain
+from fabric growth + higher Fmax + NoC-relieved routing as **~3–4× the
+effective model complexity at equal latency**, OR the same model at ~2–3×
+lower latency (recovering 234 ns to well under budget, buying back the 11 ns
+the current design is over the 1 µs target). Caveat the table also forces:
+DSP58 count does NOT grow (VU13P 12 288 vs VP1902 6 864) — but that is a
+non-issue for the multiplier-free DA firmware, which is the whole point.
+Concretely for our study:
+  - refit BDT: irrelevant here (it runs in the track producer, not the
+    correlator board) — but a per-hit **DeepSet-over-hits** (A.2) at T1 is
+    trivially affordable.
+  - tagger: constituents 16 → 32 (enables SC8, B.3) AND/OR φ-network width
+    ~2×, AND the **charge head + an offline-trained embedding head** (B.2.3/4)
+    fit with headroom to spare. This is the "grow within the same die
+    fraction" target and needs no AI-Engine story.
+
+**Target T2 — "exploit the heterogeneity" (aggressive, upside).** Assume an
+**AI-Engine-bearing device — a Premium VP2802 (472 AIE tiles, 157 INT8 TOPS)
+or an AI Core VC2802 (304 AIE-ML tiles, 202 INT8 TOPS, 16.6 FP32 TFLOPS)** —
+and port the dense trunk/heads onto the **AI Engine array** (matmul-native),
+keeping the sparse/DA front-end (constituent φ network, quantized) in fabric.
+Note the explicit trade the table exposes: the AI Core VC2802 has **~1/3 the
+LUTs of a VU13P**, so its fabric cannot also host a big PF/clustering pipeline
+— T2 realistically means either a dedicated tagger device or the VP2802
+(Premium fabric + AIE) rather than the AI-Core part. The AIE TOPS (150–200
+INT8) put the *dense-matmul* budget ~1–2 orders of magnitude over what the
+current fabric-DA design spends there, at comparable or better latency once
+the NoC feeds the array. This is the target that justifies the model styles
+the current board CANNOT run:
+  - **wide GloParT-style embedding trunk on-chip** (B.2.4 design 2): E=16–32
+    embedding served across the boundary, analyst heads at GT — the AIE array
+    is the natural home for the embedding trunk's dense matmuls;
+  - **attention / MLP-Mixer / Linformer trunks at real width** (B.2.5): the
+    arXiv 2503.03103 HGQ+da4ml mixer becomes deployable rather than
+    upper-bound; a knowledge-distillation *teacher-class* model could even run
+    on-chip;
+  - **larger constituent counts** (32–48) with per-constituent SmartPixels
+    refit features (TS2 full floats, B.1) — the input-bandwidth and
+    trunk-width cost that is prohibitive today.
+
+### D.3 What this changes in the recommendations
+
+- Everything currently labeled "offline / upper-bound study" (wide mixers,
+  wide embeddings, distillation *teachers*, TS2 full-float per-constituent
+  features) gets a home: **upper-bound at current boards → T2-deployable**.
+  Re-run the B.2.5 width/latency scans with a Versal/AIE cost model, not just
+  a VU13P one, so the accuracy ceiling is measured against the device we would
+  actually build on.
+- The DA/multiplier-free line (da4ml/HGQ2, JEDI-linear style) is NOT made
+  obsolete by AI Engines — it is the right choice for the sparse
+  constituent-processing front-end and for T1. The AI Engines are an
+  *addition* for dense trunks/heads, not a replacement. Design the tagger as
+  **fabric-DA front-end + AIE dense back-end** to use each for what it is best
+  at (this hybrid is the single most important architectural consequence of
+  the upgrade).
+- **MDMM EBOPs-as-constraint (B.2.2) becomes even more valuable**: with two
+  target devices the training-time resource constraint should be
+  parameterized by target (T1 fabric-EBOPs budget vs T2 fabric+AIE budget),
+  so one trainer produces the right model for whichever board is funded.
+- Practical study action (effort S, no new physics): add a **cost-model knob**
+  to the export path — today `firmware_config.fpga_part` is a single VU13P
+  string; make it `{vu13p, versal_prem_fabric, versal_prem_gen2, versal_aie}`
+  with per-target ReuseFactor/precision/strategy defaults and (for the AIE
+  target) an AIE-partition flag, so `pixi run export` can emit and
+  resource-report against a chosen target. This is the hook that lets every
+  future model-complexity claim be checked against T1/T2 automatically rather
+  than argued. Dependency to verify first: hls4ml/da4ml Versal-fabric support
+  is maturing but the **AIE back-end path is not a solved flow** — the AIE
+  target is a research task, not a config flip (see caveats).
+
+### D.4 Caveats / provenance
+
+- The 4× / 5.8× headline figures are AMD's marketing comparison of Versal
+  Premium *with AI Engines* (VP2802-class) vs VU13P for signal-processing / AI
+  inference. They ride the **AI-Engine axis**, which the current
+  DA/multiplier-free firmware does NOT use — so they are NOT a valid speedup
+  for today's tagger. Treat T2's "~1–2 orders of magnitude dense-matmul
+  budget" as an upper-bound planning number to be validated by an actual AIE
+  port of one trunk; the AIE toolflow for HGQ2/da4ml-style models is itself
+  unproven and is part of the T2 research cost.
+- The device-table numbers are authoritative maxima from AMD PSGs (XMP463
+  Premium Gen1, XMP510 Premium Gen2, XMP452 AI Core) and DS890 v4.10
+  (UltraScale). Values deliberately NOT asserted because AMD does not publish
+  them: 2VP3602 SLR count (omitted from the Gen2 PSG), the exact Gen2 process
+  node (AMD says "4 nm-class"; treated as ~4 nm), VC2802 bfloat16 TOPS (PSG
+  lists INT8/INT16/FP32 only), and any single "fabric MHz uplift vs
+  UltraScale+" number (AMD publishes none — the Fmax gain in T1 is an
+  engineering expectation, not a quoted figure). The specific Versal SKU a CMS
+  correlator board would use is not decided; the T1/T2 targets are stated as
+  *ratios to the current tagger footprint* so they survive the SKU being TBD.
+- The binding real-world ceiling today is NOT the VU13P die size (tagger uses
+  ~1/7 of it) but the shared correlator latency + I/O budget and the fact that
+  the tagger co-habits with PF/clustering. Any upgrade claim must be budgeted
+  as a *fraction of the board shared with those*, which is exactly how T1/T2
+  are framed.
+
+Sources for this section:
+[DeepSets L1 tagger / CTL2 = 30 VU13P, 234 ns / 360 MHz / 13% LUT (arXiv 2509.24371)](https://arxiv.org/pdf/2509.24371),
+[JEDI-linear zero-DSP <60 ns L1 tagger (arXiv 2508.15468)](https://arxiv.org/pdf/2508.15468),
+[AMD Virtex UltraScale+ resources / SLRs — DS890 v4.10](https://docs.amd.com/v/u/en-US/ds890-ultrascale-overview),
+[AMD Versal Premium Portfolio PSG (XMP463) — VP1802/VP1902/VP2802](https://docs.amd.com/v/u/en-US/versal-premium-psg),
+[AMD Versal Premium Gen2 PSG (XMP510) — 2VP36xx](https://docs.amd.com/v/u/en-US/versal-premium-gen2-psg),
+[AMD Versal AI Core PSG (XMP452) — VC2802 AIE-ML tiles/TOPS](https://docs.amd.com/api/khub/documents/RwwUMv6F2laB3pCsi9XDww/content),
+[AMD Versal Premium with AI Engines product brief](https://www.xilinx.com/content/dam/xilinx/publications/product-briefs/amd-xilinx-versal-premium-ai-engines-product-brief.pdf),
+[APx / Serenity / X2O board overview (CMS L1T system-design)](https://www.researchgate.net/publication/378779834_System_design_and_prototyping_of_the_CMS_Level-1_Trigger_at_the_High-Luminosity_LHC),
+[CMS L1 muon triggers / X2O for GMT (RG 365218553)](https://www.researchgate.net/publication/365218553_Level_1_Muon_Triggers_for_the_CMS_Experiment_at_the_HL-LHC).
+
+---
+
 ## Ranked recommendations
 
 | # | recommendation | evidence / payoff | effort | dependencies |
@@ -520,8 +754,19 @@ eaf/linux env for this study's scope.
 | 8 | selChi2 selection-margin sidecar field + feature | attacks the inverted-kick cherry-picking directly; well-motivated | S (producer) | needs producer change + #3 to measure |
 | 9 | SC8 NG cmssw production side (tagger instance + link-table clone) | training side is DONE and tested (this pass); config fails loudly until tables exist | S–M | cmssw work (out of scope here) |
 | 10 | Dataset cache for `prepare_dataset` + mlflow/.gitignore hygiene; SC4 twin of the synthetic end-to-end test | multishot wall-time; CI coverage of the default path | S | none |
+| 11 | **Per-target FPGA cost-model knob in the export path** (`fpga_part` → `{vu13p, versal_prem_fabric, versal_prem_gen2, versal_aie}` + AIE-partition flag; Part D.3) | lets every future model-complexity claim be resource-checked against T1/T2 automatically; prerequisite for #12 | S (fabric targets) | hls4ml/da4ml Versal-fabric support (AIE flow is separate, unproven) |
+| 12 | **T2 wide-trunk study** (mixer/embedding/attention at real width; distillation *teacher* on-chip), designed as **fabric-DA front-end + AIE dense back-end** on a VP2802/AI-Core-class device (Part D.2) | converts today's "offline/upper-bound only" ceiling into a deployable target for the SmartPixels-era board | L | #11; a working HGQ2/da4ml→AIE flow (research); board-program decision |
 
 Explicitly rejected (with evidence): deeper/wider BDTs (null at 40× resource
 scale), per-layer features NOW (null at current stats — revisit under #3),
 TS1b per-layer-occupancy bits (null), bit-level model ensembling (cost ≫
 unresolved gain), pip `pquant` (wrong package).
+
+**Note on the two budget regimes** (Part D): recs #1–10 are costed for the
+current VU13P-class boards. Recs #11–12 and the "offline/upper-bound" items in
+B.2.5 are the growth path unlocked by a Versal Gen 2-class board re-spin —
+T1 (~3–4× within the same die fraction) makes bigger constituent counts +
+extra heads deployable; T2 (~10× dense-matmul budget via AI Engines) makes
+wide mixer/embedding trunks deployable. The DA/multiplier-free front-end style
+stays optimal for constituent processing at every target; AI Engines are an
+*addition* for dense trunks/heads.
