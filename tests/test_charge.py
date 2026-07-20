@@ -184,12 +184,11 @@ def test_contrastive_rejects_charge_head(tmp_path):
         model.build((16, 20), 8)
 
 
-@pytest.mark.skipif(not os.environ.get("NGTAGGER_TEST_NANO"), reason="no nano test file")
-def test_charge_labels_from_nano():
-    """Real-data smoke (runs only when NGTAGGER_TEST_NANO points at an
-    L1PFTrkNano file with GenJet_partonFlavour)."""
+def test_charge_labels_from_nano(jet_nano_path):
+    """Real-data smoke (runs only when NGTAGGER_TEST_NANO points at a JET
+    nano with GenJet_partonFlavour; a track-only nano is skipped cleanly)."""
     from ngtagger.train.trainer import prepare_dataset
 
-    ds = prepare_dataset([os.environ["NGTAGGER_TEST_NANO"]], max_events=200)
+    ds = prepare_dataset([jet_nano_path], max_events=200)
     assert ds["charge_train"].shape[1] == 3
     assert set(ds["charge_train"].argmax(axis=1)) <= {0, 1, 2}
