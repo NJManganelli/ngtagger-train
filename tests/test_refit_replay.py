@@ -56,7 +56,7 @@ def _synth_track(rng, event=0, idx=0, genuine=True, n_layers=4):
                 d0=float(rng.uniform(-0.05, 0.05)), pt=float(rng.uniform(3, 10)),
                 eta=0.5)
     truth = dict(genuine=genuine, looselyGenuine=genuine, tpPt=seed["pt"] if genuine else -1.0,
-                 fromHard=genuine, pdgId=211, nStubs=6)
+                 fromHard=genuine, pdgId=211, nStubs=6, hitPattern=0b0111111)
     hits = _synth_hits(rng, n_layers)
     real = {v: dict(rInv=seed["rInv"], phi0=seed["phi0"], tanL=seed["tanL"], z0=seed["z0"],
                     d0=seed["d0"], pt=seed["pt"], nAcc=n_layers, layerMask=(1 << n_layers) - 1,
@@ -127,6 +127,25 @@ def test_config_subset_feeds_fewer_layers():
     assert len(r1["states"]) >= 1
 
 
+def test_ot_hitpattern_decode():
+    """hitPattern popcount == nStubs, and each set bit maps to an OT barrel radius
+    (LSB=OT-L1). Bit 6 is a forward-disk slot placed schematically."""
+    from ngtagger.viz._dataio import OT_BARREL_RADII, ot_stub_radii
+
+    assert len(OT_BARREL_RADII) == 6
+    # 0b0111111 = 6 barrel layers
+    stubs = ot_stub_radii(0b0111111)
+    assert len(stubs) == 6
+    assert [r for r, _ in stubs] == list(OT_BARREL_RADII)
+    # 0b0011011 = 4 stubs (bits 0,1,3,4)
+    stubs = ot_stub_radii(0b0011011)
+    assert [lab for _, lab in stubs] == ["OT-L1", "OT-L2", "OT-L4", "OT-L5"]
+    # bit 6 set -> disk slot, radius clamped to outermost barrel
+    stubs = ot_stub_radii(0b1000000)
+    assert stubs[0][1].startswith("OT-disk")
+    assert stubs[0][0] == OT_BARREL_RADII[-1]
+
+
 def test_replay_never_reads_answer():
     """Passing garbage in the real-refit fields must not change the replay output
     (the replay consumes only seed + sidecar hit records)."""
@@ -149,9 +168,11 @@ def test_figure_builds_self_contained(tmp_path):
     picks = [(data.tracks[1], "clean", "syn"),
              (data.tracks[0], "fake", "syn")]
     fig = build_figure(data, picks, np.asarray(_RADII), np.asarray(_REPLAY_SEED_SIGMAS))
-    # 8 static geometry traces + n_combos * 7
+    # static geometry (6 OT circles + 3*4 IT guides) + n_combos * 11 combo traces
+    from ngtagger.viz._dataio import OT_BARREL_RADII
+    n_static = len(OT_BARREL_RADII) + 3 * len(_RADII)
     n_combos = len(picks) * 15 * 3
-    assert len(fig.data) == 8 + n_combos * 7
+    assert len(fig.data) == n_static + n_combos * 11
     assert len(fig.layout.updatemenus) == 4
     out = tmp_path / "syn.html"
     html = fig.to_html(include_plotlyjs=True, full_html=True)

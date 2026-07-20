@@ -10,29 +10,59 @@ opens offline in a browser and embeds in a Jupyter/RISE notebook.
   KF core `ngtagger.viz._kf.replay_track`, I/O `ngtagger.viz._dataio`, curation
   `ngtagger.viz._curate`.
 - Regenerate the HTML: `pixi run python eval_refitq/refitviz/make_refit_viz.py`
-- Output: `eval_refitq/refitviz/refit_replay.html` (self-contained, ~11 MB).
+- Output: `eval_refitq/refitviz/refit_replay.html` (self-contained, ~14 MB).
 - Data (read-only): `…/spxsmoke/nano/nano_puD_TrkSmartPix_withGen.root`.
+
+## The physics being shown (seed = OT-only, refit = OT + SmartPixels)
+
+The **seed helix** is the OT-only L1Track from the L1TrackFinder (tracklet): it is
+fit from **outer-tracker stubs + the beamline**, anchored way out at r ≈ 25–108 cm.
+The **refit helix** is `digiRefit`: the same track after adding **SmartPixels
+inner-tracker hits** at r < 16 cm. So the refit is not "fit 4 inner hits" — it is
+an OT-anchored, long-lever-arm track *gaining inner-pixel constraints near the
+vertex*. The near-vertex d0/z0 improvement is exactly the payoff of that: pinning
+the innermost end of a long lever arm. And the seed's inward OT→IT **extrapolation**
+is where the multiple-scattering **bulge** lives — the r-φ deviation grows outward
+across the IT layers (visible as growing resX/pullX on L3/L4), because the
+beamline+OT-constrained fit absorbs MS kinks into compensating phi0/rInv and the
+deviation bulges between the two anchors.
 
 ## What the panels show
 
-- **(a) r-φ projection (x–y)**: the 4 TBPX layer circles (mean radii 3.0 / 6.8 /
-  10.9 / 16.0 cm), the SEED helix (blue) and the REFIT helix (red), and the
-  selected-hit markers at the crossings, colored by `selHitClass`
-  (green=same-TP/true, orange=other-TP/wrong, purple=noise).
-- **(b) r–z projection**: layers as horizontal lines at their radii; seed vs refit
-  trajectory in `(z, r)`; hit markers at the crossings.
-- **(c) Kalman step table**: one row per fed layer — the 5 state params
+- **(a) OVERVIEW (full radius, r → 115 cm)**: the long-lever-arm picture. The 6 OT
+  barrel layer circles (tan, radii 24.9 / 37.2 / 52.3 / 68.8 / 86.0 / 108.3 cm from
+  the tracklet firmware), the **OT stubs** on the seed helix (cyan squares, decoded
+  from the track `hitPattern` — see below), the 4 IT SmartPixels layers near the
+  vertex (grey dotted), both helices, and the IT selected hits. This panel makes the
+  seed read as OT-anchored and the refit as adding inner constraints.
+- **(b) IT-zoom r-φ (x–y, r < 18 cm)**: the per-hit refit action at IT scale —
+  seed (blue) vs refit (red) helices, and the selected-hit markers colored by
+  `selHitClass` (green=same-TP/true, orange=other-TP/wrong, purple=noise).
+- **(c) IT-zoom r–z**: IT layers as horizontal lines; seed vs refit `(z, r)` +
+  IT hits.
+- **(d) Kalman step table**: one row per fed IT layer — the 5 state params
   `(rInv, phi0, tanL, z0, d0)`, the running `Δd0`/`Δz0` (the physics payoff), and
-  the cumulative `χ2(rφ)` and `χ2(rz)`; seed row highlighted blue, `REFIT` row red.
-- Title badge: truth (GENUINE/FAKE, hard-int vs PU, tpPt, nStubs) and the
-  REAL-vs-REPLAY / faithful-vs-illustrative legend.
+  the cumulative `χ2(rφ)`/`χ2(rz)`; seed row blue, `REFIT` row red.
+
+### OT stubs from `hitPattern` (schematic-on-helix, honestly labelled)
+
+The reference `L1TExtTrack` carries `hitPattern` (+ `nStubs`). On this sample
+`popcount(hitPattern) == nStubs` exactly, and bit *i* (LSB) maps to OT barrel layer
+*i+1*: central tracks are dominated by `0111111` (all 6 barrel layers) and `0001111`
+(inner 4); forward tracks set bit 6 (a forward-disk slot, placed schematically at
+the outermost barrel radius). The OT stub **x-y positions are not persisted in nano**,
+so the stubs are drawn **on the seed helix** at the decoded OT radii — schematic, not
+the true stub coordinates. This is captioned in the figure. The OT barrel radii come
+from the tracklet firmware constants (`L1Trigger/TrackFindingTracklet` `Settings.h`:
+`irmean_ = {851,1269,1784,2347,2936,3697}` × `rmaxdisk_/4096`, `rmaxdisk_=120`).
 
 ## Interaction model (kernel-free)
 
 Plotly `updatemenus` are independent and **stateless** — a button can only set a
 full trace-visibility vector, and cannot read the other menus' current selection.
-A single (track, config, angle) combo owns all 7 of its traces, so no single
-"axis" menu can compose with the others without a live kernel. The design is:
+A single (track, config, angle) combo owns all 11 of its traces (across the four
+panels), so no single "axis" menu can compose with the others without a live
+kernel. The design is:
 
 - **`full combo (authoritative)`** dropdown — reaches every one of the
   `tracks × 15 × 3` states exactly. This is the source of truth.
