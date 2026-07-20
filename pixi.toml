@@ -35,6 +35,7 @@ tqdm = "*"
 scikit-learn = "*"
 matplotlib = "*"
 mplhep = "*"
+plotly = ">=5.20"  # standalone-HTML interactive refit-replay visualizer (kernel-free)
 mlflow = ">=2.14"
 coffea = ">=2024.10"
 # Keras 3 multi-backend + quantization-aware-training stack (upstream Keras_v3 line)
