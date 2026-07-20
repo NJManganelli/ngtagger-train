@@ -99,10 +99,9 @@ def test_class_pt_weights():
     assert (w > 0).all()
 
 
-@pytest.mark.skipif(not os.environ.get("NGTAGGER_TEST_NANO"), reason="no nano test file")
-def test_nano_pipeline():
+def test_nano_pipeline(jet_nano_path):
     from ngtagger.train.trainer import prepare_dataset
 
-    ds = prepare_dataset([os.environ["NGTAGGER_TEST_NANO"]], max_events=200)
+    ds = prepare_dataset([jet_nano_path], max_events=200)
     assert ds["X_train"].shape[1:] == (16, len(ds["feature_names"]))
     assert ds["y_train"].shape[1] == 8
