@@ -29,24 +29,28 @@ def _delta_r2(eta1, phi1, eta2, phi2):
 
 def _match(jets, other, max_dr: float = 0.4):
     """Index of the closest `other` object within max_dr for each jet (-1 if none),
-    plus the matched-object mask, via argcartesian minimization."""
-    pairs = ak.argcartesian({"jet": jets.eta, "obj": other.eta}, axis=1)
-    dr2 = _delta_r2(
-        jets.eta[pairs.jet], jets.phi[pairs.jet], other.eta[pairs.obj], other.phi[pairs.obj]
-    )
-    # group pairs per jet: cartesian is jet-major with len(other) entries per jet
-    n_other = ak.num(other.eta, axis=1)
-    n_jets = ak.num(jets.eta, axis=1)
-    grouped_dr2 = ak.unflatten(dr2, ak.flatten(ak.broadcast_arrays(n_other, jets.eta)[0]), axis=1)
-    grouped_obj = ak.unflatten(pairs.obj, ak.flatten(ak.broadcast_arrays(n_other, jets.eta)[0]), axis=1)
+    plus the matched-object mask. nested=True cartesian gives the (event, jet,
+    obj) grouping directly, and stays well-defined for events with zero `other`
+    objects (empty inner lists -> argmin None -> unmatched)."""
+    j = ak.zip({"eta": jets.eta, "phi": jets.phi})
+    o = ak.zip({"eta": other.eta, "phi": other.phi})
+    pairs = ak.cartesian({"j": j, "o": o}, axis=1, nested=True)
+    idxp = ak.argcartesian({"j": j, "o": o}, axis=1, nested=True)
+    dr2 = _delta_r2(pairs.j.eta, pairs.j.phi, pairs.o.eta, pairs.o.phi)  # (event, jet, obj)
 
-    best = ak.argmin(grouped_dr2, axis=2, keepdims=True)
-    best_dr2 = ak.firsts(grouped_dr2[best], axis=2)
-    best_idx = ak.firsts(grouped_obj[best], axis=2)
+    best = ak.argmin(dr2, axis=2, keepdims=True)
+    best_dr2 = ak.firsts(dr2[best], axis=2)
+    best_idx = ak.firsts(idxp.o[best], axis=2)
     matched = ak.fill_none(best_dr2 < max_dr * max_dr, False)
     idx = ak.fill_none(ak.where(matched, best_idx, -1), -1)
-    # events with zero `other` objects give empty groups -> fill with -1
     return idx, matched
+
+
+def _take(vals2d, idx, matched, default):
+    """Gather vals2d[(event, obj)] at the per-jet matched indices; unmatched
+    jets get `default` WITHOUT reading the array (index-0 reads into empty
+    collections crash for events with zero objects)."""
+    return ak.fill_none(vals2d[ak.mask(idx, matched)], default)
 
 
 def label_jets(jets: ak.Array, gen: dict, max_dr: float = 0.4, gen_pt_min: float = 5.0):
@@ -65,18 +69,14 @@ def label_jets(jets: ak.Array, gen: dict, max_dr: float = 0.4, gen_pt_min: float
     el_idx, el_match = _match(jets, els, max_dr)
     mu_idx, mu_match = _match(jets, mus, max_dr)
 
-    safe_gj = ak.where(gj_idx >= 0, gj_idx, 0)
-    hflav = ak.where(gj_match, genjets.hadronFlavour[safe_gj], -1)
-    pflav = ak.where(gj_match, genjets.partonFlavour[safe_gj], 0)
-    gj_pt = ak.where(gj_match, genjets.pt[safe_gj], 0.0)
+    hflav = _take(genjets.hadronFlavour, gj_idx, gj_match, -1)
+    pflav = _take(genjets.partonFlavour, gj_idx, gj_match, 0)
+    gj_pt = _take(genjets.pt, gj_idx, gj_match, 0.0)
 
-    safe_tau = ak.where(tau_idx >= 0, tau_idx, 0)
-    tau_charge = ak.where(tau_match, vistaus.charge[safe_tau], 0)
-    tau_pt = ak.where(tau_match, vistaus.pt[safe_tau], 0.0)
-    safe_el = ak.where(el_idx >= 0, el_idx, 0)
-    el_pt = ak.where(el_match, els.pt[safe_el], 0.0)
-    safe_mu = ak.where(mu_idx >= 0, mu_idx, 0)
-    mu_pt = ak.where(mu_match, mus.pt[safe_mu], 0.0)
+    tau_charge = _take(vistaus.charge, tau_idx, tau_match, 0)
+    tau_pt = _take(vistaus.pt, tau_idx, tau_match, 0.0)
+    el_pt = _take(els.pt, el_idx, el_match, 0.0)
+    mu_pt = _take(mus.pt, mu_idx, mu_match, 0.0)
 
     base = gj_match & (gj_pt > gen_pt_min)
     no_lep = ~tau_match & ~el_match & ~mu_match
