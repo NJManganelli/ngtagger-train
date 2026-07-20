@@ -1,20 +1,33 @@
-"""SmartPixels digiRefit refit-replay VISUALIZER.
+"""SmartPixels digiRefit refit-replay VISUALIZER (5-par prompt framing).
 
-Interactive, self-contained (kernel-free) Plotly figure showing a digiRefit
+Interactive, self-contained (kernel-free) Plotly figure showing a PROMPT digiRefit
 L1Track Kalman refit step-by-step across the 3 angle modes (none / alpha /
 alphaBeta) and the 15 SmartPixels layer configs (1000..1111), for a curated set
 of example tracks.
 
+The framing (mem:smartpixels-5par-framing-directive) is 5-par OT-only vs 5-par
+OT+IT -- does adding the SmartPixels inner-tracker (IT) hits IMPROVE the 5-par
+prompt track (impact parameter for b-tagging, vertexing). The 4-par pinned-d0 path
+is DROPPED:
+  * SEED  = 5-par OT-only PROMPT track = reference L1TTrack (real d0 + reduced fit
+            chi2 chi2XYRed/chi2ZRed).
+  * REFIT = 5-par OT+IT = prompt digiRefit variant L1TSmartPixelsTrackDigiRefit<CFG>.
+  * OT stubs = the REAL embedded L1TTrackStub table (x/y/z, layer) -- not schematic.
+
 Two-posture faithfulness (see docs/refit-replay-viz.md):
   * chi2 evolution & pulls: for the 4 PRODUCED configs (AIII/AAII/AAAI/AAAA at
-    useAngles=alphaBeta) these come straight from the nano sidecar and are
-    BIT-EXACT to production; for the other 41 config x mode combinations they are
-    the offline REPLAY.
+    useAngles=alphaBeta) these come straight from the nano sidecar; for the other
+    41 config x mode combinations they are the offline REPLAY.
   * parameter-state evolution: always the offline replay
     (:func:`ngtagger.viz.refit_replay.replay_track`). rInv / phi0 / d0 are
     reproduced faithfully in sign and order-of-magnitude scale; tanL / z0 hinge
     on the per-track trackCov correlations that nano does not persist and are
     labelled ILLUSTRATIVE.
+
+The key readout is RESOLUTION vs TRUTH: the Kalman step table shows (param - truth)
+for the 5-par OT-only seed and for the final OT+IT refit, so the viewer SEES whether
+adding IT moves the track TOWARD truth. Truth is GenVtx(PV) on nano_pE (prompt-only;
+swaps to matched-TP on nano_pF) -- see :mod:`ngtagger.viz._truth`.
 
 Public entry point: :func:`build_refit_viz`.
 """
@@ -29,12 +42,13 @@ from ngtagger.viz._dataio import (
     ANGLE_MODES,
     OT_BARREL_RADII,
     PRODUCED_CONFIGS,
+    barrel_stub_xy,
     config_active_layers,
     hit_class_name,
     load_nano,
-    ot_stub_radii,
 )
 from ngtagger.viz._kf import _REPLAY_SEED_SIGMAS, replay_track
+from ngtagger.viz._truth import track_truth, truth_is_prompt_only
 
 PARAM_NAMES = ["rInv", "phi0", "tanL", "z0", "d0"]
 PARAM_UNITS = ["cm$^{-1}$", "rad", "", "cm", "cm"]
@@ -43,20 +57,20 @@ FAITHFUL_PARAMS = {"rInv", "phi0", "d0"}
 ILLUSTRATIVE_PARAMS = {"tanL", "z0"}
 
 # Colors
-C_SEED = "#1f77b4"     # OT-only L1Track seed helix / seed state
-C_REFIT = "#d62728"    # digiRefit helix / final state
+C_SEED = "#1f77b4"     # 5-par OT-only L1Track seed helix / seed state
+C_REFIT = "#d62728"    # OT+IT digiRefit helix / final state
 C_LAYER = "#888888"    # IT (SmartPixels TBPX) layer guides
-C_OTLAYER = "#c2b280"  # OT barrel layer guides (schematic)
-C_OTSTUB = "#17becf"   # OT stubs on the seed helix (schematic, from hitPattern)
+C_OTLAYER = "#c2b280"  # OT barrel layer guides
+C_OTSTUB = "#17becf"   # REAL OT stubs (L1TTrackStub x/y/z)
 C_HIT_TRUE = "#2ca02c"    # selHitClass 0
 C_HIT_WRONG = "#ff7f0e"   # selHitClass 1
 C_HIT_NOISE = "#9467bd"   # selHitClass 2
 _HIT_COLOR = {0: C_HIT_TRUE, 1: C_HIT_WRONG, 2: C_HIT_NOISE, -1: C_LAYER}
 
-# Helix labels (physics-correct: seed = OT-only L1Track from L1TrackFinder fit on
-# outer-tracker stubs + beamline; refit = digiRefit adding SmartPixels IT hits).
-LABEL_SEED = "OT-only L1Track (seed)"
-LABEL_REFIT = "digiRefit (OT + SmartPixels)"
+# Helix labels: seed = 5-par OT-only L1Track (L1TrackFinder fit on outer-tracker
+# stubs + beamline, promptHnpar=5); refit = OT+IT (prompt digiRefit adds SmartPixels).
+LABEL_SEED = "5-par OT-only L1Track (seed)"
+LABEL_REFIT = "5-par OT+IT digiRefit (adds SmartPixels)"
 R_OVERVIEW = 115.0     # overview panel outer radius [cm] (past OT-L6 = 108)
 R_ZOOM = 18.0          # IT-zoom panel outer radius [cm]
 
@@ -108,14 +122,55 @@ def _crossing_xy(rInv, phi0, tanL, z0, d0, R):
 
 
 # --------------------------------------------------------------------------
+# reduced-chi2 accounting (OT anchor + IT increments), per mem directive
+# --------------------------------------------------------------------------
+def _reduced_chi2_running(track, chi2_rz_steps, angle_mode):
+    """Running REDUCED chi2 (chi2/ndof) starting from the OT-only L1Track fit.
+
+    The nano L1TTrack_chi2XYRed / chi2ZRed are ALREADY reduced (chi2/ndof). We
+    recover the OT absolute chi2 = reduced * ndof_OT with ndof_OT = 2*nStubs - 5
+    (5-par helix), then add the IT r-z increments per accepted hit and re-divide by
+    the growing ndof.
+
+    ndof accounting (documented in docs/refit-replay-viz.md):
+      * OT stubs contribute 2 measurements each (r-phi + r-z); 5-par fit -> subtract
+        5 -> ndof_OT = 2*nStubs - 5.
+      * each accepted IT hit adds 2 position measurements (local x, local y) and, in
+        alpha/alphaBeta modes, up to 2 angle measurements (alpha, beta). We add the
+        position dof always and the angle dof by mode.
+
+    We drive the running REDUCED chi2 with the physically-scaled r-z channel (the
+    r-phi increments are dominated by the parametrized-seed r-phi cov and are
+    unphysically inflated; they are shown raw but NOT folded into the reduced total).
+    Returns (labels-aligned running_reduced list of length len(steps)+1, ndof list).
+    """
+    n_stub = max(int(track.truth["nStubs"]), 3)
+    ndof_ot = max(2 * n_stub - 5, 1)
+    chi2_ot_abs = track.seed["chi2ZRed"] * ndof_ot            # OT z-fit absolute chi2
+
+    running_abs = chi2_ot_abs
+    ndof = ndof_ot
+    per_hit_dof = 1 + (1 if angle_mode == "alphaBeta" else 0)  # r-z channels per IT hit
+    red = [running_abs / ndof]
+    ndofs = [ndof]
+    for inc in chi2_rz_steps:
+        running_abs += inc
+        ndof += per_hit_dof
+        red.append(running_abs / max(ndof, 1))
+        ndofs.append(ndof)
+    return red, ndofs
+
+
+# --------------------------------------------------------------------------
 # per-combo replay payload
 # --------------------------------------------------------------------------
 def _combo_payload(track, config, angle_mode, radii, seed_sigmas):
     """Compute everything a (track, config, angle) combo needs to draw.
 
-    Returns a dict with seed/final params, per-step state table rows, chi2 evolution,
-    hit markers, and a real-vs-replay label. For the 4 produced configs at alphaBeta
-    the chi2 & pulls are taken from the sidecar (bit-exact); the state trajectory is
+    Returns a dict with seed/final params, per-step state table rows, resolution-to-
+    truth deltas, chi2 evolution (raw increments + running REDUCED chi2 including the
+    OT anchor), hit markers, and a real-vs-replay label. For the 4 produced configs at
+    alphaBeta the chi2 & pulls are taken from the sidecar; the state trajectory is
     always the replay.
     """
     active = config_active_layers(config)
@@ -135,7 +190,7 @@ def _combo_payload(track, config, angle_mode, radii, seed_sigmas):
     step_states = [np.asarray(seed, float)] + list(rep["states"])
     step_labels = ["seed"] + [f"after L{L}" for L in fed_layers[: len(rep["states"])]]
 
-    # chi2 evolution: prefer sidecar for produced-at-alphaBeta (bit-exact), else replay
+    # chi2 evolution: prefer sidecar for produced-at-alphaBeta, else replay
     if is_produced:
         chi2_rphi_steps, chi2_rz_steps = [], []
         for L in fed_layers[: len(rep["states"])]:
@@ -147,7 +202,27 @@ def _combo_payload(track, config, angle_mode, radii, seed_sigmas):
     cum_rphi = np.cumsum([0.0] + chi2_rphi_steps)
     cum_rz = np.cumsum([0.0] + chi2_rz_steps)
 
+    # running REDUCED chi2 including the OT-only anchor (mem directive #3)
+    red_running, ndofs = _reduced_chi2_running(track, chi2_rz_steps, angle_mode)
+
+    # resolution-to-truth: (param - truth) for the OT-only seed and the OT+IT refit.
+    # For a PRODUCED config at alphaBeta use the REAL refit d0/z0 (the bit-exact
+    # production answer) so the resolution-to-truth is faithful; else the replay
+    # (whose d0 is faithful in sign, z0 illustrative).
+    tr_truth = track_truth(track.seed, track.truth, track.genvtx)
     final = rep["final"]
+    if is_produced:
+        refit_d0 = track.real[variant]["d0"]
+        refit_z0 = track.real[variant]["z0"]
+    else:
+        refit_d0 = final[4]
+        refit_z0 = final[3]
+    resid = dict(
+        seed_d0=seed[4] - tr_truth["d0"], refit_d0=refit_d0 - tr_truth["d0"],
+        seed_z0=seed[3] - tr_truth["z0"], refit_z0=refit_z0 - tr_truth["z0"],
+        refit_d0_val=refit_d0, refit_z0_val=refit_z0, refit_real=is_produced,
+        truth=tr_truth, prompt_only=truth_is_prompt_only(tr_truth),
+    )
     return dict(
         seed=np.asarray(seed, float),
         final=final,
@@ -158,6 +233,9 @@ def _combo_payload(track, config, angle_mode, radii, seed_sigmas):
         chi2_rz_steps=chi2_rz_steps,
         cum_rphi=cum_rphi,
         cum_rz=cum_rz,
+        red_running=red_running,
+        ndofs=ndofs,
+        resid=resid,
         fed_layers=fed_layers[: len(rep["states"])],
         is_produced=is_produced,
         variant=variant,
@@ -181,10 +259,10 @@ def build_figure(data, picks, radii, seed_sigmas):
 
     Three plot panels + the Kalman step table:
       (0,0) OVERVIEW (full radius to ~115 cm): the long-lever-arm picture — the
-            OT barrel layers, the OT stubs (from hitPattern) that anchor the
-            OT-only seed way out at r~25-108 cm, the IT SmartPixels layers near the
-            vertex, both helices, and the IT selected hits. Shows the seed is an
-            OT-anchored track and digiRefit adds inner-pixel constraints.
+            OT barrel layers, the REAL OT stubs (L1TTrackStub x/y) that anchor the
+            5-par OT-only seed way out at r~25-108 cm, the IT SmartPixels layers near
+            the vertex, both helices, and the IT selected hits. Shows the seed is an
+            OT-anchored track and the OT+IT refit adds inner-pixel constraints.
       (0,1) IT-ZOOM r-φ (r<18 cm): the per-hit refit action (residuals, hit
             selection) at IT scale.
       (1,0) IT-ZOOM r-z: seed vs refit (z, r) + IT hits.
@@ -212,7 +290,7 @@ def build_figure(data, picks, radii, seed_sigmas):
             "OVERVIEW — OT-anchored seed + IT refit (long lever arm, r→115 cm)",
             "IT zoom: r-φ projection (x–y, r<18 cm)",
             "IT zoom: r–z projection",
-            "Kalman step table (state · Δ vs seed · cumulative χ2)"),
+            "Kalman step table (state · resolution-to-truth · running reduced χ2)"),
         horizontal_spacing=0.09, vertical_spacing=0.11,
     )
 
@@ -267,14 +345,11 @@ def build_figure(data, picks, radii, seed_sigmas):
         s = pl["seed"]; f = pl["final"]
         first = (ci == default_combo)
 
-        # OT stubs on the seed helix (schematic from hitPattern; stub xy not persisted)
+        # REAL OT barrel stubs from the embedded L1TTrackStub table (x/y persisted).
         otx, oty, ottxt = [], [], []
-        for (R, lab) in ot_stub_radii(tr.truth["hitPattern"]):
-            cr = _crossing_xy(*s, R=R)
-            if cr is None:
-                continue
-            otx.append(cr[0]); oty.append(cr[1])
-            ottxt.append(f"{lab} stub (schematic on seed helix, r={R:.0f} cm)")
+        for (sxx, syy, srr, lab) in barrel_stub_xy(tr.stubs):
+            otx.append(sxx); oty.append(syy)
+            ottxt.append(f"{lab} real stub (r={srr:.1f} cm)")
 
         # ---- overview (row1,col1): full-radius, both helices to R_OVERVIEW ----
         sx, sy, _, _ = helix_points(*s, rmax=R_OVERVIEW)
@@ -290,7 +365,7 @@ def build_figure(data, picks, radii, seed_sigmas):
         fig.add_trace(go.Scatter(x=otx, y=oty, mode="markers",
                                  marker=dict(size=9, color=C_OTSTUB, symbol="square",
                                              line=dict(width=1, color="#0b6b74")),
-                                 name="OT stub (schematic)", legendgroup="otstub", showlegend=first,
+                                 name="OT stub (real)", legendgroup="otstub", showlegend=first,
                                  visible=visible, text=ottxt,
                                  hovertemplate="%{text}<extra></extra>"), row=1, col=1)
         ohx, ohy, ohc, oht = _ithit_markers(tr, s, pl["fed_layers"])
@@ -333,24 +408,44 @@ def build_figure(data, picks, radii, seed_sigmas):
                                  showlegend=False, visible=visible, hoverinfo="skip"),
                       row=2, col=1)
 
-        # ---- step table (row2,col2) ----
-        header_vals = ["step"] + PARAM_NAMES + ["Δd0", "Δz0", "Σχ2(rφ)", "Σχ2(rz)"]
+        # ---- step table (row2,col2): state + RESOLUTION-TO-TRUTH + running reduced chi2 ----
+        # d0-truth / z0-truth (constant across steps); (param - truth) per row shows
+        # whether the refit moves TOWARD truth. Running REDUCED chi2 starts from the
+        # OT-only anchor (seed row) and grows as IT layers add.
+        res = pl["resid"]; tt = res["truth"]
+        d0_true = tt["d0"]; z0_true = tt["z0"]
+        header_vals = ["step", "d0", "d0−tru", "z0", "z0−tru",
+                       "rInv", "phi0", "χ2red(OT+IT)", "Σχ2(rz)", "Σχ2(rφ)"]
         rows = []
         for i, (lab, st) in enumerate(zip(pl["step_labels"], pl["step_states"])):
-            rows.append([lab] + [_fmt(st[j], PARAM_NAMES[j]) for j in range(5)]
-                        + [f"{st[4] - s[4]:+.4f}", f"{st[3] - s[3]:+.4f}",
-                           f"{pl['cum_rphi'][i]:.2f}", f"{pl['cum_rz'][i]:.2f}"])
-        rows.append(["REFIT"] + [_fmt(f[j], PARAM_NAMES[j]) for j in range(5)]
-                    + [f"{f[4] - s[4]:+.4f}", f"{f[3] - s[3]:+.4f}",
-                       f"{pl['cum_rphi'][-1]:.2f}", f"{pl['cum_rz'][-1]:.2f}"])
+            rows.append([lab, f"{st[4]:+.4f}", f"{st[4] - d0_true:+.4f}",
+                         f"{st[3]:+.4f}", f"{st[3] - z0_true:+.4f}",
+                         _fmt(st[0], "rInv"), f"{st[1]:.4f}",
+                         f"{pl['red_running'][i]:.2f}",
+                         f"{pl['cum_rz'][i]:.2f}", f"{pl['cum_rphi'][i]:.1f}"])
+        refit_tag = "REFIT*" if res["refit_real"] else "REFIT"
+        rows.append([refit_tag, f"{res['refit_d0_val']:+.4f}", f"{res['refit_d0']:+.4f}",
+                     f"{res['refit_z0_val']:+.4f}", f"{res['refit_z0']:+.4f}",
+                     _fmt(f[0], "rInv"), f"{f[1]:.4f}",
+                     f"{pl['red_running'][-1]:.2f}",
+                     f"{pl['cum_rz'][-1]:.2f}", f"{pl['cum_rphi'][-1]:.1f}"])
+        # truth-reference footer row so |seed−tru| vs |refit−tru| is readable at a glance
+        srcs = f"{tt['d0_source']}"
+        improved = abs(res["refit_d0"]) < abs(res["seed_d0"])
+        arrow = "→ toward truth" if improved else "→ away"
+        rows.append([f"truth[{srcs}]", f"{d0_true:+.4f}", f"|Δ|:{abs(res['seed_d0']):.3f}→{abs(res['refit_d0']):.3f}",
+                     f"{z0_true:+.4f}", f"|Δ|:{abs(res['seed_z0']):.3f}→{abs(res['refit_z0']):.3f}",
+                     "d0 " + arrow, "", "", "", ""])
         cols = list(map(list, zip(*rows))) if rows else [[] for _ in header_vals]
         n = len(rows)
-        rowcolors = ["#eef4fb"] + ["white"] * (n - 2) + ["#fbeeee"] if n >= 2 else ["white"] * n
+        # seed row (light blue), interior white, refit row (light red), truth row (light green)
+        rowcolors = ["#eef4fb"] + ["white"] * (n - 3) + ["#fbeeee", "#eefbf0"] if n >= 3 else ["white"] * n
         fig.add_trace(go.Table(
+            columnwidth=[1.3, 1, 1, 1, 1, 1, 1, 1.2, 1, 1],
             header=dict(values=header_vals, fill_color="#34495e",
-                        font=dict(color="white", size=10), align="center"),
+                        font=dict(color="white", size=9), align="center"),
             cells=dict(values=cols, fill_color=[rowcolors],
-                       font=dict(size=10), align="center", height=20),
+                       font=dict(size=9), align="center", height=19),
             visible=visible), row=2, col=2)
 
         for _ in range(N_TRACES):
@@ -401,9 +496,9 @@ def build_figure(data, picks, radii, seed_sigmas):
         direction="down", showactive=True, x=0.44, xanchor="left", y=1.15, yanchor="top",
         pad={"r": 4, "t": 4}, bgcolor="#eefbf0",
     )
+    arch_by_ti = [p[1] for p in picks]
     full_menu = dict(
-        buttons=[dict(label=f"{['clean','wrong','fake','tk3'][ti] if ti < 4 else 'tk'+str(ti)}"
-                            f" | {cfg} | {am}",
+        buttons=[dict(label=f"{arch_by_ti[ti]} | {cfg} | {am}",
                       method="update",
                       args=[{"visible": visibility(combo_id(ti, cfg, am))}])
                  for (ti, cfg, am) in combos],
@@ -428,14 +523,14 @@ def build_figure(data, picks, radii, seed_sigmas):
     fig.update_layout(
         # Vertical zones (top->bottom): title 1.30 · labels 1.205 · menus 1.15 ·
         # legend 1.02 · plots 1.0 · two captions below. Clear separation.
-        height=1080, width=1240,
-        margin=dict(t=235, b=130, l=60, r=20),
+        height=1120, width=1240,
+        margin=dict(t=235, b=170, l=60, r=20),
         legend=dict(orientation="h", x=0.0, y=1.02, yanchor="bottom", xanchor="left"),
         annotations=list(fig.layout.annotations) + [
-            dict(text=("<b>SmartPixels digiRefit replay</b>  —  step-by-step Kalman "
-                       "refit of an L1 track against SmartPixels hits"),
+            dict(text=("<b>SmartPixels digiRefit replay</b>  —  5-par OT-only vs 5-par OT+IT: "
+                       "does adding SmartPixels improve the prompt track?"),
                  x=0.5, y=1.30, xref="paper", yref="paper", showarrow=False,
-                 font=dict(size=16), xanchor="center"),
+                 font=dict(size=15), xanchor="center"),
             dict(text="track", x=0.0, y=1.205, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=11), xanchor="left"),
             dict(text="config (* = produced/real)", x=0.22, y=1.205, xref="paper", yref="paper",
@@ -444,24 +539,34 @@ def build_figure(data, picks, radii, seed_sigmas):
                  showarrow=False, font=dict(size=11), xanchor="left"),
             dict(text="full combo (authoritative)", x=0.66, y=1.205, xref="paper", yref="paper",
                  showarrow=False, font=dict(size=11), xanchor="left"),
-            # OT-context caption (physics framing + schematic-stub caveat).
-            dict(text=("<span style='color:#1f77b4'>seed</span> = OT-only L1Track "
-                       "(L1TrackFinder fit on OUTER-tracker stubs + beamline; anchored at "
-                       "r≈25–108 cm) &nbsp;·&nbsp; "
-                       "<span style='color:#d62728'>refit</span> = digiRefit adds SmartPixels "
-                       "IT hits (r&lt;16 cm). The near-vertex d0/z0 gain is the payoff of "
-                       "constraining a long-lever-arm OT track with inner-pixel hits; the "
-                       "seed's inward OT→IT extrapolation is where the MS-bulge lives. "
-                       "<span style='color:#17becf'>OT stubs</span> are schematic-on-helix "
-                       "(stub x-y not persisted; positions decoded from hitPattern)."),
-                 x=0.5, y=-0.13, xref="paper", yref="paper", showarrow=False,
+            # OT-context caption (5-par framing + real-stub note).
+            dict(text=("<span style='color:#1f77b4'>seed</span> = 5-par OT-only L1Track "
+                       "(L1TrackFinder fit on OUTER-tracker stubs + beamline, promptHnpar=5; "
+                       "anchored at r≈25–108 cm) &nbsp;·&nbsp; "
+                       "<span style='color:#d62728'>refit</span> = 5-par OT+IT digiRefit adds "
+                       "SmartPixels IT hits (r&lt;16 cm). The question: does adding IT IMPROVE "
+                       "the 5-par prompt track (d0 for b-tagging, vertexing)? "
+                       "<span style='color:#17becf'>OT stubs</span> are the REAL embedded "
+                       "L1TTrackStub positions (x/y/z)."),
+                 x=0.5, y=-0.12, xref="paper", yref="paper", showarrow=False,
                  font=dict(size=10.5), xanchor="center"),
+            # Resolution-to-truth + reduced-chi2 accounting caption.
+            dict(text=("Table shows RESOLUTION-TO-TRUTH: <b>d0−tru</b>/<b>z0−tru</b> per step + "
+                       "|seed−tru|→|refit−tru| (does IT move TOWARD truth?). "
+                       "Truth (nano_pE, PROMPT-only): z0=GenVtx_z, "
+                       "d0=GenVtx_x·sinφ−GenVtx_y·cosφ (beamspot≈0; matches L1Track_d0 sign; "
+                       "for DISPLACED/b tracks use matched-TP d0 from nano_pF). "
+                       "<b>χ2red(OT+IT)</b> = running reduced χ2 from the OT-only anchor "
+                       "(chi2ZRed·ndof_OT, ndof_OT=2·nStubs−5) + IT r-z increments / growing ndof; "
+                       "Σχ2(rφ) is parametrized-seed-inflated (raw, illustrative)."),
+                 x=0.5, y=-0.175, xref="paper", yref="paper", showarrow=False,
+                 font=dict(size=9.5), xanchor="center"),
             # Static fidelity key.
             dict(text=("<span style='color:#d62728'>REAL</span> = produced "
-                       "(AIII/AAII/AAAI/AAAA @ alphaBeta, chi2/pulls bit-exact) &nbsp;·&nbsp; "
+                       "(AIII/AAII/AAAI/AAAA @ alphaBeta) &nbsp;·&nbsp; "
                        "else <span style='color:#7f7f7f'>REPLAY</span> "
                        "(rInv/phi0/d0 faithful, tanL/z0 illustrative — parametrized seed cov)"),
-                 x=0.5, y=-0.185, xref="paper", yref="paper", showarrow=False,
+                 x=0.5, y=-0.225, xref="paper", yref="paper", showarrow=False,
                  font=dict(size=10.5), xanchor="center"),
         ],
     )
@@ -477,7 +582,7 @@ def _title(pick):
     # under the table, so the title stays one clean line clear of the menus).
     return (f"<b>SmartPixels digiRefit replay</b>  ·  [{arch}] ev{tr.event} trk{tr.idx}"
             f"<span style='font-size:12px'>  ·  truth: {badge_true} ({hard}, "
-            f"tpPt={truth['tpPt']:.1f}, nStubs={truth['nStubs']})</span>")
+            f"d0={tr.seed['d0']:+.3f}, tpPt={truth['tpPt']:.1f}, nStubs={truth['nStubs']})</span>")
 
 
 # --------------------------------------------------------------------------
@@ -486,20 +591,21 @@ def _title(pick):
 def build_refit_viz(nano_file, tracks=None, out_html=None,
                     layer_radii=(3.0, 6.8, 10.9, 16.0),
                     seed_sigmas=_REPLAY_SEED_SIGMAS,
-                    n_each=(2, 1, 1), max_events=6, return_fig=False):
+                    n_each=(2, 1, 1, 1), max_events=6, return_fig=False):
     """Build the standalone interactive refit-replay HTML.
 
     Parameters
     ----------
     nano_file : path to the SmartPixels nano file (read-only).
     tracks : optional list of (event, idx) tuples to force-select; otherwise the
-        curated archetypes (clean/wrong/fake) are chosen automatically.
+        curated archetypes (clean/wrong/displaced/fake) are chosen automatically.
     out_html : path to write the self-contained HTML (include_plotlyjs=True). If
         None, the HTML is not written.
     layer_radii : TBPX mean layer radii [cm] (projector convention).
     seed_sigmas : parametrized seed-covariance sqrt-diagonal (documented caveat:
         production used trackCov, not persisted in nano).
-    n_each : (n_clean, n_wrong, n_fake) archetypes to curate when tracks is None.
+    n_each : (n_clean, n_wrong, n_displaced, n_fake) archetypes to curate when
+        tracks is None (a 3-tuple maps to clean/wrong/fake with 0 displaced).
 
     Returns
     -------
@@ -513,8 +619,14 @@ def build_refit_viz(nano_file, tracks=None, out_html=None,
         picks = []
         for (e, i) in tracks:
             tr = by_key[(e, i)]
-            arch = ("clean" if (tr.truth["genuine"] and len(tr.hits) == 4)
-                    else "fake" if not tr.truth["genuine"] else "wrong")
+            if not tr.truth["genuine"]:
+                arch = "fake"
+            elif abs(tr.seed["d0"]) > 0.1:
+                arch = "displaced"
+            elif len(tr.hits) == 4:
+                arch = "clean"
+            else:
+                arch = "wrong"
             picks.append((tr, arch, "user-selected"))
     else:
         picks = curate_tracks(data, n_each=n_each)
