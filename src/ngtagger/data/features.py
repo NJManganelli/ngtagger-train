@@ -30,6 +30,11 @@ FEATURE_GROUPS = {
     # the track-quality GBDT score as a separate, composable input option
     "trkquality": ["trk_trkMVA1"],
     "cluster": ["cl_hOverE", "cl_sigmaRRTot", "cl_absZBarycenter", "cl_eMax", "cl_sigmaZZ"],
+    # global fastHisto PV transverse position + significance, one value per
+    # event broadcast to every constituent slot (computed at dataset-build
+    # time from the extended-track table via ngtagger.train.nnvtx; needs
+    # 5-parameter d0, i.e. track_table=L1TExtTrack)
+    "vertexdxy": ["vtx_dx", "vtx_dy", "vtx_dxsig", "vtx_dysig"],
 }
 
 
@@ -83,7 +88,7 @@ def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16,
         "quality": c.hwTkQuality,
     }
     for n in names:
-        if n.startswith("trk_") or n.startswith("cl_"):
+        if n.startswith("trk_") or n.startswith("cl_") or n.startswith("vtx_"):
             if n == "cl_absZBarycenter":
                 feats[n] = abs(c["cl_zBarycenter"])
             else:
