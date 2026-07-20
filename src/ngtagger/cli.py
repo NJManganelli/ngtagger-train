@@ -66,6 +66,14 @@ def main(argv=None):
     p_rq.add_argument("--seed", type=int, default=0)
     p_rq.add_argument("--conifer", action="store_true",
                       help="export conifer model json for the trained cell(s)")
+    p_rq.add_argument("--export-conifer", action="store_true",
+                      help="SPEC-ORDER path: train the producer-contract 17-feature "
+                           "REFIT_BDT_FEATURES v0 model and export a deployable conifer JSON "
+                           "(refitq_conifer_v0.json). Uses --config; ignores --tier.")
+    p_rq.add_argument("--conifer-name", default="refitq_conifer_v0",
+                      help="basename for the SPEC-ORDER conifer JSON + metadata")
+    p_rq.add_argument("--provenance", default="",
+                      help="free-text provenance recorded in the SPEC-ORDER model metadata")
 
     p_vtx = sub.add_parser("train-nnvtx", help="retrain the E2E NNVtx + association networks")
     p_vtx.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen L1PFTrkNano files")
@@ -123,7 +131,14 @@ def main(argv=None):
         from ngtagger.train.refitquality import (
             export_conifer, load_refit_tables, train_matrix, train_one)
 
-        if args.tier == "matrix":
+        if getattr(args, "export_conifer", False):
+            from ngtagger.train.refitquality import train_refitq_spec
+
+            train_refitq_spec(args.inputs, args.output, config=args.config,
+                              track_table=args.track_table, label=args.label,
+                              max_events=args.max_events, seed=args.seed,
+                              conifer_name=args.conifer_name, provenance=args.provenance)
+        elif args.tier == "matrix":
             train_matrix(args.inputs, args.output, track_table=args.track_table,
                          label=args.label, max_events=args.max_events, seed=args.seed)
             if args.conifer:

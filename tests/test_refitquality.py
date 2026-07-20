@@ -32,6 +32,7 @@ def _synth(n_events=60, tracks_per_event=30, seed=0):
                 "hwRinv": 0, "hwPhi": 0, "hwD0": 0,
                 "rInv": 0.01, "phi": 0.1, "tanL": 0.5, "z0": 1.0, "d0": 0.0,
                 "pt": 20.0, "eta": 0.5,
+                "trkMVA1": float(rng.random() * (0.5 if not g else 1.0)),
                 "genuine": g, "looselyGenuine": g, "combinatoric": (not g),
                 "unknown": False, "tpPt": 10.0 if g else -1.0, "tpFromHardInteraction": g,
             })

@@ -52,12 +52,49 @@ SMARTPIXELS_CONFIGS = ("AIII", "AAII", "AAAI", "AAAA")
 CONFIG_ACTIVESP = {"AIII": "1000", "AAII": "1100", "AAAI": "1110", "AAAA": "1111"}
 TIERS = ("A", "B", "C", "D")
 
+# ---------------------------------------------------------------------------
+# SPEC-ORDER feature contract (RefitSidecarSpec.md §6a, REFIT_BDT_FEATURES v0)
+#
+# This is DISTINCT from the tier A/B/C/D study above. The producer
+# (L1SmartPixelsTrackProducer) computes THESE 17 features in-flight per refit
+# track and evaluates the conifer BDT on them; the conifer JSON's n_features
+# must equal 17 or the producer throws at load. train-refitquality
+# --export-conifer builds this exact matrix and exports the deployable model.
+#
+# Producer semantics matched exactly (see the feature-vector block in
+# L1SmartPixelsTrackProducer.cc):
+#  - features 0-4 : per-track sidecar counters (nCrossings, nAcceptedHits,
+#                   layerHitMask, maxWindowMult, anyWindowTruncated 0/1)
+#  - features 5-8 : sum of pull^2 over APPLIED scalar updates (sentinel-gated:
+#                   the producer only accumulates where the update was applied;
+#                   in nano those pulls are non-sentinel, so we sum pull^2 over
+#                   hit rows with pull > -900)
+#  - features 9-10: chi2IncRPhiTot / chi2IncRZTot (post-guard; sentinel -> 0;
+#                   passthrough tracks carry 0 - but passthrough tracks are
+#                   never scored, so we train/parity on refit tracks only)
+#  - features 11-15: refit-minus-seed deltas on (rInv, phi, tanl, z0, d0) =
+#                    variant track minus reference track, 1:1 row aligned
+#  - feature 16   : seedTrkMVA1 = the INPUT (reference) track's trkMVA1 column
+#
+# Features are RAW (no log/clip transform - unlike the tier-study chi2 columns);
+# the KF numerical guards (spec §6b) bound the chi2 at source on post-guard
+# productions. NOTE: this PU nano was produced PRE-guard, so its chi2 columns
+# still contain the unguarded tail; we train on the data as-is (parity is about
+# the evaluation math, not training-sample perfection).
+REFIT_SPEC_FEATURES = [
+    "nCrossings", "nAcceptedHits", "layerHitMask", "maxWindowMult",
+    "anyWindowTruncated", "sumPullX2", "sumPullY2", "sumPullAlpha2",
+    "sumPullBeta2", "chi2IncRPhiTot", "chi2IncRZTot",
+    "dRinv", "dPhi", "dTanl", "dZ0", "dD0", "seedTrkMVA1",
+]
+REFIT_SPEC_VERSION = 0  # REFIT_BDT_FEATURES v0 (spec §6a)
+
 _SENTINEL = -900.0  # values <= this are the -999 fill; test with (x > _SENTINEL)
 
 # reference-track branches needed for Tier A + labels + kick reference
 _REF_HW = ["hwTanl", "hwZ0", "hwBendChi2", "hwChi2RPhi", "hwChi2RZ", "hitPattern",
            "nStubs", "hwRinv", "hwPhi", "hwD0"]
-_REF_FLOAT = ["rInv", "phi", "tanL", "z0", "d0", "pt", "eta"]
+_REF_FLOAT = ["rInv", "phi", "tanL", "z0", "d0", "pt", "eta", "trkMVA1"]
 _REF_TRUTH = ["genuine", "looselyGenuine", "combinatoric", "unknown",
               "tpPt", "tpFromHardInteraction"]
 
@@ -442,3 +479,264 @@ def export_conifer(model_dir: str, tag: str, output_dir: str | None = None, back
     cnf.save(os.path.join(output_dir, f"refitq_{tag}_conifer.json"))
     print(f"conifer model written to {output_dir}/refitq_{tag}_conifer.json")
     return cnf
+
+
+# ===========================================================================
+# SPEC-ORDER path: producer-contract 17-feature model + conifer export + parity
+# ===========================================================================
+
+def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
+                       refit_only: bool = True, require_truth: bool = True,
+                       seed_npar: int = 5, track_npar: int | None = None):
+    """Build the SPEC-ORDER (RefitSidecarSpec §6a) 17-feature matrix that the
+    producer evaluates in-flight. Returns (X float32 [N,17], y int64 [N],
+    names, aux) where aux carries the refit-performed mask and truth columns.
+
+    Row order is the shared reference/variant per-event flatten order; the
+    per-hit link table's trackIdx indexes into it (global-offset applied). When
+    refit_only=True, rows are restricted to spxRefitPerformed==1 tracks (the
+    producer never scores passthrough tracks - their trkMVA1 passes through).
+
+    seed_npar / track_npar: the producer seeds the KF d0 as
+        aSeed[4] = (seedNPar==5 && track.nFitPars()==5) ? track.d0 : 0.0
+    so feature 15 (dD0 = refit_d0 - aSeed[4]) subtracts 0.0 for 4-par seeds.
+    track_npar defaults to 4 for the prompt L1TTrack collection and 5 for the
+    Ext collection (nFitPars is not persisted in nano). Getting this wrong puts
+    a constant d0-LSB offset on feature 15 that flips near-threshold tracks.
+    """
+    if track_npar is None:
+        track_npar = 4  # prompt L1TTrack default; callers pass 5 for Ext tables
+    use_ref_d0_as_seed = (seed_npar == 5 and track_npar == 5)
+    counts = ak.to_numpy(ak.num(ref["genuine"]))
+    offsets = np.concatenate([[0], np.cumsum(counts)])
+    n_tracks = int(offsets[-1])
+
+    ref_flat = {b: ak.to_numpy(ak.flatten(ref[b])) for b in (_REF_HW + _REF_FLOAT + _REF_TRUTH)}
+    var_flat = {b: ak.to_numpy(ak.flatten(var[b])) for b in (_VAR_EXT + _VAR_FLOAT)}
+
+    y = ref_flat[label].astype(np.int64)
+    if require_truth and ref_flat["unknown"].all():
+        raise RuntimeError(
+            "all reference tracks are truth-'unknown': the TTTrackAssociator did "
+            "not run; produce the sample with the withGen track-truth sequence.")
+    if require_truth and y.sum() == 0:
+        raise RuntimeError(
+            f"no positive ('{label}') reference tracks: refit-quality training "
+            "needs a genuine/fake mix (truth-required mode fails loudly).")
+
+    # --- per-hit sum-of-squared-pull (features 5-8), applied-gated exactly as
+    #     the producer: accumulate pull^2 only where the pull is non-sentinel. ---
+    hit_flat = {b: ak.to_numpy(ak.flatten(hits[b])) for b in _HIT_COLS}
+    ev_of_hit = np.repeat(np.arange(len(counts)), ak.to_numpy(ak.num(hits["trackIdx"])))
+    gidx = hit_flat["trackIdx"].astype(np.int64) + offsets[ev_of_hit]
+
+    def _sum_sq_applied(col):
+        v = hit_flat[col].astype(np.float64)
+        m = v > _SENTINEL  # non-sentinel == applied update in the producer
+        acc = np.zeros(n_tracks, np.float64)
+        np.add.at(acc, gidx[m], v[m] ** 2)
+        return acc
+
+    sumPullX2 = _sum_sq_applied("pullX")
+    sumPullY2 = _sum_sq_applied("pullY")
+    sumPullAlpha2 = _sum_sq_applied("pullAlpha")
+    sumPullBeta2 = _sum_sq_applied("pullBeta")
+
+    # chi2 totals: producer already maps sentinel -> 0 and passthrough -> 0.
+    chi2rphi = var_flat["spxChi2IncRPhiTot"].astype(np.float64)
+    chi2rz = var_flat["spxChi2IncRZTot"].astype(np.float64)
+    chi2rphi = np.where(chi2rphi > _SENTINEL, chi2rphi, 0.0)
+    chi2rz = np.where(chi2rz > _SENTINEL, chi2rz, 0.0)
+
+    cols = [
+        var_flat["spxNCrossings"].astype(np.float32),          # 0
+        var_flat["spxNAcceptedHits"].astype(np.float32),       # 1
+        var_flat["spxLayerHitMask"].astype(np.float32),        # 2
+        var_flat["spxMaxWindowMult"].astype(np.float32),       # 3
+        var_flat["spxAnyWindowTruncated"].astype(np.float32),  # 4
+        sumPullX2.astype(np.float32),                          # 5
+        sumPullY2.astype(np.float32),                          # 6
+        sumPullAlpha2.astype(np.float32),                     # 7
+        sumPullBeta2.astype(np.float32),                      # 8
+        chi2rphi.astype(np.float32),                          # 9
+        chi2rz.astype(np.float32),                            # 10
+        (var_flat["rInv"] - ref_flat["rInv"]).astype(np.float32),  # 11 dRinv
+        (var_flat["phi"] - ref_flat["phi"]).astype(np.float32),    # 12 dPhi
+        (var_flat["tanL"] - ref_flat["tanL"]).astype(np.float32),  # 13 dTanl
+        (var_flat["z0"] - ref_flat["z0"]).astype(np.float32),      # 14 dZ0
+        # 15 dD0 = refit_d0 - aSeed[4]; aSeed[4] = ref.d0 only for a 5-par seed
+        # (seedNPar==5 && track 5-par), else 0.0 - matches the producer seeding.
+        (var_flat["d0"] - (ref_flat["d0"] if use_ref_d0_as_seed
+                           else np.zeros_like(ref_flat["d0"]))).astype(np.float32),  # 15 dD0
+        ref_flat["trkMVA1"].astype(np.float32),               # 16 seedTrkMVA1
+    ]
+    X = np.stack(cols, axis=1).astype(np.float32)
+
+    refit_mask = (var_flat["spxRefitPerformed"].astype(np.int64) == 1)
+    aux = {"refit_mask": refit_mask, "n_tracks": n_tracks,
+           "tpFromHardInteraction": ref_flat["tpFromHardInteraction"],
+           "genuine": ref_flat["genuine"].astype(np.int64),
+           "unknown": ref_flat["unknown"].astype(np.int64),
+           "pt": ref_flat["pt"], "eta": ref_flat["eta"]}
+
+    if refit_only:
+        X = X[refit_mask]
+        y = y[refit_mask]
+        for k in ("tpFromHardInteraction", "genuine", "unknown", "pt", "eta"):
+            aux[k] = aux[k][refit_mask]
+        aux["n_selected"] = int(refit_mask.sum())
+    return X, y, list(REFIT_SPEC_FEATURES), aux
+
+
+def conifer_json_walk(model_json: dict, X: np.ndarray) -> np.ndarray:
+    """Faithful float32 reproduction of conifer.h v1.7 BDT::decision_function
+    for n_classes<=2 (collapsed to 1), useAddTree=false, T=U=float - i.e. the
+    exact math the producer runs via conifer::BDT<float,float>. This is the
+    parity reference for the in-producer score.
+
+    Per conifer.h: split(x[feature], threshold); comparison True -> children_left
+    else children_right; leaf when feature==-2; value accumulated in float32
+    seeded from float32(init_predict[0]); result *= float32(norm).
+    """
+    conv = model_json.get("splitting_convention", "<=")
+    if conv == "<":
+        cmp = lambda a, b: a < b
+    elif conv == "<=":
+        cmp = lambda a, b: a <= b
+    else:
+        raise ValueError(f"unsupported splitting_convention {conv!r}")
+    init = np.float32(model_json["init_predict"][0])
+    norm = np.float32(model_json["norm"])
+    trees = model_json["trees"]  # outer: tree; inner: class (use class 0)
+
+    Xf = np.ascontiguousarray(X, dtype=np.float32)
+    out = np.empty(len(Xf), np.float32)
+    for r in range(len(Xf)):
+        x = Xf[r]
+        acc = np.float32(init)
+        for t in trees:
+            sub = t[0]
+            feat = sub["feature"]
+            cl = sub["children_left"]
+            cr = sub["children_right"]
+            thr = sub["threshold"]
+            val = sub["value"]
+            i = 0
+            while feat[i] != -2:
+                comparison = cmp(x[feat[i]], np.float32(thr[i]))
+                i = cl[i] if comparison else cr[i]
+            acc = np.float32(acc + np.float32(val[i]))
+        out[r] = np.float32(acc * norm)
+    return out
+
+
+def _spec_xgb_params(user: dict | None):
+    # trkquality-like params; small binary model on ~15k refit rows with a
+    # few-hundred-fake minority class (statistically weak by design).
+    params = {
+        "n_estimators": 60,
+        "max_depth": 3,
+        "learning_rate": 0.2,
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "early_stopping_rounds": 10,
+    }
+    params.update(user or {})
+    return params
+
+
+def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
+                      track_table: str = "L1TTrack", label: str = "genuine",
+                      max_events: int | None = None, test_fraction: float = 0.2,
+                      seed: int = 0, xgb_params: dict | None = None,
+                      export_conifer: bool = True,
+                      conifer_name: str = "refitq_conifer_v0",
+                      provenance: str = "", scale_pos_weight: bool = True):
+    """Train the SPEC-ORDER 17-feature refit-quality BDT and export it in
+    conifer JSON matching the producer contract (n_features==17).
+
+    Writes: <conifer_name>.json (deployable conifer model, raw-margin/logit),
+    <conifer_name>_meta.json (feature order + spec version + provenance),
+    refitq_spec_xgb.json (the raw xgboost model). Returns
+    (model, conifer_json_path, meta).
+    """
+    import xgboost as xgb
+    from sklearn.metrics import roc_auc_score
+
+    os.makedirs(output_dir, exist_ok=True)
+    ref, var, hits = load_refit_tables(files, config, track_table, max_events)
+    X, y, names, aux = build_spec_dataset(ref, var, hits, config, label=label)
+    assert len(names) == 17, f"spec feature count {len(names)} != 17"
+
+    train, test = _split(len(X), test_fraction, seed)
+    params = _spec_xgb_params(xgb_params)
+    if scale_pos_weight:
+        n_pos = max(int(y[train].sum()), 1)
+        n_neg = max(int((y[train] == 0).sum()), 1)
+        params.setdefault("scale_pos_weight", n_neg / n_pos)
+
+    model = xgb.XGBClassifier(**params, random_state=seed)
+    model.fit(X[train], y[train], eval_set=[(X[test], y[test])], verbose=False)
+    proba = model.predict_proba(X[test])[:, 1]
+    auc = float(roc_auc_score(y[test], proba)) if (y[test].sum() and (y[test] == 0).sum()) else float("nan")
+
+    n_pos = int(y.sum())
+    n_neg = int((y == 0).sum())
+    print(f"refitq[SPEC v{REFIT_SPEC_VERSION}]: test AUC = {auc:.4f}  "
+          f"(config={config}, nfeat=17, n_refit={len(X)}, "
+          f"n_train={len(train)}, n_test={len(test)}, pos={n_pos}, neg={n_neg})")
+
+    xgb_path = os.path.join(output_dir, "refitq_spec_xgb.json")
+    model.save_model(xgb_path)
+
+    conifer_json_path = None
+    if export_conifer:
+        import conifer
+
+        booster = model.get_booster()
+        cfg = conifer.backends.cpp.auto_config()
+        cfg["OutputDir"] = os.path.join(output_dir, f"{conifer_name}_prj")
+        cnf = conifer.converters.convert_from_xgboost(booster, cfg)
+        conifer_json_path = os.path.join(output_dir, f"{conifer_name}.json")
+        cnf.save(conifer_json_path)
+        # validate the exported JSON against the producer contract at export time
+        with open(conifer_json_path) as f:
+            cj = json.load(f)
+        if int(cj.get("n_features", -1)) != 17:
+            raise RuntimeError(
+                f"exported conifer n_features={cj.get('n_features')} != 17; "
+                "producer would reject this model.")
+        # offline-margin self-check: python conifer walk vs the raw BOOSTER
+        # margin (which is what conifer converts and what conifer.h/the producer
+        # compute). NB: the sklearn XGBClassifier.predict(output_margin=True)
+        # wrapper disagrees with the booster on xgboost>=2.0 - the booster margin
+        # is the correct conifer reference, verified to match the walk to 0.0.
+        walk = conifer_json_walk(cj, X[test])
+        dtest = xgb.DMatrix(X[test])
+        booster_margin = booster.predict(dtest, output_margin=True).astype(np.float32)
+        max_walk_diff = float(np.max(np.abs(walk - booster_margin))) if len(X[test]) else 0.0
+        print(f"  conifer written: {conifer_json_path}  "
+              f"(n_trees={cj['n_trees']}, init_predict={cj['init_predict']}, "
+              f"conv={cj.get('splitting_convention')})")
+        print(f"  margin self-check max|walk - booster_margin| = {max_walk_diff:.3e} (float32)")
+
+    meta = {
+        "spec": "RefitSidecarSpec.md REFIT_BDT_FEATURES", "spec_version": REFIT_SPEC_VERSION,
+        "n_features": 17, "features": names, "config": config, "activeSP": CONFIG_ACTIVESP[config],
+        "label": label, "track_table": track_table, "margin_semantics": "raw_logit_margin",
+        "conifer_decision_function": "sum(tree_values)+init_predict, then *norm (float32)",
+        "test_auc": auc, "n_refit_tracks": len(X), "n_pos": n_pos, "n_neg": n_neg,
+        "n_train": len(train), "n_test": len(test), "seed": seed,
+        "params": {k: v for k, v in params.items()},
+        "input_files": [os.path.basename(f) for f in files],
+        "provenance": provenance,
+        "caveat": ("PRE-guard PU nano: chi2 columns carry the unguarded numerical tail. "
+                   "Trained as-is; parity is about evaluation math, not sample perfection. "
+                   "Trained on refit tracks only (passthrough tracks are never scored)."),
+    }
+    meta_path = os.path.join(output_dir, f"{conifer_name}_meta.json")
+    with open(meta_path, "w") as f:
+        json.dump(meta, f, indent=2)
+    print(f"  metadata written: {meta_path}")
+
+    return model, conifer_json_path, meta
