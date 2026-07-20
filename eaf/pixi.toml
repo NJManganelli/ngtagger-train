@@ -44,6 +44,8 @@ tensorflow = { version = ">=2.16,<2.20", extras = ["and-cuda"] }
 quantizers = "*"
 xgboost = ">=2"
 conifer = "*"
+# MDMM constrained multi-objective training (torch-based; pulls torch+CUDA here)
+mdmm = "*"
 hgq2 = { git = "https://github.com/calad0i/HGQ2" }
 da4ml = ">=0.3"
 hls4ml = { git = "https://github.com/CMS-L1T-Jet-Tagging/hls4ml", branch = "jet_tagger_hls4ml_update" }

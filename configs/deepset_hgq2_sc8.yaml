@@ -1,0 +1,57 @@
+# SC8 (wide-cone) NG tagger training — same DeepSet HGQ2 architecture as the
+# SC4 baseline, pointed at the SC8 jet/link tables via the data_config table
+# knobs (the pipeline is table-name parametrized; no code fork).
+#
+# PRODUCTION-SIDE GAP (2026-07-19): current nanos carry only the plain
+# L1puppiJetSC8 kinematic table (pt/eta/phi/et/mass). The NG-tagged SC8 jet
+# table and its jet<->constituent link table (names below assume the SC4
+# convention) require the cmssw side to schedule an SC8 NG tagger producer +
+# an SC8 L1JetCandLinkTableProducer clone in the L1PFNano flavors. Until
+# then this config fails loudly at read time (missing branches).
+model: DeepSetHGQ2
+experiment: ngtagger-sc8
+
+run_config:
+  verbose: 2
+
+data_config:
+  # SC8 cones hold more constituents; 32 matches the wider clustering window.
+  # Revisit against the actual SC8 firmware tagger window when it exists.
+  n_constituents: 32
+  feature_groups: [baseline]
+  jet_table: L1puppiJetSC8NG
+  link_table: L1SC8NGJetCands
+  cand_table: L1ExtPuppiCand
+  track_table: L1TExtTrack
+  cluster_table: L1HGCCluster
+  # gen matching follows the jet radius (0.8 for SC8; 0.4 default for SC4)
+  gen_match_dr: 0.8
+
+model_config:
+  name: deepset_hgq2_sc8
+  conv1d_layers: [10, 10]
+  conv1d_parallelisation_factor: [32, 32]
+  classification_layers: [32, 16]
+  regression_layers: [10]
+  beta: 1.0e-8
+
+quantization_config:
+  pt_output_quantization: [16, 6]
+
+training_config:
+  weight_method: onlyclass
+  validation_split: 0.1
+  epochs: 150
+  batch_size: 2048
+  learning_rate: 0.01
+  loss_weights: [1.0, 1.0]
+  EarlyStopping_patience: 15
+  ReduceLROnPlateau_factor: 0.5
+  ReduceLROnPlateau_patience: 5
+  ReduceLROnPlateau_min_lr: 1.0e-5
+
+firmware_config:
+  backend: Vitis
+  clock_period: 2.5
+  fpga_part: xcvu13p-flga2577-2-e
+  project_name: L1TSC8NGJetModel_ngt

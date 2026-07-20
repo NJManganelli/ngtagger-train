@@ -37,11 +37,18 @@ def class_pt_weights(y: np.ndarray, reco_pt: np.ndarray, method: str = "onlyclas
 
 
 def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[str] | None = None,
-                    max_events: int | None = None, test_fraction: float = 0.1, seed: int = 0):
-    """nano files -> train/test numpy tensors. No intermediate formats."""
+                    max_events: int | None = None, test_fraction: float = 0.1, seed: int = 0,
+                    tables: dict | None = None, gen_match_dr: float = 0.4):
+    """nano files -> train/test numpy tensors. No intermediate formats.
+
+    tables: optional overrides for the nano table names (jet_table, link_table,
+    cand_table, track_table, cluster_table) — e.g. the SC8 pipeline points
+    jet_table/link_table at the SC8 NG collections. gen_match_dr follows the
+    jet radius (0.4 for SC4, 0.8 for SC8).
+    """
     jets, constituents, gen = load_jets(files, n_const=n_const, feature_groups=feature_groups,
-                                        max_events=max_events)
-    label, target_pt, target_pt_phys, keep = label_jets(jets, gen)
+                                        max_events=max_events, **(tables or {}))
+    label, target_pt, target_pt_phys, keep = label_jets(jets, gen, max_dr=gen_match_dr)
 
     X, feature_names = build_features(jets, constituents, n_const=n_const, feature_groups=feature_groups)
     flat_label = ak.to_numpy(ak.flatten(label))
@@ -79,12 +86,17 @@ def run_training(config_path: str, files: list[str], output_dir: str, seed: int 
     model = ModelRegistry.create(config["model"], output_dir)
     model.load_yaml(config_path)
 
+    dc = config.get("data_config", {})
+    tables = {k: dc[k] for k in ("jet_table", "link_table", "cand_table",
+                                 "track_table", "cluster_table") if k in dc}
     ds = dataset or prepare_dataset(
         files,
-        n_const=config.get("data_config", {}).get("n_constituents", 16),
-        feature_groups=config.get("data_config", {}).get("feature_groups", ["baseline"]),
+        n_const=dc.get("n_constituents", 16),
+        feature_groups=dc.get("feature_groups", ["baseline"]),
         max_events=max_events,
         seed=seed,
+        tables=tables,
+        gen_match_dr=dc.get("gen_match_dr", 0.4),
     )
     model.class_labels = list(ds["class_labels"])
     model.feature_names = list(ds["feature_names"])
