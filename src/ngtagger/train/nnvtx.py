@@ -91,21 +91,244 @@ def to_padded(feats: dict, feature_names: list[str], max_tracks: int = MAX_TRACK
     return X, mask
 
 
+VTX_KERNELS = ("flat", "triangular", "gaussian", "epanechnikov")
+
+
+def make_kernel(kernel: str = "flat", window_bins: int = 3, sigma_bins: float = 1.0,
+                kernel_array=None):
+    """Peak-finder kernel weights for fast_histo_z0 / fast_histo_vtx.
+
+    flat          ones(window_bins)  -- emulator boxcar (default)
+    triangular    1 - |i|/(hw+1)     over i in [-hw, hw], hw = (window_bins-1)//2
+    epanechnikov  1 - (i/(hw+1))^2   same support
+    gaussian      exp(-i^2/2 sigma_bins^2), support 2*ceil(3 sigma)+1 (>= window_bins)
+    kernel_array  arbitrary user weights (overrides `kernel`)
+
+    Normalised to max=1 (normalisation cannot affect the arg-max selection)."""
+    if kernel_array is not None:
+        k = np.asarray(kernel_array, dtype=float)
+        if k.ndim != 1 or k.size == 0 or not np.any(k > 0):
+            raise ValueError("kernel_array must be a non-empty 1D array with a positive entry")
+        return k / k.max()
+    if kernel == "flat":
+        return np.ones(window_bins)
+    hw = (window_bins - 1) // 2
+    if kernel == "gaussian":
+        hw = max(hw, int(np.ceil(3.0 * sigma_bins)))
+    i = np.arange(-hw, hw + 1, dtype=float)
+    if kernel == "gaussian":
+        return np.exp(-0.5 * (i / sigma_bins) ** 2)
+    if kernel == "triangular":
+        return 1.0 - np.abs(i) / (hw + 1.0)
+    if kernel == "epanechnikov":
+        return 1.0 - (i / (hw + 1.0)) ** 2
+    raise ValueError(f"unknown kernel '{kernel}'; known: {VTX_KERNELS} or kernel_array")
+
+
+def _select_window(hist: np.ndarray, kern: np.ndarray, window_bins: int) -> int:
+    """Kernel-weighted arg-max window selection: correlate the histogram with
+    the kernel, return the first bin of the window_bins-wide centroid window
+    centred on the winning kernel position. For the flat kernel this reduces
+    bit-identically to the original boxcar arg-max (lo == argmax index)."""
+    scores = np.convolve(hist, kern[::-1], mode="valid")  # correlation semantics
+    b = int(np.argmax(scores))
+    lo = b + (len(kern) - 1) // 2 - (window_bins - 1) // 2
+    return min(max(lo, 0), len(hist) - window_bins)
+
+
 def fast_histo_z0(z0: np.ndarray, pt: np.ndarray, mask: np.ndarray,
-                  window_bins: int = 3, max_track_pt: float = 50.0):
+                  window_bins: int = 3, max_track_pt: float = 50.0,
+                  kernel: str = "flat", sigma_bins: float = 1.0, kernel_array=None):
     """Numpy reference of the fastHisto baseline: pt-weighted (capped) z0
-    histogram, best sliding window, pt-weighted mean inside the window."""
+    histogram, best sliding window, pt-weighted mean inside the window.
+
+    `kernel` selects the peak-finder weighting (see make_kernel); the default
+    "flat" is bit-identical to the emulator boxcar. The kernel enters ONLY the
+    arg-max window selection: the z estimate stays the plain pt-weighted
+    centroid of the window (emulator convention -- a kernel-weighted centroid
+    would pull z toward the kernel centre and break stock comparisons)."""
     n_events = z0.shape[0]
     edges = np.linspace(HISTO_MIN, HISTO_MAX, N_BINS + 1)
+    kern = make_kernel(kernel, window_bins, sigma_bins, kernel_array)
     out = np.zeros(n_events)
     w = np.minimum(pt, max_track_pt) * mask
     for i in range(n_events):
         hist, _ = np.histogram(z0[i], bins=edges, weights=w[i])
-        windows = np.convolve(hist, np.ones(window_bins), mode="valid")
-        b = int(np.argmax(windows))
-        sel = (z0[i] >= edges[b]) & (z0[i] < edges[b + window_bins]) & (w[i] > 0)
-        out[i] = np.average(z0[i][sel], weights=w[i][sel]) if sel.any() else 0.5 * (edges[b] + edges[b + window_bins])
+        lo = _select_window(hist, kern, window_bins)
+        sel = (z0[i] >= edges[lo]) & (z0[i] < edges[lo + window_bins]) & (w[i] > 0)
+        out[i] = np.average(z0[i][sel], weights=w[i][sel]) if sel.any() else 0.5 * (edges[lo] + edges[lo + window_bins])
     return out
+
+
+# --------------------------------------------------------------------------
+# Vertex transverse-position (dx, dy) estimation in the fastHisto PV window
+# --------------------------------------------------------------------------
+# Sign convention (VERIFIED against DataFormats/L1TrackTrigger/interface/
+# TTTrack.h: thePOCA_(d0*sin(phi0), -d0*cos(phi0), z0), and the beamspot-
+# correction comment d0 - (XB*sin(phi) - YB*cos(phi)); the nano d0/phi
+# branches are Var("d0()")/Var("phi()") on the same TTTrack):
+#     d0_i = x_v sin(phi_i) - y_v cos(phi_i) + noise    (prompt track from
+# vertex (x_v, y_v); curvature negligible at vertex scale). NOTE this is the
+# NEGATIVE of offline TrackBase::dxy().
+VTX_RESULT_FIELDS = ("z0_pv", "dx", "dy", "sigma_dx", "sigma_dy", "dxsig", "dysig",
+                     "n_window", "sum_w", "phi_condition", "d0_scatter")
+
+
+def fast_histo_vtx(z0: np.ndarray, pt: np.ndarray, mask: np.ndarray,
+                   d0: np.ndarray, phi: np.ndarray,
+                   window_bins: int = 3, max_track_pt: float = 50.0,
+                   kernel: str = "flat", sigma_bins: float = 1.0, kernel_array=None,
+                   estimator: str = "lsq", min_condition: float = 1e-6,
+                   d0_gate: float | None = None):
+    """fastHisto extended with a PV-window (dx, dy) estimate.
+
+    d0_gate (cm, optional): tracks with |d0| > d0_gate are excluded from the
+    (dx, dy) accumulators only (never from the z histogram, which stays
+    emulator-faithful). The transverse solve assumes PROMPT tracks
+    (curvature ignored at vertex scale); L1 extended-track collections in a
+    jet environment also carry displaced/loose tracks with |d0| up to
+    O(cm) -- see eval_refitq/vtxdxy/realdata_smoke -- that violate the prompt
+    approximation and inflate the fit scatter. A gate of ~0.1-0.2 cm restores
+    a beam-spot-scale estimate. None = no gate (all tracks, faithful to the
+    raw accumulator picture).
+
+    Parallel per-z-bin accumulators alongside the pt-weighted z histogram:
+    w, w*d0*s, w*d0*c, w*s^2, w*c^2, w*s*c, w*d0^2, n  (s=sin(phi), c=cos(phi),
+    w = capped-pt weight). At the found peak window the sums are aggregated
+    and, with the convention d0 = x_v s - y_v c (see above), minimising
+    Sum w (d0 - x_v s + y_v c)^2 gives the weighted least-squares normal
+    equations (symmetric form after negating the second row):
+
+        [  S_ss  -S_sc ] [x_v]   [ +S_wds ]        S_ab  = sum w a b
+        [ -S_sc   S_cc ] [y_v] = [ -S_wdc ]        S_wds = sum w d0 s, etc.
+
+    solved as x_v = (S_cc S_wds - S_sc S_wdc)/det,
+             y_v = (S_sc S_wds - S_ss S_wdc)/det,  det = S_ss S_cc - S_sc^2.
+    (Noiseless closure is exact -- proven in test_convention_exact_recovery.)
+
+    estimator="isotropic" is the cheap variant x_v = +2 S_wds/S_w,
+    y_v = -2 S_wdc/S_w, exact only for phi-isotropic weighted coverage
+    (S_ss = S_cc = S_w/2, S_sc = 0); its uncertainties reuse the residual
+    formula with the isotropic normal matrix.
+
+    Uncertainties: residual scatter of d0 about the fit inside the window,
+    computed FROM THE SUMS (no second track pass):
+        S_wrr = S_wdd - 2 x S_wds + 2 y S_wdc + x^2 S_ss + y^2 S_cc - 2 x y S_sc
+        sigma^2_d0 = S_wrr / (n - 2),   Cov(x,y) = sigma^2_d0 * A^-1
+    (pragmatic: assumes sigma_d0,i ~ 1/sqrt(w_i) up to a common scale; needs
+    n >= 3 for the scatter, n >= 2 and phi_condition >= min_condition for the
+    solve; otherwise NaN -- degraded inputs must be visible, not silent).
+
+    d0 MUST come from a 5-parameter (Extended) track collection (nano
+    L1TExtTrack): the prompt 4-par tracks have d0 pinned to 0 and carry no
+    (dx, dy) information. Use vertex_dxy_features for the loud guard.
+
+    Returns a dict of (n_events,) float64 arrays, fields VTX_RESULT_FIELDS.
+    z0_pv is computed exactly as fast_histo_z0 (same histogram, selection and
+    centroid); phi_condition = det(A)/(S_ss*S_cc) in (0, 1], 1 = balanced
+    coverage; d0_scatter = sqrt(S_wrr/S_w) (weighted RMS of the d0 residuals)."""
+    if estimator not in ("lsq", "isotropic"):
+        raise ValueError(f"unknown estimator '{estimator}' (lsq | isotropic)")
+    n_events = z0.shape[0]
+    edges = np.linspace(HISTO_MIN, HISTO_MAX, N_BINS + 1)
+    kern = make_kernel(kernel, window_bins, sigma_bins, kernel_array)
+    w = np.minimum(pt, max_track_pt) * mask
+    s, c = np.sin(phi), np.cos(phi)
+
+    out = {f: np.full(n_events, np.nan) for f in VTX_RESULT_FIELDS}
+    out["n_window"] = np.zeros(n_events)
+    out["sum_w"] = np.zeros(n_events)
+    for i in range(n_events):
+        zi, wi, d0i, si, ci = z0[i], w[i], d0[i], s[i], c[i]
+        hist, _ = np.histogram(zi, bins=edges, weights=wi)
+        lo = _select_window(hist, kern, window_bins)
+
+        # transverse-solve weight: pt weight, optionally prompt-track gated
+        # (gate never touches the z histogram / window selection above)
+        wg = wi if d0_gate is None else wi * (np.abs(d0i) <= d0_gate)
+
+        # parallel per-bin accumulator histograms, aggregated over the window
+        sums = []
+        for vals in (wg, wg * d0i * si, wg * d0i * ci, wg * si * si, wg * ci * ci,
+                     wg * si * ci, wg * d0i * d0i, (wg > 0).astype(float)):
+            acc, _ = np.histogram(zi, bins=edges, weights=vals)
+            sums.append(acc[lo:lo + window_bins].sum())
+        Sw, Swds, Swdc, Sss, Scc, Ssc, Swdd, Sn = sums
+        n = int(round(Sn))
+        out["n_window"][i], out["sum_w"][i] = n, Sw
+
+        # z centroid: identical to fast_histo_z0 (value-based selection)
+        sel = (zi >= edges[lo]) & (zi < edges[lo + window_bins]) & (wi > 0)
+        out["z0_pv"][i] = (np.average(zi[sel], weights=wi[sel]) if sel.any()
+                           else 0.5 * (edges[lo] + edges[lo + window_bins]))
+        if Sw <= 0:
+            continue
+
+        det = Sss * Scc - Ssc * Ssc
+        cond = det / (Sss * Scc) if (Sss > 0 and Scc > 0) else 0.0
+        out["phi_condition"][i] = cond
+        if estimator == "isotropic":
+            dx, dy = 2.0 * Swds / Sw, -2.0 * Swdc / Sw
+            inv_xx = inv_yy = 2.0 / Sw  # isotropic A = (Sw/2) * I
+        else:
+            if n < 2 or det <= 0 or cond < min_condition:
+                continue  # degenerate phi coverage: no transverse solve
+            dx = (Scc * Swds - Ssc * Swdc) / det
+            dy = (Ssc * Swds - Sss * Swdc) / det
+            inv_xx, inv_yy = Scc / det, Sss / det
+        out["dx"][i], out["dy"][i] = dx, dy
+
+        s_wrr = max(Swdd - 2 * dx * Swds + 2 * dy * Swdc
+                    + dx * dx * Sss + dy * dy * Scc - 2 * dx * dy * Ssc, 0.0)
+        out["d0_scatter"][i] = np.sqrt(s_wrr / Sw)
+        if n >= 3:
+            s2 = s_wrr / (n - 2)
+            out["sigma_dx"][i] = np.sqrt(s2 * inv_xx)
+            out["sigma_dy"][i] = np.sqrt(s2 * inv_yy)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                out["dxsig"][i] = dx / out["sigma_dx"][i]
+                out["dysig"][i] = dy / out["sigma_dy"][i]
+    return out
+
+
+def vertex_dxy_features(tracks, pt_field: str = "pt", z0_field: str = "z0",
+                        d0_field: str = "d0", phi_field: str = "phi",
+                        sanitize: bool = False, **fast_histo_kwargs):
+    """Per-event vertex (dx, dy) feature columns from a jagged nano track
+    table (feature group "vertexdxy"; track_table must be the 5-parameter
+    extended collection, e.g. L1TExtTrack -- an identically-zero d0 column
+    means the prompt 4-par collection was passed and raises loudly instead of
+    silently yielding dx=dy=0).
+
+    Returns {vtx_dx, vtx_dy, vtx_dxsig, vtx_dysig} as (n_events,) float32.
+    sanitize=True maps non-finite values (no solve / zero scatter) to 0.0 for
+    direct use as model inputs; keep False for studies (NaN stays visible)."""
+    for fld in (pt_field, z0_field, d0_field, phi_field):
+        if fld not in tracks.fields:
+            raise KeyError(
+                f"track table lacks '{fld}' (needed by vertexdxy; extended-track "
+                f"table required, e.g. L1TExtTrack). Available: {sorted(tracks.fields)}")
+    if not ak.any(np.abs(tracks[d0_field]) > 0):
+        raise ValueError(
+            "track-table d0 is identically zero: the prompt 4-parameter collection "
+            "carries no (dx, dy) information; use the extended table (L1TExtTrack)")
+    counts = ak.num(tracks[z0_field], axis=1)
+    max_trk = max(int(ak.max(counts)), 1)
+
+    def _pad(field, fill=0.0):
+        return ak.to_numpy(ak.fill_none(
+            ak.pad_none(tracks[field], max_trk, axis=1, clip=True), fill)).astype(np.float64)
+
+    mask = ak.to_numpy(ak.fill_none(
+        ak.pad_none(ak.ones_like(tracks[z0_field]), max_trk, axis=1, clip=True), 0.0)
+    ).astype(np.float64)
+    res = fast_histo_vtx(_pad(z0_field), _pad(pt_field), mask,
+                         _pad(d0_field), _pad(phi_field), **fast_histo_kwargs)
+    out = {"vtx_dx": res["dx"], "vtx_dy": res["dy"],
+           "vtx_dxsig": res["dxsig"], "vtx_dysig": res["dysig"]}
+    if sanitize:
+        out = {k: np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0) for k, v in out.items()}
+    return {k: v.astype(np.float32) for k, v in out.items()}
 
 
 # --------------------------------------------------------------------------

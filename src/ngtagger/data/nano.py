@@ -25,6 +25,9 @@ CAND_BRANCHES = [
     "puppiWeight", "hwEmID", "hwTkQuality", "l1TrackIdx", "hgcClusterIdx",
 ]
 TRACK_BRANCHES = ["rInv", "tanL", "z0", "d0", "chi2XYRed", "chi2ZRed", "chi2BendRed", "trkMVA1"]
+# extra track branches needed only by the "vertexdxy" feature group (global
+# fastHisto PV (dx, dy) estimate; requires the 5-par extended track table)
+VTX_TRACK_BRANCHES = ["pt", "phi", "z0", "d0"]
 CLUSTER_BRANCHES = ["hOverE", "sigmaRRTot", "zBarycenter", "eMax", "sigmaZZ"]
 JET_BRANCHES = ["pt", "eta", "phi", "et"]
 GEN_BRANCHES = {
@@ -47,6 +50,7 @@ def read_events(
     cluster_table: str = "L1HGCCluster",
     with_gen: bool = True,
     max_events: int | None = None,
+    extra_track_branches: list[str] | None = None,
 ) -> ak.Array:
     """Load the needed branches from L1PFTrkNano Events trees."""
     branches = (
@@ -54,7 +58,7 @@ def read_events(
         + [f"{jet_table}_*TagScore*"]
         + _branches(link_table, ["jetIdx", "candIdx", "slot", "inTagger"])
         + _branches(cand_table, CAND_BRANCHES)
-        + _branches(track_table, TRACK_BRANCHES)
+        + _branches(track_table, TRACK_BRANCHES + list(extra_track_branches or []))
         + _branches(cluster_table, CLUSTER_BRANCHES)
     )
     if with_gen:
@@ -136,6 +140,7 @@ def load_jets(
     feature records). Feature engineering and labeling live in features.py /
     labels.py; this returns the aligned building blocks.
     """
+    groups = feature_groups or ["baseline"]
     events = read_events(
         files,
         jet_table=jet_table,
@@ -145,9 +150,8 @@ def load_jets(
         cluster_table=cluster_table,
         with_gen=with_gen,
         max_events=max_events,
+        extra_track_branches=VTX_TRACK_BRANCHES if "vertexdxy" in groups else None,
     )
-
-    groups = feature_groups or ["baseline"]
     nested_idx = group_constituents(events, jet_table, link_table, n_const=n_const)
     cands = events[cand_table]
 
@@ -160,6 +164,14 @@ def load_jets(
         clusters = events[cluster_table]
         for name in CLUSTER_BRANCHES:
             const[f"cl_{name}"] = crossref_gather(cands, clusters, nested_idx, "hgcClusterIdx", name)
+    if "vertexdxy" in groups:
+        # per-event global PV (dx, dy) from the extended-track table,
+        # broadcast to every constituent slot (fails loudly on a 4-par table)
+        from ngtagger.train.nnvtx import vertex_dxy_features
+
+        vtx = vertex_dxy_features(events[track_table], sanitize=True)
+        for name, col in vtx.items():
+            const[name] = ak.broadcast_arrays(ak.Array(col), const["pt"])[0]
 
     constituents = ak.zip(const, depth_limit=3)
     jets = events[jet_table]
