@@ -19,6 +19,9 @@ python = "3.12.*"
 pip = "*"
 numpy = "<2.1"
 pytest = "*"
+jupyterlab = ">=4.6.1,<5"
+ipykernel = ">=7.3.0,<8"
+anyio = ">=4.14.2,<5"
 
 [pypi-dependencies]
 ngtagger = { path = ".", editable = true }
@@ -47,6 +50,7 @@ hgq2 = { git = "https://github.com/calad0i/HGQ2" }
 da4ml = ">=0.3"
 # hls4ml: CMS jet-tagging fork with HGQ2/da4ml support (mirrors upstream TrainTagger Keras_v3)
 hls4ml = { git = "https://github.com/CMS-L1T-Jet-Tagging/hls4ml", branch = "jet_tagger_hls4ml_update" }
+jupyterlab-rise = ">=0.43.1, <0.44"
 
 # --------------------------------------------------------------------------
 # osx (M-series) : Metal acceleration for local parallel training
