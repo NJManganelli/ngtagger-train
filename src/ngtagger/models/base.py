@@ -41,6 +41,7 @@ class TagModel(ABC):
         self.feature_names: list[str] = []
         self.output_id_name = "jet_id_output"
         self.output_pt_name = "pT_output"
+        self.output_charge_name = "charge_output"
 
     def load_yaml(self, path: str):
         with open(path) as f:
@@ -65,7 +66,13 @@ class TagModel(ABC):
     def compile(self): ...
 
     @abstractmethod
-    def fit(self, X, y, pt_target, sample_weight=None, validation_split=0.1, seed: int = 0): ...
+    def fit(self, X, y, pt_target, sample_weight=None, validation_split=0.1, seed: int = 0,
+            y_charge=None): ...
+
+    def constraint_metrics(self) -> dict:
+        """Final MDMM multiplier state for logging; {} unless the model
+        trained with a constraints section (see train/mdmm.py)."""
+        return {}
 
     def save(self):
         os.makedirs(self.output_dir, exist_ok=True)

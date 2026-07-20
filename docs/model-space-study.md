@@ -328,6 +328,15 @@ Effort: M (Route B port + one constrained training reproducing the baseline;
 EBOPs-constraint study +M). Dependency: none (mdmm/torch installed; toy data
 possible; real data needs the B.0 nano for tagger-level results).
 
+> **Status (2026-07-19): IMPLEMENTED** — Route-B port in
+> `src/ngtagger/train/mdmm.py` (stop-gradient ascent, pip-mdmm-lockstep
+> verified), opt-in `constraints:` yaml section wired through
+> `DeepSetHGQ2.compile`/`run_training` with targets pt_bias, bkg/sig_eff,
+> head_loss, and the EBOPs budget (wired via the HGQ2 per-layer `beta`
+> variables — callback route). See `docs/constrained-training.md` and
+> `tests/test_mdmm.py`; tagger-level constrained trainings still await the
+> B.0 nano.
+
 #### B.2.3 Charge classifier head (2–3 bits)
 
 Ground truth: from gen — for jets labeled light by hadronFlavour==0, the
@@ -356,6 +365,13 @@ Trigger use: W′/H± charge asymmetries, VBF same-sign topologies, ttbar
 charge tagging at GT — cheap bits with real menu value if separation
 materializes. Effort: S–M (labels + head + MDMM floor constraint; no new
 producer). Dependency: B.0 nano.
+
+> **Status (2026-07-19): SCAFFOLD IMPLEMENTED** — 3-class head via
+> `model_config.charge_layers` (DeepSetHGQ2), partonFlavour→{q−,0,q+} labels
+> in `data/labels.py` (`charge_train/test` from `prepare_dataset`), Q_κ
+> benchmark utilities in `eval/charge_baseline.py`, MDMM floor demonstrated
+> in `configs/deepset_hgq2_mdmm.yaml`. See `docs/constrained-training.md`
+> and `tests/test_charge.py`; real-data go/no-go vs Q_κ awaits the B.0 nano.
 
 #### B.2.4 GloParT-style analyst embeddings
 

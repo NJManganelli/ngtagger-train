@@ -10,7 +10,7 @@ import awkward as ak
 import numpy as np
 
 from ngtagger.data.features import build_features
-from ngtagger.data.labels import CLASS_LABELS, label_jets
+from ngtagger.data.labels import CHARGE_CLASS_LABELS, CLASS_LABELS, label_jet_charge, label_jets
 from ngtagger.data.nano import load_jets
 from ngtagger.models.base import ModelRegistry, TagModel
 
@@ -49,15 +49,18 @@ def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[st
     jets, constituents, gen = load_jets(files, n_const=n_const, feature_groups=feature_groups,
                                         max_events=max_events, **(tables or {}))
     label, target_pt, target_pt_phys, keep = label_jets(jets, gen, max_dr=gen_match_dr)
+    charge_label = label_jet_charge(jets, gen, max_dr=gen_match_dr)
 
     X, feature_names = build_features(jets, constituents, n_const=n_const, feature_groups=feature_groups)
     flat_label = ak.to_numpy(ak.flatten(label))
+    flat_charge = ak.to_numpy(ak.flatten(charge_label))
     flat_keep = ak.to_numpy(ak.flatten(keep))
     flat_pt_phys = ak.to_numpy(ak.flatten(target_pt_phys))
     flat_reco_pt = ak.to_numpy(ak.flatten(jets.pt))
 
     X = X[flat_keep]
     y = np.eye(len(CLASS_LABELS))[flat_label[flat_keep]]
+    y_charge = np.eye(len(CHARGE_CLASS_LABELS))[flat_charge[flat_keep]]
     pt_target = target_pt[flat_keep]
     truth_pt = flat_pt_phys[flat_keep]
     reco_pt = flat_reco_pt[flat_keep]
@@ -69,9 +72,12 @@ def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[st
     return {
         "X_train": X[train], "y_train": y[train], "pt_train": pt_target[train],
         "truth_pt_train": truth_pt[train], "reco_pt_train": reco_pt[train],
+        "charge_train": y_charge[train],
         "X_test": X[test], "y_test": y[test], "pt_test": pt_target[test],
         "truth_pt_test": truth_pt[test], "reco_pt_test": reco_pt[test],
+        "charge_test": y_charge[test],
         "feature_names": feature_names, "class_labels": CLASS_LABELS,
+        "charge_class_labels": CHARGE_CLASS_LABELS,
     }
 
 
@@ -113,6 +119,7 @@ def run_training(config_path: str, files: list[str], output_dir: str, seed: int 
         mlflow = None
         run_ctx = _NullCtx()
 
+    constraints = config.get("constraints") or {}
     with run_ctx:
         if mlflow:
             mlflow.log_params({
@@ -120,15 +127,22 @@ def run_training(config_path: str, files: list[str], output_dir: str, seed: int 
                 "n_train": len(ds["X_train"]),
                 **{f"train.{k}": v for k, v in model.training_config.items() if np.isscalar(v)},
             })
+            if constraints:
+                mlflow.log_param("constraints", ",".join(
+                    str(item.get("target")) for item in constraints.get("items", [])
+                ))
         model.build(ds["X_train"].shape[1:], len(model.class_labels))
         model.compile()
         model.fit(ds["X_train"], ds["y_train"], ds["pt_train"],
                   sample_weight=weights,
                   validation_split=model.training_config.get("validation_split", 0.1),
-                  seed=seed)
+                  seed=seed,
+                  y_charge=ds.get("charge_train"))
         model.save()
         if mlflow:
             mlflow.log_metric("best_val_loss", model.best_val_loss())
+            for k, v in model.constraint_metrics().items():
+                mlflow.log_metric(k, v)
             mlflow.log_artifacts(model.output_dir)
     return model
 
