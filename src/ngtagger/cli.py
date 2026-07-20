@@ -94,6 +94,21 @@ def main(argv=None):
     p_dv.add_argument("--max-events", type=int, default=None)
     p_dv.add_argument("--conifer", action="store_true")
 
+    p_vs = sub.add_parser("vtx-study",
+                          help="fastHisto vertex (dx, dy) / peak-finder kernel study")
+    mode = p_vs.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--kernel-scan", action="store_true",
+                      help="two-close-vertices kernel scan (flat vs tapered)")
+    mode.add_argument("--realdata", nargs="+", metavar="FILE",
+                      help="real-data (dx, dy) smoke over extended-track nano file(s)")
+    p_vs.add_argument("--outdir", default="eval_refitq/vtxdxy")
+    p_vs.add_argument("--track-table", default="L1TExtTrack",
+                      help="extended (5-par) track table for --realdata")
+    p_vs.add_argument("--d0-gate", type=float, default=0.15,
+                      help="|d0| prompt-track gate [cm] for --realdata")
+    p_vs.add_argument("--seed", type=int, default=0, help="--kernel-scan toy seed")
+    p_vs.add_argument("--no-plot", action="store_true", help="skip PNG output")
+
     p_ins = sub.add_parser("inspect-nano", help="print tagger-relevant tables of a nano file")
     p_ins.add_argument("file")
 
@@ -171,6 +186,14 @@ def main(argv=None):
         train_dispvtx(args.inputs, args.output, max_events=args.max_events)
         if args.conifer:
             export_conifer(args.output)
+    elif args.cmd == "vtx-study":
+        from ngtagger.train.vtxstudy import run_kernel_scan, run_vertex_dxy_smoke
+
+        if args.kernel_scan:
+            run_kernel_scan(args.outdir, seed=args.seed, make_plot=not args.no_plot)
+        else:
+            run_vertex_dxy_smoke(args.realdata, args.outdir, track_table=args.track_table,
+                                 d0_gate=args.d0_gate, make_plot=not args.no_plot)
     elif args.cmd == "inspect-nano":
         import uproot
 

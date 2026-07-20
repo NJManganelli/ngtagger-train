@@ -1,9 +1,15 @@
-"""SC8 pipeline plumbing test: the jet/link/cand/track tables are config knobs,
-not hardcoded names. Builds a synthetic nano whose ONLY jet collection uses the
-PLAIN SC8 naming (L1puppiJetSC8 / L1SC8JetCands / L1PuppiCand / L1TTrack -- SC8
-has no NG-tagged collection; training labels come from gen matching) and runs
-the full prepare_dataset path (read -> group -> features -> gen labels) through
-the table-override kwargs that configs/deepset_hgq2_sc8.yaml sets."""
+"""SC8 + SC4 pipeline plumbing tests: the jet/link/cand/track tables are config
+knobs, not hardcoded names. Builds a synthetic nano and runs the full
+prepare_dataset path (read -> group -> features -> gen labels) through the
+table-override kwargs.
+
+Two parallel table-name sets share one fixture machinery:
+  SC8  L1puppiJetSC8 / L1SC8JetCands / L1PuppiCand / L1TTrack -- SC8 has no
+       NG-tagged collection; labels come from gen matching (config
+       configs/deepset_hgq2_sc8.yaml).
+  SC4  L1puppiJetSC4NG / L1SC4NGJetCands / L1ExtPuppiCand / L1TExtTrack -- the
+       default (NG) path; this is the synthetic twin so the default pipeline
+       has the same synthetic coverage as SC8."""
 
 import awkward as ak
 import numpy as np
@@ -11,14 +17,26 @@ import pytest
 
 uproot = pytest.importorskip("uproot")
 
+# SC8 table-name set (no NG collection)
 JET_TABLE = "L1puppiJetSC8"
 LINK_TABLE = "L1SC8JetCands"
 CAND_TABLE = "L1PuppiCand"
 TRACK_TABLE = "L1TTrack"
 
+# SC4 (default, NG) table-name set -- the synthetic twin
+SC4_TABLES = {
+    "jet_table": "L1puppiJetSC4NG", "link_table": "L1SC4NGJetCands",
+    "cand_table": "L1ExtPuppiCand", "track_table": "L1TExtTrack",
+}
+SC8_TABLES = {
+    "jet_table": JET_TABLE, "link_table": LINK_TABLE,
+    "cand_table": CAND_TABLE, "track_table": TRACK_TABLE,
+}
 
-def _write_sc8(tmp_path, name="sc8.root", n_events=8):
+
+def _write_nano(tmp_path, tables, name, n_events=8):
     """Two jets per event, two constituents each; cand 0/2 track-matched.
+    `tables` selects the jet/link/cand/track table NAMES (SC4 vs SC8).
 
     NOTE: uproot's how="zip" reader groups jagged branches by shared offsets,
     so every collection here carries a pairwise-DISTINCT per-event count
@@ -26,6 +44,10 @@ def _write_sc8(tmp_path, name="sc8.root", n_events=8):
     GenPart 9) or the groups would merge under synthetic-fixture names.
     Extra entries are placed far away in (eta, phi) so matching is unaffected.
     """
+    jet_table = tables["jet_table"]
+    link_table = tables["link_table"]
+    cand_table = tables["cand_table"]
+    track_table = tables["track_table"]
     # 5 cands: 4 linked + 1 stray
     cand = {
         "pt": [[30.0, 5.0, 18.0, 3.0, 1.0]] * n_events,
@@ -47,18 +69,18 @@ def _write_sc8(tmp_path, name="sc8.root", n_events=8):
         "run": np.ones(n_events, dtype=np.uint32),
         "luminosityBlock": np.ones(n_events, dtype=np.uint32),
         "event": np.arange(n_events, dtype=np.uint64),
-        CAND_TABLE: ak.zip({k: ak.Array(v) for k, v in cand.items()}),
-        JET_TABLE: ak.zip({
+        cand_table: ak.zip({k: ak.Array(v) for k, v in cand.items()}),
+        jet_table: ak.zip({
             "pt": [[35.0, 20.0]] * n_events, "eta": [[0.15, -0.35]] * n_events,
             "phi": [[0.05, -0.8]] * n_events, "et": [[35.0, 20.0]] * n_events,
         }),
-        LINK_TABLE: ak.zip({
+        link_table: ak.zip({
             "jetIdx": [[0, 0, 1, 1]] * n_events,
             "candIdx": [[0, 1, 2, 3]] * n_events,
             "slot": [[0, 1, 0, 1]] * n_events,
             "inTagger": [[True, True, True, True]] * n_events,
         }),
-        TRACK_TABLE: ak.zip({
+        track_table: ak.zip({
             "rInv": [[1e-3, -2e-3, 3e-3]] * n_events, "tanL": [[0.2, -0.6, 1.0]] * n_events,
             "z0": [[0.01, -0.02, 0.03]] * n_events, "d0": [[0.001, -0.002, 0.003]] * n_events,
             "chi2XYRed": [[1.1, 2.2, 3.0]] * n_events, "chi2ZRed": [[0.9, 1.5, 2.0]] * n_events,
@@ -98,14 +120,19 @@ def _write_sc8(tmp_path, name="sc8.root", n_events=8):
     return str(tmp_path / name)
 
 
-def test_load_jets_sc8_tables(tmp_path):
+# Both the default (SC4/NG) and the SC8 table-name sets get identical synthetic
+# coverage: the fixture is table-name-agnostic, so the twin is a parametrization.
+_TABLE_SETS = [pytest.param(SC4_TABLES, "sc4.root", id="sc4"),
+               pytest.param(SC8_TABLES, "sc8.root", id="sc8")]
+
+
+@pytest.mark.parametrize("tables,fname", _TABLE_SETS)
+def test_load_jets_tables(tmp_path, tables, fname):
     from ngtagger.data.nano import load_jets
 
-    path = _write_sc8(tmp_path)
+    path = _write_nano(tmp_path, tables, fname)
     jets, constituents, gen = load_jets(
-        [path], n_const=8, feature_groups=["baseline", "track"],
-        jet_table=JET_TABLE, link_table=LINK_TABLE,
-        cand_table=CAND_TABLE, track_table=TRACK_TABLE,
+        [path], n_const=8, feature_groups=["baseline", "track"], **tables,
     )
     assert ak.all(ak.num(jets.pt, axis=1) == 2)
     assert ak.all(ak.num(constituents.pt, axis=2) == 2)
@@ -113,14 +140,14 @@ def test_load_jets_sc8_tables(tmp_path):
     assert float(ak.flatten(constituents.trk_trkMVA1, axis=None)[0]) == pytest.approx(0.9)
 
 
-def test_prepare_dataset_sc8_end_to_end(tmp_path):
+@pytest.mark.parametrize("tables,fname", _TABLE_SETS)
+def test_prepare_dataset_end_to_end(tmp_path, tables, fname):
     from ngtagger.train.trainer import prepare_dataset
 
-    path = _write_sc8(tmp_path)
+    path = _write_nano(tmp_path, tables, fname)
     ds = prepare_dataset(
         [path], n_const=8, feature_groups=["baseline"],
-        tables={"jet_table": JET_TABLE, "link_table": LINK_TABLE,
-                "cand_table": CAND_TABLE, "track_table": TRACK_TABLE},
+        tables=dict(tables),
         gen_match_dr=0.8, test_fraction=0.25,
     )
     n_jets = len(ds["X_train"]) + len(ds["X_test"])
