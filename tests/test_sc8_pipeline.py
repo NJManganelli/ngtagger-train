@@ -1,8 +1,9 @@
-"""SC8 pipeline plumbing test: the jet/link tables are config knobs, not
-hardcoded names. Builds a synthetic nano whose ONLY jet collection uses the
-SC8 NG naming (L1puppiJetSC8NG / L1SC8NGJetCands) and runs the full
-prepare_dataset path (read -> group -> features -> gen labels) through the
-table-override kwargs that configs/deepset_hgq2_sc8.yaml sets."""
+"""SC8 pipeline plumbing test: the jet/link/cand/track tables are config knobs,
+not hardcoded names. Builds a synthetic nano whose ONLY jet collection uses the
+PLAIN SC8 naming (L1puppiJetSC8 / L1SC8JetCands / L1PuppiCand / L1TTrack -- SC8
+has no NG-tagged collection; training labels come from gen matching) and runs
+the full prepare_dataset path (read -> group -> features -> gen labels) through
+the table-override kwargs that configs/deepset_hgq2_sc8.yaml sets."""
 
 import awkward as ak
 import numpy as np
@@ -10,8 +11,10 @@ import pytest
 
 uproot = pytest.importorskip("uproot")
 
-JET_TABLE = "L1puppiJetSC8NG"
-LINK_TABLE = "L1SC8NGJetCands"
+JET_TABLE = "L1puppiJetSC8"
+LINK_TABLE = "L1SC8JetCands"
+CAND_TABLE = "L1PuppiCand"
+TRACK_TABLE = "L1TTrack"
 
 
 def _write_sc8(tmp_path, name="sc8.root", n_events=8):
@@ -44,7 +47,7 @@ def _write_sc8(tmp_path, name="sc8.root", n_events=8):
         "run": np.ones(n_events, dtype=np.uint32),
         "luminosityBlock": np.ones(n_events, dtype=np.uint32),
         "event": np.arange(n_events, dtype=np.uint64),
-        "L1ExtPuppiCand": ak.zip({k: ak.Array(v) for k, v in cand.items()}),
+        CAND_TABLE: ak.zip({k: ak.Array(v) for k, v in cand.items()}),
         JET_TABLE: ak.zip({
             "pt": [[35.0, 20.0]] * n_events, "eta": [[0.15, -0.35]] * n_events,
             "phi": [[0.05, -0.8]] * n_events, "et": [[35.0, 20.0]] * n_events,
@@ -55,7 +58,7 @@ def _write_sc8(tmp_path, name="sc8.root", n_events=8):
             "slot": [[0, 1, 0, 1]] * n_events,
             "inTagger": [[True, True, True, True]] * n_events,
         }),
-        "L1TExtTrack": ak.zip({
+        TRACK_TABLE: ak.zip({
             "rInv": [[1e-3, -2e-3, 3e-3]] * n_events, "tanL": [[0.2, -0.6, 1.0]] * n_events,
             "z0": [[0.01, -0.02, 0.03]] * n_events, "d0": [[0.001, -0.002, 0.003]] * n_events,
             "chi2XYRed": [[1.1, 2.2, 3.0]] * n_events, "chi2ZRed": [[0.9, 1.5, 2.0]] * n_events,
@@ -102,6 +105,7 @@ def test_load_jets_sc8_tables(tmp_path):
     jets, constituents, gen = load_jets(
         [path], n_const=8, feature_groups=["baseline", "track"],
         jet_table=JET_TABLE, link_table=LINK_TABLE,
+        cand_table=CAND_TABLE, track_table=TRACK_TABLE,
     )
     assert ak.all(ak.num(jets.pt, axis=1) == 2)
     assert ak.all(ak.num(constituents.pt, axis=2) == 2)
@@ -115,7 +119,8 @@ def test_prepare_dataset_sc8_end_to_end(tmp_path):
     path = _write_sc8(tmp_path)
     ds = prepare_dataset(
         [path], n_const=8, feature_groups=["baseline"],
-        tables={"jet_table": JET_TABLE, "link_table": LINK_TABLE},
+        tables={"jet_table": JET_TABLE, "link_table": LINK_TABLE,
+                "cand_table": CAND_TABLE, "track_table": TRACK_TABLE},
         gen_match_dr=0.8, test_fraction=0.25,
     )
     n_jets = len(ds["X_train"]) + len(ds["X_test"])
@@ -149,7 +154,9 @@ def test_sc8_config_tables_reach_prepare_dataset(tmp_path, monkeypatch):
     with pytest.raises(_Stop):
         trainer_mod.run_training(cfg_path, ["dummy.root"], str(tmp_path / "out"))
 
-    assert captured["tables"]["jet_table"] == "L1puppiJetSC8NG"
-    assert captured["tables"]["link_table"] == "L1SC8NGJetCands"
+    assert captured["tables"]["jet_table"] == "L1puppiJetSC8"
+    assert captured["tables"]["link_table"] == "L1SC8JetCands"
+    assert captured["tables"]["cand_table"] == "L1PuppiCand"
+    assert captured["tables"]["track_table"] == "L1TTrack"
     assert captured["n_const"] == cfg["data_config"]["n_constituents"]
     assert captured["gen_match_dr"] == pytest.approx(0.8)
