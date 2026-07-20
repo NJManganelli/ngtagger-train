@@ -63,6 +63,11 @@ class _SimCLRModel(keras.Model):
 class DeepSetContrastive(TagModel):
     def build(self, input_shape: tuple, n_classes: int):
         cfg = self.model_config
+        if cfg.get("charge_layers"):
+            raise NotImplementedError(
+                "charge head is only implemented for DeepSetHGQ2 (drop "
+                "model_config.charge_layers or switch models)"
+            )
         n_const, n_feat = input_shape
         self._input_shape = input_shape
         self._n_classes = n_classes
@@ -128,7 +133,9 @@ class DeepSetContrastive(TagModel):
         tc = self.training_config
         self.simclr.compile(optimizer=keras.optimizers.Adam(tc.get("embedding_lr", 1e-2)))
 
-    def fit(self, X, y, pt_target, sample_weight=None, validation_split=0.1, seed: int = 0):
+    def fit(self, X, y, pt_target, sample_weight=None, validation_split=0.1, seed: int = 0,
+            y_charge=None):
+        # y_charge accepted for interface parity; no charge head here (guarded in build)
         keras.utils.set_random_seed(seed)
         rng = np.random.default_rng(seed)
         tc = self.training_config

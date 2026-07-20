@@ -60,22 +60,67 @@ class DeepSetHGQ2(TagModel):
                 pt = QDense(width, activation="relu", name=f"Dense_{i + 1}_pT")(pt)
             pt = QDense(1, name=self.output_pt_name)(pt)
 
-            self.model = keras.Model(inputs=inputs, outputs=[jet_id, pt])
+            outputs = [jet_id, pt]
+            if cfg.get("charge_layers"):
+                # 3-class charge head (study B.2.3): {q-, neutral/gluon, q+},
+                # 2-bit output field; shares the pooled trunk like the others.
+                charge = main
+                for i, width in enumerate(cfg["charge_layers"]):
+                    charge = QDense(width, activation="relu", name=f"Dense_{i + 1}_charge")(charge)
+                charge = QDense(3, activation="relu", name="Dense_out_charge")(charge)
+                charge = Activation("linear", name=self.output_charge_name)(charge)
+                outputs.append(charge)
+
+            self.model = keras.Model(inputs=inputs, outputs=outputs)
+
+    @property
+    def has_charge_head(self) -> bool:
+        return bool(self.model_config.get("charge_layers"))
+
+    def _output_names(self) -> list[str]:
+        names = [self.output_id_name, self.output_pt_name]
+        if self.has_charge_head:
+            names.append(self.output_charge_name)
+        return names
 
     def compile(self):
         tc = self.training_config
         opt = keras.optimizers.Adam(learning_rate=tc.get("learning_rate", 1e-2))
-        self.model.compile(
+        names = self._output_names()
+        losses = {
+            self.output_id_name: keras.losses.CategoricalCrossentropy(from_logits=True),
+            self.output_pt_name: keras.losses.LogCosh(),
+        }
+        metrics = {self.output_id_name: ["categorical_accuracy"]}
+        loss_weights = list(tc.get("loss_weights", [1.0, 1.0]))
+        if self.has_charge_head:
+            losses[self.output_charge_name] = keras.losses.CategoricalCrossentropy(from_logits=True)
+            metrics[self.output_charge_name] = ["categorical_accuracy"]
+            if len(loss_weights) < len(names):
+                loss_weights.append(tc.get("charge_loss_weight", 1.0))
+        if len(loss_weights) != len(names):
+            raise ValueError(f"loss_weights has {len(loss_weights)} entries for outputs {names}")
+
+        self._train_model = self.model
+        self._mdmm_callbacks = []
+        if self.config.get("constraints"):
+            from ngtagger.train.mdmm import attach_mdmm
+
+            self._train_model, self._mdmm_callbacks = attach_mdmm(
+                self.model, self.config["constraints"], names, self.class_labels or None
+            )
+        self._train_model.compile(
             optimizer=opt,
-            loss={
-                self.output_id_name: keras.losses.CategoricalCrossentropy(from_logits=True),
-                self.output_pt_name: keras.losses.LogCosh(),
-            },
-            loss_weights=dict(zip(
-                [self.output_id_name, self.output_pt_name], tc.get("loss_weights", [1.0, 1.0])
-            )),
-            metrics={self.output_id_name: ["categorical_accuracy"]},
+            loss=losses,
+            loss_weights=dict(zip(names, loss_weights)),
+            metrics=metrics,
         )
+
+    def constraint_metrics(self) -> dict:
+        from ngtagger.train.mdmm import collect_constraint_metrics
+
+        return collect_constraint_metrics(getattr(self, "_train_model", None),
+                                          getattr(self, "_mdmm_callbacks", []))
 
     def _callbacks(self):
         tc = self.training_config
@@ -97,17 +142,28 @@ class DeepSetHGQ2(TagModel):
             pass
         return cbs
 
-    def fit(self, X, y, pt_target, sample_weight=None, validation_split=0.1, seed: int = 0):
+    def fit(self, X, y, pt_target, sample_weight=None, validation_split=0.1, seed: int = 0,
+            y_charge=None):
         keras.utils.set_random_seed(seed)
         tc = self.training_config
-        self.history = self.model.fit(
+        targets = {self.output_id_name: y, self.output_pt_name: pt_target}
+        if self.has_charge_head:
+            if y_charge is None:
+                raise ValueError(
+                    "model_config.charge_layers enables the charge head but no "
+                    "y_charge labels were provided (prepare_dataset supplies "
+                    "charge_train; see data/labels.py label_jet_charge)"
+                )
+            targets[self.output_charge_name] = y_charge
+        train_model = getattr(self, "_train_model", None) or self.model
+        self.history = train_model.fit(
             X,
-            {self.output_id_name: y, self.output_pt_name: pt_target},
+            targets,
             sample_weight=sample_weight,
             epochs=tc.get("epochs", 100),
             batch_size=tc.get("batch_size", 2048),
             validation_split=validation_split,
-            callbacks=self._callbacks(),
+            callbacks=self._callbacks() + getattr(self, "_mdmm_callbacks", []),
             verbose=self.config.get("run_config", {}).get("verbose", 2),
         )
         return self.history

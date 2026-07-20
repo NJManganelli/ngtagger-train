@@ -17,6 +17,10 @@ import numpy as np
 
 CLASS_LABELS = ["b", "charm", "light", "gluon", "taup", "taum", "muon", "electron"]
 
+# 3-class jet-charge scheme (model-space study B.2.3): index = sign(parton
+# electric charge) + 1, with gluon/unmatched central.
+CHARGE_CLASS_LABELS = ["qminus", "neutral", "qplus"]
+
 # statusFlags bit 0: isPrompt (NanoAOD convention)
 _IS_PROMPT = 1 << 0
 
@@ -106,3 +110,37 @@ def label_jets(jets: ak.Array, gen: dict, max_dr: float = 0.4, gen_pt_min: float
 
     keep = (label >= 0) & (target_pt_phys > gen_pt_min)
     return label, target_pt, target_pt_phys, keep
+
+
+def parton_charge_class(pflav):
+    """GenJet.partonFlavour -> 3-class charge index {0: q-, 1: neutral, 2: q+}.
+
+    Exact pdgId -> class map (study B.2.3: u-type quarks carry +2/3, d-type
+    -1/3, antiquarks negated; gluon and unmatched are neutral/central):
+
+        +1 d    -> q-      -1 dbar -> q+
+        +2 u    -> q+      -2 ubar -> q-
+        +3 s    -> q-      -3 sbar -> q+
+        +4 c    -> q+      -4 cbar -> q-
+        +5 b    -> q-      -5 bbar -> q+
+        +6 t    -> q+      -6 tbar -> q-
+        21 g, 0 (unmatched/undefined), anything else -> neutral
+    """
+    absf = abs(pflav)
+    is_quark = (absf >= 1) & (absf <= 6)
+    up_type = is_quark & (absf % 2 == 0)  # u, c, t: +2/3; d, s, b: -1/3
+    sign = np.sign(pflav)
+    qsign = ak.where(up_type, sign, -sign)  # sign of the parton electric charge
+    return ak.values_astype(ak.where(is_quark, qsign + 1, 1), np.int64)
+
+
+def label_jet_charge(jets: ak.Array, gen: dict, max_dr: float = 0.4):
+    """Per-jet 3-class charge label from the deltaR-matched GenJet
+    partonFlavour, aligned with `jets` (same nesting as label_jets output).
+    Additive to the 8-class scheme -- label_jets is untouched; leptonic jets
+    also get a charge class here (their charge is already carried by the
+    8-class labels; mask downstream if a quark-only sample is wanted)."""
+    genjets = gen["GenJet"]
+    gj_idx, gj_match = _match(jets, genjets, max_dr)
+    pflav = _take(genjets.partonFlavour, gj_idx, gj_match, 0)
+    return parton_charge_class(pflav)
