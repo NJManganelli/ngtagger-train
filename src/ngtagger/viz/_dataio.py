@@ -32,7 +32,15 @@ SIDE = "L1TSmartPixelsExtRefitHitDigiRefitAAAA"   # all-layer sidecar
 TRK = "L1TSmartPixelsExtTrackDigiRefit"           # + variant suffix
 
 _REF_COLS = ["rInv", "phi", "tanL", "z0", "d0", "pt", "eta", "genuine",
-             "tpPt", "tpFromHardInteraction", "tpPdgId", "nStubs", "looselyGenuine"]
+             "tpPt", "tpFromHardInteraction", "tpPdgId", "nStubs", "looselyGenuine",
+             "hitPattern"]
+
+# Phase-2 Outer-Tracker barrel mean layer radii [cm], from the tracklet firmware
+# constants (L1Trigger/TrackFindingTracklet Settings.h: irmean_ * rmaxdisk_/4096,
+# rmaxdisk_=120): {851,1269,1784,2347,2936,3697} -> these values. Bit i (LSB) of the
+# TTTrack hitPattern populates OT barrel layer i+1 (bit 6 = a forward disk slot;
+# schematic on barrel tracks). These anchor the OT-only seed's long lever arm.
+OT_BARREL_RADII = (24.9, 37.2, 52.3, 68.8, 86.0, 108.3)
 _SIDE_COLS = ["trackIdx", "layer", "resX", "resY", "cotAlphaMeas", "cotBetaMeas",
               "parCotAlpha", "parCotBeta", "sigAlpha", "sigBeta",
               "pullX", "pullY", "pullAlpha", "pullBeta",
@@ -104,7 +112,8 @@ def load_nano(nano_file, layer_radii=(3.0, 6.8, 10.9, 16.0), max_events=None):
             truth = dict(genuine=bool(rf["genuine"][i]),
                          looselyGenuine=bool(rf["looselyGenuine"][i]),
                          tpPt=float(rf["tpPt"][i]), fromHard=bool(rf["tpFromHardInteraction"][i]),
-                         pdgId=int(rf["tpPdgId"][i]), nStubs=int(rf["nStubs"][i]))
+                         pdgId=int(rf["tpPdgId"][i]), nStubs=int(rf["nStubs"][i]),
+                         hitPattern=int(rf["hitPattern"][i]))
             hits = {}
             rows = np.where(s["trackIdx"] == i)[0]
             for r in rows:
@@ -137,3 +146,21 @@ def config_active_layers(config):
 
 def hit_class_name(cls):
     return {0: "same-TP (true)", 1: "other-TP (wrong)", 2: "noise", -1: "none"}.get(cls, "?")
+
+
+def ot_stub_radii(hit_pattern, ot_radii=OT_BARREL_RADII):
+    """Decode a TTTrack hitPattern into the OT barrel radii carrying a stub.
+
+    Bit i (LSB) -> OT barrel layer i+1. popcount(hitPattern) == nStubs (verified on
+    the sample). Bit 6 is a forward-disk slot with no barrel radius; for barrel
+    tracks it is rare and is placed schematically at the outermost barrel radius.
+    Returns a list of (radius, layer_label) for the set bits.
+    """
+    out = []
+    for b in range(7):
+        if hit_pattern & (1 << b):
+            if b < len(ot_radii):
+                out.append((ot_radii[b], f"OT-L{b + 1}"))
+            else:
+                out.append((ot_radii[-1], f"OT-disk(bit{b})"))
+    return out
