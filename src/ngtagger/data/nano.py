@@ -96,18 +96,27 @@ def group_constituents(events: ak.Array, jet_table: str, link_table: str, n_cons
     return ak.mask(nested_cand, keep)[~ak.is_none(ak.mask(nested_cand, keep), axis=2)]
 
 
+def _gather2(arr2d: ak.Array, nested_idx: ak.Array) -> ak.Array:
+    """Index an (event, obj) array with an (event, jet, constituent) jagged
+    index. awkward rejects direct jagged indexing when the index is one level
+    deeper than the array, so gather flat per event and re-nest."""
+    counts = ak.num(nested_idx, axis=2)
+    flat_idx = ak.flatten(nested_idx, axis=2)
+    return ak.unflatten(arr2d[flat_idx], ak.flatten(counts, axis=1), axis=1)
+
+
 def gather(cands: ak.Array, nested_idx: ak.Array, field: str) -> ak.Array:
     """Gather a candidate field into (event, jet, constituent) nesting."""
-    return cands[field][nested_idx]
+    return _gather2(cands[field], nested_idx)
 
 
 def crossref_gather(cands: ak.Array, other: ak.Array, nested_idx: ak.Array, idx_field: str, field: str, default: float = 0.0) -> ak.Array:
     """Gather a field from a crossref'd table (tracks/clusters) via an idx
     column on the candidates; -1 (no ref) yields `default`."""
-    ref_idx = cands[idx_field][nested_idx]
+    ref_idx = _gather2(cands[idx_field], nested_idx)
     valid = ref_idx >= 0
     safe_idx = ak.where(valid, ref_idx, 0)
-    vals = other[field][safe_idx]
+    vals = _gather2(other[field], safe_idx)
     return ak.where(valid, vals, default)
 
 
