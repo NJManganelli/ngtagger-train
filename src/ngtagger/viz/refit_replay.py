@@ -84,6 +84,18 @@ def _poca(rInv, phi0, d0):
 
 def helix_points(rInv, phi0, tanL, z0, d0, rmax=17.5, npts=250):
     """Sample the helix from POCA outward to radius rmax. Returns x, y, z, r."""
+    # CMSSW TTTrack sign convention: with the stored (signed) rInv, positive
+    # curvature puts the centre of curvature to the RIGHT of the momentum
+    # (phi0_hat rotated by -90deg), i.e. centre = POCA + R*(sin phi0, -cos phi0).
+    # The bare (sin(phi0+psi))/rInv parametrisation below curls the OTHER way
+    # (centre to the LEFT), which mirror-flips the transverse helix and makes it
+    # peel away from its own OT stubs (verified: as-is the drawn helix misses the
+    # nano stubs by up to ~25 cm on soft tracks; flipping the curl lands it on
+    # them to <1 mm). Negate the signed curvature once so R, the centre, psimax
+    # and the arc-length s all pick up the correct handedness. This is a pure
+    # bending-plane sign; s = psi/rInv and z are unchanged (r-z projection is
+    # unaffected), and _poca / the straight-line branch do not depend on it.
+    rInv = -rInv
     x0, y0 = _poca(rInv, phi0, d0)
     if abs(rInv) < 1e-9:
         b = x0 * np.cos(phi0) + y0 * np.sin(phi0)

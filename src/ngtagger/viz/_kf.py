@@ -18,6 +18,13 @@ def _helix_global(a, R):
     SmartPixelsHelixProjector::crossLayer's analytic step. a=(rInv,phi0,tanL,z0,d0);
     POCA x0=d0*sin(phi0), y0=-d0*cos(phi0). Returns (pos[3], dir[3], s) or None."""
     rInv, phi0, tanL, z0, d0 = a
+    # Mirror the CMSSW producer's SIGN FIX (SmartPixelsHelixProjector::crossLayer):
+    # the stored rInv follows the CMSSW TTTrack convention, which curls opposite to
+    # this (sin(phi0+psi))/rInv parametrization. The producer negates the signed
+    # curvature at crossLayer entry so the IT crossing lands on the correct (real-
+    # digi) side; this replay must negate identically to stay faithful to it (and to
+    # match the OT stubs / drawn helix). z0/tanL and arc length are unaffected.
+    rInv = -rInv
     x0 = d0 * np.sin(phi0); y0 = -d0 * np.cos(phi0)
     c0 = np.cos(phi0); s0 = np.sin(phi0)
     if abs(rInv) < 1e-6:
