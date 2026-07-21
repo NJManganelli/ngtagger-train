@@ -489,3 +489,23 @@ def test_js_core_matches_python(tmp_path):
     print(res.stderr)
     assert res.returncode == 0, res.stderr
     assert "ALL PASS" in (res.stdout + res.stderr), res.stderr
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="JXA needs macOS osascript")
+def test_site_smoke_jxa(tmp_path):
+    """Load the rendered site data exactly as explorer.html would (typed
+    arrays at byte offsets) and run the compute core on it.  Gated on the
+    regenerable site dir existing (python -m ngtagger.viz.mva_explorer ...)."""
+    site = os.path.join(os.path.dirname(__file__), "..", "eval_mva_explorer", "site")
+    site = os.path.abspath(site)
+    if not os.path.exists(os.path.join(site, "manifest.json")):
+        pytest.skip("no rendered site (run python -m ngtagger.viz.mva_explorer export-all)")
+    core = open(os.path.join(SITE_SRC, "explorer_core.js")).read()
+    smoke = open(os.path.join(SITE_SRC, "smoke_site_jxa.js")).read()
+    script = tmp_path / "smoke.js"
+    script.write_text(core + "\n" + smoke.replace("__SITEDIR__", site))
+    res = subprocess.run(["osascript", "-l", "JavaScript", str(script)],
+                         capture_output=True, text=True, timeout=600)
+    print(res.stdout, res.stderr)
+    assert res.returncode == 0, res.stderr
+    assert "SMOKE PASS" in (res.stdout + res.stderr), res.stdout + res.stderr

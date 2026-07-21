@@ -116,7 +116,8 @@ function computeGridEntry(spec) {
     while (true) {
       let off = fixedOff + plotOff;
       for (let k = 0; k < restAxes.length; k++) off += lists[k][idx[k]] * rst[k];
-      vals.push(vf(off));
+      const v = vf(off);
+      if (Number.isFinite(v)) vals.push(v); // 0/0 ratios in f32 blocks -> skip
       let k = restAxes.length - 1;
       while (k >= 0) {
         idx[k]++;

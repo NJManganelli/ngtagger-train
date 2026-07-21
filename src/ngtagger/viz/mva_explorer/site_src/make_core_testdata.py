@@ -58,7 +58,8 @@ def grid_reference(values: np.ndarray, centers: list, fixed: dict, x_axis: int,
         sl[x_axis] = bx
         if iy >= 0:
             sl[iy] = by
-        return sub[tuple(sl)].ravel()
+        out = sub[tuple(sl)].ravel()
+        return out[np.isfinite(out)]  # mirror explorer_core's gather filter
 
     def coord(axis, b):
         return float(centers[axis][b]) if centers[axis] is not None else float(b)
