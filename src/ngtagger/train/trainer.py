@@ -57,6 +57,10 @@ def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[st
     flat_keep = ak.to_numpy(ak.flatten(keep))
     flat_pt_phys = ak.to_numpy(ak.flatten(target_pt_phys))
     flat_reco_pt = ak.to_numpy(ak.flatten(jets.pt))
+    # cheap jet-level kinematics carried through for prediction dumps / plots
+    flat_reco_eta = ak.to_numpy(ak.flatten(jets.eta))
+    flat_reco_phi = ak.to_numpy(ak.flatten(jets.phi))
+    flat_nconst = ak.to_numpy(ak.flatten(ak.num(constituents.pt, axis=2)))
 
     X = X[flat_keep]
     y = np.eye(len(CLASS_LABELS))[flat_label[flat_keep]]
@@ -64,6 +68,9 @@ def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[st
     pt_target = target_pt[flat_keep]
     truth_pt = flat_pt_phys[flat_keep]
     reco_pt = flat_reco_pt[flat_keep]
+    reco_eta = flat_reco_eta[flat_keep]
+    reco_phi = flat_reco_phi[flat_keep]
+    nconst = flat_nconst[flat_keep]
 
     rng = np.random.default_rng(seed)
     idx = rng.permutation(len(X))
@@ -72,9 +79,13 @@ def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[st
     return {
         "X_train": X[train], "y_train": y[train], "pt_train": pt_target[train],
         "truth_pt_train": truth_pt[train], "reco_pt_train": reco_pt[train],
+        "reco_eta_train": reco_eta[train], "reco_phi_train": reco_phi[train],
+        "nconst_train": nconst[train],
         "charge_train": y_charge[train],
         "X_test": X[test], "y_test": y[test], "pt_test": pt_target[test],
         "truth_pt_test": truth_pt[test], "reco_pt_test": reco_pt[test],
+        "reco_eta_test": reco_eta[test], "reco_phi_test": reco_phi[test],
+        "nconst_test": nconst[test],
         "charge_test": y_charge[test],
         "feature_names": feature_names, "class_labels": CLASS_LABELS,
         "charge_class_labels": CHARGE_CLASS_LABELS,
@@ -139,6 +150,14 @@ def run_training(config_path: str, files: list[str], output_dir: str, seed: int 
                   seed=seed,
                   y_charge=ds.get("charge_train"))
         model.save()
+        try:  # default-on per-jet test-set prediction dump (MVA explorer input)
+            from ngtagger.train.prediction_dump import dump_test_predictions
+
+            dump_test_predictions(
+                model, ds, os.path.join(model.output_dir, "pred_test.npz"),
+                seed=seed, extra_meta={"config": config.get("model")})
+        except Exception as e:  # never fail a training over the dump
+            print(f"prediction dump skipped: {e}")
         if mlflow:
             mlflow.log_metric("best_val_loss", model.best_val_loss())
             for k, v in model.constraint_metrics().items():
