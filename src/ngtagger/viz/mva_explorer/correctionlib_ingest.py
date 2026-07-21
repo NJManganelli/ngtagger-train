@@ -367,15 +367,18 @@ def export_structured_smear(json_path: str, dataset_id: str, title: str,
                 cube[ik, ic, ip] = np.asarray(
                     corr.evaluate(*args)).reshape(grid_shape)
 
-    if np.min(cube) <= 0 or not np.all(np.isfinite(cube)):
-        raise ValueError(f"{dataset_id}: smearing cube must be strictly positive")
-    q = quantize_log10_int16(cube, scale)
+    if not np.all(np.isfinite(cube)):
+        raise ValueError(f"{dataset_id}: non-finite values in smearing cube")
+    if np.min(cube) > 0:
+        q, quant = quantize_log10_int16(cube, scale), "log10_i16"
+    else:  # e.g. CalV1 carries exact-0 sigmas in uncovered bins
+        q, quant = cube.astype("<f4"), "f32"
 
     meta = {
         "id": dataset_id, "title": title, "type": "structured",
         "source": os.path.basename(json_path),
         "file": f"{dataset_id}.bin",
-        "quant": "log10_i16", "scale": scale,
+        "quant": quant, "scale": scale,
         "shape": list(q.shape),
         "kinds": kind_names,
         "configs": configs,

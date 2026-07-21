@@ -1,0 +1,775 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>SmartPixels MVA explorer</title>
+<script src="plotly.min.js"></script>
+<script src="explorer_core.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; display: flex; height: 100vh; }
+  #sidebar { width: 480px; min-width: 480px; overflow-y: auto; padding: 12px;
+             background: #f5f6f8; border-right: 1px solid #ccc; }
+  #plotwrap { flex: 1; display: flex; flex-direction: column; }
+  #plot { flex: 1; }
+  h1 { font-size: 16px; margin: 4px 0 10px; }
+  fieldset { border: 1px solid #bbb; border-radius: 6px; margin-bottom: 10px; padding: 8px; }
+  legend { font-size: 12px; font-weight: 600; color: #444; }
+  label { font-size: 12px; }
+  select, input[type=text], input[type=number] {
+    font-size: 12px; padding: 2px 4px; border: 1px solid #bbb; border-radius: 4px; }
+  input[type=number] { width: 62px; }
+  input[type=range] { vertical-align: middle; }
+  .row { display: flex; align-items: center; gap: 6px; margin: 3px 0; flex-wrap: wrap; }
+  .entry { background: #fff; border: 1px solid #ccc; border-radius: 6px;
+           padding: 8px; margin-bottom: 8px; position: relative; }
+  .entry .rm { position: absolute; top: 4px; right: 6px; border: none; background: none;
+               color: #b00; font-size: 15px; cursor: pointer; }
+  .cuts { display: grid; grid-template-columns: auto 1fr 1fr; gap: 2px 6px;
+          font-size: 11px; align-items: center; margin-top: 4px; }
+  button.big { font-size: 13px; padding: 6px 10px; margin: 4px 2px; cursor: pointer;
+               border: 1px solid #888; border-radius: 6px; background: #fff; }
+  button.big:hover { background: #eef; }
+  .hint { font-size: 11px; color: #666; margin: 6px 0; }
+  #status { font-size: 12px; color: #666; padding: 4px 10px; }
+  .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+  .tabs button { flex: 1; font-size: 13px; padding: 6px 4px; cursor: pointer;
+                 border: 1px solid #888; border-radius: 6px 6px 0 0; background: #e4e6ea; }
+  .tabs button.active { background: #fff; font-weight: 600; border-bottom: 2px solid #fff; }
+  .tabs button:disabled { color: #aaa; cursor: default; }
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <h1>SmartPixels MVA explorer</h1>
+  <div class="tabs">
+    <button id="tab-reg">Regressions</button>
+    <button id="tab-tkq">tkQuality</button>
+    <button id="tab-tag">Jet tagger</button>
+  </div>
+  <div id="controls"></div>
+  <div id="entries"></div>
+  <button class="big" id="addBtn">+ add curve</button>
+  <div class="hint" id="panelHint"></div>
+</div>
+<div id="plotwrap">
+  <div id="status">loading manifest&hellip;</div>
+  <div id="plot"></div>
+</div>
+
+<script>
+"use strict";
+
+const PALETTE = ["#1f77b4","#d62728","#2ca02c","#9467bd","#ff7f0e",
+                 "#17becf","#8c564b","#e377c2","#bcbd22","#7f7f7f"];
+let MANIFEST = null;
+const DS = {};          // id -> {meta, buf(ArrayBuffer), arr(typed) }
+let PANEL = "reg";      // "reg" | "tkq" | "tag"
+let entrySeq = 0;
+
+/* ------------------------------------------------------------- loading */
+
+async function fetchJSON(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error("HTTP " + r.status + " for " + path);
+  return r.json();
+}
+
+async function loadDataset(metaFile) {
+  const meta = await fetchJSON(metaFile);
+  const r = await fetch(meta.file);
+  if (!r.ok) throw new Error("HTTP " + r.status + " for " + meta.file);
+  const buf = await r.arrayBuffer();
+  const ds = { meta, buf };
+  if (meta.type === "structured")
+    ds.arr = meta.quant === "log10_i16" ? new Int16Array(buf) : new Float32Array(buf);
+  else if (meta.type === "table")
+    ds.arr = new Float32Array(buf);
+  DS[meta.id] = ds;
+  return ds;
+}
+
+function corrView(ds, cm) {   // typed view for one generic correction block
+  return cm.quant === "log10_i16"
+    ? new Int16Array(ds.buf, cm.byte_offset, cm.n_values)
+    : new Float32Array(ds.buf, cm.byte_offset, cm.n_values);
+}
+
+/* ------------------------------------------------------------- helpers */
+
+const el = (id) => document.getElementById(id);
+const status = (t, isErr) => {
+  el("status").innerHTML = isErr ? "<b style='color:#b00'>" + t + "</b>" : t;
+};
+
+function opt(sel, items, values) {
+  sel.innerHTML = "";
+  items.forEach((t, i) => sel.add(new Option(t, values ? values[i] : t)));
+}
+
+function cutRowsHTML(items) {  // items: [{key, label}]
+  let h = "";
+  for (const it of items)
+    h += `<span>${it.label}</span>
+      <input type="number" step="any" class="cut" data-cut="${it.key}" data-kind="lo" placeholder="min">
+      <input type="number" step="any" class="cut" data-cut="${it.key}" data-kind="hi" placeholder="max">`;
+  return h;
+}
+
+function collectCuts(entryDiv) {  // {key: [lo, hi]} from the cut inputs
+  const out = {};
+  for (const inp of entryDiv.querySelectorAll(".cut")) {
+    const k = inp.dataset.cut;
+    if (!(k in out)) out[k] = [-Infinity, Infinity];
+    if (inp.value !== "")
+      out[k][inp.dataset.kind === "lo" ? 0 : 1] = parseFloat(inp.value);
+  }
+  for (const k in out)
+    if (out[k][0] === -Infinity && out[k][1] === Infinity) delete out[k];
+  return out;
+}
+
+function cutsLabel(cuts) {
+  const parts = [];
+  for (const k in cuts) {
+    const [lo, hi] = cuts[k];
+    parts.push(k + "∈[" + (isFinite(lo) ? lo : "") + "," + (isFinite(hi) ? hi : "") + "]");
+  }
+  return parts.length ? " [" + parts.join(", ") + "]" : "";
+}
+
+/* ============================================================= panels */
+/* Each panel provides: controlsHTML(), initControls(), entryHTML(idx),
+ * initEntry(div), autoName(div), traces() -> [plotly traces], layout(). */
+
+const PANELS = { reg: regPanel(), tkq: tablePanel("tkq"), tag: tablePanel("tag") };
+
+/* -------------------------------------------------------- regressions */
+
+function regPanel() {
+  const P = {};
+  P.hint = "Correctionlib regressions. Structured presets (tkLayout, CalV1) " +
+    "expose kind (absolute σ vs relative-to-0000), param and numerator/" +
+    "denominator SPIX configs in the canonical combinatoric order; generic " +
+    "payloads (digiRefit) expose each correction with its own axes. Cuts on " +
+    "non-plotted axes restrict the aggregation range; the 16–84% band shows " +
+    "the spread over the integrated axes. Values ≤0 (uncovered bins) are " +
+    "stored raw and excluded from ratios.";
+
+  P.controlsHTML = () => `
+    <fieldset><legend>Regression dataset</legend>
+      <div class="row"><label>dataset <select id="regDataset"></select></label></div>
+      <div class="row">
+        <label>x axis <select id="regX"></select></label>
+        <label>2nd axis <select id="regY"><option value="">none (1D)</option></select></label>
+      </div>
+      <div class="row">
+        <label>aggregation <select id="regAgg"><option>median</option><option>mean</option></select></label>
+        <label>y scale <select id="regScale"><option>log</option><option selected>linear</option></select></label>
+        <label><input type="checkbox" id="regBand" checked> 16&ndash;84% band</label>
+      </div>
+    </fieldset>`;
+
+  P.currentDS = () => DS[el("regDataset").value];
+
+  P.realAxes = (ds) => {
+    if (ds.meta.type === "structured") return ds.meta.axes.map(a => a.name);
+    const names = [];
+    for (const cm of ds.meta.corrections)
+      for (const a of cm.axes)
+        if (a.kind === "real" && !names.includes(a.name)) names.push(a.name);
+    return names;
+  };
+
+  P.initControls = async () => {
+    const sel = el("regDataset");
+    opt(sel, MANIFEST.regressions.map(r => r.title), MANIFEST.regressions.map(r => r.id));
+    sel.onchange = async () => { await P.loadCurrent(); P.resetEntries(); replot(); };
+    for (const id of ["regX", "regY", "regAgg", "regScale", "regBand"])
+      el(id).addEventListener("change", replot);
+    await P.loadCurrent();
+    P.resetEntries();
+  };
+
+  P.loadCurrent = async () => {
+    const id = el("regDataset").value;
+    if (!DS[id]) {
+      status("loading " + id + "&hellip;");
+      const entry = MANIFEST.regressions.find(r => r.id === id);
+      await loadDataset(entry.meta);
+    }
+    const ds = DS[id];
+    const axes = P.realAxes(ds);
+    const lab = (n) => P.axisLabel(ds, n);
+    opt(el("regX"), axes.map(lab), axes);
+    el("regY").innerHTML = "<option value=''>none (1D)</option>";
+    axes.forEach(a => el("regY").add(new Option(lab(a), a)));
+    status(P.statusLine(ds));
+  };
+
+  P.axisLabel = (ds, name) => {
+    const pool = ds.meta.type === "structured"
+      ? ds.meta.axes
+      : ds.meta.corrections.flatMap(c => c.axes);
+    const ax = pool.find(a => a.name === name);
+    return (ax && ax.label) || name;
+  };
+
+  P.statusLine = (ds) => {
+    if (ds.meta.type === "structured")
+      return ds.meta.title + " — " + ds.meta.shape.join(" × ") +
+        " (kinds × configs × params × grid), quant " + ds.meta.quant;
+    const sk = ds.meta.skipped.length;
+    return ds.meta.title + " — " + ds.meta.corrections.length + " corrections" +
+      (sk ? " (" + sk + " skipped: non-deterministic)" : "");
+  };
+
+  P.resetEntries = () => {
+    el("entries").innerHTML = "";
+    P.addEntry();
+  };
+
+  P.entryHTML = (idx) => {
+    const ds = P.currentDS();
+    let inner;
+    if (ds.meta.type === "structured") {
+      const cfgO = ds.meta.configs.map(c => `<option>${c}</option>`).join("");
+      inner = `
+        <div class="row">
+          <label>kind <select class="kind">${ds.meta.kinds.map(k => `<option>${k}</option>`).join("")}</select></label>
+          <label>param <select class="param">${ds.meta.params.map(p => `<option>${p}</option>`).join("")}</select></label>
+        </div>
+        <div class="row">
+          <label>num <select class="num">${cfgO}</select></label>
+          <label>den <select class="den"><option value="">(none)</option>${cfgO}</select></label>
+          <input type="color" class="color" value="${PALETTE[idx % PALETTE.length]}">
+        </div>
+        <div class="cuts">${cutRowsHTML(ds.meta.axes.map(a => ({key: a.name, label: a.label || a.name})))}</div>`;
+    } else {
+      const corrO = ds.meta.corrections.map(c => `<option>${c.name}</option>`).join("");
+      inner = `
+        <div class="row">
+          <label>correction <select class="corr">${corrO}</select></label>
+          <input type="color" class="color" value="${PALETTE[idx % PALETTE.length]}">
+        </div>
+        <div class="catsel row"></div>
+        <div class="cuts"></div>`;
+    }
+    return inner + `
+      <div class="row" style="margin-top:4px">
+        <label style="flex:1">legend <input type="text" class="lname" style="width:75%"></label>
+      </div>`;
+  };
+
+  P.initEntry = (div) => {
+    const ds = P.currentDS();
+    if (ds.meta.type === "structured") {
+      div.querySelector(".num").value = "1111";
+      const den = div.querySelector(".den");
+      if (ds.meta.kinds.includes("sigma")) den.value = "0000";
+    } else {
+      const refresh = () => P.refreshGenericEntry(div);
+      div.querySelector(".corr").addEventListener("change", refresh);
+      refresh();
+    }
+  };
+
+  P.refreshGenericEntry = (div) => {
+    const ds = P.currentDS();
+    const cm = ds.meta.corrections.find(c => c.name === div.querySelector(".corr").value);
+    const cats = div.querySelector(".catsel");
+    cats.innerHTML = "";
+    for (const [i, a] of cm.axes.entries()) {
+      if (a.kind !== "cat") continue;
+      const s = document.createElement("label");
+      s.innerHTML = `${a.name} <select class="cat" data-axis="${i}">` +
+        a.categories.map(c => `<option>${c}</option>`).join("") + "</select>";
+      cats.appendChild(s);
+    }
+    div.querySelector(".cuts").innerHTML = cutRowsHTML(
+      cm.axes.filter(a => a.kind === "real").map(a => ({key: a.name, label: a.label || a.name})));
+  };
+
+  P.autoName = (div) => {
+    const ds = P.currentDS();
+    if (ds.meta.type === "structured") {
+      const k = div.querySelector(".kind").value;
+      const p = div.querySelector(".param").value;
+      const num = div.querySelector(".num").value;
+      const den = div.querySelector(".den").value;
+      return "σ(" + p + ") " + (den ? num + "/" + den : num) +
+        (k === "relative" ? " (rel)" : "") + cutsLabel(collectCuts(div));
+    }
+    return div.querySelector(".corr").value +
+      [...div.querySelectorAll(".cat")].map(s => " " + s.value).join("") +
+      cutsLabel(collectCuts(div));
+  };
+
+  P.traces = () => {
+    const ds = P.currentDS();
+    const xName = el("regX").value;
+    let yName = el("regY").value || null;
+    if (yName === xName) yName = null;
+    const agg = el("regAgg").value;
+    const band = el("regBand").checked;
+    const logScale = el("regScale").value === "log";
+    const traces = [];
+    let any2d = false;
+
+    for (const div of document.querySelectorAll(".entry")) {
+      const color = div.querySelector(".color").value;
+      const name = div.querySelector(".lname").value;
+      let spec;
+      const cuts = collectCuts(div);
+      if (ds.meta.type === "structured") {
+        const m = ds.meta;
+        const gridShape = m.shape.slice(3);
+        const gridSize = gridShape.reduce((a, b) => a * b, 1);
+        const ik = m.kinds.indexOf(div.querySelector(".kind").value);
+        const ip = m.params.indexOf(div.querySelector(".param").value);
+        const num = m.configs.indexOf(div.querySelector(".num").value);
+        const denV = div.querySelector(".den").value;
+        const den = denV === "" ? null : m.configs.indexOf(denV);
+        const base = ((ik * m.configs.length + num) * m.params.length + ip) * gridSize;
+        const denBase = den == null ? null :
+          ((ik * m.configs.length + den) * m.params.length + ip) * gridSize;
+        const ix = m.axes.findIndex(a => a.name === xName);
+        const iy = yName == null ? null : m.axes.findIndex(a => a.name === yName);
+        if (ix < 0) continue;
+        const cutsIdx = {};
+        m.axes.forEach((a, i) => { if (cuts[a.name]) cutsIdx[i] = cuts[a.name]; });
+        spec = {
+          valueFn: makeValueFn(ds.arr, m.quant, m.scale, base, denBase),
+          shape: gridShape, centers: m.axes.map(a => a.centers),
+          fixedBins: {}, xAxis: ix, yAxis: iy, cuts: cutsIdx, agg,
+        };
+      } else {
+        const cm = ds.meta.corrections.find(c => c.name === div.querySelector(".corr").value);
+        const ix = cm.axes.findIndex(a => a.name === xName);
+        if (ix < 0) continue; // this correction has no such axis
+        const iy = yName == null ? null : cm.axes.findIndex(a => a.name === yName);
+        const fixedBins = {};
+        for (const s of div.querySelectorAll(".cat")) {
+          const ai = parseInt(s.dataset.axis);
+          fixedBins[ai] = cm.axes[ai].categories.map(String).indexOf(s.value);
+        }
+        const cutsIdx = {};
+        cm.axes.forEach((a, i) => { if (cuts[a.name]) cutsIdx[i] = cuts[a.name]; });
+        spec = {
+          valueFn: makeValueFn(corrView(ds, cm), cm.quant, cm.scale, 0, null),
+          shape: cm.shape,
+          centers: cm.axes.map(a => a.kind === "real" ? a.centers : null),
+          fixedBins, xAxis: ix, yAxis: (iy != null && iy >= 0) ? iy : null,
+          cuts: cutsIdx, agg,
+        };
+      }
+      let r;
+      try { r = computeGridEntry(spec); }
+      catch (err) { console.error(err); continue; }
+      if (r.dim === 1) {
+        if (band)
+          traces.push({ x: r.x.concat(r.x.slice().reverse()),
+                        y: r.hi.concat(r.lo.slice().reverse()),
+                        type: "scatter", fill: "toself", fillcolor: color + "22",
+                        line: { width: 0 }, hoverinfo: "skip",
+                        showlegend: false, legendgroup: name });
+        traces.push({ x: r.x, y: r.mid, type: "scatter",
+                      mode: "lines+markers", marker: { size: 5 },
+                      line: { color }, name, legendgroup: name,
+                      customdata: r.n,
+                      hovertemplate: "%{x:.3g}: %{y:.4g} (n=%{customdata})" +
+                                     "<extra>" + name + "</extra>" });
+      } else {
+        any2d = true;
+        const z = logScale ? r.z.map(row => row.map(v => Math.log10(v))) : r.z;
+        traces.push({ x: r.x, y: r.y, z, type: "surface",
+                      colorscale: [[0, color], [1, color]], showscale: false,
+                      opacity: 0.85, name, showlegend: true, customdata: r.z,
+                      hovertemplate: xName + ": %{x:.3g}<br>" + yName +
+                        ": %{y:.3g}<br>value: %{customdata:.4g}<extra>" + name + "</extra>" });
+      }
+    }
+    P._any2d = any2d;
+    return traces;
+  };
+
+  P.layout = () => {
+    const ds = P.currentDS();
+    const logScale = el("regScale").value === "log";
+    const xName = el("regX").value, yName = el("regY").value;
+    const xT = P.axisLabel(ds, xName);
+    if (P._any2d)
+      return { scene: { xaxis: { title: { text: xT } },
+                        yaxis: { title: { text: P.axisLabel(ds, yName) } },
+                        zaxis: { title: { text: (logScale ? "log10 " : "") + "value" } },
+                        aspectmode: "cube" },
+               margin: { l: 0, r: 0, t: 10, b: 0 }, legend: { orientation: "h" } };
+    return { xaxis: { title: { text: xT } },
+             yaxis: { title: { text: "value (" + el("regAgg").value + ")" },
+                      type: logScale ? "log" : "linear" },
+             margin: { l: 60, r: 20, t: 20, b: 45 }, legend: { orientation: "h" } };
+  };
+
+  P.addEntry = () => addEntryDiv(P);
+  return P;
+}
+
+/* ------------------------------------------- tables (tkq + jet tagger) */
+
+function tablePanel(kind) {
+  const P = {};
+  const pre = kind;   // element-id prefix
+  P.hint = kind === "tkq"
+    ? "Stage-3 refit-quality BDT scored on the fat coherent nanos (1111→AAAA, " +
+      "1100→AAII; 0000 has no refit tables and is excluded). Rows are " +
+      "refit-performed L1TTracks; label = genuine. Four y-quantities share the " +
+      "overlay list; per-bin counts are shown in hover because statistics are thin."
+    : "Stage-4 jet-tagger test-set predictions per (view · feature-variant · " +
+      "seed). ~1300 test jets/view: bins are intentionally noisy — counts are " +
+      "displayed, not hidden. 'seed band' overlays the mean across seeds with a " +
+      "min–max band. Charge classes exist only for the charge-head cell.";
+
+  P.dsId = () => kind === "tkq" ? "tkq" : "tagger";
+  P.meta = () => DS[P.dsId()].meta;
+
+  P.controlsHTML = () => `
+    <fieldset><legend>${kind === "tkq" ? "tkQuality" : "Jet tagger"} view</legend>
+      <div class="row">
+        <label>y quantity <select id="${pre}Mode">
+          <option value="stats">score vs x (band)</option>
+          <option value="eff">efficiency @ WP vs x</option>
+          <option value="auc">per-bin AUC vs x</option>
+          <option value="hist">score distributions</option>
+        </select></label>
+        <label>x <select id="${pre}X"></select></label>
+        <label>bins <input type="number" id="${pre}Bins" min="1" max="60" step="1" value="0"></label>
+      </div>
+      <div class="row">
+        <label>score cut <input type="range" id="${pre}Cut" min="0" max="1" step="0.01" value="0.5"
+               oninput="document.getElementById('${pre}CutV').textContent=this.value">
+               <span id="${pre}CutV">0.5</span></label>
+      </div>
+      <div class="row">
+        <label>aggregation <select id="${pre}Agg"><option>mean</option><option>median</option></select></label>
+        <label>y scale <select id="${pre}Scale"><option selected>linear</option><option>log</option></select></label>
+        <label><input type="checkbox" id="${pre}Band" checked> band</label>
+        <label><input type="checkbox" id="${pre}Norm" checked> normalize hists</label>
+      </div>
+    </fieldset>`;
+
+  P.initControls = async () => {
+    if (!DS[P.dsId()]) {
+      const entry = kind === "tkq" ? MANIFEST.tkquality : MANIFEST.tagger;
+      status("loading " + entry.id + "&hellip;");
+      await loadDataset(entry.meta);
+    }
+    const m = P.meta();
+    const xCols = Object.keys(m.x_defaults).filter(c => c !== "score");
+    opt(el(pre + "X"), xCols);
+    el(pre + "X").value = xCols[0];
+    for (const id of ["Mode", "X", "Bins", "Cut", "Agg", "Scale", "Band", "Norm"])
+      el(pre + id).addEventListener("change", replot);
+    const total = m.groups.reduce((a, g) => a + g.n_rows, 0);
+    status(m.title + " — " + total + " rows in " + m.groups.length + " groups");
+    el("entries").innerHTML = "";
+    P.addEntry();
+  };
+
+  P.views = () => {
+    const m = P.meta();
+    if (kind === "tkq") return m.groups.map(g => g.view);
+    return m.view_order.filter(v => m.groups.some(g => g.view === v));
+  };
+
+  P.entryHTML = (idx) => {
+    const m = P.meta();
+    const viewO = P.views().map(v => `<option>${v}</option>`).join("");
+    let selRows;
+    if (kind === "tkq") {
+      selRows = `<div class="row">
+        <label>config <select class="view">${viewO}</select></label>
+        <input type="color" class="color" value="${PALETTE[idx % PALETTE.length]}"></div>`;
+    } else {
+      selRows = `<div class="row">
+          <label>view <select class="view">${viewO}</select></label>
+          <label>variant <select class="variant"></select></label>
+        </div>
+        <div class="row">
+          <label>class <select class="cls"></select></label>
+          <label>seed <select class="seed"></select></label>
+          <input type="color" class="color" value="${PALETTE[idx % PALETTE.length]}">
+        </div>`;
+    }
+    const cutCols = Object.keys(m.x_defaults).filter(c => c !== "score");
+    return selRows +
+      `<div class="cuts">${cutRowsHTML(cutCols.map(c => ({key: c, label: c})))}</div>
+       <div class="row" style="margin-top:4px">
+         <label style="flex:1">legend <input type="text" class="lname" style="width:75%"></label>
+       </div>`;
+  };
+
+  P.initEntry = (div) => {
+    if (kind === "tkq") return;
+    const m = P.meta();
+    const refreshVariants = () => {
+      const v = div.querySelector(".view").value;
+      const variants = m.variant_order.filter(
+        va => m.groups.some(g => g.view === v && g.variant === va));
+      opt(div.querySelector(".variant"),
+          variants.map(va => m.variant_labels[va] || va), variants);
+      refreshClasses();
+    };
+    const refreshClasses = () => {
+      const v = div.querySelector(".view").value;
+      const va = div.querySelector(".variant").value;
+      const groups = m.groups.filter(g => g.view === v && g.variant === va);
+      const cls = [...m.class_names];
+      if (groups.some(g => g.has_charge)) cls.push(...m.charge_class_names);
+      const clsSel = div.querySelector(".cls");
+      const keep = clsSel.value;
+      opt(clsSel, cls);
+      if (cls.includes(keep)) clsSel.value = keep;
+      const seeds = groups.map(g => g.seed).sort((a, b) => a - b);
+      const seedSel = div.querySelector(".seed");
+      opt(seedSel, seeds.map(String).concat(["seed band"]),
+          seeds.map(String).concat(["all"]));
+    };
+    div.querySelector(".view").addEventListener("change", refreshVariants);
+    div.querySelector(".variant").addEventListener("change", refreshClasses);
+    refreshVariants();
+  };
+
+  P.autoName = (div) => {
+    const cuts = cutsLabel(collectCuts(div));
+    if (kind === "tkq")
+      return div.querySelector(".view").value + " · genuine" + cuts;
+    const m = P.meta();
+    const va = div.querySelector(".variant").value;
+    const seed = div.querySelector(".seed").value;
+    return div.querySelector(".view").value + " · " +
+      (m.variant_labels[va] || va) + " · " +
+      div.querySelector(".cls").value + " vs all · " +
+      (seed === "all" ? "seed-band" : "seed " + seed) + cuts;
+  };
+
+  /* selected groups + score/label semantics for one entry */
+  P.entrySelection = (div) => {
+    const m = P.meta();
+    const view = div.querySelector(".view").value;
+    if (kind === "tkq") {
+      const g = m.groups.find(gr => gr.view === view);
+      return { groups: [g], scoreCol: "score", labelCol: "label", posVal: 1 };
+    }
+    const variant = div.querySelector(".variant").value;
+    const cls = div.querySelector(".cls").value;
+    const seedV = div.querySelector(".seed").value;
+    let groups = m.groups.filter(g => g.view === view && g.variant === variant);
+    if (seedV !== "all") groups = groups.filter(g => g.seed === parseInt(seedV));
+    const isCharge = m.charge_class_names.includes(cls);
+    return {
+      groups,
+      scoreCol: "prob_" + cls,
+      labelCol: isCharge ? m.charge_label_column : m.label_column,
+      posVal: isCharge ? m.charge_class_names.indexOf(cls) : m.class_names.indexOf(cls),
+    };
+  };
+
+  P.xEdges = (mode) => {
+    const m = P.meta();
+    const col = mode === "hist" ? "score" : el(pre + "X").value;
+    const spec = { ...m.x_defaults[col] };
+    const nb = parseInt(el(pre + "Bins").value);
+    if (nb > 0) spec.n = nb;
+    return { col, edges: makeEdges(spec) };
+  };
+
+  P.curveForGroup = (g, sel, mode, xcol, edges, agg, cut, norm) => {
+    const ds = DS[P.dsId()];
+    const m = P.meta();
+    const table = makeTable(ds.arr, m.columns, g.row_offset, g.n_rows);
+    const cuts = P._cuts;
+    const rows = selectRows(table, cuts);
+    const s = columnValues(table, sel.scoreCol, rows);
+    const lab = columnValues(table, sel.labelCol, rows);
+    const pos = positiveMask(lab, sel.posVal);
+    if (mode === "hist") {
+      const sPos = [], sNeg = [];
+      for (let i = 0; i < s.length; i++) (pos[i] ? sPos : sNeg).push(s[i]);
+      return { pos: histogram(sPos, edges, norm), neg: histogram(sNeg, edges, norm) };
+    }
+    const x = columnValues(table, xcol, rows);
+    if (mode === "stats") return binnedScoreStats(x, s, edges, agg);
+    if (mode === "eff") return binnedEfficiency(x, s, pos, cut, edges);
+    return binnedAUC(x, s, pos, edges);
+  };
+
+  P.traces = () => {
+    const mode = el(pre + "Mode").value;
+    const { col: xcol, edges } = P.xEdges(mode);
+    const agg = el(pre + "Agg").value;
+    const cut = parseFloat(el(pre + "Cut").value);
+    const band = el(pre + "Band").checked;
+    const norm = el(pre + "Norm").checked;
+    const traces = [];
+
+    for (const div of document.querySelectorAll(".entry")) {
+      const color = div.querySelector(".color").value;
+      const name = div.querySelector(".lname").value;
+      const sel = P.entrySelection(div);
+      if (!sel.groups.length || !sel.groups[0]) continue;
+      P._cuts = collectCuts(div);
+      const curves = sel.groups.map(
+        g => P.curveForGroup(g, sel, mode, xcol, edges, agg, cut, norm));
+
+      const centers = edgeCenters(edges);
+      const pushBand = (lo, hi, grp) => {
+        if (!band) return;
+        traces.push({ x: centers.concat(centers.slice().reverse()),
+                      y: hi.concat(lo.slice().reverse()), type: "scatter",
+                      fill: "toself", fillcolor: color + "22", line: { width: 0 },
+                      hoverinfo: "skip", showlegend: false, legendgroup: grp });
+      };
+      const pushLine = (y, n, grp, dash, label) => {
+        traces.push({ x: centers, y, type: "scatter", mode: "lines+markers",
+                      marker: { size: 5 }, line: { color, dash: dash || "solid" },
+                      name: label, legendgroup: grp, customdata: n,
+                      hovertemplate: "%{x:.3g}: %{y:.4g} (n=%{customdata})" +
+                                     "<extra>" + label + "</extra>" });
+      };
+
+      if (mode === "hist") {
+        const cPos = combineCurves(curves.map(c => ({ mid: c.pos.y })));
+        const cNeg = combineCurves(curves.map(c => ({ mid: c.neg.y })));
+        const nPos = curves[0].pos.counts, nNeg = curves[0].neg.counts;
+        if (curves.length > 1) { pushBand(cPos.lo, cPos.hi, name); }
+        pushLine(cPos.mid, nPos, name, "solid", name + " (signal)");
+        pushLine(cNeg.mid, nNeg, name, "dash", name + " (rest)");
+        continue;
+      }
+      if (mode === "stats") {
+        const comb = combineCurves(curves.map(c => ({ mid: c.mid })));
+        if (curves.length > 1) pushBand(comb.lo, comb.hi, name);
+        else pushBand(curves[0].lo, curves[0].hi, name);
+        pushLine(comb.mid, curves[0].n, name, "solid", name);
+        continue;
+      }
+      if (mode === "eff") {
+        const cE = combineCurves(curves.map(c => ({ mid: c.eff })));
+        const cM = combineCurves(curves.map(c => ({ mid: c.mistag })));
+        if (curves.length > 1) { pushBand(cE.lo, cE.hi, name); pushBand(cM.lo, cM.hi, name); }
+        pushLine(cE.mid, curves[0].nPos, name, "solid", name + " (eff)");
+        pushLine(cM.mid, curves[0].nNeg, name, "dash", name + " (mistag)");
+        continue;
+      }
+      // auc
+      const cA = combineCurves(curves.map(c => ({ mid: c.auc })));
+      if (curves.length > 1) pushBand(cA.lo, cA.hi, name);
+      const nTot = curves[0].nPos.map((v, i) => v + curves[0].nNeg[i]);
+      traces.push({ x: centers, y: cA.mid, type: "scatter", mode: "lines+markers+text",
+                    marker: { size: 5 }, line: { color }, name, legendgroup: name,
+                    text: nTot.map(v => "n=" + v), textposition: "top center",
+                    textfont: { size: 9, color: "#666" },
+                    customdata: curves[0].nPos.map((v, i) => v + "+/" + curves[0].nNeg[i] + "-"),
+                    hovertemplate: "%{x:.3g}: AUC %{y:.4g} (%{customdata})" +
+                                   "<extra>" + name + "</extra>" });
+    }
+    return traces;
+  };
+
+  P.layout = () => {
+    const mode = el(pre + "Mode").value;
+    const m = P.meta();
+    const xcol = mode === "hist" ? "score" : el(pre + "X").value;
+    const yTitles = { stats: "score (" + el(pre + "Agg").value + ", 16–84% band)",
+                      eff: "efficiency / mistag @ score>" + el(pre + "Cut").value,
+                      auc: "one-vs-rest AUC (per bin)",
+                      hist: el(pre + "Norm").checked ? "density" : "count" };
+    const lay = {
+      xaxis: { title: { text: xcol },
+               type: (m.x_defaults[xcol] || {}).log ? "log" : "linear" },
+      yaxis: { title: { text: yTitles[mode] },
+               type: el(pre + "Scale").value === "log" ? "log" : "linear" },
+      margin: { l: 60, r: 20, t: 20, b: 45 }, legend: { orientation: "h" },
+    };
+    if (mode === "auc")
+      lay.shapes = [{ type: "line", xref: "paper", x0: 0, x1: 1, y0: 0.5, y1: 0.5,
+                      line: { color: "#888", dash: "dash", width: 1 } }];
+    return lay;
+  };
+
+  P.addEntry = () => addEntryDiv(P);
+  return P;
+}
+
+/* ------------------------------------------------------ entry plumbing */
+
+function addEntryDiv(P) {
+  const idx = entrySeq++;
+  const div = document.createElement("div");
+  div.className = "entry";
+  div.innerHTML = `<button class="rm" title="remove">&#10005;</button>` + P.entryHTML(idx);
+  const nameEl = div.querySelector(".lname");
+  div.querySelector(".rm").onclick = () => { div.remove(); replot(); };
+  nameEl.addEventListener("input", () => { nameEl.dataset.dirty = "1"; });
+  div.addEventListener("change", (ev) => {
+    if (ev.target !== nameEl && nameEl.dataset.dirty !== "1")
+      nameEl.value = P.autoName(div);
+    replot();
+  });
+  document.getElementById("entries").appendChild(div);
+  P.initEntry(div);
+  nameEl.value = P.autoName(div);
+}
+
+/* -------------------------------------------------------------- panel */
+
+async function switchPanel(p) {
+  PANEL = p;
+  for (const [key, tid] of [["reg", "tab-reg"], ["tkq", "tab-tkq"], ["tag", "tab-tag"]])
+    el(tid).classList.toggle("active", key === p);
+  const P = PANELS[p];
+  el("controls").innerHTML = P.controlsHTML();
+  el("entries").innerHTML = "";
+  el("panelHint").textContent = P.hint;
+  try {
+    await P.initControls();
+  } catch (err) {
+    status("failed to load panel data: " + err, true);
+    return;
+  }
+  replot();
+}
+
+function replot() {
+  const P = PANELS[PANEL];
+  let traces;
+  try { traces = P.traces(); }
+  catch (err) { console.error(err); status("plot error: " + err, true); return; }
+  Plotly.react("plot", traces, P.layout(), { responsive: true });
+}
+
+async function boot() {
+  if (location.protocol === "file:") {
+    status("Opened via file:// — the browser blocks loading the binary data " +
+      "this way. Serve the directory over HTTP instead, e.g. " +
+      "<code>python3 -m http.server 8742</code> in the site folder, then open " +
+      "<code>http://127.0.0.1:8742/explorer.html</code>.", true);
+    return;
+  }
+  try { MANIFEST = await fetchJSON("manifest.json"); }
+  catch (err) { status("failed to load manifest.json: " + err, true); return; }
+  el("tab-reg").onclick = () => switchPanel("reg");
+  el("tab-tkq").onclick = () => switchPanel("tkq");
+  el("tab-tag").onclick = () => switchPanel("tag");
+  el("tab-tkq").disabled = !MANIFEST.tkquality;
+  el("tab-tag").disabled = !MANIFEST.tagger;
+  el("tab-tkq").title = MANIFEST.tkquality ? "" : "run export-tkquality first";
+  el("tab-tag").title = MANIFEST.tagger ? "" : "run the stage-4 re-run + export-tagger first";
+  el("addBtn").onclick = () => { PANELS[PANEL].addEntry(); replot(); };
+  await switchPanel(MANIFEST.regressions.length ? "reg" :
+                    (MANIFEST.tkquality ? "tkq" : "tag"));
+}
+
+boot();
+</script>
+</body>
+</html>
