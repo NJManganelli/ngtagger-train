@@ -21,3 +21,8 @@ eval_refitq/models/
 
 # large regenerable presentation artifact (make_refit_viz.py rebuilds it)
 eval_refitq/refitviz/*.html
+
+# MVA explorer rendered site + exported data (regenerable: python -m ngtagger.viz.mva_explorer export-all)
+eval_mva_explorer/
+# Stage-4 per-jet prediction dumps (regenerable via the stage4 matrix re-run)
+eval_refitq/stage4/pred_dumps/
