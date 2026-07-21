@@ -52,6 +52,14 @@ _REF_COLS = ["rInv", "phi", "tanL", "z0", "d0", "pt", "eta", "genuine",
              "tpPt", "tpEta", "tpFromHardInteraction", "tpPdgId", "nStubs",
              "looselyGenuine", "hitPattern", "chi2XYRed", "chi2ZRed"]
 
+# Matched-TrackingParticle full-helix truth columns present on the fixed-projector
+# nano_pF (mem:smartpixels-5par-framing-directive): real tp_d0/tp_z0 (NOT GenVtx) so
+# resolution-to-truth works for DISPLACED/b tracks. Loaded OPTIONALLY -- if a column is
+# absent (older nano_pE) it is silently skipped and _truth.track_truth falls back to the
+# GenVtx(PV) interim truth. Unmatched tracks carry the -999 sentinel (handled downstream).
+_REF_TP_COLS = ["tp_d0", "tp_z0", "tp_phi", "tp_pt", "tp_eta", "tp_charge",
+                "tp_tanL", "tp_vx", "tp_vy", "tp_vz"]
+
 # Phase-2 Outer-Tracker barrel mean layer radii [cm] -- kept for the OVERVIEW layer
 # guide circles. The per-track stub POSITIONS now come from the real L1TTrackStub
 # table (x/y/z), not from these; these only draw the schematic barrel rings.
@@ -107,7 +115,12 @@ def load_nano(nano_file, layer_radii=(3.0, 6.8, 10.9, 16.0), max_events=None):
     t = uproot.open(f"{nano_file}:Events")
     n_ev = t.num_entries if max_events is None else min(max_events, t.num_entries)
 
-    ref = t.arrays([f"{REF}_{c}" for c in _REF_COLS], entry_stop=n_ev)
+    # Detect which matched-TP truth columns this nano actually carries (pF has them;
+    # older pE does not). Only the present ones are read + surfaced to _truth.
+    avail = set(t.keys())
+    tp_cols = [c for c in _REF_TP_COLS if f"{REF}_{c}" in avail]
+
+    ref = t.arrays([f"{REF}_{c}" for c in _REF_COLS + tp_cols], entry_stop=n_ev)
     side = t.arrays([f"{SIDE}_{c}" for c in _SIDE_COLS], entry_stop=n_ev)
     stub = t.arrays([f"{STUB}_{c}" for c in _STUB_COLS], entry_stop=n_ev)
     trk = {v: t.arrays([f"{TRK}{v}_{c}" for c in _TRK_COLS], entry_stop=n_ev)
@@ -124,7 +137,7 @@ def load_nano(nano_file, layer_radii=(3.0, 6.8, 10.9, 16.0), max_events=None):
         st = {c: _flat(stub[f"{STUB}_{c}"], e) for c in _STUB_COLS}
         tv = {v: {c: _flat(trk[v][f"{TRK}{v}_{c}"], e) for c in _TRK_COLS}
               for v in PRODUCED_CONFIGS.values()}
-        rf = {c: _flat(ref[f"{REF}_{c}"], e) for c in _REF_COLS}
+        rf = {c: _flat(ref[f"{REF}_{c}"], e) for c in _REF_COLS + tp_cols}
         genvtx = dict(x=float(gv["x"][e]), y=float(gv["y"][e]), z=float(gv["z"][e]))
 
         for i in range(n_trk):
@@ -138,6 +151,11 @@ def load_nano(nano_file, layer_radii=(3.0, 6.8, 10.9, 16.0), max_events=None):
                          fromHard=bool(rf["tpFromHardInteraction"][i]),
                          pdgId=int(rf["tpPdgId"][i]), nStubs=int(rf["nStubs"][i]),
                          hitPattern=int(rf["hitPattern"][i]))
+            # matched-TP full-helix truth (nano_pF): real tp_d0/tp_z0 so
+            # resolution-to-truth is correct for displaced/b tracks; _truth.track_truth
+            # picks these up (key names tp_d0/tp_z0) over the GenVtx(PV) interim truth.
+            for c in tp_cols:
+                truth[c] = float(rf[c][i])
             hits = {}
             rows = np.where(s["trackIdx"] == i)[0]
             for r in rows:

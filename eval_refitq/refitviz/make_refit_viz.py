@@ -17,7 +17,12 @@ import os
 
 from ngtagger.viz.refit_replay import build_refit_viz
 
-_DEFAULT_NANO = "/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/nano_pE_TrkSmartPix_withGen_file1.root"
+# Default: the FIXED-projector nano_pF (crossLayer sign fix; carries matched-TP truth
+# tp_d0/tp_z0, embedded L1TTrackStub OT stubs, the 4 produced refit configs). The
+# separately-produced 15-config nano_pG_PFTrkSmartPix_withGen_file{1..10}.root swaps in
+# trivially here once ready (and PRODUCED_CONFIGS in _dataio.py extends to 15) -- no
+# other change needed; develop on nano_pF for now.
+_DEFAULT_NANO = "/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/nano_pF_PFTrkSmartPix_withGen_file1.root"
 _DEFAULT_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "refit_replay.html")
 
 
