@@ -1,0 +1,28 @@
+{
+  "source": "nano_pF_PFTrkSmartPix_withGen_file{1..10}.root (post-sign-fix)",
+  "selection": "matched TP (tp_pt>0); refit tables row-aligned, passthrough included",
+  "n_events": 1000,
+  "n_matched_tracks": 184839,
+  "median_um": {
+    "seed": {
+      "d0": 388.7939453125,
+      "z0": 1429.6221923828125
+    },
+    "AIII": {
+      "d0": 190.391357421875,
+      "z0": 727.1099243164062
+    },
+    "AAII": {
+      "d0": 156.89793395996094,
+      "z0": 552.5780029296875
+    },
+    "AAAI": {
+      "d0": 192.501220703125,
+      "z0": 613.5487670898438
+    },
+    "AAAA": {
+      "d0": 209.84019470214844,
+      "z0": 625.7557983398438
+    }
+  }
+}
