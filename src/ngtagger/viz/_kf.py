@@ -109,6 +109,184 @@ def _recover_sy(a, R, parCotBeta, cotBetaMeas):
     return 1.0
 
 
+# ---------------------------------------------------------------------------
+# Config-wide FULL-HIT-SET chi2 (viz round 4). Evaluate ONE track state against a
+# FIXED hit set: the linked OT BARREL stubs + the accepted SmartPixels hits on
+# the config's ACTIVE layers. Every displayed variant of a (track, config) -- the
+# OT-only L1Track, each intermediate KF state, the final refit -- is charged
+# against the SAME set with the SAME per-hit sigmas, so the reduced chi2 column
+# is directly comparable across rows (the OT-only track is now "charged" for the
+# smartpix hits its fit never saw).
+#   * IT hits: the KF measurement model's LOCAL-X (r-phi) channel with _SIGX
+#     (frozen local frame at the state's predicted crossing). The hit GLOBAL
+#     positions are reconstructed ONCE per track by
+#     :func:`reconstruct_hit_globals` (the recorded resX/resY are innovations vs
+#     the RUNNING AAAA/alphaBeta production state, so the reconstruction replays
+#     that pass and places hit i at its PRE-update predicted crossing + res); the
+#     same fixed positions are then shared by every evaluated state and config.
+#     The IT LOCAL-Y (z) channel is EXCLUDED from the comparator: the hit z can
+#     only be reconstructed through the replay's z trajectory, which is the
+#     documented ILLUSTRATIVE direction (trackCov correlations not persisted), so
+#     charging it at the 29 um _SIGY weight would swamp the column with
+#     reconstruction noise (verified numerically: with IT-y included the produced
+#     refit shows chi2 GROWTH on most tracks whose d0 demonstrably moved toward
+#     truth; with the transverse-faithful channels the produced refit lowers the
+#     full-set chi2 on ~90% of d0-improved tracks). OT z IS included -- stub z is
+#     real data and the state's z extrapolation is honest.
+#   * OT stubs: extrapolate the helix to the stub cylinder radius and take the
+#     (r-phi, z) residuals with an approximate Phase-2 OT resolution model -- PS
+#     modules (barrel L1-3): 100 um r-phi pitch + 1.467 mm macro-pixel z; 2S
+#     (L4-6): 90 um pitch + 5.025 cm strip length -- with the r-phi sigma
+#     inflated by a simple multiple-scattering lever-arm term _OT_MS_COEFF*r/pt.
+#     ENDCAP stubs are EXCLUDED (their disk/strip measurement model is not
+#     persisted here; the overview panel likewise draws only barrel stubs). The
+#     L1 fit's internal weights are not persisted in nano, so this is a
+#     COMPARATOR model, not the fit's own chi2; identical sigmas for all rows
+#     means the row RANKING never depends on the sigma choice.
+# ---------------------------------------------------------------------------
+_OT_PS_SIG_RPHI = 0.0100 / np.sqrt(12.0)   # PS 100 um pitch      [cm]
+_OT_PS_SIG_Z = 0.1467 / np.sqrt(12.0)      # PS 1.467 mm macropix [cm]
+_OT_2S_SIG_RPHI = 0.0090 / np.sqrt(12.0)   # 2S 90 um pitch       [cm]
+_OT_2S_SIG_Z = 5.025 / np.sqrt(12.0)       # 2S 5.025 cm strip    [cm]
+_OT_MS_COEFF = 0.002                       # MS r-phi inflation: coeff*r[cm]/pt [cm]
+
+
+def _wrap_phi(dphi):
+    return (dphi + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def _ot_stub_sigmas(stub, pt):
+    """(sig_rphi, sig_z) for one OT barrel stub: PS (layers 1-3) vs 2S (4-6),
+    with the MS lever-arm inflation on r-phi."""
+    ps = int(stub.get("layer", 1)) <= 3
+    sig_rphi = _OT_PS_SIG_RPHI if ps else _OT_2S_SIG_RPHI
+    sig_z = _OT_PS_SIG_Z if ps else _OT_2S_SIG_Z
+    r = float(stub.get("r", np.hypot(stub["x"], stub["y"])))
+    ms = _OT_MS_COEFF * r / max(abs(pt), 1.0)
+    return float(np.hypot(sig_rphi, ms)), sig_z
+
+
+def _cyl_residuals(a, sx, sy_, sz, r_surf):
+    """(res_rphi, res_z) of the point (sx, sy_, sz) at cylinder radius r_surf vs
+    the helix extrapolated to that radius -> (r*dphi, dz). If the helix never
+    reaches the radius (soft curler), fall back to the transverse closest-
+    approach point on the helix circle so the chi2 stays finite/comparable."""
+    rInv, phi0, tanL, z0, d0 = a
+    phi_p = np.arctan2(sy_, sx)
+    cr = _helix_global(np.asarray(a, float), r_surf)
+    if cr is not None:
+        g, _, _ = cr
+        return (r_surf * _wrap_phi(np.arctan2(g[1], g[0]) - phi_p), g[2] - sz)
+    # fallback: transverse closest approach on the (sign-fixed) helix circle
+    rf = -rInv
+    x0 = d0 * np.sin(phi0); y0 = -d0 * np.cos(phi0)
+    if abs(rf) < 1e-6:          # straight line: project the point onto the line
+        dx, dy = np.cos(phi0), np.sin(phi0)
+        s = (sx - x0) * dx + (sy_ - y0) * dy
+        perp = (sx - x0) * (-dy) + (sy_ - y0) * dx
+        return perp, z0 + tanL * max(s, 0.0) - sz
+    R = 1.0 / rf
+    cx = x0 - R * np.sin(phi0); cy = y0 + R * np.cos(phi0)
+    dist = max(np.hypot(sx - cx, sy_ - cy), 1e-9)
+    res_perp = dist - abs(R)                           # distance to the circle
+    ang_p = np.arctan2(sy_ - cy, sx - cx)
+    ang_0 = np.arctan2(y0 - cy, x0 - cx)
+    s = abs(_wrap_phi(ang_p - ang_0)) * abs(R)         # arc to the closest point
+    return res_perp, z0 + tanL * s - sz
+
+
+def reconstruct_hit_globals(seed_params, hit_records, layer_radii=None,
+                            param_sigmas=None):
+    """Reconstruct each accepted IT hit's GLOBAL position from the sidecar.
+
+    The recorded (resX, resY) are innovations vs the RUNNING refit state of the
+    AAAA/alphaBeta production pass (the sidecar's pass), in the frozen local frame
+    of that state's predicted crossing -- NOT vs the seed. So: replay that pass
+    and place the i-th accepted hit at (pre-update predicted crossing) +
+    resX*ex + resY*ey. The reconstruction is per-track and config-independent:
+    the SAME fixed positions feed every displayed (config, angle) variant.
+
+    Returns dict layer -> np.array([x, y, z]) for each localizable accepted hit.
+    """
+    RAD = _DEFAULT_RADII if layer_radii is None else np.asarray(layer_radii, float)
+    ps = _REPLAY_SEED_SIGMAS if param_sigmas is None else param_sigmas
+    rep = replay_track(seed_params, hit_records, layer_radii=RAD,
+                       use_angles="alphaBeta", active_layers=(1, 1, 1, 1),
+                       param_sigmas=ps, seed_npar=5)
+    traj = rep["traj_states"]
+    out = {}
+    k = 0                                   # pre-update stage index into traj
+    for hd in sorted(hit_records, key=lambda h: int(h["layer"])):
+        L = int(hd["layer"])
+        if not hd["hitAccepted"]:
+            continue
+        a_pre = np.asarray(traj[min(k, len(traj) - 1)], float)
+        R = RAD[L - 1]
+        sy = _recover_sy(a_pre, R, hd.get("parCotBeta", -999.0),
+                         hd.get("cotBetaMeas", -999.0))
+        frame = _build_frame(a_pre, R, sy, sy)
+        if frame is None:                   # unlocalizable: skipped identically
+            continue                        # by the replay -> stage not consumed
+        g0, B = frame
+        out[L] = g0 + hd["resX"] * B[0] + hd["resY"] * B[1]
+        k += 1
+    return out
+
+
+def hitset_chi2(params, stubs, hit_globals, active_layers=(1, 1, 1, 1),
+                layer_radii=None, pt=None):
+    """Chi2 of ONE track state against the FIXED config-wide full hit set.
+
+    params      : the 5-par state to evaluate (rInv, phi0, tanL, z0, d0).
+    stubs       : list of real OT stub dicts (x/y/z, r, layer, isBarrel); only
+                  BARREL stubs are counted (endcap excluded, see block comment).
+    hit_globals : dict layer -> global IT hit position from
+                  :func:`reconstruct_hit_globals` (computed ONCE per track so the
+                  hit set is literally identical for every evaluated state);
+                  only ACTIVE layers are counted.
+    pt          : seed pt [GeV] for the OT multiple-scattering sigma inflation.
+
+    Returns dict(chi2, chi2_ot, chi2_it, n_meas): n_meas = 2 per counted OT stub
+    (r-phi + z) + 1 per counted IT hit (local-x only; the IT z channel is
+    excluded, see the block comment), identical for every state of a given
+    (track, config) -- the caller divides by the common ndof = n_meas - 5.
+    """
+    RAD = _DEFAULT_RADII if layer_radii is None else np.asarray(layer_radii, float)
+    a = np.asarray(params, float)
+    pt = 2.0 if pt is None else float(pt)
+
+    chi2_ot = 0.0
+    n_meas = 0
+    for stub in stubs:
+        if not stub.get("isBarrel", True):
+            continue
+        r_stub = float(stub.get("r", np.hypot(stub["x"], stub["y"])))
+        res1, res2 = _cyl_residuals(a, float(stub["x"]), float(stub["y"]),
+                                    float(stub["z"]), r_stub)
+        sig1, sig2 = _ot_stub_sigmas(stub, pt)
+        chi2_ot += (res1 / sig1) ** 2 + (res2 / sig2) ** 2
+        n_meas += 2
+
+    chi2_it = 0.0
+    for L in sorted(hit_globals):
+        if not active_layers[L - 1]:
+            continue
+        g_hit = np.asarray(hit_globals[L], float)
+        R = RAD[L - 1]
+        frame = _build_frame(a, R, 1.0, 1.0)   # sign of the axes is chi2-neutral
+        if frame is not None:
+            g0, B = frame
+            rx = B[0] @ (g_hit - g0)
+        else:                                  # state misses the layer: fall back
+            rx, _ = _cyl_residuals(a, g_hit[0], g_hit[1], g_hit[2],
+                                   float(np.hypot(g_hit[0], g_hit[1])))
+        chi2_it += (rx / _SIGX) ** 2           # local-x only (IT z excluded)
+        n_meas += 1
+
+    return dict(chi2=chi2_ot + chi2_it, chi2_ot=chi2_ot, chi2_it=chi2_it,
+                n_meas=n_meas)
+
+
 # Recommended parametrized seed for the offline replay. Tighter on (rInv, phi0) than
 # the producer's ablation paramSigmas so the r-phi position updates do not overshoot
 # curvature/azimuth or scramble the phi0/d0 correlation. This is a DOCUMENTED
@@ -133,7 +311,14 @@ def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBe
       production used seedCovMode='trackCov', not persisted in nano).
 
     Returns dict with 'final' params, 'delta' vs seed, per-step 'states',
-    'chi2_rphi'/'chi2_rz' increments, and per-step 'pulls'.
+    'chi2_rphi'/'chi2_rz' increments, and per-step 'pulls'. Also returns the full
+    COVARIANCE-EVOLUTION trajectory used by the animated replay: 'traj_states'
+    (state at seed, after-L1, ..., final -- length = n_updates+1, one entry per KF
+    stage) and 'traj_sigmas' (the matching sqrt-diagonal per-param 1sigma for the 5
+    params, same order as the state (rInv, phi0, tanL, z0, d0)). 'traj_covs' holds
+    the full 5x5 covariance at each stage. This is the literal
+    "full covariance matrix computations from L1Track level, first update, ..." so the
+    viz can show each param's sigma SHRINK as each IT hit is folded in.
     """
     RAD = _DEFAULT_RADII if layer_radii is None else np.asarray(layer_radii, float)
     a = np.asarray(seed_params, float).copy()
@@ -146,6 +331,16 @@ def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBe
     useAlpha = use_angles != "none"
     useBeta = use_angles == "alphaBeta"
     states, chi2_rphi, chi2_rz, pulls = [], [], [], []
+
+    # Covariance-evolution trajectory: stage 0 = the seed (L1Track level), then one
+    # entry after every accepted IT update. The seed sigma is the parametrized-seed
+    # sqrt-diagonal (documented caveat); each update shrinks it as C = C - K v^T.
+    def _sigma_diag(cov):
+        return np.sqrt(np.clip(np.diag(cov), 0.0, None))
+
+    traj_states = [aSeed.copy()]
+    traj_covs = [C.copy()]
+    traj_sigmas = [_sigma_diag(C)]
 
     for hd in sorted(hit_records, key=lambda h: int(h["layer"])):
         L = int(hd["layer"])
@@ -190,6 +385,7 @@ def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBe
                 if p is not None: pk["pullBeta"] = p; c_rz += ci
 
         states.append(a.copy()); chi2_rphi.append(c_rphi); chi2_rz.append(c_rz); pulls.append(pk)
+        traj_states.append(a.copy()); traj_covs.append(C.copy()); traj_sigmas.append(_sigma_diag(C))
 
     return {
         "final": a.copy(),
@@ -202,4 +398,8 @@ def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBe
         "chi2_rz_tot": float(np.sum(chi2_rz)),
         "pulls": pulls,
         "cov": C,
+        # covariance-evolution trajectory (seed -> after each accepted update)
+        "traj_states": traj_states,
+        "traj_sigmas": traj_sigmas,
+        "traj_covs": traj_covs,
     }

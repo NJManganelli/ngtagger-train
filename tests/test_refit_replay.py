@@ -199,6 +199,189 @@ def test_reduced_chi2_running_starts_from_ot_anchor():
     assert len(red_ab) == len(inc) + 1
 
 
+def test_replay_covariance_trajectory_shrinks():
+    """The replay records a per-KF-stage covariance-evolution trajectory: traj_states
+    / traj_sigmas / traj_covs each have length n_updates+1 (seed + one per accepted
+    hit), aligned with 'states'. Each per-param 1sigma is non-negative and the d0/rInv
+    sigma does not GROW as position/curvature-constraining IT hits fold in (a scalar
+    KF update can only shrink or hold a diagonal)."""
+    rng = np.random.default_rng(2)
+    tr = _synth_track(rng, n_layers=4)
+    seed = [tr.seed[k] for k in ["rInv", "phi0", "tanL", "z0", "d0"]]
+    r = replay_track(seed, list(tr.hits.values()), layer_radii=_RADII,
+                     use_angles="alphaBeta", active_layers=(1, 1, 1, 1))
+    n = len(r["states"]) + 1
+    assert len(r["traj_states"]) == n
+    assert len(r["traj_sigmas"]) == n
+    assert len(r["traj_covs"]) == n
+    # seed stage == the input seed; all sigmas finite & non-negative
+    assert np.allclose(r["traj_states"][0], np.asarray(seed))
+    for sg in r["traj_sigmas"]:
+        assert sg.shape == (5,)
+        assert np.all(sg >= 0.0) and np.all(np.isfinite(sg))
+    # d0 (idx 4) and rInv (idx 0) sigma are non-increasing across the KF stages
+    sig = np.array(r["traj_sigmas"])
+    assert np.all(sig[1:, 4] <= sig[:-1, 4] + 1e-12)
+    assert np.all(sig[1:, 0] <= sig[:-1, 0] + 1e-12)
+
+
+def test_combo_payload_res_pct_and_sigmas():
+    """_combo_payload surfaces the animation trajectory: step_sigmas aligned with
+    step_states, and res_pct[d0/z0/rInv] with the seed entry = None (no previous step)
+    and later entries either None or a finite percent change."""
+    from ngtagger.viz.refit_replay import _combo_payload
+
+    rng = np.random.default_rng(9)
+    tr = _synth_track(rng, n_layers=4)
+    pl = _combo_payload(tr, "1111", "alphaBeta", np.asarray(_RADII),
+                        np.asarray(_REPLAY_SEED_SIGMAS))
+    assert len(pl["step_sigmas"]) == len(pl["step_states"])
+    for nm in ("d0", "z0", "rInv"):
+        assert nm in pl["res_pct"] and nm in pl["res_abs"]
+        assert len(pl["res_pct"][nm]) == len(pl["step_states"])
+        assert pl["res_pct"][nm][0] is None    # seed row: no previous step
+        for v in pl["res_pct"][nm][1:]:
+            assert v is None or np.isfinite(v)
+
+
+def test_table_values_full_covariance_columns():
+    """_table_values returns 13 columns whose last 5 are the covariance-diagonal σ for
+    (rInv, φ0, tanL, z0, d0) (round 4: σz0/σd0 rendered in µm), plus the round-4
+    config-wide full-hit-set χ²/ndof column, and a per-COLUMN fill list."""
+    from ngtagger.viz.refit_replay import _combo_payload, _table_values, _TABLE_HEADER
+
+    assert _TABLE_HEADER[-5:] == ["σrInv", "σφ0", "σtanL", "σz0<br>µm", "σd0<br>µm"]
+    # the compact per-row %Δd0→tru column is present (coordinator refinement #6)
+    assert "%Δd0" in _TABLE_HEADER
+    # the round-4 config-wide full-hit-set reduced chi2 column is present
+    assert "χ²/ndof<br>all hits" in _TABLE_HEADER
+    rng = np.random.default_rng(4)
+    tr = _synth_track(rng, n_layers=4)
+    pl = _combo_payload(tr, "1111", "alphaBeta", np.asarray(_RADII),
+                        np.asarray(_REPLAY_SEED_SIGMAS))
+    cols, col_fills = _table_values(pl, highlight_step=1)
+    assert len(cols) == len(_TABLE_HEADER) == 13
+    assert len(col_fills) == len(_TABLE_HEADER)   # per-column fill
+    # every column fill is a per-row list of equal length (== number of table rows)
+    nrows = len(cols[0])
+    assert all(len(cf) == nrows for cf in col_fills)
+    # the %Δd0 column: first row is blank (no previous step), later steps may show %
+    pdi = _TABLE_HEADER.index("%Δd0")
+    assert cols[pdi][0] == ""      # OT L1Track row has no %Δ
+    # round 2 rename: the initial row is labelled "OT L1Track", never "seed"
+    assert cols[0][0] == "OT L1Track"
+    assert all("seed" not in c.lower() for c in cols[0])
+    # the full-hit-set column: every state row is populated; the footer shows the
+    # common ndof so the fixed-denominator semantics are visible
+    fci = _TABLE_HEADER.index("χ²/ndof<br>all hits")
+    n_state_rows = len(pl["step_states"]) + 1        # + REFIT row
+    assert all(cols[fci][i] not in ("", None) for i in range(n_state_rows))
+    assert cols[fci][-1].startswith("ndof=")
+
+
+def test_combo_payload_full_hitset_chi2():
+    """_combo_payload surfaces the config-wide full-hit-set reduced chi2: one value
+    per KF stage + one for the refit, all divided by ONE common ndof; the hit set
+    (n_meas, hence ndof) changes with the config but not across rows."""
+    from ngtagger.viz.refit_replay import _combo_payload
+
+    rng = np.random.default_rng(21)
+    tr = _synth_track(rng, n_layers=4)
+    pl4 = _combo_payload(tr, "1111", "alphaBeta", np.asarray(_RADII),
+                         np.asarray(_REPLAY_SEED_SIGMAS))
+    pl1 = _combo_payload(tr, "1000", "alphaBeta", np.asarray(_RADII),
+                         np.asarray(_REPLAY_SEED_SIGMAS))
+    for pl in (pl4, pl1):
+        assert len(pl["full_red"]) == len(pl["step_states"])
+        assert pl["full_ndof"] >= 1
+        assert np.isfinite(pl["full_refit_red"])
+        assert all(np.isfinite(v) and v >= 0.0 for v in pl["full_red"])
+    # fewer active layers -> fewer IT measurements in the set -> smaller ndof
+    assert pl1["full_ndof"] < pl4["full_ndof"]
+
+
+def test_hitset_chi2_fixed_set_and_reconstruction():
+    """hitset_chi2: the measurement count is a property of the (track, config) hit
+    set, identical for every evaluated state; only barrel stubs are counted (2 each)
+    plus 1 (local-x) per active-layer IT hit; and the chi2 responds to the state."""
+    from ngtagger.viz._kf import hitset_chi2, reconstruct_hit_globals
+
+    rng = np.random.default_rng(31)
+    tr = _synth_track(rng, n_layers=4)
+    seed = [tr.seed[k] for k in ["rInv", "phi0", "tanL", "z0", "d0"]]
+    hg = reconstruct_hit_globals(seed, list(tr.hits.values()), layer_radii=_RADII)
+    assert set(hg) <= set(tr.hits)
+    kw = dict(stubs=tr.stubs, hit_globals=hg, active_layers=(1, 1, 1, 1),
+              layer_radii=_RADII, pt=tr.seed["pt"])
+    h_seed = hitset_chi2(seed, **kw)
+    pert = list(seed)
+    pert[4] += 0.05                       # shift d0 by 500 um
+    h_pert = hitset_chi2(pert, **kw)
+    n_barrel = sum(1 for s in tr.stubs if s["isBarrel"])
+    assert h_seed["n_meas"] == 2 * n_barrel + len(hg)
+    assert h_pert["n_meas"] == h_seed["n_meas"]      # SAME set for every state
+    assert h_seed["chi2"] >= 0.0 and np.isfinite(h_seed["chi2"])
+    assert h_pert["chi2"] != h_seed["chi2"]          # responds to the state
+    # config subsets drop IT measurements only (stub part unchanged)
+    h_sub = hitset_chi2(seed, stubs=tr.stubs, hit_globals=hg,
+                        active_layers=(1, 0, 0, 0), layer_radii=_RADII,
+                        pt=tr.seed["pt"])
+    assert h_sub["n_meas"] < h_seed["n_meas"]
+    assert h_sub["chi2_ot"] == pytest.approx(h_seed["chi2_ot"])
+
+
+def test_animation_covariance_band_shrinks():
+    """The build produces animation frames whose ±σd0 / ±σz0 covariance bands NARROW
+    monotonically from the seed to the final KF stage (the visible covariance-tightening
+    signal). Band width is measured as the median edge-to-edge separation of the polygon."""
+    from ngtagger.viz.refit_replay import build_figure
+
+    data = _synth_data()
+    picks = [(data.tracks[1], "clean", "syn"), (data.tracks[0], "fake", "syn")]
+    fig = build_figure(data, picks, np.asarray(_RADII), np.asarray(_REPLAY_SEED_SIGMAS))
+
+    def band_width(d):
+        x = np.asarray(d.x); y = np.asarray(d.y)
+        if x is None or len(x) < 4:
+            return 0.0
+        n = len(x) // 2
+        xp, yp = x[:n], y[:n]
+        xm, ym = x[n:][::-1], y[n:][::-1]
+        m = min(len(xp), len(xm))
+        return float(np.median(np.hypot(xp[:m] - xm[:m], yp[:m] - ym[:m])))
+
+    # frame data order: [rphi band, ov helix, ov hit, rphi helix, rphi hit,
+    #                    rz band, rz helix, rz hit, table]
+    w_rphi = [band_width(fr.data[0]) for fr in fig.frames]
+    w_rz = [band_width(fr.data[5]) for fr in fig.frames]
+    # seed band is the widest; final is the narrowest; overall non-increasing-ish
+    assert w_rphi[0] > w_rphi[-1]
+    assert w_rz[0] > w_rz[-1]
+    assert w_rphi[0] > 0.5   # seed band is a readable size (magnified)
+
+
+def test_animation_features_the_default_track():
+    """REGRESSION guard (coordinator: 'animation overlays the wrong track'). The
+    always-visible animation overlay MUST demonstrate the SAME track that the static
+    default view shows -- else the animated helix/★ mismatch the static stubs/hits.
+    The animation's final-frame overview helix must coincide with the static default
+    REFIT helix (same track + config 1111)."""
+    from ngtagger.viz.refit_replay import build_figure, LABEL_REFIT
+
+    data = _synth_data()
+    picks = [(data.tracks[1], "clean", "syn"), (data.tracks[0], "fake", "syn")]
+    fig = build_figure(data, picks, np.asarray(_RADII), np.asarray(_REPLAY_SEED_SIGMAS))
+    # the animated overview helix is the 2nd trace in each frame (A_OV_HELIX)
+    fx = np.asarray(fig.frames[-1].data[1].x)
+    fy = np.asarray(fig.frames[-1].data[1].y)
+    # the visible static default refit overview helix
+    refit = [t for t in fig.data if t.name == LABEL_REFIT and t.visible]
+    assert len(refit) == 1
+    rx = np.asarray(refit[0].x); ry = np.asarray(refit[0].y)
+    # both sample POCA->115 cm for the same (track, config): endpoints coincide
+    assert abs(fx[-1] - rx[-1]) < 1e-6 and abs(fy[-1] - ry[-1]) < 1e-6
+
+
 def test_replay_never_reads_answer():
     """Passing garbage in the real-refit fields must not change the replay output
     (the replay consumes only seed + sidecar hit records)."""
@@ -222,17 +405,97 @@ def test_figure_builds_self_contained(tmp_path):
              (data.tracks[0], "fake", "syn")]
     fig = build_figure(data, picks, np.asarray(_RADII), np.asarray(_REPLAY_SEED_SIGMAS))
     # static geometry (6 OT circles + 3*4 IT guides) + n_combos * 11 combo traces
+    # + 9 dedicated animation-overlay traces (±σd0 band, ±σz0 band, helix/hit x3
+    # panels, table).
     from ngtagger.viz._dataio import OT_BARREL_RADII
     n_static = len(OT_BARREL_RADII) + 3 * len(_RADII)
     n_combos = len(picks) * 15 * 3
-    assert len(fig.data) == n_static + n_combos * 11
-    assert len(fig.layout.updatemenus) == 4
+    n_anim = 9
+    assert len(fig.data) == n_static + n_combos * 11 + n_anim
+    # 4 dropdown menus (track/config/angle/full) + 1 Play/Pause/Step button group
+    assert len(fig.layout.updatemenus) == 5
+    # round 4: the animation button group has Play/Pause + the two single-step buttons
+    anim_menu = fig.layout.updatemenus[-1]
+    btn_labels = [b.label for b in anim_menu.buttons]
+    assert "◀ Step" in btn_labels and "Step ▶" in btn_labels
+    assert any("Play" in b for b in btn_labels) and any("Pause" in b for b in btn_labels)
+    # one animation frame per KF step (initial + one per fed IT layer) + a KF-step slider
+    assert len(fig.frames) >= 1
+    assert len(fig.layout.sliders) == 1
+    assert len(fig.layout.sliders[0].steps) == len(fig.frames)
+    # each frame rewrites the 9 overlay traces and carries a per-step status annotation
+    assert len(fig.frames[0].traces) == n_anim
+    assert fig.frames[0].layout.annotations  # captions + KF-step status preserved
+    # the step table shows the FULL covariance diagonal (all 5 σ columns, z0/d0 in µm)
+    # plus the round-4 config-wide full-hit-set χ²/ndof column
+    tables = [t for t in fig.data if t.type == "table"]
+    hdr = list(tables[-1].header.values)
+    for col in ("σrInv", "σφ0", "σtanL", "σz0<br>µm", "σd0<br>µm",
+                "χ²/ndof<br>all hits"):
+        assert col in hdr, f"missing table column {col}"
+    # round-4 layout: the table lives in the UPPER-RIGHT quadrant; both IT zooms
+    # (r-z = axes 2, r-phi = axes 3) sit side by side in the BOTTOM half
+    for t in tables:
+        assert t.domain.x[0] >= 0.5 and t.domain.y[0] >= 0.5
+    assert fig.layout.yaxis2.domain[1] <= 0.5   # r-z zoom (bottom-left)
+    assert fig.layout.yaxis3.domain[1] <= 0.5   # r-phi zoom (bottom-right)
+    assert fig.layout.xaxis3.domain[0] >= 0.5   # ...on the right
     out = tmp_path / "syn.html"
     html = fig.to_html(include_plotlyjs=True, full_html=True)
     out.write_text(html)
     assert "Plotly.newPlot" in html
     assert '<script src="' not in html  # fully inlined, no external script
     assert out.stat().st_size > 1_000_000
+
+
+def test_no_user_visible_seed_string():
+    """Round 4 rename: nothing user-visible may say "seed" (an L1Track is itself
+    built from a seed triplet, so the label was confusing) -- the initial track is
+    the "OT L1Track". Walk every user-visible string in the figure: trace names,
+    hovertemplates, table header+cells, annotations, subplot titles, dropdown/button
+    labels, slider step labels, frame annotations."""
+    from ngtagger.viz.refit_replay import build_figure
+
+    data = _synth_data()
+    picks = [(data.tracks[1], "clean", "syn"), (data.tracks[0], "fake", "syn")]
+    fig = build_figure(data, picks, np.asarray(_RADII), np.asarray(_REPLAY_SEED_SIGMAS))
+
+    visible = []
+    for t in fig.data:
+        visible.append(getattr(t, "name", None))
+        visible.append(getattr(t, "hovertemplate", None))
+        if t.type == "table":
+            visible.extend(str(v) for v in t.header.values)
+            for colv in t.cells.values:
+                visible.extend(str(v) for v in colv)
+    for a in fig.layout.annotations:
+        visible.append(a.text)
+    for m in fig.layout.updatemenus:
+        for b in m.buttons:
+            visible.append(b.label)
+    for s in fig.layout.sliders:
+        visible.extend(st.label for st in s.steps)
+        visible.append(s.currentvalue.prefix)
+    for fr in fig.frames:
+        if fr.layout and fr.layout.annotations:
+            visible.extend(a.text for a in fr.layout.annotations)
+    offenders = [v for v in visible if v and "seed" in str(v).lower()]
+    assert not offenders, f"user-visible 'seed' strings remain: {offenders[:5]}"
+
+
+def test_injected_js_has_step_buttons():
+    """The injected animation-controller JS wires all FOUR buttons (Play loop,
+    Pause, ◀ Step, Step ▶) through one shared gotoFrame that clamps at the ends
+    and keeps sliders[0].active in sync."""
+    from ngtagger.viz.refit_replay import _inject_loop_js
+
+    html = _inject_loop_js("<html><body>x</body></html>", 2500, 5)
+    assert "gotoFrame" in html
+    assert "sliders[0].active" in html
+    assert "wired < 4" in html                       # all four buttons hooked
+    assert "\\u25c0" in html                         # the ◀ Step matcher
+    assert "Math.max(0, Math.min(" in html           # clamped, no wrap on step
+    assert html.count("<script>") == 1 and "</body>" in html
 
 
 # --------------------------------------------------------------------------
