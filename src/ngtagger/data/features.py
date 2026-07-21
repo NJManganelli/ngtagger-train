@@ -35,6 +35,14 @@ FEATURE_GROUPS = {
     # time from the extended-track table via ngtagger.train.nnvtx; needs
     # 5-parameter d0, i.e. track_table=L1TExtTrack)
     "vertexdxy": ["vtx_dx", "vtx_dy", "vtx_dxsig", "vtx_dysig"],
+    # Stage-4 per-constituent-track vertex-dxy emulation: transverse IP (dxy)
+    # of each constituent's 5-par prompt track and its longitudinal offset from
+    # the emulated PV (L1Vertex z0). A classic b-tagging displacement feature.
+    "vertexdxy_pv": ["vtxpv_dxy", "vtxpv_dz"],
+    # Stage-4 on-the-fly refit-quality BDT score: the constituent's SmartPixels
+    # refit track scored by the deployed Stage-3 conifer (0 for tracks without
+    # a refit / neutral constituents).
+    "refitbdt": ["refit_bdt_score"],
 }
 
 
@@ -88,7 +96,7 @@ def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16,
         "quality": c.hwTkQuality,
     }
     for n in names:
-        if n.startswith("trk_") or n.startswith("cl_") or n.startswith("vtx_"):
+        if n.startswith(("trk_", "cl_", "vtx_", "vtxpv_", "refit_")):
             if n == "cl_absZBarycenter":
                 feats[n] = abs(c["cl_zBarycenter"])
             else:

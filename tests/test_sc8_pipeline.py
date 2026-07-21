@@ -170,7 +170,8 @@ def test_sc8_config_tables_reach_prepare_dataset(tmp_path, monkeypatch):
 
     captured = {}
 
-    def fake_prepare(files, n_const, feature_groups, max_events, seed, tables, gen_match_dr):
+    def fake_prepare(files, n_const, feature_groups, max_events, seed, tables, gen_match_dr,
+                     **kwargs):
         captured.update(tables=tables, n_const=n_const, gen_match_dr=gen_match_dr)
         raise _Stop()
 
