@@ -14,6 +14,15 @@ Corrections containing non-deterministic nodes (hashprng) cannot be rendered
 as a static grid; they are skipped and recorded in the meta, as are compound
 corrections whose stack includes such a node (their physical sub-corrections
 are exported through the normal path).
+
+EXCEPTION — the deterministic synthesis ENVELOPE: a compound of exactly the
+shape [sigma-like deterministic correction, hashprng-stdnormal] with
+output_op "*" (the SmartPixels smear factorization) is recorded in the meta
+as an `envelopes` entry referencing the exported sigma grid (and the matching
+`*_bias` grid when present), so the browser can render bias ± {1,2}·sigma
+bands ("synthesis envelope, throw ~ N(bias, sigma) via HashPRNG") without
+ever evaluating the raw hash noise.  HashPRNG structures that do not match
+this shape keep the plain skip path.
 """
 
 from __future__ import annotations
@@ -265,11 +274,34 @@ def export_generic_dataset(json_path: str, dataset_id: str, title: str,
         })
         offset += len(block)
 
+    envelopes: list[dict] = []
+    exported = {c["name"] for c in corr_meta}
+    by_name = {c["name"]: c for c in cset_json.get("corrections", [])}
     for comp in cset_json.get("compound_corrections", []) or []:
-        by_name = {c["name"]: c for c in cset_json.get("corrections", [])}
         stack = comp.get("stack", [])
         bad = [s for s in stack if s in by_name and has_hashprng(by_name[s])]
-        if bad:
+        if not bad:
+            continue
+        det = [s for s in stack if s not in bad]
+        # deterministic-envelope shape: [sigma-like, hashprng stdnormal], output_op "*"
+        if (len(stack) == 2 and len(bad) == 1 and len(det) == 1
+                and comp.get("output_op") == "*"
+                and by_name[bad[0]]["data"].get("distribution") == "stdnormal"
+                and det[0] in exported):
+            sigma_name = det[0]
+            bias_name = (sigma_name.replace("_sigma", "_bias")
+                         if "_sigma" in sigma_name else None)
+            if bias_name not in exported:
+                bias_name = None
+            envelopes.append({
+                "name": comp["name"],
+                "sigma": sigma_name,
+                "bias": bias_name,
+                "prng": bad[0],
+                "description": comp.get("description") or "",
+                "label": "synthesis envelope, throw ~ N(bias, sigma) via HashPRNG",
+            })
+        else:
             skipped.append({"name": comp["name"],
                             "reason": "compound stack includes non-deterministic "
                                       f"node(s): {', '.join(bad)}; its physical "
@@ -280,6 +312,7 @@ def export_generic_dataset(json_path: str, dataset_id: str, title: str,
         "source": os.path.basename(json_path),
         "file": f"{dataset_id}.bin",
         "corrections": corr_meta,
+        "envelopes": envelopes,
         "skipped": skipped,
     }
     os.makedirs(out_dir, exist_ok=True)

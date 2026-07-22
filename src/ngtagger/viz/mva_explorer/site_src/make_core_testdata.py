@@ -218,10 +218,33 @@ def make_table_cases(rng) -> tuple[list[dict], np.ndarray, list[str]]:
     return cases, rows, columns, comb, curves
 
 
+# ------------------------------------------------------------ envelope ref
+
+def make_envelope_case(rng) -> dict:
+    """Reference for explorer_core.synthesisEnvelope: bias ± k·sigma bands on a
+    shared 1D x grid, plus the null-bias (bias ≡ 0) variant."""
+    n = 7
+    x = np.linspace(-0.5, 0.5, n)
+    bias = rng.normal(0.0, 0.01, n)
+    sigma = 10.0 ** rng.normal(-1.5, 0.2, n)
+    ks = [1, 2]
+
+    def bands(mid):
+        return [{"k": k, "lo": (mid - k * sigma).tolist(),
+                 "hi": (mid + k * sigma).tolist()} for k in ks]
+
+    return {
+        "x": x.tolist(), "bias": bias.tolist(), "sigma": sigma.tolist(), "ks": ks,
+        "expected": {"mid": bias.tolist(), "bands": bands(bias)},
+        "expected0": {"mid": [0.0] * n, "bands": bands(np.zeros(n))},
+    }
+
+
 def generate(out_path: str) -> dict:
     rng = np.random.default_rng(20260721)
     grid_cases, q, f32, shape, centers = make_grid_cases(rng)
     table_cases, rows, columns, comb, comb_in = make_table_cases(rng)
+    envelope = make_envelope_case(rng)
 
     def _jsonable(o):
         if isinstance(o, dict):
@@ -250,6 +273,7 @@ def generate(out_path: str) -> dict:
             "cases": _jsonable(table_cases),
         },
         "combine": {"input": _jsonable(comb_in), "expected": _jsonable(comb)},
+        "envelope": _jsonable(envelope),
     }
     with open(out_path, "w") as f:
         json.dump(out, f)

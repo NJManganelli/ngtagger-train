@@ -133,6 +133,32 @@ function run() {
     report("table[" + i + "]", err);
   });
 
+  /* ---- synthesisEnvelope ---- */
+  {
+    const ev = td.envelope;
+    const rB = { x: ev.x, mid: ev.bias };
+    const rS = { x: ev.x, mid: ev.sigma };
+    const checkBands = (got, exp, tag) => {
+      let e = null;
+      exp.forEach((b, i) => {
+        if (!e)
+          e = (got[i].k !== b.k ? tag + ".k " + got[i].k + " vs " + b.k : null) ||
+              cmp(got[i].lo, b.lo, tag + "[k=" + b.k + "].lo") ||
+              cmp(got[i].hi, b.hi, tag + "[k=" + b.k + "].hi");
+      });
+      return e;
+    };
+    const r = synthesisEnvelope(rB, rS, ev.ks);
+    let err = cmp(r.x, ev.x, "env.x") || cmp(r.mid, ev.expected.mid, "env.mid") ||
+              checkBands(r.bands, ev.expected.bands, "env.band");
+    if (!err) {
+      const r0 = synthesisEnvelope(null, rS, ev.ks);
+      err = cmp(r0.mid, ev.expected0.mid, "env0.mid") ||
+            checkBands(r0.bands, ev.expected0.bands, "env0.band");
+    }
+    report("envelope", err);
+  }
+
   /* ---- combineCurves ---- */
   {
     const inCurves = td.combine.input.map((c) => ({
