@@ -86,7 +86,32 @@ def main():
                                                  f"mean={mean:.5f} std/sig={std/sig:.4f} ks_p={ks.pvalue:.2e}")
                     results["cells"].append(cell)
 
-    # determinism: repeated evals + fresh load
+    # fused shift compound: spx_angle_X_shift(inputs, 1.0) == bias(inputs) + smear(inputs)
+    rng_grid = [(l, float(a), float(cb), BLOCALY)
+                for l in (1, 2, 3, 4)
+                for a in np.linspace(-0.55, 0.55, 23)
+                for cb in (-2.0, -0.15, 0.6, 3.0)]
+    for x in ("alpha", "beta"):
+        fused = np.array([cset.compound[f"spx_angle_{x}_shift"].evaluate(*pr, 1.0) for pr in rng_grid])
+        two = np.array([cset[f"spx_angle_{x}_bias"].evaluate(*pr)
+                        + cset.compound[f"spx_angle_{x}_smear"].evaluate(*pr) for pr in rng_grid])
+        maxdiff = float(np.max(np.abs(fused - two)))
+        results[f"fused_vs_twopiece_{x}"] = dict(n=len(rng_grid), max_abs_diff=maxdiff)
+        if maxdiff > 1e-12:
+            ok = False
+            results["errors"].append(f"fused {x} != bias+smear (max diff {maxdiff:.3g})")
+
+    # alpha-beta throw INDEPENDENCE (distinct entropy permutations)
+    alphas = np.linspace(-0.05, 0.05, 2000)
+    za = np.array([cset["spx_angle_prng"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
+    zb = np.array([cset["spx_angle_prng_beta"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
+    rho_ab = float(stats.spearmanr(za, zb).statistic)
+    results["alpha_beta_throw_independence"] = dict(spearman=rho_ab, n=len(alphas))
+    if abs(rho_ab) > 0.1:
+        ok = False
+        results["errors"].append(f"alpha-beta throws correlated: spearman={rho_ab:.3f}")
+
+    # determinism: repeated evals + fresh load (two-piece AND fused)
     probe = (2, 0.123456789, -0.4, BLOCALY)
     v1 = cset.compound["spx_angle_alpha_smear"].evaluate(*probe)
     v2 = cset.compound["spx_angle_alpha_smear"].evaluate(*probe)
@@ -94,9 +119,11 @@ def main():
     v3 = cset2.compound["spx_angle_alpha_smear"].evaluate(*probe)
     p1 = cset["spx_angle_prng"].evaluate(*probe)
     p2 = cset2["spx_angle_prng"].evaluate(*probe)
+    f1 = cset.compound["spx_angle_alpha_shift"].evaluate(*probe, 1.0)
+    f2 = cset2.compound["spx_angle_alpha_shift"].evaluate(*probe, 1.0)
     results["determinism"] = dict(repeat_identical=(v1 == v2), fresh_load_identical=(v1 == v3),
-                                  prng_identical=(p1 == p2), value=v1)
-    if not (v1 == v2 == v3 and p1 == p2):
+                                  prng_identical=(p1 == p2), fused_identical=(f1 == f2), value=v1)
+    if not (v1 == v2 == v3 and p1 == p2 and f1 == f2):
         ok = False
         results["errors"].append("determinism violated")
 

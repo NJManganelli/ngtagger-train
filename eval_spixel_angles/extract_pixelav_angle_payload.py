@@ -89,15 +89,20 @@ CMS_PIX_TRANSFORM = (
     "(dx_cms=-dy_pix, B_y_cms=-B_x_pix)."
 )
 
-# The consumer contract for the HashPRNG-factorized stochastic term (embedded in the
-# CorrectionSet description and both smear compounds; the producer implements exactly this).
+# The consumer contract (embedded in the CorrectionSet description and every compound;
+# the producer implements exactly the PRIMARY form -- one evaluate per angle).
 CONSUMER_CONTRACT = (
-    "CONSUMER CONTRACT: cot(X)_meas = cot(X)_true"
-    " + spx_angle_X_bias(layer,cotAlpha,cotBeta,bLocalY)"
-    " + spx_angle_X_smear(layer,cotAlpha,cotBeta,bLocalY), X in {alpha,beta}. "
-    "spx_angle_X_smear is a CompoundCorrection stack [spx_angle_X_sigma, spx_angle_prng] "
-    "with output_op '*' => sigma(inputs) * N(0,1), so bias + smear reproduces a throw "
-    "~ N(bias, sigma) per bin. Validity gate: accept the synthesized angle pair iff "
+    "CONSUMER CONTRACT (PRIMARY, fused): cot(X)_meas = cot(X)_true"
+    " + spx_angle_X_shift(layer,cotAlpha,cotBeta,bLocalY, prngAcc=1.0), X in {alpha,beta}"
+    " -- ONE CompoundCorrection evaluate per angle; the trailing prngAcc input MUST be "
+    "passed as 1.0 (it is the compound's internal accumulator seed). "
+    "EQUIVALENT two-piece form (kept for visualization + cross-validation): "
+    "cot(X)_meas = cot(X)_true + spx_angle_X_bias(layer,cotAlpha,cotBeta,bLocalY)"
+    " + spx_angle_X_smear(layer,cotAlpha,cotBeta,bLocalY), where spx_angle_X_smear is the "
+    "stack [spx_angle_X_sigma, spx_angle_prng(_beta)] with output_op '*' => sigma*N(0,1). "
+    "The fused and two-piece forms agree bit-for-bit by construction (same rounded bias "
+    "decimal, same prng node). Both reproduce a throw ~ N(bias, sigma) per bin. "
+    "Validity gate: accept the synthesized angle pair iff "
     "spx_angle_valid_flat(inputs) < spx_angle_valid_prob(inputs)."
 )
 
@@ -108,13 +113,20 @@ PRNG_SEMANTICS = (
     "inputs give identical throws (a reproducibility FEATURE: replay/debug gets "
     "bit-identical synthesis; float-distinct angles give independent throws). All four "
     "inputs including the int 'layer' are entropy (int entropy verified working in the "
-    "correctionlib C++ evaluator). Both smear compounds share spx_angle_prng, so the "
-    "alpha and beta throws at the SAME input tuple use the SAME standard-normal deviate "
-    "(marginals exact N(bias,sigma); alpha-beta throw correlation = 1 by construction, "
-    "matching the established SmartPixels track-smear compound idiom). "
-    "spx_angle_valid_flat hashes the same inputs in REVERSED order (bLocalY,cotBeta,"
-    "cotAlpha,layer) to decorrelate the validity gate from the smear throw."
+    "correctionlib C++ evaluator). Alpha and beta throws are INDEPENDENT, matching the "
+    "legacy producer's two independent engine draws: spx_angle_prng (alpha) hashes "
+    "(layer,cotAlpha,cotBeta,bLocalY); spx_angle_prng_beta hashes the DISTINCT "
+    "permutation (cotBeta,bLocalY,layer,cotAlpha); spx_angle_valid_flat hashes the "
+    "REVERSED order (bLocalY,cotBeta,cotAlpha,layer). Distinct entropy permutations "
+    "give decorrelated hash streams (verified empirically)."
 )
+
+# Entropy permutations -- pairwise distinct, the decorrelation mechanism.
+PRNG_HASH_ORDERS = {
+    "spx_angle_prng": ["layer", "cotAlpha", "cotBeta", "bLocalY"],
+    "spx_angle_prng_beta": ["cotBeta", "bLocalY", "layer", "cotAlpha"],
+    "spx_angle_valid_flat": ["bLocalY", "cotBeta", "cotAlpha", "layer"],
+}
 
 def ALPHA_BETA_MAPPING(cols_true, cols_pred, cols_resid):
     """Return (spec_alpha_dict, spec_beta_dict), each mapping 'true'/'pred'/'resid' to the
@@ -263,9 +275,10 @@ def accumulate_files(files, spec_alpha, spec_beta):
     return acc_alpha, acc_beta, diag
 
 
-def _multibinning(acc, kind, na, nb):
-    """Build a schemav2 MultiBinning over (cotAlpha, cotBeta, bLocalY) from an accumulator.
-    kind in {'sigma','bias'}.  bLocalY has one bin (degenerate)."""
+def _content_values(acc, kind, na, nb):
+    """Per-cell rounded values (row-major over (cotAlpha, cotBeta)); kind in {'sigma','bias'}.
+    The SINGLE source of the payload numerics: the plain bias/sigma tables AND the fused
+    shift compound's Formula constants come from here, so fused == bias + smear exactly."""
     pooled = acc.pooled() if acc is not None else np.array([])
     if pooled.size:
         pq16, pq50, pq84 = np.quantile(pooled, [0.16, 0.5, 0.84])
@@ -286,6 +299,33 @@ def _multibinning(acc, kind, na, nb):
                 else:
                     sig, bias = max(SIGMA_FLOOR, robsig), med
             content.append(round(sig if kind == "sigma" else bias, 6))
+    return content
+
+
+def _multibinning(acc, kind, na, nb):
+    """Build a schemav2 MultiBinning over (cotAlpha, cotBeta, bLocalY) from an accumulator.
+    kind in {'sigma','bias'}.  bLocalY has one bin (degenerate)."""
+    return cs.MultiBinning(
+        nodetype="multibinning",
+        inputs=["cotAlpha", "cotBeta", "bLocalY"],
+        edges=[SPEC_ALPHA_EDGES, SPEC_BETA_EDGES, BLOCALY_EDGES],
+        content=_content_values(acc, kind, na, nb),
+        flow="clamp",
+    )
+
+
+def _final_multibinning(acc, na, nb):
+    """The fused-shift terminal node: bias table whose cells are Formula nodes
+    '<bias> + x' over the prngAcc accumulator (which holds sigma*z when reached),
+    so the cell outputs bias + sigma*z. Bias constants are the SAME rounded decimals
+    as the plain bias table (repr of round(...,6)) -> fused == bias + smear exactly."""
+    content = [
+        cs.Formula(nodetype="formula",
+                   expression=f"{repr(bias)} + x",
+                   parser="TFormula",
+                   variables=["prngAcc"])
+        for bias in _content_values(acc, "bias", na, nb)
+    ]
     return cs.MultiBinning(
         nodetype="multibinning",
         inputs=["cotAlpha", "cotBeta", "bLocalY"],
@@ -342,47 +382,73 @@ def _prng_inputs():
     ]
 
 
-def _prng_correction():
-    """spx_angle_prng: deterministic standard-normal deviate hashed from the input tuple."""
+def _shift_inputs():
+    """The fused-compound signature: the 4 plain inputs + the prngAcc accumulator seed."""
+    return _prng_inputs() + [
+        cs.Variable(name="prngAcc", type="real",
+                    description="internal accumulator seed -- the consumer MUST pass 1.0; "
+                                "the compound updates it to sigma, then sigma*N(0,1)"),
+    ]
+
+
+def _prng_name(x):
+    """The stdnormal throw node for angle x (distinct entropy permutations => independent)."""
+    return "spx_angle_prng" if x == "alpha" else "spx_angle_prng_beta"
+
+
+def _prng_correction(name, dist):
+    """A deterministic HashPRNG variate node hashed from the input tuple (order per
+    PRNG_HASH_ORDERS -- distinct permutations decorrelate the streams)."""
+    order = PRNG_HASH_ORDERS[name]
+    what = ("standard-normal deviate (stdnormal)" if dist == "stdnormal"
+            else "U(0,1) gate variate (stdflat)")
+    role = {
+        "spx_angle_prng": "the cotAlpha smear throw",
+        "spx_angle_prng_beta": "the cotBeta smear throw (independent of alpha)",
+        "spx_angle_valid_flat": ("the validity gate: accept iff "
+                                 "spx_angle_valid_flat(inputs) < spx_angle_valid_prob(inputs)"),
+    }[name]
     return cs.Correction(
-        name="spx_angle_prng",
-        description=("Deterministic standard-normal deviate: HashPRNG stdnormal over the "
-                     "input tuple (layer, cotAlpha, cotBeta, bLocalY) as entropy. "
-                     + PRNG_SEMANTICS + " " + CONSUMER_CONTRACT),
+        name=name,
+        description=(f"Deterministic {what} for {role}; HashPRNG entropy order "
+                     f"({', '.join(order)}). " + PRNG_SEMANTICS + " " + CONSUMER_CONTRACT),
         version=0,
         inputs=_prng_inputs(),
-        output=cs.Variable(name="spx_angle_prng", type="real"),
-        data=cs.HashPRNG(nodetype="hashprng",
-                         inputs=["layer", "cotAlpha", "cotBeta", "bLocalY"],
-                         distribution="stdnormal"),
+        output=cs.Variable(name=name, type="real"),
+        data=cs.HashPRNG(nodetype="hashprng", inputs=order, distribution=dist),
     )
 
 
-def _valid_flat_correction():
-    """spx_angle_valid_flat: deterministic U(0,1) for the valid_prob gate, entropy order
-    REVERSED vs spx_angle_prng to decorrelate the gate from the smear throw."""
+def _final_correction(x, acc, na, nb, prov):
+    """spx_angle_{x}_final: terminal node of the fused shift compound. Same
+    (layer category; cotAlpha,cotBeta,bLocalY multibinning) structure as the bias
+    table, but each cell is the Formula '<bias> + prngAcc' -> bias + sigma*N(0,1)
+    when reached through the compound."""
     return cs.Correction(
-        name="spx_angle_valid_flat",
-        description=("Deterministic U(0,1) gate variate: HashPRNG stdflat over the input "
-                     "tuple with REVERSED entropy order (bLocalY, cotBeta, cotAlpha, layer) "
-                     "to decorrelate from spx_angle_prng. Consumer accepts the synthesized "
-                     "angles iff spx_angle_valid_flat(inputs) < spx_angle_valid_prob(inputs). "
-                     + PRNG_SEMANTICS),
+        name=f"spx_angle_{x}_final",
+        description=(f"Fused-shift terminal for cot{x.capitalize()}: per-bin Formula "
+                     f"'<bias> + prngAcc' with the SAME rounded bias constants as "
+                     f"spx_angle_{x}_bias. Only meaningful inside spx_angle_{x}_shift "
+                     f"(where prngAcc has been updated to sigma*N(0,1)); standalone "
+                     f"evaluation returns bias + whatever prngAcc is passed. "
+                     + CONSUMER_CONTRACT + " " + prov),
         version=0,
-        inputs=_prng_inputs(),
-        output=cs.Variable(name="spx_angle_valid_flat", type="real"),
-        data=cs.HashPRNG(nodetype="hashprng",
-                         inputs=["bLocalY", "cotBeta", "cotAlpha", "layer"],
-                         distribution="stdflat"),
+        inputs=_shift_inputs(),
+        output=cs.Variable(name=f"spx_angle_{x}_final", type="real"),
+        data=cs.Category(
+            nodetype="category", input="layer",
+            content=[cs.CategoryItem(key=l, value=_final_multibinning(acc, na, nb))
+                     for l in LAYERS]),
     )
 
 
 def _smear_compound(x, prov):
-    """spx_angle_{alpha,beta}_smear = spx_angle_{x}_sigma * spx_angle_prng (output_op '*')."""
+    """spx_angle_{x}_smear = spx_angle_{x}_sigma * spx_angle_prng[_beta] (output_op '*').
+    The two-piece stochastic term -- kept for visualization + cross-validation."""
     return cs.CompoundCorrection(
         name=f"spx_angle_{x}_smear",
         description=(f"Stochastic term for cot{x.capitalize()} synthesis: CompoundCorrection "
-                     f"stack [spx_angle_{x}_sigma, spx_angle_prng], output_op '*' => "
+                     f"stack [spx_angle_{x}_sigma, {_prng_name(x)}], output_op '*' => "
                      f"sigma(inputs) * N(0,1). " + CONSUMER_CONTRACT + " " + PRNG_SEMANTICS
                      + " " + prov),
         inputs=_prng_inputs(),
@@ -391,7 +457,30 @@ def _smear_compound(x, prov):
         inputs_update=[],
         input_op="*",
         output_op="*",
-        stack=[f"spx_angle_{x}_sigma", "spx_angle_prng"],
+        stack=[f"spx_angle_{x}_sigma", _prng_name(x)],
+    )
+
+
+def _shift_compound(x, prov):
+    """spx_angle_{x}_shift: the FUSED bias + sigma*N(0,1) in ONE compound evaluate.
+    Mechanism: prngAcc starts at 1.0 (consumer-passed); inputs_update=['prngAcc'] with
+    input_op '*' folds each stack output into it (1 -> sigma -> sigma*z); the terminal
+    spx_angle_{x}_final returns bias + prngAcc; output_op 'last' emits that."""
+    return cs.CompoundCorrection(
+        name=f"spx_angle_{x}_shift",
+        description=(f"FUSED synthesis shift for cot{x.capitalize()}: stack "
+                     f"[spx_angle_{x}_sigma, {_prng_name(x)}, spx_angle_{x}_final], "
+                     f"inputs_update=['prngAcc'], input_op '*', output_op 'last' => "
+                     f"bias(inputs) + sigma(inputs)*N(0,1) in one evaluate "
+                     f"(pass prngAcc=1.0). " + CONSUMER_CONTRACT + " " + PRNG_SEMANTICS
+                     + " " + prov),
+        inputs=_shift_inputs(),
+        output=cs.Variable(name=f"spx_angle_{x}_shift", type="real",
+                           description=f"additive total shift for cot{x.capitalize()}_meas"),
+        inputs_update=["prngAcc"],
+        input_op="*",
+        output_op="last",
+        stack=[f"spx_angle_{x}_sigma", _prng_name(x), f"spx_angle_{x}_final"],
     )
 
 
@@ -438,10 +527,14 @@ def build_payload(variant, files, acc_alpha, acc_beta, diag):
                     lambda: _multibinning(acc_beta, "bias", na, nb)),
         _correction("spx_angle_valid_prob", "P(NN emits usable angle). No validity flag -> 1.0 everywhere. " + prov,
                     lambda: _prob_multibinning(na, nb)),
-        _prng_correction(),
-        _valid_flat_correction(),
+        _prng_correction("spx_angle_prng", "stdnormal"),
+        _prng_correction("spx_angle_prng_beta", "stdnormal"),
+        _prng_correction("spx_angle_valid_flat", "stdflat"),
+        _final_correction("alpha", acc_alpha, na, nb, prov),
+        _final_correction("beta", acc_beta, na, nb, prov),
     ]
-    compounds = [_smear_compound("alpha", prov), _smear_compound("beta", prov)]
+    compounds = [_smear_compound("alpha", prov), _smear_compound("beta", prov),
+                 _shift_compound("alpha", prov), _shift_compound("beta", prov)]
     cset = cs.CorrectionSet(
         schema_version=2,
         description=prov + " | " + CONSUMER_CONTRACT + " " + PRNG_SEMANTICS,
