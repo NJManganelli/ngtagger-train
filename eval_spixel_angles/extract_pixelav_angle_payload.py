@@ -89,6 +89,33 @@ CMS_PIX_TRANSFORM = (
     "(dx_cms=-dy_pix, B_y_cms=-B_x_pix)."
 )
 
+# The consumer contract for the HashPRNG-factorized stochastic term (embedded in the
+# CorrectionSet description and both smear compounds; the producer implements exactly this).
+CONSUMER_CONTRACT = (
+    "CONSUMER CONTRACT: cot(X)_meas = cot(X)_true"
+    " + spx_angle_X_bias(layer,cotAlpha,cotBeta,bLocalY)"
+    " + spx_angle_X_smear(layer,cotAlpha,cotBeta,bLocalY), X in {alpha,beta}. "
+    "spx_angle_X_smear is a CompoundCorrection stack [spx_angle_X_sigma, spx_angle_prng] "
+    "with output_op '*' => sigma(inputs) * N(0,1), so bias + smear reproduces a throw "
+    "~ N(bias, sigma) per bin. Validity gate: accept the synthesized angle pair iff "
+    "spx_angle_valid_flat(inputs) < spx_angle_valid_prob(inputs)."
+)
+
+# Determinism + correlation semantics of the HashPRNG factorization (empirically probed
+# with correctionlib 2.9.0; see eval_spixel_angles/hashprng_ab/probe_findings.json).
+PRNG_SEMANTICS = (
+    "HashPRNG determinism: the throw is a pure hash of the input tuple -- identical "
+    "inputs give identical throws (a reproducibility FEATURE: replay/debug gets "
+    "bit-identical synthesis; float-distinct angles give independent throws). All four "
+    "inputs including the int 'layer' are entropy (int entropy verified working in the "
+    "correctionlib C++ evaluator). Both smear compounds share spx_angle_prng, so the "
+    "alpha and beta throws at the SAME input tuple use the SAME standard-normal deviate "
+    "(marginals exact N(bias,sigma); alpha-beta throw correlation = 1 by construction, "
+    "matching the established SmartPixels track-smear compound idiom). "
+    "spx_angle_valid_flat hashes the same inputs in REVERSED order (bLocalY,cotBeta,"
+    "cotAlpha,layer) to decorrelate the validity gate from the smear throw."
+)
+
 def ALPHA_BETA_MAPPING(cols_true, cols_pred, cols_resid):
     """Return (spec_alpha_dict, spec_beta_dict), each mapping 'true'/'pred'/'resid' to the
     source column name in the parquet, or None if that spec angle is unavailable in this file.
@@ -305,6 +332,69 @@ def _correction(name, desc, builder):
     )
 
 
+def _prng_inputs():
+    """The shared 4-input signature, identical (names/types/order) to the plain corrections."""
+    return [
+        cs.Variable(name="layer", type="int", description="TBPX layer 1-4 (entropy)"),
+        cs.Variable(name="cotAlpha", type="real", description="spec-alpha true angle (entropy). " + CMS_PIX_TRANSFORM),
+        cs.Variable(name="cotBeta", type="real", description="spec-beta true angle (entropy). " + CMS_PIX_TRANSFORM),
+        cs.Variable(name="bLocalY", type="real", description="CMSSW local-y B [T] (entropy)"),
+    ]
+
+
+def _prng_correction():
+    """spx_angle_prng: deterministic standard-normal deviate hashed from the input tuple."""
+    return cs.Correction(
+        name="spx_angle_prng",
+        description=("Deterministic standard-normal deviate: HashPRNG stdnormal over the "
+                     "input tuple (layer, cotAlpha, cotBeta, bLocalY) as entropy. "
+                     + PRNG_SEMANTICS + " " + CONSUMER_CONTRACT),
+        version=0,
+        inputs=_prng_inputs(),
+        output=cs.Variable(name="spx_angle_prng", type="real"),
+        data=cs.HashPRNG(nodetype="hashprng",
+                         inputs=["layer", "cotAlpha", "cotBeta", "bLocalY"],
+                         distribution="stdnormal"),
+    )
+
+
+def _valid_flat_correction():
+    """spx_angle_valid_flat: deterministic U(0,1) for the valid_prob gate, entropy order
+    REVERSED vs spx_angle_prng to decorrelate the gate from the smear throw."""
+    return cs.Correction(
+        name="spx_angle_valid_flat",
+        description=("Deterministic U(0,1) gate variate: HashPRNG stdflat over the input "
+                     "tuple with REVERSED entropy order (bLocalY, cotBeta, cotAlpha, layer) "
+                     "to decorrelate from spx_angle_prng. Consumer accepts the synthesized "
+                     "angles iff spx_angle_valid_flat(inputs) < spx_angle_valid_prob(inputs). "
+                     + PRNG_SEMANTICS),
+        version=0,
+        inputs=_prng_inputs(),
+        output=cs.Variable(name="spx_angle_valid_flat", type="real"),
+        data=cs.HashPRNG(nodetype="hashprng",
+                         inputs=["bLocalY", "cotBeta", "cotAlpha", "layer"],
+                         distribution="stdflat"),
+    )
+
+
+def _smear_compound(x, prov):
+    """spx_angle_{alpha,beta}_smear = spx_angle_{x}_sigma * spx_angle_prng (output_op '*')."""
+    return cs.CompoundCorrection(
+        name=f"spx_angle_{x}_smear",
+        description=(f"Stochastic term for cot{x.capitalize()} synthesis: CompoundCorrection "
+                     f"stack [spx_angle_{x}_sigma, spx_angle_prng], output_op '*' => "
+                     f"sigma(inputs) * N(0,1). " + CONSUMER_CONTRACT + " " + PRNG_SEMANTICS
+                     + " " + prov),
+        inputs=_prng_inputs(),
+        output=cs.Variable(name=f"spx_angle_{x}_smear", type="real",
+                           description=f"additive stochastic term for cot{x.capitalize()}_meas"),
+        inputs_update=[],
+        input_op="*",
+        output_op="*",
+        stack=[f"spx_angle_{x}_sigma", "spx_angle_prng"],
+    )
+
+
 def git_rev():
     try:
         return subprocess.check_output(
@@ -348,8 +438,16 @@ def build_payload(variant, files, acc_alpha, acc_beta, diag):
                     lambda: _multibinning(acc_beta, "bias", na, nb)),
         _correction("spx_angle_valid_prob", "P(NN emits usable angle). No validity flag -> 1.0 everywhere. " + prov,
                     lambda: _prob_multibinning(na, nb)),
+        _prng_correction(),
+        _valid_flat_correction(),
     ]
-    cset = cs.CorrectionSet(schema_version=2, description=prov, corrections=corrs)
+    compounds = [_smear_compound("alpha", prov), _smear_compound("beta", prov)]
+    cset = cs.CorrectionSet(
+        schema_version=2,
+        description=prov + " | " + CONSUMER_CONTRACT + " " + PRNG_SEMANTICS,
+        corrections=corrs,
+        compound_corrections=compounds,
+    )
     return cset
 
 
