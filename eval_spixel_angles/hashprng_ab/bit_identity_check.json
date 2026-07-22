@@ -1,0 +1,137 @@
+{
+ "Mlp_Slim-2bit": {
+  "spx_angle_alpha_sigma": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_alpha_bias": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_beta_sigma": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_beta_bias": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_valid_prob": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "_additions": [
+   "spx_angle_alpha_final",
+   "spx_angle_beta_final",
+   "spx_angle_prng",
+   "spx_angle_prng_beta",
+   "spx_angle_valid_flat"
+  ],
+  "_compounds": [
+   "spx_angle_alpha_shift",
+   "spx_angle_alpha_smear",
+   "spx_angle_beta_shift",
+   "spx_angle_beta_smear"
+  ]
+ },
+ "Conv2D_Max-2bit": {
+  "spx_angle_alpha_sigma": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_alpha_bias": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_beta_sigma": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_beta_bias": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_valid_prob": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "_additions": [
+   "spx_angle_alpha_final",
+   "spx_angle_beta_final",
+   "spx_angle_prng",
+   "spx_angle_prng_beta",
+   "spx_angle_valid_flat"
+  ],
+  "_compounds": [
+   "spx_angle_alpha_shift",
+   "spx_angle_alpha_smear",
+   "spx_angle_beta_shift",
+   "spx_angle_beta_smear"
+  ]
+ },
+ "Conv1D_Full-2bit": {
+  "spx_angle_alpha_sigma": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_alpha_bias": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_beta_sigma": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_beta_bias": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "spx_angle_valid_prob": {
+   "present": true,
+   "data_bit_identical": true,
+   "inputs_identical": true,
+   "output_identical": true
+  },
+  "_additions": [
+   "spx_angle_alpha_final",
+   "spx_angle_beta_final",
+   "spx_angle_prng",
+   "spx_angle_prng_beta",
+   "spx_angle_valid_flat"
+  ],
+  "_compounds": [
+   "spx_angle_alpha_shift",
+   "spx_angle_alpha_smear",
+   "spx_angle_beta_shift",
+   "spx_angle_beta_smear"
+  ]
+ }
+}

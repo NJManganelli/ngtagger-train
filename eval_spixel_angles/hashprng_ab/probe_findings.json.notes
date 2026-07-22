@@ -1,0 +1,10 @@
+IN-CONTAINER CHECK (2026-07-22): CMSSW bundled correctionlib = 2.7.0 (both arches).
+Supports: hashprng (int entropy), CompoundCorrection, inputs_update accumulator recipe,
+Formula-in-multibinning content. fused==bias+smear diff 0.0; repeat-deterministic.
+ARM (el9_aarch64_gcc13) and x86 (el9_amd64_gcc14) values BIT-IDENTICAL:
+  probe (2, 0.123456789, -0.4, -3.81):
+  z=-0.12976226785279882 zb=0.4993853504768312 u=0.6184479643318503
+  smear=-0.002129528577732281 fused=-0.0038395285777322813
+HOST correctionlib 2.9.0 gives DIFFERENT absolute hash values than bundled 2.7.0
+(hash evolution between versions) -> reproducibility is per-correctionlib-version;
+distributional payload validation unaffected. Producer will use the FUSED path.

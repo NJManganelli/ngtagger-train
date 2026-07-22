@@ -1,0 +1,39 @@
+{
+ "int_entropy": {
+  "works": true,
+  "layer1": 1.4023190226557853,
+  "layer2": 1.6326106628463748,
+  "distinct": true
+ },
+ "same_inputs_same_value": {
+  "va": -0.46048467404042037,
+  "vb": -0.46048467404042037,
+  "identical": true
+ },
+ "order_sensitivity": {
+  "v_fwd": -0.46048467404042037,
+  "v_rev": 1.2243227638302765,
+  "differs": true
+ },
+ "flat_vs_normal_same_entropy": {
+  "spearman": 0.5137504160007907,
+  "max_abs_diff_phi": 0.9881232692695152
+ },
+ "stdnormal_stats": {
+  "mean": 0.025017121246088382,
+  "std": 1.034233398445701,
+  "n": 2001
+ },
+ "compound": {
+  "works": true,
+  "value": -0.9209693480808407,
+  "sigma_times_prng": -0.9209693480808407,
+  "matches": true
+ },
+ "compound_int_entropy": {
+  "works": true,
+  "layer1": 1.768437425655726,
+  "layer2": -4.411656592793303,
+  "layer_changes_throw": true
+ }
+}
