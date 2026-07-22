@@ -70,7 +70,17 @@ only appear in formulas get a linspace (override with `--linspace`).
 Corrections containing the non-deterministic `hashprng` node — and compound
 stacks that include it — cannot be rendered as a static grid; they are skipped
 and listed in the meta/status line, while their physical sub-corrections are
-exported normally.
+exported normally. **Exception — synthesis envelopes**: a compound of exactly
+the shape `[sigma-like correction, hashprng stdnormal]` with `output_op "*"`
+(the SmartPixels angle-smear factorization, e.g. `spx_angle_alpha_smear`)
+appears in the correction dropdown as `<name> [envelope]` and renders the
+**deterministic envelope**: the matching `*_bias` grid (0 when absent) as the
+central curve with bias ± 1σ and ± 2σ bands, labelled *"synthesis envelope,
+throw ~ N(bias, sigma) via HashPRNG"*. The raw hash noise is never rendered —
+the envelope is the complete deterministic content of the throw. With a 2nd
+axis selected the envelope entry falls back to the central bias surface
+(bands are a 1D concept). Non-matching hashprng compounds (e.g. the fused
+3-stack `spx_angle_*_shift`) keep the skip path.
 
 **UI**: dataset → (structured) kind/param/num/den config — configs always in
 the canonical combinatoric order `0000, 1000, 0100, 0010, 0001, 1100, 1010,

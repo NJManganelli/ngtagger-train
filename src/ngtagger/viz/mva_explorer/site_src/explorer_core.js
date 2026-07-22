@@ -155,6 +155,28 @@ function computeGridEntry(spec) {
   return { dim: 2, x, y, z };
 }
 
+/* Deterministic synthesis envelope for a [sigma, hashprng-stdnormal] "*"
+ * compound (SmartPixels smear factorization): central bias curve with
+ * bias ± k·sigma bands — the throw is ~ N(bias, sigma), so the envelope IS
+ * the full deterministic content; the raw hash noise is never rendered.
+ * biasEntry/sigmaEntry: 1D computeGridEntry results on the SAME x grid
+ * (biasEntry null -> bias ≡ 0).  ks: band multipliers, e.g. [1, 2]. */
+function synthesisEnvelope(biasEntry, sigmaEntry, ks) {
+  const x = sigmaEntry.x;
+  const n = x.length;
+  const mid = new Array(n);
+  for (let i = 0; i < n; i++) mid[i] = biasEntry ? biasEntry.mid[i] : 0;
+  const bands = (ks || [1, 2]).map((k) => {
+    const lo = new Array(n), hi = new Array(n);
+    for (let i = 0; i < n; i++) {
+      lo[i] = mid[i] - k * sigmaEntry.mid[i];
+      hi[i] = mid[i] + k * sigmaEntry.mid[i];
+    }
+    return { k, lo, hi };
+  });
+  return { x, mid, bands };
+}
+
 /* ----------------------------------------------------------------- table */
 
 /* table = { data: Float32Array (whole dataset file), ncol,
@@ -367,7 +389,7 @@ function positiveMask(labels, positiveValue) {
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     strides, binsInRange, quantile, aggregate,
-    makeValueFn, computeGridEntry,
+    makeValueFn, computeGridEntry, synthesisEnvelope,
     makeTable, selectRows, columnValues, makeEdges, edgeCenters, binAssign,
     binnedScoreStats, binnedEfficiency, aucRanked, binnedAUC, histogram,
     combineCurves, positiveMask,

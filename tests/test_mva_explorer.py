@@ -107,13 +107,37 @@ def _synthetic_cset():
                "content": [-1.0, 1.0]}),
         _corr("c_inactive_input", [_inp("x"), _inp("unused")], binning),
         _corr("c_prng", [_inp("x"), _inp("y")], prng),
+        # envelope-shaped smear factorization: sigma/bias pair + stdnormal prng
+        _corr("c_env_sigma", [_inp("x")], binning),
+        _corr("c_env_bias", [_inp("x")],
+              {"nodetype": "binning", "input": "x",
+               "edges": [0.0, 1.0, 2.0, 4.0], "flow": "clamp",
+               "content": [-0.1, 0.0, 0.1]}),
+        _corr("c_flatprng", [_inp("x"), _inp("y")],
+              {"nodetype": "hashprng", "inputs": ["x", "y"],
+               "distribution": "stdflat"}),
     ]
     compound = [{
+        # matches the envelope shape (sigma-like = c_binning, no *_bias partner)
         "name": "comp_with_prng",
         "inputs": [_inp("x"), _inp("y")],
         "output": {"name": "w", "type": "real"},
         "inputs_update": [], "input_op": "*", "output_op": "*",
         "stack": ["c_binning", "c_prng"],
+    }, {
+        # matches the envelope shape with a *_sigma/*_bias pair
+        "name": "comp_env",
+        "inputs": [_inp("x"), _inp("y")],
+        "output": {"name": "w", "type": "real"},
+        "inputs_update": [], "input_op": "*", "output_op": "*",
+        "stack": ["c_env_sigma", "c_prng"],
+    }, {
+        # stdflat prng: NOT envelope-shaped -> stays on the skip path
+        "name": "comp_with_flatprng",
+        "inputs": [_inp("x"), _inp("y")],
+        "output": {"name": "w", "type": "real"},
+        "inputs_update": [], "input_op": "*", "output_op": "*",
+        "stack": ["c_binning", "c_flatprng"],
     }]
     return _cset(corrections, compound)
 
@@ -178,9 +202,18 @@ def test_generic_export_matches_correctionlib(synthetic_json, tmp_path):
     assert "c_prng" not in names
     assert set(names) == {"c_binning", "c_multibinning", "c_category",
                           "c_formula", "c_formularef", "c_transform",
-                          "c_signed", "c_inactive_input"}
+                          "c_signed", "c_inactive_input",
+                          "c_env_sigma", "c_env_bias"}
     skipped = {s["name"] for s in meta["skipped"]}
-    assert skipped == {"c_prng", "comp_with_prng"}
+    assert skipped == {"c_prng", "c_flatprng", "comp_with_flatprng"}
+    # envelope-shaped compounds are recorded (not skipped), with bias association
+    envs = {e["name"]: e for e in meta["envelopes"]}
+    assert set(envs) == {"comp_with_prng", "comp_env"}
+    assert envs["comp_with_prng"]["sigma"] == "c_binning"
+    assert envs["comp_with_prng"]["bias"] is None
+    assert envs["comp_env"]["sigma"] == "c_env_sigma"
+    assert envs["comp_env"]["bias"] == "c_env_bias"
+    assert "N(bias, sigma)" in envs["comp_env"]["label"]
 
     blob = open(os.path.join(out, meta["file"]), "rb").read()
     cset = correctionlib.CorrectionSet.from_file(synthetic_json)

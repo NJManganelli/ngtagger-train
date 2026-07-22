@@ -153,7 +153,10 @@ function regPanel() {
     "payloads (digiRefit) expose each correction with its own axes. Cuts on " +
     "non-plotted axes restrict the aggregation range; the 16–84% band shows " +
     "the spread over the integrated axes. Values ≤0 (uncovered bins) are " +
-    "stored raw and excluded from ratios.";
+    "stored raw and excluded from ratios. '[envelope]' entries render the " +
+    "deterministic synthesis envelope of a [sigma × HashPRNG] smear compound: " +
+    "bias ± {1,2}·σ bands (throw ~ N(bias, sigma) via HashPRNG; the raw hash " +
+    "noise is never rendered).";
 
   P.controlsHTML = () => `
     <fieldset><legend>Regression dataset</legend>
@@ -219,8 +222,22 @@ function regPanel() {
       return ds.meta.title + " — " + ds.meta.shape.join(" × ") +
         " (kinds × configs × params × grid), quant " + ds.meta.quant;
     const sk = ds.meta.skipped.length;
+    const ne = (ds.meta.envelopes || []).length;
     return ds.meta.title + " — " + ds.meta.corrections.length + " corrections" +
+      (ne ? " + " + ne + " synthesis envelopes" : "") +
       (sk ? " (" + sk + " skipped: non-deterministic)" : "");
+  };
+
+  /* Resolve an entry's correction dropdown value: plain correction meta, or a
+   * synthesis-envelope pseudo-entry ("env:<name>") whose axes come from its
+   * exported sigma grid. Returns {cm, env} (env null for plain corrections). */
+  P.resolveCorr = (ds, val) => {
+    if (val.startsWith("env:")) {
+      const env = (ds.meta.envelopes || []).find(e => e.name === val.slice(4));
+      const cm = ds.meta.corrections.find(c => c.name === env.sigma);
+      return { cm, env };
+    }
+    return { cm: ds.meta.corrections.find(c => c.name === val), env: null };
   };
 
   P.resetEntries = () => {
@@ -245,7 +262,9 @@ function regPanel() {
         </div>
         <div class="cuts">${cutRowsHTML(ds.meta.axes.map(a => ({key: a.name, label: a.label || a.name})))}</div>`;
     } else {
-      const corrO = ds.meta.corrections.map(c => `<option>${c.name}</option>`).join("");
+      const corrO = ds.meta.corrections.map(c => `<option>${c.name}</option>`).join("") +
+        (ds.meta.envelopes || []).map(e =>
+          `<option value="env:${e.name}">${e.name} [envelope]</option>`).join("");
       inner = `
         <div class="row">
           <label>correction <select class="corr">${corrO}</select></label>
@@ -275,7 +294,7 @@ function regPanel() {
 
   P.refreshGenericEntry = (div) => {
     const ds = P.currentDS();
-    const cm = ds.meta.corrections.find(c => c.name === div.querySelector(".corr").value);
+    const { cm } = P.resolveCorr(ds, div.querySelector(".corr").value);
     const cats = div.querySelector(".catsel");
     cats.innerHTML = "";
     for (const [i, a] of cm.axes.entries()) {
@@ -299,7 +318,8 @@ function regPanel() {
       return "σ(" + p + ") " + (den ? num + "/" + den : num) +
         (k === "relative" ? " (rel)" : "") + cutsLabel(collectCuts(div));
     }
-    return div.querySelector(".corr").value +
+    const cv = div.querySelector(".corr").value;
+    return (cv.startsWith("env:") ? cv.slice(4) + " [envelope]" : cv) +
       [...div.querySelectorAll(".cat")].map(s => " " + s.value).join("") +
       cutsLabel(collectCuts(div));
   };
@@ -343,7 +363,7 @@ function regPanel() {
           fixedBins: {}, xAxis: ix, yAxis: iy, cuts: cutsIdx, agg,
         };
       } else {
-        const cm = ds.meta.corrections.find(c => c.name === div.querySelector(".corr").value);
+        const { cm, env } = P.resolveCorr(ds, div.querySelector(".corr").value);
         const ix = cm.axes.findIndex(a => a.name === xName);
         if (ix < 0) continue; // this correction has no such axis
         const iy = yName == null ? null : cm.axes.findIndex(a => a.name === yName);
@@ -354,13 +374,54 @@ function regPanel() {
         }
         const cutsIdx = {};
         cm.axes.forEach((a, i) => { if (cuts[a.name]) cutsIdx[i] = cuts[a.name]; });
-        spec = {
-          valueFn: makeValueFn(corrView(ds, cm), cm.quant, cm.scale, 0, null),
-          shape: cm.shape,
-          centers: cm.axes.map(a => a.kind === "real" ? a.centers : null),
+        const mkSpec = (block) => ({
+          valueFn: makeValueFn(corrView(ds, block), block.quant, block.scale, 0, null),
+          shape: block.shape,
+          centers: block.axes.map(a => a.kind === "real" ? a.centers : null),
           fixedBins, xAxis: ix, yAxis: (iy != null && iy >= 0) ? iy : null,
           cuts: cutsIdx, agg,
-        };
+        });
+        if (env) {
+          // Deterministic synthesis envelope: bias ± {1,2}·sigma bands (the throw
+          // is ~ N(bias, sigma) via HashPRNG; the raw hash noise is not rendered).
+          // The sigma and bias grids share identical axes (validated payload-side).
+          const biasCm = env.bias
+            ? ds.meta.corrections.find(c => c.name === env.bias) : null;
+          let rS, rB = null;
+          try {
+            rS = computeGridEntry(mkSpec(cm));
+            if (biasCm) rB = computeGridEntry(mkSpec(biasCm));
+          } catch (err) { console.error(err); continue; }
+          const hover = "<extra>" + name + " — " + env.label + "</extra>";
+          if (rS.dim === 1) {
+            const e = synthesisEnvelope(rB, rS, [1, 2]);
+            for (const b of e.bands.slice().reverse())  // wide band first
+              traces.push({ x: e.x.concat(e.x.slice().reverse()),
+                            y: b.hi.concat(b.lo.slice().reverse()),
+                            type: "scatter", fill: "toself",
+                            fillcolor: color + (b.k === 1 ? "44" : "1c"),
+                            line: { width: 0 }, hoverinfo: "skip",
+                            showlegend: false, legendgroup: name });
+            traces.push({ x: e.x, y: e.mid, type: "scatter",
+                          mode: "lines+markers", marker: { size: 5 },
+                          line: { color, dash: "dot" }, name, legendgroup: name,
+                          hovertemplate: "%{x:.3g}: bias %{y:.4g}" + hover });
+          } else {
+            // 2D: envelope bands are a 1D concept -> central bias surface only
+            // (sigma surface when the payload carries no bias grid).
+            any2d = true;
+            const rC = rB || rS;
+            const z = logScale ? rC.z.map(row => row.map(v => Math.log10(v))) : rC.z;
+            traces.push({ x: rC.x, y: rC.y, z, type: "surface",
+                          colorscale: [[0, color], [1, color]], showscale: false,
+                          opacity: 0.85, name: name + (rB ? " (bias)" : " (sigma)"),
+                          showlegend: true, customdata: rC.z,
+                          hovertemplate: xName + ": %{x:.3g}<br>" + yName +
+                            ": %{y:.3g}<br>value: %{customdata:.4g}" + hover });
+          }
+          continue;
+        }
+        spec = mkSpec(cm);
       }
       let r;
       try { r = computeGridEntry(spec); }
