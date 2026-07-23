@@ -20,10 +20,13 @@ import numpy as np
 import uproot
 
 # Candidate-level branches used to build features. hgcClusterIdx and l1TrackIdx
-# are OPTIONAL: some fat single-coherent-view nanos ship L1ExtPuppiCand without
-# hgcClusterIdx and with an unfilled (all -1) l1TrackIdx. The loader tolerates
-# their absence/emptiness and (for l1TrackIdx) recovers the link from the
-# row-aligned plain L1PuppiCand tier when available. See load_jets.
+# are OPTIONAL. In the current fat single-coherent-view nanos, L1ExtPuppiCand
+# ships l1TrackIdx FILLED directly (valid on charged constituents, -1 only on
+# neutrals), so the plain-L1PuppiCand recovery below is a guarded fallback that
+# does NOT trigger here. It stays only for older/degenerate nanos where
+# L1ExtPuppiCand.l1TrackIdx is unfilled (all -1); the swap is gated on our own
+# column being empty. hgcClusterIdx may still be genuinely absent on some
+# nanos; the loader tolerates that. See load_jets.
 CAND_BRANCHES = [
     "pt", "eta", "phi", "mass", "charge", "id", "z0", "dxy",
     "puppiWeight", "hwEmID", "hwTkQuality", "l1TrackIdx", "hgcClusterIdx",
@@ -216,9 +219,13 @@ def load_jets(
             continue
         const[name] = gather(cands, nested_idx, name)
 
-    # Recover the constituent->track link. The deregionized L1ExtPuppiCand ships
-    # l1TrackIdx=-1 in these fat nanos; the row-aligned plain L1PuppiCand carries
-    # the filled link, so swap in its column when ours is empty.
+    # Recover the constituent->track link. In the current fat nanos the
+    # deregionized L1ExtPuppiCand already carries a filled l1TrackIdx, so this
+    # guarded fallback is a no-op there. It only fires for older/degenerate
+    # nanos whose L1ExtPuppiCand.l1TrackIdx is unfilled (all -1): in that case
+    # the row-aligned plain L1PuppiCand carries the link, so we swap in its
+    # column. The `ak.any(... >= 0)` guard means the swap never overrides a
+    # genuinely-filled ExtPuppiCand column.
     link_idx_field = "l1TrackIdx"
     if need_trk_gather and link_cand_table and f"{link_cand_table}_l1TrackIdx" in _record_fields(events):
         own = cands["l1TrackIdx"] if "l1TrackIdx" in cands.fields else None
