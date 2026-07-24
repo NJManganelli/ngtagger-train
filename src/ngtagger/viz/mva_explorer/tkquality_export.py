@@ -1,5 +1,5 @@
 """Panel 2 exporter: per-track Stage-3 refit-quality BDT scores + conditioning
-variables from the FAT COHERENT nanos, stored as one float32 row matrix the
+variables from the unified coherent nanos, stored as one float32 row matrix the
 browser bins on the fly.
 
 Data mapping (user's choice):

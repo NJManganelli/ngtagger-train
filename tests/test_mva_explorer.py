@@ -413,7 +413,7 @@ def test_tkq_rows_synthetic(tmp_path):
 @pytest.mark.skipif(
     not os.path.exists("/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/"
                        "nano_fat_1111_coopt_file1.root"),
-    reason="fat coherent nanos not available")
+    reason="unified coherent nanos not available")
 def test_tkq_export_integration(tmp_path):
     from ngtagger.viz.mva_explorer.tkquality_export import export_tkquality
 

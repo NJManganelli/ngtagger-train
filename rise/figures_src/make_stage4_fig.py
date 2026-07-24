@@ -1,6 +1,6 @@
 """Stage-4 jet-tagger variant-matrix figure: macro AUC heatmap, views x features.
 
-Data source: eval_refitq/stage4/stage4_summary.json (11-cell matrix, fat
+Data source: eval_refitq/stage4/stage4_summary.json (11-cell matrix, unified
 coherent nanos 1111/1100/0000, 3 seeds/cell, best-of-seed macro AUC).
 
 Run:  pixi run python rise/figures_src/make_stage4_fig.py

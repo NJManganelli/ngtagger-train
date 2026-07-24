@@ -1,7 +1,7 @@
 """CLI: python -m ngtagger.viz.mva_explorer <cmd> [...]
 
   export-regressions   Panel 1: evaluate + quantize the correctionlib presets
-  export-tkquality     Panel 2: score the fat coherent nanos with the Stage-3 BDTs
+  export-tkquality     Panel 2: score the unified coherent nanos with the Stage-3 BDTs
   export-tagger        Panel 3: convert Stage-4 prediction dumps to site tables
   export-file          Panel 1 generic path for an arbitrary correctionlib JSON
   make-site            copy the static app (html/js/plotly) + write manifest.json

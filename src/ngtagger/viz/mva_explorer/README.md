@@ -6,7 +6,7 @@ families with the same overlay/range/aggregation machinery:
 1. **Regressions** — correctionlib payloads (tkLayout smearing, CalV1 compound
    smearing, the digiRefit v4fixed payloads, or any schema-v2 file you point
    it at), grid-evaluated at export time and sliced in the browser.
-2. **tkQuality** — the Stage-3 refit-quality BDT scored per track on the fat
+2. **tkQuality** — the Stage-3 refit-quality BDT scored per track on the unified
    coherent nanos.
 3. **Jet tagger** — the Stage-4 per-jet test-set predictions across the full
    (view × feature-variant × seed) matrix.
@@ -97,7 +97,7 @@ the num/den ratio (the eval_spixel ratio-builder mode).
 pixi run python -m ngtagger.viz.mva_explorer export-tkquality
 ```
 
-Scores every refit-performed L1TTrack of the fat coherent nanos with the
+Scores every refit-performed L1TTrack of the unified coherent nanos with the
 deployed Stage-3 conifer models using the repo's bit-faithful walker
 (`ngtagger.train.refitquality.conifer_json_walk`) on the exact 24-feature
 REFIT_BDT_FEATURES v1 vector (5-par prompt-track framing, identical to
