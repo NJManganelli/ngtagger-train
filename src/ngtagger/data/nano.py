@@ -20,7 +20,7 @@ import numpy as np
 import uproot
 
 # Candidate-level branches used to build features. hgcClusterIdx and l1TrackIdx
-# are OPTIONAL. In the current fat single-coherent-view nanos, L1ExtPuppiCand
+# are OPTIONAL. In the current unified single-coherent-view nanos, L1ExtPuppiCand
 # ships l1TrackIdx FILLED directly (valid on charged constituents, -1 only on
 # neutrals), so the plain-L1PuppiCand recovery below is a guarded fallback that
 # does NOT trigger here. It stays only for older/degenerate nanos where
@@ -219,7 +219,7 @@ def load_jets(
             continue
         const[name] = gather(cands, nested_idx, name)
 
-    # Recover the constituent->track link. In the current fat nanos the
+    # Recover the constituent->track link. In the current unified nanos the
     # deregionized L1ExtPuppiCand already carries a filled l1TrackIdx, so this
     # guarded fallback is a no-op there. It only fires for older/degenerate
     # nanos whose L1ExtPuppiCand.l1TrackIdx is unfilled (all -1): in that case
