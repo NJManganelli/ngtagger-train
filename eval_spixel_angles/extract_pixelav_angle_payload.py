@@ -7,8 +7,20 @@ Validator: L1Trigger/Phase3SmartPixels/python/validatePixelAVAngleSet.py
 
 WHAT THIS CONSUMES
 ------------------
-Per-cluster regression-eval parquet(s) written by the ngtagger-train pipeline for one
-SmartPixels regression model variant. Each row is one PixelAV-simulated cluster; columns:
+Per-cluster regression-eval parquet(s) produced EXTERNALLY by the smart-pixels-ml
+regression evaluation (github.com/smart-pix/smart-pixels-ml, plus smart-pixels-ml-2bit-Synth
+for the *-2bit variants; dumps published under CERNBox
+regression_outputs/<dataset>/<tier>/...-vars.parquet, where <tier> is one of
+full-precision / model-quantized / input-digitized).
+
+They are NOT produced by ngtagger-train: this script contains no model, imports no ML
+framework and evaluates no network. It is a pure reducer over already-computed per-cluster
+predictions -- the NN's entire contribution arrives in the residual columns below. Record the
+upstream source with --nn-source / --nn-dataset / --nn-tier so the payload provenance names
+the real producer (the residual widths differ materially between quantization tiers, and the
+input filename does not survive into the payload).
+
+Each row is one PixelAV-simulated cluster; columns:
   cotA/cotB          : NN-PREDICTED cot angles  (SmartPixels 'alpha'/'beta' labels)
   cotAtrue/cotBtrue  : PixelAV TRUE cot angles
   residuals_cotA/_B  : (true - pred)   [note the sign; see RESIDUAL_IS_TRUE_MINUS_PRED]
@@ -26,9 +38,9 @@ plane. Therefore:  spec_alpha <- pixelav_BETA ,  spec_beta <- pixelav_ALPHA.
 COVERAGE / LIMITATIONS honestly encoded as degenerate clamp axes:
   - No 'layer' column      -> one fit duplicated across layer categories 1..4.
   - No 'bLocalY' column    -> single clamp bin centred on the nominal -3.81 T.
-  - cotBeta (spec) axis     : the eval sample's non-bending angle is present but only over a
-                              restricted (optimized-vars) range; binned where data exists,
-                              clamped beyond.
+  - Both angle axes are binned over the measured sample range (see the edge tables); the
+    residual clamped fraction is measured at runtime and reported + recorded in provenance,
+    so silent loss of resolution outside the binning cannot go unnoticed again.
 All recorded in provenance per spec section 6.
 
 MULTI-FILE / MULTI-VARIANT / INCREMENTAL
@@ -169,10 +181,21 @@ RESIDUAL_IS_TRUE_MINUS_PRED = True
 #  primary resolved axis; cotBeta (spec) gets a coarse axis where data supports it.
 # =====================================================================================
 LAYERS = [1, 2, 3, 4]
-# spec-alpha (bending) edges -- fine, covers the optimized-vars range with clamp beyond
-SPEC_ALPHA_EDGES = [-0.6, -0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.6]
-# spec-beta (non-bending) edges -- coarse
-SPEC_BETA_EDGES = [-6.0, -1.0, -0.3, 0.0, 0.3, 1.0, 6.0]
+# Edges sized to the ACTUAL sample range, measured on the 2t-Mlp_Full-2bit dump
+# (108222 rows): spec-alpha (= pixelav cotB) spans [-1.077, +0.746] and spec-beta
+# (= pixelav cotA) spans [-1.067, +1.069].
+#
+# The previous alpha edges stopped at +-0.6 and therefore CLAMPED 23.3% of the sample into
+# the two outer bins -- nearly a quarter of the clusters got no angular resolution, and
+# asymmetrically so (cotB reaches -1.077 but only +0.746, so the lower edge bin absorbed
+# most of it). The previous beta edges ran to +-6 although the data stops near +-1.07,
+# leaving two near-empty bins that fell through to the pooled fallback.
+#
+# spec-alpha (bending): 0.1-wide core, widening to 0.2/0.3 in the sparse tails.
+SPEC_ALPHA_EDGES = [-1.1, -0.8, -0.6, -0.4, -0.3, -0.2, -0.1, 0.0,
+                    0.1, 0.2, 0.3, 0.4, 0.6, 0.8]
+# spec-beta (non-bending): coarse but bounded by the data, symmetric.
+SPEC_BETA_EDGES = [-1.1, -0.6, -0.3, 0.0, 0.3, 0.6, 1.1]
 # bLocalY: single degenerate clamp bin around the nominal field
 BLOCALY_EDGES = [-4.0, 4.0]
 MIN_BIN_COUNT = 25          # below this, fall back to the pooled (all-bins) estimate
@@ -215,6 +238,33 @@ def _edges_index(x, edges):
     return np.clip(idx, 0, len(edges) - 2)
 
 
+def _verify_residual_sign(d, spec, label):
+    """Check RESIDUAL_IS_TRUE_MINUS_PRED against the data instead of trusting the comment.
+
+    The dumps carry true, pred AND residual, so the convention -- which sign-flips every bias
+    in the payload if wrong -- is verifiable at runtime from columns that were already being
+    read. Measured on 2t-Mlp_Full-2bit (108222 rows): the declared convention reproduces the
+    residual column bit-exactly (median|diff| = 0.0e+00) for cotA, cotB, x and y, while the
+    opposite sign is off by ~3.3e-02. Returns the measured median deviation, or None when the
+    variant dumps no prediction for this angle.
+    """
+    if not spec or not spec.get("pred") or spec["pred"] not in d:
+        return None
+    true, pred, resid = d[spec["true"]], d[spec["pred"]], d[spec["resid"]]
+    tmp = float(np.median(np.abs((true - pred) - resid)))   # residual == true - pred ?
+    pmt = float(np.median(np.abs((pred - true) - resid)))   # residual == pred - true ?
+    stated, other = (tmp, pmt) if RESIDUAL_IS_TRUE_MINUS_PRED else (pmt, tmp)
+    name = "true-pred" if RESIDUAL_IS_TRUE_MINUS_PRED else "pred-true"
+    if not (stated <= 1e-6 and stated < other):
+        raise SystemExit(
+            f"[fatal] {label}: residual column '{spec['resid']}' does not follow the declared "
+            f"convention RESIDUAL_IS_TRUE_MINUS_PRED={RESIDUAL_IS_TRUE_MINUS_PRED} ({name}): "
+            f"median|({name}) - resid| = {stated:.3e}, versus {other:.3e} for the opposite "
+            f"sign. Every bias in the payload would come out sign-flipped -- fix the flag (or "
+            f"the input dump) before trusting this output.")
+    return stated
+
+
 def accumulate_files(files, spec_alpha, spec_beta):
     """Stream all files row-group-wise; accumulate spec-signed residuals for alpha and (if
     available) beta into (n_alpha_bins, n_beta_bins) cells indexed by (spec_alpha, spec_beta).
@@ -226,6 +276,15 @@ def accumulate_files(files, spec_alpha, spec_beta):
     # NN self-reported sigma accumulation (diagnostic, not part of payload)
     nn_sigma_alpha, nn_sigma_beta = [], []
     total_rows = 0
+    # residual-sign verification (once, on the first batch that has predictions) and
+    # clamped-row counting: rows falling outside the binned range get no resolution, so the
+    # fraction is measured rather than assumed.
+    sign_checked = False
+    sign_dev = dict(alpha=None, beta=None)
+    clamped_alpha = clamped_beta = 0
+    beta_axis_rows = 0
+    a_lo, a_hi = SPEC_ALPHA_EDGES[0], SPEC_ALPHA_EDGES[-1]
+    b_lo, b_hi = SPEC_BETA_EDGES[0], SPEC_BETA_EDGES[-1]
 
     # which columns to read
     read_cols = set()
@@ -245,14 +304,26 @@ def accumulate_files(files, spec_alpha, spec_beta):
             d = {c: np.asarray(batch.column(c)).astype(np.float64) for c in read}
             n = len(next(iter(d.values())))
             total_rows += n
+            if not sign_checked:
+                dev_a = _verify_residual_sign(d, spec_alpha, "spec-alpha")
+                dev_b = _verify_residual_sign(d, spec_beta, "spec-beta")
+                if dev_a is not None or dev_b is not None:
+                    sign_dev = dict(alpha=dev_a, beta=dev_b)
+                    sign_checked = True
+                    print(f"[ok] residual sign convention verified against the data "
+                          f"(true-pred): median deviation alpha={dev_a} beta={dev_b}")
             # spec-signed residuals
             a_true = d[spec_alpha["true"]]
             a_resid = d[spec_alpha["resid"]]
             a_pred_minus_true = -a_resid if RESIDUAL_IS_TRUE_MINUS_PRED else a_resid
+            clamped_alpha += int(np.count_nonzero((a_true < a_lo) | (a_true > a_hi)))
             # bin index: alpha axis from spec-alpha-true; beta axis from spec-beta-true if present
             ia = _edges_index(a_true, SPEC_ALPHA_EDGES)
             if spec_beta and spec_beta["true"] and spec_beta["true"] in d:
-                ib = _edges_index(d[spec_beta["true"]], SPEC_BETA_EDGES)
+                b_true = d[spec_beta["true"]]
+                clamped_beta += int(np.count_nonzero((b_true < b_lo) | (b_true > b_hi)))
+                beta_axis_rows += n
+                ib = _edges_index(b_true, SPEC_BETA_EDGES)
             else:
                 # no spec-beta axis data -> put everything in the central beta bin
                 ib = np.full(n, (nb - 1) // 2, dtype=int)
@@ -271,6 +342,10 @@ def accumulate_files(files, spec_alpha, spec_beta):
         total_rows=total_rows,
         nn_sigma_alpha_med=float(np.median(np.concatenate(nn_sigma_alpha))) if nn_sigma_alpha else None,
         nn_sigma_beta_med=float(np.median(np.concatenate(nn_sigma_beta))) if nn_sigma_beta else None,
+        residual_sign_verified=sign_checked,
+        residual_sign_dev=sign_dev,
+        clamped_frac_alpha=(clamped_alpha / total_rows) if total_rows else None,
+        clamped_frac_beta=(clamped_beta / beta_axis_rows) if beta_axis_rows else None,
     )
     return acc_alpha, acc_beta, diag
 
@@ -493,22 +568,35 @@ def git_rev():
         return "unknown"
 
 
-def build_payload(variant, files, acc_alpha, acc_beta, diag):
+def build_payload(variant, files, acc_alpha, acc_beta, diag, upstream):
     na, nb = len(SPEC_ALPHA_EDGES) - 1, len(SPEC_BETA_EDGES) - 1
     beta_measurable = acc_beta is not None
+    cf_a = diag["clamped_frac_alpha"]
+    cf_b = diag["clamped_frac_beta"]
     prov = (
         f"SmartPixels PixelAV angle-response payload | model-variant={variant} | "
-        f"pixelav=part.93-family (PixelAV sim, ngtagger-train) | "
-        f"nn={variant} regression eval (ngtagger-train optimized-vars) | "
+        # Attribution split: the NN evaluation happens upstream, this script only reduces its
+        # per-cluster dumps into binned bias/sigma. Conflating the two misled a reader once.
+        f"NN EVALUATION (upstream; produced the input dumps): source={upstream['source']} "
+        f"dataset={upstream['dataset']} tier={upstream['tier']} | "
+        f"REDUCTION (this payload): ngtagger-train "
+        f"eval_spixel_angles/extract_pixelav_angle_payload.py fitrev={git_rev()} -- no model "
+        f"is evaluated here | "
         f"files={[os.path.basename(f) for f in files]} | rows={diag['total_rows']} | "
-        f"date={datetime.date.today().isoformat()} | fitrev={git_rev()} | "
+        f"date={datetime.date.today().isoformat()} | "
         f"MAPPING: SmartPixels alpha/beta SWAPPED vs CMSSW spec frame "
         f"(spec_alpha<-pixelav_beta[cotB], spec_beta<-pixelav_alpha[cotA]); "
-        f"residual column = (true-pred), spec bias = -median(residual). | "
+        f"residual column = (true-pred), spec bias = -median(residual); convention VERIFIED "
+        f"against this dump at runtime (verified={diag['residual_sign_verified']}, median "
+        f"deviation alpha={diag['residual_sign_dev']['alpha']} "
+        f"beta={diag['residual_sign_dev']['beta']}). | "
         f"{CMS_PIX_TRANSFORM} | "
         f"COVERAGE LIMITS: no layer column (one fit duplicated across layers 1-4); "
         f"no bLocalY column (single clamp bin at -3.81 T); "
         f"beta(spec) measurable={beta_measurable}; "
+        f"axis edges cover the measured sample range -- clamped row fraction "
+        f"alpha={'%.4f' % cf_a if cf_a is not None else 'n/a'} "
+        f"beta={'%.4f' % cf_b if cf_b is not None else 'n/a'}; "
         f"valid_prob=1.0 (no per-cluster validity flag in eval dumps). "
         f"NN self-reported sigma median: alpha={diag['nn_sigma_alpha_med']} beta={diag['nn_sigma_beta_med']}."
     )
@@ -550,6 +638,14 @@ def main():
     ap.add_argument("--model-variant", required=True, help="e.g. Mlp_Slim-2bit (into provenance + filename)")
     ap.add_argument("--out-dir", default=".", help="output directory")
     ap.add_argument("--gzip", action="store_true", help="write .json.gz")
+    # Upstream attribution: the NN evaluation that produced the input dumps is NOT done here.
+    ap.add_argument("--nn-source", default="smart-pix/smart-pixels-ml (rev unrecorded)",
+                    help="repo/commit that evaluated the NN and wrote the input parquet(s)")
+    ap.add_argument("--nn-dataset", default="unrecorded",
+                    help="PixelAV dataset the NN was evaluated on, e.g. dataset_3src_16x16_50x12P5")
+    ap.add_argument("--nn-tier", default="unrecorded",
+                    help="quantization tier of the dump: full-precision | model-quantized | "
+                         "input-digitized (residual widths differ materially between them)")
     args = ap.parse_args()
 
     files = []
@@ -575,7 +671,20 @@ def main():
         files, spec_alpha, spec_beta or dict(true=None, pred=None, resid=None, sigma_nn="sigmacotA"))
     print(f"[info] accumulated {diag['total_rows']} rows")
 
-    cset = build_payload(args.model_variant, files, acc_alpha, acc_beta, diag)
+    cf_a, cf_b = diag["clamped_frac_alpha"], diag["clamped_frac_beta"]
+    print("[info] clamped rows (outside the binned range): "
+          + (f"alpha={cf_a:.4%}" if cf_a is not None else "alpha=n/a")
+          + (f" beta={cf_b:.4%}" if cf_b is not None else ""))
+    if cf_a is not None and cf_a > 0.02:
+        print(f"[warn] {cf_a:.2%} of rows fall outside SPEC_ALPHA_EDGES "
+              f"[{SPEC_ALPHA_EDGES[0]}, {SPEC_ALPHA_EDGES[-1]}] and are clamped into the edge "
+              f"bins -- they get no angular resolution. Widen the edges to the sample range.")
+    if cf_b is not None and cf_b > 0.02:
+        print(f"[warn] {cf_b:.2%} of rows fall outside SPEC_BETA_EDGES "
+              f"[{SPEC_BETA_EDGES[0]}, {SPEC_BETA_EDGES[-1]}] and are clamped.")
+
+    upstream = dict(source=args.nn_source, dataset=args.nn_dataset, tier=args.nn_tier)
+    cset = build_payload(args.model_variant, files, acc_alpha, acc_beta, diag, upstream)
 
     os.makedirs(args.out_dir, exist_ok=True)
     ext = ".json.gz" if args.gzip else ".json"
