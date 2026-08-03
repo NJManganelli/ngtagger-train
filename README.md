@@ -24,9 +24,28 @@ Install [pixi](https://pixi.sh), then:
 
 ```bash
 git clone <this repo> && cd ngtagger-train
-pixi install                 # macOS arm64 (M-series; tensorflow-metal)
+pixi install                 # macOS arm64 (M-series; tensorflow + tensorflow-metal)
 pixi run test                # verify: full synthetic test suite
 ```
+
+On **macOS x86_64 (Intel)** use the `jax` environment instead:
+
+```bash
+pixi install -e jax          # osx-64 (also available on arm64)
+pixi run -e jax test
+```
+
+Keras 3 is multi-backend and each environment exports `KERAS_BACKEND` on
+activation, so the same code trains on either. The split is forced by upstream
+wheels rather than preference: TensorFlow ships no x86-macOS wheel past 2.16.2,
+and that wheel requires `numpy<2.0` while `da4ml` requires `numpy>=2`, so the
+TensorFlow backend cannot be installed on Intel at any version. JAX is the only
+backend with a usable x86-macOS wheel (`jaxlib` caps at 0.4.38 there). The
+`jax` environment is available on arm64 too, for backend cross-checks.
+
+Note that the arm64-only environments (`default`, `tune`) can only be
+*re-locked* from an arm64 machine, because pixi builds the git-sourced QAT
+stack's metadata with an interpreter for the current platform.
 
 On a **linux + NVIDIA GPU** node (Elastic Analysis Facility):
 
@@ -35,7 +54,8 @@ cd eaf && pixi install       # linux-64, CUDA 12 (see eaf/pixi.toml)
 pixi run train ...           # same CLI, GPU backend
 ```
 
-Optional: `pixi install -e tune` adds `ray[tune]` for hyperparameter scans.
+Optional: `pixi install -e tune` adds `ray[tune]` for hyperparameter scans
+(`jax-tune` for the JAX equivalent).
 All runs log to **mlflow** (`pixi run mlflow-ui` to browse `./mlruns`).
 
 ## 2. Input data: producing L1*Nano

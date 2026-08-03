@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "NG jet tagger training pipeline reading L1PFTrkNano directly (no intermediate formats)"
 authors = ["Nick Manganelli <nickmanganelli@gmail.com>"]
 channels = ["conda-forge"]
-platforms = ["osx-arm64"]  # linux-64 + CUDA variant: see eaf/pixi.toml
+platforms = ["osx-arm64", "osx-64"]  # linux-64 + CUDA variant: see eaf/pixi.toml
 
 [tasks]
 train = "python -m ngtagger.cli train"
@@ -38,28 +38,88 @@ mplhep = "*"
 plotly = ">=5.20"  # standalone-HTML interactive refit-replay visualizer (kernel-free)
 mlflow = ">=2.14"
 coffea = ">=2024.10"
-# Keras 3 multi-backend + quantization-aware-training stack (upstream Keras_v3 line)
+# Keras 3 multi-backend + quantization-aware-training stack (upstream Keras_v3
+# line). The backend itself is deliberately NOT pinned here -- it comes from the
+# `tf` or `jax` feature below, so one manifest spans both macOS architectures.
 keras = ">=3.5"
-tensorflow = ">=2.16,<2.20"
 quantizers = "*"
 xgboost = ">=2"
 conifer = "*"
-# MDMM constrained multi-objective training (torch-based; Keras3 torch backend
-# or a keras.ops port — see docs/model-space-study.md). Pulls torch (CPU/MPS).
-mdmm = "*"
-hgq2 = { git = "https://github.com/calad0i/HGQ2" }
+# Release wheel, not the git checkout: building HGQ2 from git yields a wheel
+# containing only hgq/__init__.py + hgq/_version.py (every subpackage is missing,
+# so `import hgq` dies with a misleading "circular import"). The published wheel
+# is complete and carries every API used here.
+hgq2 = ">=0.1.9"
 da4ml = ">=0.3"
 # hls4ml: CMS jet-tagging fork with HGQ2/da4ml support (mirrors upstream TrainTagger Keras_v3)
 hls4ml = { git = "https://github.com/CMS-L1T-Jet-Tagging/hls4ml", branch = "jet_tagger_hls4ml_update" }
 jupyterlab-rise = ">=0.43.1, <0.44"
 
 # --------------------------------------------------------------------------
-# osx (M-series) : Metal acceleration for local parallel training
+# osx-64 (Intel) pins for transitive deps that dropped x86-macOS wheels.
+# numba stops at 0.62.1 and its llvmlite at 0.45.1; coffea only asks for
+# numba>=0.58.1, so an unconstrained solve picks a newer numba that has to
+# compile llvmlite from source (needs a system LLVM, and fails).
+# --------------------------------------------------------------------------
+[target.osx-64.pypi-dependencies]
+numba = ">=0.61,<0.63"
+
+# fsspec-xrootd needs the `xrootd` bindings. Upstream only tags those wheels
+# macosx_15_0, while conda-forge's osx-64 interpreter reports
+# MACOSX_DEPLOYMENT_TARGET=11.0 -- so uv rejects the (perfectly runnable) wheel
+# and falls back to compiling XRootD's C++ from sdist. Take conda-forge's
+# prebuilt bindings instead. arm64 still source-builds it, as it does today.
+# cryptography >=49 ships macOS wheels for arm64 only (48.x and earlier were
+# universal2, which covered Intel), so pypi resolution lands on a Rust source
+# build. conda-forge still builds it for osx-64.
+[target.osx-64.dependencies]
+python-xrootd = "6.*"
+cryptography = ">=43,<50"  # upper bound is mlflow's
+
+# --------------------------------------------------------------------------
+# Keras 3 backends, one per feature. Each feature exports KERAS_BACKEND on
+# activation, which the os.environ.setdefault() calls in ngtagger.cli and the
+# tests honour -- so the backend follows the environment, not the source.
+#
+# tensorflow is osx-arm64 only, and not by preference: upstream ships no
+# x86-macOS wheel past 2.16.2, and that last Intel wheel requires numpy<2.0
+# while da4ml requires numpy>=2, so the tensorflow stack is unsatisfiable on
+# Intel at any version. jax is the only backend with a current-ish x86-macOS
+# wheel (jaxlib caps at 0.4.38 there; arm64 tracks upstream).
+# --------------------------------------------------------------------------
+[feature.tf]
+platforms = ["osx-arm64"]
+[feature.tf.pypi-dependencies]
+tensorflow = ">=2.16,<2.20"
+[feature.tf.activation.env]
+KERAS_BACKEND = "tensorflow"
+
+[feature.jax.pypi-dependencies]
+jax = ">=0.4.20"
+jaxlib = ">=0.4.20"
+[feature.jax.activation.env]
+KERAS_BACKEND = "jax"
+
+# --------------------------------------------------------------------------
+# osx (M-series) : Metal acceleration for local parallel training. Only
+# meaningful alongside the tensorflow backend.
 # --------------------------------------------------------------------------
 [feature.metal]
 platforms = ["osx-arm64"]
 [feature.metal.pypi-dependencies]
 tensorflow-metal = "*"
+
+# --------------------------------------------------------------------------
+# MDMM cross-check reference. src/ngtagger/train/mdmm.py is a pure keras.ops
+# port; the pip `mdmm` package is torch-only and is installed solely as the
+# reference implementation tests/test_mdmm.py compares against (via
+# pytest.importorskip, so it self-skips when absent). torch has no x86-macOS
+# wheel past 2.2.2, which predates numpy 2 -- hence arm64 only.
+# --------------------------------------------------------------------------
+[feature.mdmm-ref]
+platforms = ["osx-arm64"]
+[feature.mdmm-ref.pypi-dependencies]
+mdmm = "*"
 
 # --------------------------------------------------------------------------
 # hyperparameter scans / parallel multishot with ray (optional, heavier)
@@ -71,6 +131,10 @@ ray = { version = "*", extras = ["tune"] }
 # eaf/pixi.toml (linux-64-only workspace; cross-platform pypi solving of the
 # git-sourced QAT stack is not possible from macOS).
 
+# default   : osx-arm64, tensorflow + Metal (unchanged from before)
+# jax       : osx-arm64 + osx-64, jax backend -- the only option on Intel
 [environments]
-default = ["metal"]
-tune = ["metal", "tune"]
+default = ["tf", "metal", "mdmm-ref"]
+tune = ["tf", "metal", "mdmm-ref", "tune"]
+jax = ["jax"]
+jax-tune = ["jax", "tune"]
