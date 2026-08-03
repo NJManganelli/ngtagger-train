@@ -306,7 +306,7 @@ is **torch-only**. Two integration routes into this Keras-3 trainer:
 - Route B (clean): port MDMM to `keras.ops` (~60 lines: one extra trainable
   λ per constraint, `loss = main + Σ λ_i g_i − damping/2 Σ g_i²`, with λ
   updated by ascent — implementable as a Keras Model subclass with a second
-  optimizer, backend-agnostic, mirrors `_SimCLRModel`'s custom train_step
+  optimizer, backend-agnostic, mirrors `_SimCLRModel`'s `compute_loss` override
   pattern already in `models/deepset_contrastive.py`).
 
 Physically sensible constraints (each replaces a today-implicit trade-off):

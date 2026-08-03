@@ -25,38 +25,36 @@ from ngtagger.models.losses import augment_constituents, nt_xent
 
 
 class _SimCLRModel(keras.Model):
+    """Backend-neutral SimCLR wrapper (tensorflow / jax / torch).
+
+    The pair loss is expressed by overriding ``compute_loss`` rather than by
+    hand-rolling a ``tf.GradientTape`` training step, so gradients come from
+    Keras 3's built-in per-backend ``train_step``. The two augmented views are
+    passed as a single two-element input and the normalized embeddings are
+    returned stacked on axis 1, which keeps the whole path inside ``keras.ops``.
+    """
+
     def __init__(self, encoder, projector, temperature=0.5, **kw):
         kw.setdefault("name", "simclr")
         super().__init__(**kw)
         self.encoder = encoder
         self.projector = projector
         self.temperature = temperature
-        self.loss_tracker = keras.metrics.Mean(name="loss")
 
-    def call(self, x):
-        return self.projector(self.encoder(x))
+    def embed(self, x):
+        """L2-normalized projection head output for one view."""
+        z = self.projector(self.encoder(x))
+        return z / (ops.norm(z, axis=1, keepdims=True) + 1e-8)
 
-    def compute_loss_pair(self, x1, x2):
-        z1 = self(x1)
-        z2 = self(x2)
-        z1 = z1 / (ops.norm(z1, axis=1, keepdims=True) + 1e-8)
-        z2 = z2 / (ops.norm(z2, axis=1, keepdims=True) + 1e-8)
-        return nt_xent(z1, z2, self.temperature)
+    def call(self, inputs):
+        x1, x2 = inputs
+        return ops.stack([self.embed(x1), self.embed(x2)], axis=1)
 
-    def train_step(self, data):
-        import tensorflow as tf
-
-        x1, x2 = data
-        with tf.GradientTape() as tape:
-            loss = self.compute_loss_pair(x1, x2)
-        grads = tape.gradient(loss, self.trainable_variables)
-        self.optimizer.apply_gradients(zip(grads, self.trainable_variables))
-        self.loss_tracker.update_state(loss)
-        return {"loss": self.loss_tracker.result()}
-
-    @property
-    def metrics(self):
-        return [self.loss_tracker]
+    def compute_loss(self, x=None, y=None, y_pred=None, sample_weight=None, **kwargs):
+        # y / sample_weight are unused: NT-Xent is self-supervised, the targets
+        # supplied by _PairSequence are placeholders.
+        del x, y, sample_weight, kwargs
+        return nt_xent(y_pred[:, 0], y_pred[:, 1], self.temperature)
 
 
 @ModelRegistry.register("DeepSetContrastive")
@@ -145,7 +143,7 @@ class DeepSetContrastive(TagModel):
         v1 = augment_constituents(X, rng, isfilled_index=isfilled_idx)
         v2 = augment_constituents(X, rng, isfilled_index=isfilled_idx)
         self.simclr.fit(
-            _pair_dataset(v1, v2, tc.get("batch_size", 2048)),
+            _PairSequence(v1, v2, tc.get("batch_size", 2048), seed=seed),
             epochs=tc.get("embedding_epochs", 20),
             verbose=self.config.get("run_config", {}).get("verbose", 2),
         )
@@ -182,9 +180,29 @@ class DeepSetContrastive(TagModel):
         return self.history
 
 
-def _pair_dataset(v1, v2, batch_size):
-    """tf.data dataset yielding (view1, view2) batches for the SimCLR
-    train_step."""
-    import tensorflow as tf
+class _PairSequence(keras.utils.PyDataset):
+    """Backend-neutral ((view1, view2), placeholder_y) batch feeder.
 
-    return tf.data.Dataset.from_tensor_slices((v1, v2)).shuffle(len(v1)).batch(batch_size, drop_remainder=True)
+    Replaces the former tf.data pipeline. Incomplete trailing batches are
+    dropped, matching the old drop_remainder=True: NT-Xent normalizes over the
+    in-batch negatives, so a short final batch would shift the loss scale.
+    """
+
+    def __init__(self, v1, v2, batch_size, seed=0, **kw):
+        super().__init__(**kw)
+        self.v1 = v1
+        self.v2 = v2
+        self.batch_size = batch_size
+        self._rng = np.random.default_rng(seed)
+        self._order = self._rng.permutation(len(v1))
+
+    def __len__(self):
+        return len(self.v1) // self.batch_size
+
+    def __getitem__(self, idx):
+        sel = self._order[idx * self.batch_size:(idx + 1) * self.batch_size]
+        placeholder_y = np.zeros((len(sel), 1), dtype="float32")
+        return (self.v1[sel], self.v2[sel]), placeholder_y
+
+    def on_epoch_end(self):
+        self._order = self._rng.permutation(len(self.v1))
