@@ -13,8 +13,9 @@ Tier / config matrix (13 trainings):
   Tier B  (per config): A + refit info WITHOUT angles (crossing/hit counts,
           layer mask, window multiplicity/truncation, per-hit position pulls
           and residuals aggregated per track, and the refit-kick deltas
-          variant-minus-reference on rInv/phi/tanl/z0/d0). chi2 totals are
-          NOT used in B (they mix position + angle terms).
+          variant-minus-reference on rInv/phi/tanl/z0/d0). The COMBINED chi2
+          totals are NOT used in B (they mix position + angle terms); on v2.6
+          split-schema nano the pure position sums (spxChi2IncX/YTot) ARE.
   Tier C  (per config): B + bending-angle (alpha) features, and the
           spxChi2IncRPhiTot total is now allowed.
   Tier D  (per config): C + beta features and spxChi2IncRZTot.
@@ -51,6 +52,18 @@ SMARTPIXELS_CONFIGS = ("AIII", "AAII", "AAAI", "AAAA")
 # activeSP bitmask per config (L1-only up to all four TBPX layers)
 CONFIG_ACTIVESP = {"AIII": "1000", "AAII": "1100", "AAAI": "1110", "AAAA": "1111"}
 TIERS = ("A", "B", "C", "D")
+# What the A/B/C/D BDT-input ablation tiers mean (details in the module
+# docstring). Single source of truth for the CLI help, the matrix report and
+# the persisted metadata - the tier letters never appear without it.
+TIER_DESCRIPTIONS = {
+    "A": "classic-7 TrackQuality features from the reference hw track word (no refit info)",
+    "A-spx": "classic-7 TrackQuality features rebuilt from the SCENARIO table's refit-repacked "
+             "hw track word (nStubs via the implicit index link) - the refit's effect at "
+             "baseline-feature level; simultaneous-storage mode only",
+    "B": "A + refit counters/occupancy, position pulls/residuals, refit-kick deltas (no angles, no chi2)",
+    "C": "B + alpha (bending-angle) features + chi2IncRPhiTot",
+    "D": "C + beta features + chi2IncRZTot (full refit visibility)",
+}
 
 # ---------------------------------------------------------------------------
 # SPEC-ORDER feature contract (RefitSidecarSpec.md §6a, REFIT_BDT_FEATURES v0)
@@ -101,6 +114,57 @@ _SPEC_NFEAT = {0: 17, 1: 24}
 
 _SENTINEL = -900.0  # values <= this are the -999 fill; test with (x > _SENTINEL)
 
+# chi2 column schemas: simulation v2.5 nano carries the unified r-phi/r-z
+# combinations; v2.6 (RefitSidecarSpec v0.5) splits them per measurement
+# dimension. The loader detects which schema a file carries; for split files it
+# synthesizes the unified columns EXACTLY (rphi = X + Alpha, rz = Y + Beta;
+# non-applied terms are exactly 0, sentinel sums stay < -900) so every legacy
+# feature is directly comparable across schemas, and the split columns
+# additionally feed pure position/angle chi2 features into the tier study.
+_CHI2_TOT_UNIFIED = ["spxChi2IncRPhiTot", "spxChi2IncRZTot"]
+_CHI2_TOT_SPLIT = ["spxChi2IncXTot", "spxChi2IncYTot", "spxChi2IncAlphaTot", "spxChi2IncBetaTot"]
+_CHI2_HIT_UNIFIED = ["chi2IncRPhi", "chi2IncRZ"]
+_CHI2_HIT_SPLIT = ["chi2IncX", "chi2IncY", "chi2IncAlpha", "chi2IncBeta"]
+
+
+def _detect_chi2_schema(files: list[str], var_tbl: str) -> str:
+    """'split' (sim v2.6 / spec v0.5) or 'unified' (v2.5), from the first file's
+    branch names. Mixing schemas across input files is not supported."""
+    with uproot.open(f"{files[0]}:Events") as t:
+        keys = set(t.keys())
+    if f"{var_tbl}_{_CHI2_TOT_SPLIT[0]}" in keys:
+        return "split"
+    if f"{var_tbl}_{_CHI2_TOT_UNIFIED[0]}" in keys:
+        return "unified"
+    raise RuntimeError(
+        f"table {var_tbl!r} in {files[0]} carries neither the split (v2.6) nor "
+        f"the unified (v2.5) chi2 columns")
+
+
+def _chi2_schema_of(var) -> str:
+    """Schema of an already-loaded variant record (split columns present?)."""
+    return "split" if all(f in var.fields for f in _CHI2_TOT_SPLIT) else "unified"
+
+# Working points for the fake-rate report: fraction of REAL (label-positive)
+# tracks kept by the score cut. Fake rate = fraction of label-negative tracks
+# surviving the same cut, evaluated on the test split.
+WORKING_POINTS = (0.95, 0.97, 0.99)
+
+
+def _fake_rates(y_true: np.ndarray, scores: np.ndarray, effs=WORKING_POINTS) -> dict:
+    """Fake rate at fixed real-track efficiency, keyed by the efficiency as a
+    '0.95'-style string (JSON-stable). NaN when either class is empty."""
+    pos = scores[y_true == 1]
+    neg = scores[y_true == 0]
+    out = {}
+    for e in effs:
+        if len(pos) == 0 or len(neg) == 0:
+            out[f"{e:.2f}"] = float("nan")
+            continue
+        thr = np.quantile(pos, 1.0 - e)  # score cut keeping e of the real tracks
+        out[f"{e:.2f}"] = float(np.mean(neg >= thr))
+    return out
+
 # reference-track branches needed for Tier A + labels + kick reference
 _REF_HW = ["hwTanl", "hwZ0", "hwBendChi2", "hwChi2RPhi", "hwChi2RZ", "hitPattern",
            "nStubs", "hwRinv", "hwPhi", "hwD0"]
@@ -112,6 +176,10 @@ _REF_TRUTH = ["genuine", "looselyGenuine", "combinatoric", "unknown",
 _VAR_EXT = ["spxRefitPerformed", "spxSeedCovOK", "spxNCrossings", "spxNAcceptedHits",
             "spxLayerHitMask", "spxMaxWindowMult", "spxAnyWindowTruncated", "spxNKFUpdates",
             "spxChi2IncRPhiTot", "spxChi2IncRZTot"]
+# variant-table hw columns for the scenario-hw baseline (classic-7 minus nStubs,
+# which the scenario tables do not persist - it comes from the reference table
+# via the implicit index link). Loaded in simultaneous-storage mode only.
+_VAR_HW = ["hwTanl", "hwZ0", "hwBendChi2", "hitPattern", "hwChi2RPhi", "hwChi2RZ"]
 # variant refit float parameters (for the variant-minus-reference kick deltas)
 _VAR_FLOAT = ["rInv", "phi", "tanL", "z0", "d0"]
 # per-hit link columns aggregated per track
@@ -128,20 +196,39 @@ def _log1p_clip(x: np.ndarray) -> np.ndarray:
 
 
 def load_refit_tables(files: list[str], config: str, track_table: str = "L1TTrack",
-                      max_events: int | None = None):
+                      max_events: int | None = None,
+                      crossref_track_table: str | None = None):
     """Read the reference track table, the matching variant track table, and
     the per-hit link table for one config. Returns three flat awkward arrays
     (reference tracks, variant tracks, per-hit rows) all from the same events.
 
-    Reference and variant track tables are 1:1 row aligned (verified 17324 ==
-    17324 in the study sample); the per-hit table's trackIdx indexes into that
-    shared per-event row order.
+    Two nano layouts are supported:
+      legacy single-storage: track_table is the nominal table (L1TTrack /
+        L1TExtTrack) carrying the seed hw word, nStubs and TP truth; the
+        variant tables are derived from config.
+      simultaneous storage (nominal + SmartPixels scenario collections side by
+        side): the scenario tables carry no nStubs/truth/TP columns, so pass
+        the nominal table as crossref_track_table - the reference columns are
+        read from it and linked to the scenario rows IMPLICITLY by index
+        (scenario track i == nominal track i, the digiRefit producer's 1:1
+        output-sync invariant). The alignment is validated per event below.
+
+    Reference and variant track tables are 1:1 row aligned; the per-hit
+    table's trackIdx indexes into that shared per-event row order.
     """
     if config not in SMARTPIXELS_CONFIGS:
         raise ValueError(f"unknown config {config!r}; known: {SMARTPIXELS_CONFIGS}")
     ext = "Ext" if "Ext" in track_table else ""
     var_tbl = f"L1TSmartPixels{ext}TrackDigiRefit{config}"
     hit_tbl = f"L1TSmartPixels{ext}RefitHitDigiRefit{config}"
+    ref_tbl = crossref_track_table or track_table
+    if ref_tbl.startswith("L1TSmartPixels"):
+        raise ValueError(
+            f"reference track table {ref_tbl!r} is a SmartPixels scenario table: it "
+            "carries no nStubs / TP-truth columns. For simultaneous-storage nano pass "
+            "the nominal table via --crossref-track-table (L1TTrack, or L1TExtTrack "
+            "for the Ext scenario tables); scenario and nominal rows are linked "
+            "implicitly by index.")
 
     def _load(prefix, cols):
         br = [f"{prefix}_{b}" for b in cols]
@@ -151,9 +238,39 @@ def load_refit_tables(files: list[str], config: str, track_table: str = "L1TTrac
         # rezip into a record keyed by the bare column name (drop the prefix)
         return ak.zip({b: arrs[f"{prefix}_{b}"] for b in cols}, depth_limit=1)
 
-    ref = _load(track_table, _REF_HW + _REF_FLOAT + _REF_TRUTH)
-    var = _load(var_tbl, _VAR_EXT + _VAR_FLOAT)
-    hits = _load(hit_tbl, _HIT_COLS)
+    schema = _detect_chi2_schema(files, var_tbl)
+    ref = _load(ref_tbl, _REF_HW + _REF_FLOAT + _REF_TRUTH)
+    # simultaneous storage: also read the scenario table's own hw word so the
+    # scenario-hw baseline (tier 'A-spx') can be trained alongside.
+    var_cols = _VAR_EXT + _VAR_FLOAT + (_VAR_HW if crossref_track_table else [])
+    hit_cols = list(_HIT_COLS)
+    if schema == "split":
+        var_cols = [c for c in var_cols if c not in _CHI2_TOT_UNIFIED] + _CHI2_TOT_SPLIT
+        hit_cols = [c for c in hit_cols if c not in _CHI2_HIT_UNIFIED] + _CHI2_HIT_SPLIT
+    var = _load(var_tbl, var_cols)
+    hits = _load(hit_tbl, hit_cols)
+    if schema == "split":
+        # Synthesize the unified combinations exactly (spec v0.5 invariant:
+        # rphi = X + Alpha, rz = Y + Beta; sentinel sums stay below -900 and
+        # behave identically under every downstream sentinel test).
+        var = ak.with_field(var, var["spxChi2IncXTot"] + var["spxChi2IncAlphaTot"], "spxChi2IncRPhiTot")
+        var = ak.with_field(var, var["spxChi2IncYTot"] + var["spxChi2IncBetaTot"], "spxChi2IncRZTot")
+        hits = ak.with_field(hits, hits["chi2IncX"] + hits["chi2IncAlpha"], "chi2IncRPhi")
+        hits = ak.with_field(hits, hits["chi2IncY"] + hits["chi2IncBeta"], "chi2IncRZ")
+    print(f"refitq chi2 schema: {schema}"
+          + (" (unified columns synthesized as X+Alpha / Y+Beta)" if schema == "split" else ""))
+    # Validate the implicit index link (variant row i == reference row i) that
+    # every downstream feature relies on; fail loudly if it does not hold.
+    n_ref = ak.num(ref[_REF_HW[0]])
+    n_var = ak.num(var[_VAR_EXT[0]])
+    if not ak.all(n_ref == n_var):
+        n_bad = int(ak.sum(n_ref != n_var))
+        raise RuntimeError(
+            f"reference table {ref_tbl!r} and variant table {var_tbl!r} are not 1:1 "
+            f"row-aligned ({n_bad} events differ): the implicit index link does not "
+            "hold for this table pair. Check that --crossref-track-table names the "
+            "nominal collection the refit consumed (L1TTrack for prompt scenario "
+            "tables, L1TExtTrack for Ext ones).")
     return ref, var, hits
 
 
@@ -234,16 +351,26 @@ def _tier_a_features(ref_flat: dict):
 
 
 def build_refitq_dataset(ref, var, hits, tier: str, config: str, label: str = "genuine",
-                         require_truth: bool = True):
+                         require_truth: bool = True, hw_source: str = "ref"):
     """Build (X, y, feature_names, info) for one tier/config cell.
 
     ref/var are 1:1 row-aligned track tables; hits is the per-hit link table
     with a per-event trackIdx into that shared row order. Flattening is done
     event-major so a global track offset can be applied to trackIdx.
+
+    hw_source selects which table supplies the classic-7 hw features:
+    'ref' (default, the reference/nominal track word) or 'var' (the scenario
+    table's refit-repacked track word; baseline tier A only, nStubs and the
+    labels still come from the reference table via the implicit index link).
     """
     tier = tier.upper()
     if tier not in TIERS:
         raise ValueError(f"unknown tier {tier!r}; known {TIERS}")
+    if hw_source not in ("ref", "var"):
+        raise ValueError(f"hw_source must be 'ref' or 'var', got {hw_source!r}")
+    if hw_source == "var" and tier != "A":
+        raise ValueError("hw_source='var' is only defined for the baseline tier A "
+                         "(tiers B-D are specified on the reference hw word)")
 
     # per-event counts to build global offsets for the hit trackIdx
     counts = ak.to_numpy(ak.num(ref["genuine"]))
@@ -263,7 +390,18 @@ def build_refitq_dataset(ref, var, hits, tier: str, config: str, label: str = "g
             f"no positive ('{label}') reference tracks: refit-quality training "
             "needs a genuine/fake mix (truth-required mode fails loudly).")
 
-    X, names = _tier_a_features(ref_flat)
+    if hw_source == "var":
+        missing = [b for b in _VAR_HW if b not in var.fields]
+        if missing:
+            raise ValueError(
+                f"variant table is missing hw columns {missing}: the scenario-hw "
+                "baseline needs the tables loaded in simultaneous-storage mode "
+                "(load_refit_tables with crossref_track_table set)")
+        hw_flat = {b: ak.to_numpy(ak.flatten(var[b])) for b in _VAR_HW}
+        hw_flat["nStubs"] = ref_flat["nStubs"]  # implicit index link (not persisted on scenario tables)
+        X, names = _tier_a_features(hw_flat)
+    else:
+        X, names = _tier_a_features(ref_flat)
     if tier == "A":
         info = {"n_tracks": n_tracks, "n_pos": int(y.sum()), "n_neg": int((y == 0).sum())}
         return X.astype(np.float32), y, names, info
@@ -314,6 +452,19 @@ def build_refitq_dataset(ref, var, hits, tier: str, config: str, label: str = "g
         "hit_meanSigBeta": agg["hit_meanSigBeta"].astype(np.float32),
     }
 
+    # v2.6 split schema: the pure per-dimension chi2 sums become ADDITIONAL
+    # features. Position-only chi2 no longer mixes angle terms, so it becomes
+    # admissible in tier B (the mixing was B's exclusion reason); the pure
+    # angle sums join their angle tiers. The legacy combined features above
+    # are kept unchanged (synthesized on split files) so tier results stay
+    # comparable across v2.5/v2.6 nano.
+    if _chi2_schema_of(var) == "split":
+        split_flat = {b: ak.to_numpy(ak.flatten(var[b])) for b in _CHI2_TOT_SPLIT}
+        b_block["spxChi2IncXTot"] = _log1p_clip(split_flat["spxChi2IncXTot"])
+        b_block["spxChi2IncYTot"] = _log1p_clip(split_flat["spxChi2IncYTot"])
+        c_block["spxChi2IncAlphaTot"] = _log1p_clip(split_flat["spxChi2IncAlphaTot"])
+        d_block["spxChi2IncBetaTot"] = _log1p_clip(split_flat["spxChi2IncBetaTot"])
+
     blocks = dict(b_block)
     if tier in ("C", "D"):
         blocks.update(c_block)
@@ -352,12 +503,18 @@ def _xgb_params(user: dict | None):
 def train_one(ref, var, hits, tier: str, config: str, output_dir: str,
               label: str = "genuine", test_fraction: float = 0.2, seed: int = 0,
               xgb_params: dict | None = None, log_mlflow: bool = True,
-              scale_pos_weight: bool = True):
+              scale_pos_weight: bool = True, hw_source: str = "ref",
+              tables: dict | None = None):
+    """Train one tier/config cell. hw_source='var' trains the scenario-hw
+    baseline (tier A features off the variant table's refit track word).
+    tables, when given as {'ref': name, 'var': name}, is recorded in the meta
+    and the report line so the trained-on collection is always explicit."""
     import xgboost as xgb
     from sklearn.metrics import roc_auc_score
 
     os.makedirs(output_dir, exist_ok=True)
-    X, y, names, info = build_refitq_dataset(ref, var, hits, tier, config, label=label)
+    X, y, names, info = build_refitq_dataset(ref, var, hits, tier, config, label=label,
+                                             hw_source=hw_source)
     train, test = _split(len(X), test_fraction, seed)
 
     params = _xgb_params(xgb_params)
@@ -372,17 +529,40 @@ def train_one(ref, var, hits, tier: str, config: str, output_dir: str,
     # AUC is on genuine-vs-fake; here positive=label, so the fake-rejection AUC
     # is 1-AUC symmetric. Report the standard label-positive AUC.
     auc = float(roc_auc_score(y[test], proba))
+    fake_rates = _fake_rates(y[test], proba)
 
-    tag = "A" if tier == "A" else f"{tier}-{config}"
-    print(f"refitq[{tag}]: test AUC = {auc:.4f}  "
+    if hw_source == "var":
+        tag = f"A-spx-{config}"
+    else:
+        tag = "A" if tier == "A" else f"{tier}-{config}"
+    if hw_source == "var":
+        feat_tbl = (tables or {}).get("var")
+    elif tier == "A":
+        feat_tbl = (tables or {}).get("ref")
+    else:  # tiers B-D mix reference hw + scenario refit columns
+        feat_tbl = " + ".join(t for t in ((tables or {}).get("ref"), (tables or {}).get("var")) if t) or None
+    src_note = f"  [features: {feat_tbl}]" if feat_tbl else ""
+    fr_str = "  ".join(f"FR@{e}={fr:.4f}" for e, fr in fake_rates.items())
+    print(f"refitq[{tag}]: test AUC = {auc:.4f}  {fr_str}  "
           f"(nfeat={len(names)}, n_train={len(train)}, n_test={len(test)}, "
-          f"pos={info['n_pos']}, neg={info['n_neg']})")
+          f"pos={info['n_pos']}, neg={info['n_neg']}){src_note}")
 
     model.save_model(os.path.join(output_dir, f"refitq_{tag}_xgb.json"))
-    meta = {"tier": tier, "config": (None if tier == "A" else config),
-            "activeSP": (None if tier == "A" else CONFIG_ACTIVESP[config]),
+    desc_key = "A-spx" if hw_source == "var" else tier
+    meta = {"tier": tier, "tier_description": TIER_DESCRIPTIONS[desc_key],
+            "hw_source": hw_source,
+            "feature_source_table": feat_tbl,
+            "label_source_table": (tables or {}).get("ref"),
+            "config": (None if tag == "A" else config),
+            "activeSP": (None if tag == "A" else CONFIG_ACTIVESP[config]),
             "label": label, "features": names, "n_features": len(names),
-            "test_auc": auc, "n_pos": info["n_pos"], "n_neg": info["n_neg"],
+            "chi2_schema": _chi2_schema_of(var),
+            "test_auc": auc,
+            "fake_rates": fake_rates,
+            "fake_rate_definition": ("fraction of label-negative (fake) test tracks above the "
+                                     "score cut keeping the keyed fraction of label-positive "
+                                     "(real) test tracks"),
+            "n_pos": info["n_pos"], "n_neg": info["n_neg"],
             "n_train": len(train), "n_test": len(test), "seed": seed,
             "params": {k: v for k, v in params.items()},
             "caveat": ("production used useAngles=alphaBeta for ALL variants; tiers "
@@ -435,40 +615,107 @@ def auc_std_over_seeds(ref, var, hits, tier: str, config: str, label: str = "gen
 def train_matrix(files: list[str], output_dir: str, track_table: str = "L1TTrack",
                  label: str = "genuine", max_events: int | None = None,
                  test_fraction: float = 0.2, seed: int = 0,
-                 configs=SMARTPIXELS_CONFIGS, xgb_params: dict | None = None):
-    """Train the full 1 + 3x4 = 13-cell matrix and return a nested AUC dict:
-    {'A': auc, 'B': {config: auc, ...}, 'C': {...}, 'D': {...}}."""
+                 configs=SMARTPIXELS_CONFIGS, xgb_params: dict | None = None,
+                 crossref_track_table: str | None = None):
+    """Train the tier x config matrix (tiers per TIER_DESCRIPTIONS: one
+    config-independent A cell + B/C/D per available config) and return a
+    nested AUC dict: {'A': auc, 'B': {config: auc, ...}, 'C': {...}, 'D': {...}}.
+
+    Configs whose digiRefit tables are absent from the first input file are
+    skipped with a notice - simultaneous-storage productions typically carry a
+    single activeSP scenario per file."""
     os.makedirs(output_dir, exist_ok=True)
+
+    ext = "Ext" if "Ext" in track_table else ""
+    with uproot.open(f"{files[0]}:Events") as tree:
+        keys = set(tree.keys())
+    have = [c for c in configs
+            if f"L1TSmartPixels{ext}TrackDigiRefit{c}_{_VAR_EXT[0]}" in keys]
+    if not have:
+        raise RuntimeError(
+            f"no L1TSmartPixels{ext}TrackDigiRefit* tables for configs {tuple(configs)} "
+            f"in {files[0]}; is this a SmartPixels digiRefit nano?")
+    if len(have) < len(configs):
+        skipped = [c for c in configs if c not in have]
+        print(f"configs {skipped} have no tables in {os.path.basename(files[0])}; "
+              f"training the matrix on {have} only")
+    configs = have
+
+    ref_tbl = crossref_track_table or track_table
+
+    def _tables(cfg):
+        return {"ref": ref_tbl, "var": f"L1TSmartPixels{ext}TrackDigiRefit{cfg}"}
+
     results = {"A": None, "B": {}, "C": {}, "D": {}}
+    if crossref_track_table:
+        # simultaneous storage: also train the scenario-hw baseline per config
+        results["A-spx"] = {}
     meta_all = {}
 
     # Tier A is config-independent: train once off the first config's tables
-    ref0, var0, hits0 = load_refit_tables(files, configs[0], track_table, max_events)
+    ref0, var0, hits0 = load_refit_tables(files, configs[0], track_table, max_events,
+                                          crossref_track_table=crossref_track_table)
     _, auc_a, meta_a = train_one(ref0, var0, hits0, "A", configs[0], output_dir,
                                  label=label, test_fraction=test_fraction, seed=seed,
-                                 xgb_params=xgb_params)
+                                 xgb_params=xgb_params, tables=_tables(configs[0]))
     results["A"] = auc_a
     meta_all["A"] = meta_a
 
     for cfg in configs:
-        ref, var, hits = load_refit_tables(files, cfg, track_table, max_events)
+        ref, var, hits = load_refit_tables(files, cfg, track_table, max_events,
+                                           crossref_track_table=crossref_track_table)
+        if crossref_track_table:
+            _, auc_s, meta_s = train_one(ref, var, hits, "A", cfg, output_dir,
+                                         label=label, test_fraction=test_fraction, seed=seed,
+                                         xgb_params=xgb_params, hw_source="var",
+                                         tables=_tables(cfg))
+            results["A-spx"][cfg] = auc_s
+            meta_all[f"A-spx-{cfg}"] = meta_s
         for tier in ("B", "C", "D"):
             _, auc, meta = train_one(ref, var, hits, tier, cfg, output_dir,
                                      label=label, test_fraction=test_fraction, seed=seed,
-                                     xgb_params=xgb_params)
+                                     xgb_params=xgb_params, tables=_tables(cfg))
             results[tier][cfg] = auc
             meta_all[f"{tier}-{cfg}"] = meta
 
     with open(os.path.join(output_dir, "auc_matrix.json"), "w") as f:
         json.dump({"results": results, "meta": meta_all,
-                   "label": label, "configs": list(configs)}, f, indent=2)
-    print("\nAUC matrix (rows=tier, cols=config):")
-    print(f"  A (baseline): {results['A']:.4f}")
-    header = "       " + "  ".join(f"{c:>7}" for c in configs)
+                   "label": label, "configs": list(configs),
+                   "tables": {"reference": ref_tbl,
+                              "variant": {c: _tables(c)["var"] for c in configs}},
+                   "tiers": TIER_DESCRIPTIONS}, f, indent=2)
+    print("\nAUC matrix (rows=tier, cols=config); tiers:")
+    for t in TIERS:
+        print(f"  {t}: {TIER_DESCRIPTIONS[t]}")
+    if "A-spx" in results:
+        print(f"  A-spx: {TIER_DESCRIPTIONS['A-spx']}")
+    print(f"  A (baseline, features from {ref_tbl}): {results['A']:.4f}")
+    header = "         " + "  ".join(f"{c:>7}" for c in configs)
     print(header)
+    if "A-spx" in results:
+        row = "  A-spx:  " + "  ".join(f"{results['A-spx'][c]:7.4f}" for c in configs)
+        print(row + f"   (features from L1TSmartPixels{ext}TrackDigiRefit<cfg>)")
     for tier in ("B", "C", "D"):
-        row = f"  {tier}:  " + "  ".join(f"{results[tier][c]:7.4f}" for c in configs)
+        row = f"  {tier}:      " + "  ".join(f"{results[tier][c]:7.4f}" for c in configs)
         print(row)
+
+    # working-point report: fake rate at fixed real-track efficiency, per config
+    print("\nfake rate at fixed real-track efficiency (test split):")
+    for cfg in configs:
+        cells = [("A", "A")]
+        if f"A-spx-{cfg}" in meta_all:
+            cells.append(("A-spx", f"A-spx-{cfg}"))
+        cells += [(t, f"{t}-{cfg}") for t in ("B", "C", "D")]
+        print(f"  config {cfg}:")
+        print(f"    {'cell':6s} {'AUC':>7s}  "
+              + "  ".join(f"{'FR@eff=' + e:>11s}" for e in
+                          (f"{w:.2f}" for w in WORKING_POINTS)))
+        for name, key in cells:
+            m = meta_all[key]
+            frs = "  ".join(f"{m['fake_rates'][f'{w:.2f}']:11.4f}" for w in WORKING_POINTS)
+            src = m.get("feature_source_table")
+            print(f"    {name:6s} {m['test_auc']:7.4f}  {frs}"
+                  + (f"   [features: {src}]" if src else ""))
     return results, meta_all
 
 
@@ -556,7 +803,11 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
     sumPullAlpha2 = _sum_sq_applied("pullAlpha")
     sumPullBeta2 = _sum_sq_applied("pullBeta")
 
-    # chi2 totals: producer already maps sentinel -> 0 and passthrough -> 0.
+    # chi2 totals: features 9/10 of the PRODUCER CONTRACT are the r-phi/r-z
+    # combinations regardless of nano schema (on v2.6 split files the loader
+    # synthesizes them as X+Alpha / Y+Beta, matching the producer's in-flight
+    # recombination) - deployed conifer models stay valid on both schemas.
+    # Producer already maps sentinel -> 0 and passthrough -> 0.
     chi2rphi = var_flat["spxChi2IncRPhiTot"].astype(np.float64)
     chi2rz = var_flat["spxChi2IncRZTot"].astype(np.float64)
     chi2rphi = np.where(chi2rphi > _SENTINEL, chi2rphi, 0.0)
@@ -689,7 +940,8 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
                       conifer_name: str = "refitq_conifer_v0",
                       provenance: str = "", scale_pos_weight: bool = True,
                       spec_version: int = 0,
-                      seed_npar: int = 5, track_npar: int | None = None):
+                      seed_npar: int = 5, track_npar: int | None = None,
+                      crossref_track_table: str | None = None):
     """Train the SPEC-ORDER refit-quality BDT and export it in conifer JSON
     matching the producer contract. spec_version=0 -> the 17-feature v0 vector;
     spec_version=1 -> the 24-feature v1 vector (v0 + the classic-7 TrackQuality hw
@@ -709,7 +961,8 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
         raise ValueError(f"spec_version must be 0 or 1, got {spec_version}")
     nfeat_expected = _SPEC_NFEAT[spec_version]
     os.makedirs(output_dir, exist_ok=True)
-    ref, var, hits = load_refit_tables(files, config, track_table, max_events)
+    ref, var, hits = load_refit_tables(files, config, track_table, max_events,
+                                       crossref_track_table=crossref_track_table)
     X, y, names, aux = build_spec_dataset(ref, var, hits, config, label=label,
                                           seed_npar=seed_npar, track_npar=track_npar,
                                           spec_version=spec_version)
@@ -726,10 +979,12 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
     model.fit(X[train], y[train], eval_set=[(X[test], y[test])], verbose=False)
     proba = model.predict_proba(X[test])[:, 1]
     auc = float(roc_auc_score(y[test], proba)) if (y[test].sum() and (y[test] == 0).sum()) else float("nan")
+    fake_rates = _fake_rates(y[test], proba)
 
     n_pos = int(y.sum())
     n_neg = int((y == 0).sum())
-    print(f"refitq[SPEC v{spec_version}]: test AUC = {auc:.4f}  "
+    fr_str = "  ".join(f"FR@{e}={fr:.4f}" for e, fr in fake_rates.items())
+    print(f"refitq[SPEC v{spec_version}]: test AUC = {auc:.4f}  {fr_str}  "
           f"(config={config}, nfeat={nfeat_expected}, n_refit={len(X)}, "
           f"n_train={len(train)}, n_test={len(test)}, pos={n_pos}, neg={n_neg})")
 
@@ -770,9 +1025,17 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
     meta = {
         "spec": "RefitSidecarSpec.md REFIT_BDT_FEATURES", "spec_version": spec_version,
         "n_features": nfeat_expected, "features": names, "config": config, "activeSP": CONFIG_ACTIVESP[config],
-        "label": label, "track_table": track_table, "margin_semantics": "raw_logit_margin",
+        "label": label, "track_table": track_table,
+        "crossref_track_table": crossref_track_table,
+        "chi2_schema": _chi2_schema_of(var),
+        "margin_semantics": "raw_logit_margin",
         "conifer_decision_function": "sum(tree_values)+init_predict, then *norm (float32)",
-        "test_auc": auc, "n_refit_tracks": len(X), "n_pos": n_pos, "n_neg": n_neg,
+        "test_auc": auc,
+        "fake_rates": fake_rates,
+        "fake_rate_definition": ("fraction of label-negative (fake) test tracks above the "
+                                 "score cut keeping the keyed fraction of label-positive "
+                                 "(real) test tracks"),
+        "n_refit_tracks": len(X), "n_pos": n_pos, "n_neg": n_neg,
         "n_train": len(train), "n_test": len(test), "seed": seed,
         "params": {k: v for k, v in params.items()},
         "input_files": [os.path.basename(f) for f in files],

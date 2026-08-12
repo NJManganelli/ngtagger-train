@@ -57,10 +57,26 @@ def main(argv=None):
                       help="withGen SmartPixels digiRefit nano files")
     p_rq.add_argument("-o", "--output", required=True)
     p_rq.add_argument("--tier", choices=["A", "B", "C", "D", "matrix"], default="matrix",
-                      help="single tier, or 'matrix' for the full 13-cell A/B/C/D x config run")
+                      help="BDT-input ablation tier: A = classic-7 TrackQuality baseline "
+                           "(reference hw track word only, no refit info); B = A + refit "
+                           "counters/occupancy, position pulls/residuals and refit-kick "
+                           "deltas (no angles, no chi2); C = B + alpha (bending-angle) "
+                           "features + chi2IncRPhiTot; D = C + beta features + "
+                           "chi2IncRZTot. 'matrix' runs one A cell + B/C/D per config")
     p_rq.add_argument("--config", choices=["AIII", "AAII", "AAAI", "AAAA"], default="AAAA",
                       help="digiRefit config (ignored for tier A; used for a single B/C/D run)")
-    p_rq.add_argument("--track-table", default="L1TTrack", help="L1TTrack or L1TExtTrack")
+    p_rq.add_argument("--track-table", default="L1TTrack",
+                      help="reference track table (L1TTrack or L1TExtTrack) for legacy "
+                           "single-storage nano; for simultaneous-storage nano the "
+                           "SmartPixels scenario track table (e.g. "
+                           "L1TSmartPixelsTrackDigiRefitAAII) together with "
+                           "--crossref-track-table")
+    p_rq.add_argument("--crossref-track-table", default=None,
+                      help="simultaneous-storage nano only: the nominal track table "
+                           "(L1TTrack, or L1TExtTrack for Ext scenario tables) that "
+                           "supplies the seed hw word, nStubs and TP-truth columns the "
+                           "SmartPixels scenario tables do not carry; rows are linked "
+                           "implicitly by index (scenario track i == nominal track i)")
     p_rq.add_argument("--label", default="genuine", choices=["genuine", "looselyGenuine"])
     p_rq.add_argument("--max-events", type=int, default=None)
     p_rq.add_argument("--seed", type=int, default=0)
@@ -157,23 +173,35 @@ def main(argv=None):
                               track_table=args.track_table, label=args.label,
                               max_events=args.max_events, seed=args.seed,
                               conifer_name=args.conifer_name, provenance=args.provenance,
-                              spec_version=args.spec_version)
+                              spec_version=args.spec_version,
+                              crossref_track_table=args.crossref_track_table)
         elif args.tier == "matrix":
-            train_matrix(args.inputs, args.output, track_table=args.track_table,
-                         label=args.label, max_events=args.max_events, seed=args.seed)
+            _, meta_all = train_matrix(args.inputs, args.output, track_table=args.track_table,
+                                       label=args.label, max_events=args.max_events, seed=args.seed,
+                                       crossref_track_table=args.crossref_track_table)
             if args.conifer:
-                for tag in ["A", "B-AIII", "B-AAII", "B-AAAI", "B-AAAA",
-                            "C-AIII", "C-AAII", "C-AAAI", "C-AAAA",
-                            "D-AIII", "D-AAII", "D-AAAI", "D-AAAA"]:
+                for tag in meta_all:
                     export_conifer(args.output, tag)
         else:
             ref, var, hits = load_refit_tables(args.inputs, args.config,
-                                               args.track_table, args.max_events)
+                                               args.track_table, args.max_events,
+                                               crossref_track_table=args.crossref_track_table)
+            ext = "Ext" if "Ext" in args.track_table else ""
+            tables = {"ref": args.crossref_track_table or args.track_table,
+                      "var": f"L1TSmartPixels{ext}TrackDigiRefit{args.config}"}
             train_one(ref, var, hits, args.tier, args.config, args.output,
-                      label=args.label, seed=args.seed)
+                      label=args.label, seed=args.seed, tables=tables)
+            if args.tier == "A" and args.crossref_track_table:
+                # simultaneous storage: also train the scenario-hw baseline
+                train_one(ref, var, hits, "A", args.config, args.output,
+                          label=args.label, seed=args.seed, hw_source="var",
+                          tables=tables)
             if args.conifer:
-                tag = "A" if args.tier == "A" else f"{args.tier}-{args.config}"
-                export_conifer(args.output, tag)
+                tags = ["A" if args.tier == "A" else f"{args.tier}-{args.config}"]
+                if args.tier == "A" and args.crossref_track_table:
+                    tags.append(f"A-spx-{args.config}")
+                for tag in tags:
+                    export_conifer(args.output, tag)
     elif args.cmd == "train-nnvtx":
         from ngtagger.train.nnvtx import train_nnvtx
 
