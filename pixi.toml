@@ -18,6 +18,12 @@ mlflow-ui = "mlflow ui --backend-store-uri file://$PIXI_PROJECT_ROOT/mlruns"
 python = "3.12.*"
 pip = "*"
 numpy = "<2.1"
+# torch from conda-forge (not pypi): the pip wheel vendors its own libomp.dylib,
+# which collides with the env's llvm-openmp (loaded via openblas) -> OMP Error #15.
+# The conda build links the shared llvm-openmp, and pixi's conda->pypi name
+# mapping lets it satisfy the pip-side `torch` requirements (mdmm, tabfm, hgq2).
+pytorch = "*"
+torchvision = "*"
 pytest = "*"
 jupyterlab = ">=4.6.1,<5"
 ipykernel = ">=7.3.0,<8"
@@ -50,10 +56,19 @@ conifer = "*"
 # so `import hgq` dies with a misleading "circular import"). The published wheel
 # is complete and carries every API used here.
 hgq2 = ">=0.1.9"
+# MDMM constrained multi-objective training (torch-based; Keras3 torch backend
+# or a keras.ops port — see docs/model-space-study.md). torch comes from conda.
+mdmm = "*"
 da4ml = ">=0.3"
 # hls4ml: CMS jet-tagging fork with HGQ2/da4ml support (mirrors upstream TrainTagger Keras_v3)
 hls4ml = { git = "https://github.com/CMS-L1T-Jet-Tagging/hls4ml", branch = "jet_tagger_hls4ml_update" }
 jupyterlab-rise = ">=0.43.1, <0.44"
+# TabFM for experimentation
+tabfm = { git = "https://github.com/google-research/tabfm.git", extras = ["pytorch"]}
+# tabfm imports jaxtyping.Array unconditionally, which jaxtyping<0.3 only
+# defines when jax is importable (upstream packaging bug) -> need CPU jax.
+jax = "*"
+safetensors = "*"
 
 # --------------------------------------------------------------------------
 # osx-64 (Intel) pins for transitive deps that dropped x86-macOS wheels.
@@ -110,18 +125,6 @@ platforms = ["osx-arm64"]
 tensorflow-metal = "*"
 
 # --------------------------------------------------------------------------
-# MDMM cross-check reference. src/ngtagger/train/mdmm.py is a pure keras.ops
-# port; the pip `mdmm` package is torch-only and is installed solely as the
-# reference implementation tests/test_mdmm.py compares against (via
-# pytest.importorskip, so it self-skips when absent). torch has no x86-macOS
-# wheel past 2.2.2, which predates numpy 2 -- hence arm64 only.
-# --------------------------------------------------------------------------
-[feature.mdmm-ref]
-platforms = ["osx-arm64"]
-[feature.mdmm-ref.pypi-dependencies]
-mdmm = "*"
-
-# --------------------------------------------------------------------------
 # hyperparameter scans / parallel multishot with ray (optional, heavier)
 # --------------------------------------------------------------------------
 [feature.tune.pypi-dependencies]
@@ -134,7 +137,7 @@ ray = { version = "*", extras = ["tune"] }
 # default   : osx-arm64, tensorflow + Metal (unchanged from before)
 # jax       : osx-arm64 + osx-64, jax backend -- the only option on Intel
 [environments]
-default = ["tf", "metal", "mdmm-ref"]
-tune = ["tf", "metal", "mdmm-ref", "tune"]
+default = ["tf", "metal"]
+tune = ["tf", "metal", "tune"]
 jax = ["jax"]
 jax-tune = ["jax", "tune"]
