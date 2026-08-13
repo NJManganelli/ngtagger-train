@@ -169,8 +169,11 @@ def _fake_rates(y_true: np.ndarray, scores: np.ndarray, effs=WORKING_POINTS) -> 
 _REF_HW = ["hwTanl", "hwZ0", "hwBendChi2", "hwChi2RPhi", "hwChi2RZ", "hitPattern",
            "nStubs", "hwRinv", "hwPhi", "hwD0"]
 _REF_FLOAT = ["rInv", "phi", "tanL", "z0", "d0", "pt", "eta", "trkMVA1"]
+# tpPdgId carries the matched TrackingParticle species: the target of the
+# track-origin multiclass study (tabfm_refitq.build_origin_labels). It is a
+# truth column, never a feature.
 _REF_TRUTH = ["genuine", "looselyGenuine", "combinatoric", "unknown",
-              "tpPt", "tpFromHardInteraction"]
+              "tpPt", "tpPdgId", "tpFromHardInteraction"]
 
 # per-track extension columns from the variant track table (tier B core)
 _VAR_EXT = ["spxRefitPerformed", "spxSeedCovOK", "spxNCrossings", "spxNAcceptedHits",

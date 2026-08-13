@@ -1,8 +1,9 @@
 """ngtagger command line interface.
 
-  ngtagger train      -c configs/deepset_hgq2.yaml -i nano1.root nano2.root -o output/run1
-  ngtagger multishot  -c configs/deepset_hgq2.yaml -i nano.root -o output/ms -n 5 -p 2
-  ngtagger export     -m output/ms/best -o firmware/
+  ngtagger train-jetmulticlass       -c configs/deepset_hgq2.yaml -i nano1.root nano2.root -o output/run1
+  ngtagger multishot-jetmulticlass  -c configs/deepset_hgq2.yaml -i nano.root -o output/ms -n 5 -p 2
+  ngtagger train-jetmulticlass-tabfm -i nano.root -o output/tabfm
+  ngtagger export                   -m output/ms/best -o firmware/
   ngtagger inspect-nano nano.root
 """
 
@@ -19,14 +20,16 @@ def main(argv=None):
     parser = ArgumentParser(prog="ngtagger")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p_train = sub.add_parser("train", help="single training run")
+    p_train = sub.add_parser("train-jetmulticlass",
+                             help="single training run of the multiclass jet tagger")
     p_train.add_argument("-c", "--config", required=True)
     p_train.add_argument("-i", "--inputs", nargs="+", required=True, help="L1PFTrkNano root files")
     p_train.add_argument("-o", "--output", required=True)
     p_train.add_argument("--seed", type=int, default=0)
     p_train.add_argument("--max-events", type=int, default=None)
 
-    p_ms = sub.add_parser("multishot", help="multi-seed training, keep best")
+    p_ms = sub.add_parser("multishot-jetmulticlass",
+                          help="multi-seed training of the multiclass jet tagger, keep best")
     p_ms.add_argument("-c", "--config", required=True)
     p_ms.add_argument("-i", "--inputs", nargs="+", required=True)
     p_ms.add_argument("-o", "--output", required=True)
@@ -34,6 +37,33 @@ def main(argv=None):
     p_ms.add_argument("-p", "--parallel", type=int, default=None,
                       help="concurrent shots (default: auto per machine)")
     p_ms.add_argument("--max-events", type=int, default=None)
+
+    p_jt = sub.add_parser("train-jetmulticlass-tabfm",
+                          help="TabFM baselines for the jet tagger: 8-class flavour, "
+                               "pt-ratio regression, 3-class charge")
+    p_jt.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen nano files")
+    p_jt.add_argument("-o", "--output", required=True)
+    p_jt.add_argument("--n-const", type=int, default=8,
+                      help="constituents per jet (flattened slot-major for the tabular model). "
+                           "Default 8, NOT the deepset's 16: the shipped TabFM checkpoint "
+                           "returns all-NaN predictions at 320 flattened features (16 const) "
+                           "while 160 (8 const) is clean")
+    p_jt.add_argument("--feature-groups", nargs="*", default=None,
+                      help="feature groups (same vocabulary as the deepset configs)")
+    p_jt.add_argument("--heads", nargs="+", default=["flavour", "pt", "charge"],
+                      choices=["flavour", "pt", "charge"], help="which heads to fit")
+    p_jt.add_argument("--max-context", type=int, default=4096,
+                      help="rows shown to TabFM as in-context 'training' data")
+    p_jt.add_argument("--max-eval", type=int, default=8192, help="evaluation rows")
+    p_jt.add_argument("--unbalanced-context", action="store_true",
+                      help="sample classification contexts at natural class proportions")
+    p_jt.add_argument("--unbalanced-eval", action="store_true",
+                      help="evaluate at natural class proportions instead of class-balanced")
+    p_jt.add_argument("--n-estimators", type=int, default=8, help="TabFM ensemble members")
+    p_jt.add_argument("--gen-match-dr", type=float, default=0.4, help="jet-radius gen matching cone")
+    p_jt.add_argument("--device", default=None, help="torch device (default: cuda if available)")
+    p_jt.add_argument("--max-events", type=int, default=None)
+    p_jt.add_argument("--seed", type=int, default=0)
 
     p_exp = sub.add_parser("export", help="hls4ml firmware conversion")
     p_exp.add_argument("-m", "--model", required=True, help="trained model directory")
@@ -95,6 +125,46 @@ def main(argv=None):
     p_rq.add_argument("--provenance", default="",
                       help="free-text provenance recorded in the SPEC-ORDER model metadata")
 
+    for _name, _help in (
+        ("train-refitquality-tabfm",
+         "TabFM (tabular foundation model) genuine-vs-fake baseline on the refit features"),
+        ("train-refitquality-tabfmmulticlass",
+         "TabFM track-ORIGIN classification (electron/muon/pion/kaon/proton + combinatorial fakes)"),
+    ):
+      _p = sub.add_parser(_name, help=_help)
+      _p.add_argument("-i", "--inputs", nargs="+", required=True,
+                      help="withGen SmartPixels digiRefit nano files")
+      _p.add_argument("-o", "--output", required=True)
+      _p.add_argument("--config", choices=["AIII", "AAII", "AAAI", "AAAA"], default="AAII",
+                      help="digiRefit config (selects the variant/hit tables)")
+      _p.add_argument("--tier", choices=["A", "B", "C", "D"], default="D",
+                      help="feature tier (same construction as train-refitquality; "
+                           "D = full refit visibility)")
+      _p.add_argument("--track-table", default="L1TTrack",
+                      help="reference track table, or the SmartPixels scenario table "
+                           "together with --crossref-track-table")
+      _p.add_argument("--crossref-track-table", default=None,
+                      help="simultaneous-storage nano: the nominal table supplying the "
+                           "seed hw word, nStubs and TP-truth columns")
+      _p.add_argument("--label", default="looselyGenuine",
+                      choices=["genuine", "looselyGenuine"],
+                      help="positive class for the binary mode (ignored for multiclass)")
+      _p.add_argument("--max-context", type=int, default=4096,
+                      help="rows shown to TabFM as in-context 'training' data")
+      _p.add_argument("--max-eval", type=int, default=8192, help="evaluation rows")
+      _p.add_argument("--unbalanced-eval", action="store_true",
+                      help="evaluate at natural class proportions instead of class-balanced "
+                           "(balanced keeps every rare-class row; metrics are within-class "
+                           "so balancing does not bias AUC or the fake rates)")
+      _p.add_argument("--unbalanced-context", action="store_true",
+                      help="sample the context at natural class proportions instead of "
+                           "class-balanced (fakes are ~1%% of tracks, so balancing is the default)")
+      _p.add_argument("--n-estimators", type=int, default=8,
+                      help="TabFM ensemble members (cost scales with this)")
+      _p.add_argument("--device", default=None, help="torch device (default: cuda if available)")
+      _p.add_argument("--max-events", type=int, default=None)
+      _p.add_argument("--seed", type=int, default=0)
+
     p_vtx = sub.add_parser("train-nnvtx", help="retrain the E2E NNVtx + association networks")
     p_vtx.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen L1PFTrkNano files")
     p_vtx.add_argument("-o", "--output", required=True)
@@ -130,16 +200,26 @@ def main(argv=None):
 
     args = parser.parse_args(argv)
 
-    if args.cmd == "train":
+    if args.cmd == "train-jetmulticlass":
         from ngtagger.train.trainer import run_training
 
         run_training(args.config, args.inputs, args.output, seed=args.seed,
                      max_events=args.max_events)
-    elif args.cmd == "multishot":
+    elif args.cmd == "multishot-jetmulticlass":
         from ngtagger.train.multishot import run_multishot
 
         run_multishot(args.config, args.inputs, args.output, n_shots=args.n_shots,
                       parallel=args.parallel, max_events=args.max_events)
+    elif args.cmd == "train-jetmulticlass-tabfm":
+        from ngtagger.train.tabfm_tagger import train_tagger_tabfm
+
+        train_tagger_tabfm(args.inputs, args.output, n_const=args.n_const,
+                           feature_groups=args.feature_groups, heads=tuple(args.heads),
+                           max_context=args.max_context, max_eval=args.max_eval,
+                           balanced_context=not args.unbalanced_context,
+                           balanced_eval=not args.unbalanced_eval,
+                           n_estimators=args.n_estimators, gen_match_dr=args.gen_match_dr,
+                           device=args.device, max_events=args.max_events, seed=args.seed)
     elif args.cmd == "export":
         from ngtagger.models.base import ModelRegistry
         import json
@@ -202,6 +282,19 @@ def main(argv=None):
                     tags.append(f"A-spx-{args.config}")
                 for tag in tags:
                     export_conifer(args.output, tag)
+    elif args.cmd in ("train-refitquality-tabfm", "train-refitquality-tabfmmulticlass"):
+        from ngtagger.train.tabfm_refitq import train_refitq_tabfm
+
+        train_refitq_tabfm(args.inputs, args.output, config=args.config,
+                           track_table=args.track_table,
+                           crossref_track_table=args.crossref_track_table,
+                           tier=args.tier, label=args.label,
+                           multiclass=(args.cmd == "train-refitquality-tabfmmulticlass"),
+                           max_context=args.max_context, max_eval=args.max_eval,
+                           balanced_context=not args.unbalanced_context,
+                           balanced_eval=not args.unbalanced_eval,
+                           n_estimators=args.n_estimators, device=args.device,
+                           max_events=args.max_events, seed=args.seed)
     elif args.cmd == "train-nnvtx":
         from ngtagger.train.nnvtx import train_nnvtx
 
