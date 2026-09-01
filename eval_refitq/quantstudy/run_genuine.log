@@ -1,0 +1,54 @@
+loading 2 file(s)
+
+== identity check: sum(pull^2) per dimension vs stored joint totals ==
+  RPhi: n=32799  median rel dev=3.689e-08  p99=1.324e-07  max=2.330e-07
+  RZ: n=32799  median rel dev=3.713e-08  p99=1.341e-07  max=2.424e-07
+
+== sample ==
+  refit tracks=32799  positives=31775  negatives=1024
+
+== per-dimension delta distributions (post-guard) ==
+      X: zero=  0.0%  med=     15.7  p99= 2.86e+05  max= 8.35e+05
+      Y: zero=  0.0%  med=     7.67  p99= 5.49e+03  max= 8.64e+03
+  Alpha: zero=  2.9%  med=     14.4  p99= 2.12e+04  max= 7.67e+05
+   Beta: zero=  3.0%  med=     10.9  p99= 7.58e+04  max= 9.16e+05
+
+== reference AUCs ==
+  base (orig chi2 + counters, NO refit delta) : 0.96316
+  + float position deltas                     : 0.96549
+  + float position AND angle deltas           : 0.96659
+  paired dAUC(float position - base) = +0.00233  [-0.00091, +0.00550]
+  paired dAUC(angle on top of position) = +0.00113  [-0.00181, +0.00402]
+
+== position-delta quantization sweep (vs FLOAT position deltas) ==
+  bits  k/oct  codes_used  sat%   zero%   AUC      paired dAUC vs float [95% CI]
+     3    0.8           8  37.02   9.15  0.96612  +0.00066 [-0.00156, +0.00304]
+     3    1.0           8  40.65   7.06  0.96561  +0.00010 [-0.00213, +0.00223]
+     3    1.5           8  50.61   5.05  0.96498  -0.00056 [-0.00313, +0.00214]
+     3    2.0           8  63.11   3.79  0.96316  -0.00235 [-0.00512, +0.00045]
+     4    0.8          16   0.02   9.15  0.96500  -0.00050 [-0.00256, +0.00153]
+     4    1.0          16   8.38   7.06  0.96614  +0.00063 [-0.00120, +0.00250]
+     4    1.5          16  33.69   5.05  0.96512  -0.00033 [-0.00242, +0.00169]
+     4    2.0          16  39.56   3.79  0.96529  -0.00017 [-0.00235, +0.00212]
+     5    0.8          16   0.00   9.15  0.96500  -0.00050 [-0.00256, +0.00153]
+     5    1.0          21   0.00   7.06  0.96563  +0.00014 [-0.00157, +0.00181]
+     5    1.5          31   0.00   5.05  0.96497  -0.00053 [-0.00248, +0.00138]
+     5    2.0          32   6.67   3.79  0.96478  -0.00076 [-0.00272, +0.00121]
+     6    0.8          16   0.00   9.15  0.96500  -0.00050 [-0.00256, +0.00153]
+     6    1.0          21   0.00   7.06  0.96563  +0.00014 [-0.00157, +0.00181]
+     6    1.5          31   0.00   5.05  0.96497  -0.00053 [-0.00248, +0.00138]
+     6    2.0          40   0.00   3.79  0.96423  -0.00124 [-0.00334, +0.00058]
+
+== quantile (equal-frequency) upper bound at each bit width ==
+  3 bits: AUC=0.96587  dAUC vs float=+0.00034 [-0.00178, +0.00242]
+  4 bits: AUC=0.96400  dAUC vs float=-0.00154 [-0.00328, +0.00006]
+  5 bits: AUC=0.96451  dAUC vs float=-0.00107 [-0.00277, +0.00054]
+  6 bits: AUC=0.96352  dAUC vs float=-0.00201 [-0.00385, -0.00027]
+
+== angle-delta bits (on top of 4-bit k=2 position deltas) ==
+  angle 1 bit(s): AUC=0.96499  dAUC vs position-only=-0.00034 [-0.00153, +0.00102]
+  angle 2 bit(s): AUC=0.96391  dAUC vs position-only=-0.00141 [-0.00293, +0.00011]
+  angle 3 bit(s): AUC=0.96438  dAUC vs position-only=-0.00096 [-0.00291, +0.00087]
+  angle 4 bit(s): AUC=0.96483  dAUC vs position-only=-0.00049 [-0.00280, +0.00166]
+
+wrote eval_refitq/quantstudy/chi2_bitwidth_results_genuine.json

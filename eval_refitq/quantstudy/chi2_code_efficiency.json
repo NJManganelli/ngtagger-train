@@ -1,0 +1,533 @@
+{
+  "files": [
+    "/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/clamp_on_f1.root",
+    "/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/clamp_on_f2.root"
+  ],
+  "identity": {
+    "RPhi": {
+      "n": 32799,
+      "median_rel_dev": 3.6889150432130086e-08,
+      "p99_rel_dev": 1.324066331036886e-07,
+      "max_rel_dev": 2.3301911198582124e-07
+    },
+    "RZ": {
+      "n": 32799,
+      "median_rel_dev": 3.713493475118647e-08,
+      "p99_rel_dev": 1.3414325227368577e-07,
+      "max_rel_dev": 2.423567573529343e-07
+    }
+  },
+  "n_tracks": 32799,
+  "dynamic_range": {
+    "X": {
+      "frac_zero": 0.0,
+      "p50": 15.652744757669499,
+      "p90": 15740.42665596005,
+      "p99": 286019.2367637758,
+      "p999": 521056.54350714036,
+      "max": 834875.6159935887,
+      "octaves_p1_to_p999": 28.164306802901166
+    },
+    "Y": {
+      "frac_zero": 0.0,
+      "p50": 7.670442644829596,
+      "p90": 2118.8843886371,
+      "p99": 5486.128719858446,
+      "p999": 7288.95877591284,
+      "max": 8636.22995189473,
+      "octaves_p1_to_p999": 22.301050242053094
+    },
+    "Alpha": {
+      "frac_zero": 0.028842342754352268,
+      "p50": 14.447640079472762,
+      "p90": 243.11471213858283,
+      "p99": 21214.8231516841,
+      "p999": 243382.10189779682,
+      "max": 766532.3069599866,
+      "octaves_p1_to_p999": 23.38450393146171
+    },
+    "Beta": {
+      "frac_zero": 0.029848470989969206,
+      "p50": 10.917967237629966,
+      "p90": 10558.378077857733,
+      "p99": 75811.35655837857,
+      "p999": 355761.4333695789,
+      "max": 915646.289180896,
+      "octaves_p1_to_p999": 22.65847562205123
+    }
+  },
+  "codes": [
+    {
+      "bits": 3,
+      "per_octave": 0.5,
+      "X": {
+        "entropy_bits": 2.8559569358557635,
+        "efficiency": 0.9519856452852545,
+        "saturation_frac": 0.12921125644074513,
+        "code0_frac": 0.1944266593493704,
+        "spearman_vs_float": 0.9749750186230471
+      },
+      "Y": {
+        "entropy_bits": 2.6216065887693523,
+        "efficiency": 0.8738688629231174,
+        "saturation_frac": 9.146620323790359e-05,
+        "code0_frac": 0.2076587700844538,
+        "spearman_vs_float": 0.9623227105834514
+      }
+    },
+    {
+      "bits": 3,
+      "per_octave": 0.75,
+      "X": {
+        "entropy_bits": 2.678890062380003,
+        "efficiency": 0.8929633541266676,
+        "saturation_frac": 0.3186987408152688,
+        "code0_frac": 0.15820604286716058,
+        "spearman_vs_float": 0.9566110065406109
+      },
+      "Y": {
+        "entropy_bits": 2.6741522486567724,
+        "efficiency": 0.8913840828855908,
+        "saturation_frac": 0.2754352266837404,
+        "code0_frac": 0.1577792005853837,
+        "spearman_vs_float": 0.9622874055284152
+      }
+    },
+    {
+      "bits": 3,
+      "per_octave": 1.0,
+      "X": {
+        "entropy_bits": 2.644347188356918,
+        "efficiency": 0.8814490627856393,
+        "saturation_frac": 0.3733650416171225,
+        "code0_frac": 0.13707734991920487,
+        "spearman_vs_float": 0.9409433998978493
+      },
+      "Y": {
+        "entropy_bits": 2.590838414023839,
+        "efficiency": 0.863612804674613,
+        "saturation_frac": 0.35208390499710357,
+        "code0_frac": 0.13222964114759597,
+        "spearman_vs_float": 0.9466721901088895
+      }
+    },
+    {
+      "bits": 3,
+      "per_octave": 1.5,
+      "X": {
+        "entropy_bits": 2.4527838587476145,
+        "efficiency": 0.8175946195825382,
+        "saturation_frac": 0.4758071892435745,
+        "code0_frac": 0.11256440745144669,
+        "spearman_vs_float": 0.8896022894603561
+      },
+      "Y": {
+        "entropy_bits": 2.6039978098918377,
+        "efficiency": 0.8679992699639459,
+        "saturation_frac": 0.4081221988475258,
+        "code0_frac": 0.10661910424098296,
+        "spearman_vs_float": 0.927842534400974
+      }
+    },
+    {
+      "bits": 3,
+      "per_octave": 2.0,
+      "X": {
+        "entropy_bits": 2.120438669931026,
+        "efficiency": 0.7068128899770086,
+        "saturation_frac": 0.5852007683161072,
+        "code0_frac": 0.09652733315040092,
+        "spearman_vs_float": 0.8003022272822091
+      },
+      "Y": {
+        "entropy_bits": 2.44037489779915,
+        "efficiency": 0.8134582992663834,
+        "saturation_frac": 0.4848013658953017,
+        "code0_frac": 0.09097838348730145,
+        "spearman_vs_float": 0.8832991463362593
+      }
+    },
+    {
+      "bits": 3,
+      "per_octave": 3.0,
+      "X": {
+        "entropy_bits": 1.7055151587782564,
+        "efficiency": 0.5685050529260854,
+        "saturation_frac": 0.6968200250007622,
+        "code0_frac": 0.07826458123723284,
+        "spearman_vs_float": 0.6614366222706769
+      },
+      "Y": {
+        "entropy_bits": 2.002684981885814,
+        "efficiency": 0.6675616606286047,
+        "saturation_frac": 0.6242263483642794,
+        "code0_frac": 0.0746059331077167,
+        "spearman_vs_float": 0.7552690724884285
+      }
+    },
+    {
+      "bits": 4,
+      "per_octave": 0.5,
+      "X": {
+        "entropy_bits": 3.0598538898901277,
+        "efficiency": 0.7649634724725319,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.1944266593493704,
+        "spearman_vs_float": 0.976846261663074
+      },
+      "Y": {
+        "entropy_bits": 2.6216065887693523,
+        "efficiency": 0.6554016471923381,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.2076587700844538,
+        "spearman_vs_float": 0.9623227105834514
+      }
+    },
+    {
+      "bits": 4,
+      "per_octave": 0.75,
+      "X": {
+        "entropy_bits": 3.591056512913473,
+        "efficiency": 0.8977641282283683,
+        "saturation_frac": 0.00024390987530107625,
+        "code0_frac": 0.15820604286716058,
+        "spearman_vs_float": 0.988163554670736
+      },
+      "Y": {
+        "entropy_bits": 3.124441856043379,
+        "efficiency": 0.7811104640108447,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.1577792005853837,
+        "spearman_vs_float": 0.9804449999280476
+      }
+    },
+    {
+      "bits": 4,
+      "per_octave": 1.0,
+      "X": {
+        "entropy_bits": 3.7874003034372925,
+        "efficiency": 0.9468500758593231,
+        "saturation_frac": 0.08381353090033233,
+        "code0_frac": 0.13707734991920487,
+        "spearman_vs_float": 0.9921114622179522
+      },
+      "Y": {
+        "entropy_bits": 3.502147211543712,
+        "efficiency": 0.875536802885928,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.13222964114759597,
+        "spearman_vs_float": 0.9880451896010972
+      }
+    },
+    {
+      "bits": 4,
+      "per_octave": 1.5,
+      "X": {
+        "entropy_bits": 3.476556609492813,
+        "efficiency": 0.8691391523732033,
+        "saturation_frac": 0.2815329735662673,
+        "code0_frac": 0.11256440745144669,
+        "spearman_vs_float": 0.9740491366486372
+      },
+      "Y": {
+        "entropy_bits": 3.5667415091445287,
+        "efficiency": 0.8916853772861322,
+        "saturation_frac": 0.21741516509649683,
+        "code0_frac": 0.10661910424098296,
+        "spearman_vs_float": 0.9848014635728978
+      }
+    },
+    {
+      "bits": 4,
+      "per_octave": 2.0,
+      "X": {
+        "entropy_bits": 3.3247639572793424,
+        "efficiency": 0.8311909893198356,
+        "saturation_frac": 0.3554071770480807,
+        "code0_frac": 0.09652733315040092,
+        "spearman_vs_float": 0.9526725120416045
+      },
+      "Y": {
+        "entropy_bits": 3.309533734086216,
+        "efficiency": 0.827383433521554,
+        "saturation_frac": 0.3306808134394341,
+        "code0_frac": 0.09097838348730145,
+        "spearman_vs_float": 0.9615001910377394
+      }
+    },
+    {
+      "bits": 4,
+      "per_octave": 3.0,
+      "X": {
+        "entropy_bits": 3.1442236684950347,
+        "efficiency": 0.7860559171237587,
+        "saturation_frac": 0.4374828500868929,
+        "code0_frac": 0.07826458123723284,
+        "spearman_vs_float": 0.9149981933996805
+      },
+      "Y": {
+        "entropy_bits": 3.2633115145113756,
+        "efficiency": 0.8158278786278439,
+        "saturation_frac": 0.3908350864355621,
+        "code0_frac": 0.0746059331077167,
+        "spearman_vs_float": 0.9394170701688955
+      }
+    },
+    {
+      "bits": 5,
+      "per_octave": 0.5,
+      "X": {
+        "entropy_bits": 3.0598538898901277,
+        "efficiency": 0.6119707779780256,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.1944266593493704,
+        "spearman_vs_float": 0.976846261663074
+      },
+      "Y": {
+        "entropy_bits": 2.6216065887693523,
+        "efficiency": 0.5243213177538705,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.2076587700844538,
+        "spearman_vs_float": 0.9623227105834514
+      }
+    },
+    {
+      "bits": 5,
+      "per_octave": 0.75,
+      "X": {
+        "entropy_bits": 3.591056512913473,
+        "efficiency": 0.7182113025826946,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.15820604286716058,
+        "spearman_vs_float": 0.988163554670736
+      },
+      "Y": {
+        "entropy_bits": 3.124441856043379,
+        "efficiency": 0.6248883712086758,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.1577792005853837,
+        "spearman_vs_float": 0.9804449999280476
+      }
+    },
+    {
+      "bits": 5,
+      "per_octave": 1.0,
+      "X": {
+        "entropy_bits": 3.972324349606924,
+        "efficiency": 0.7944648699213848,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.13707734991920487,
+        "spearman_vs_float": 0.9926736930220127
+      },
+      "Y": {
+        "entropy_bits": 3.502147211543712,
+        "efficiency": 0.7004294423087424,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.13222964114759597,
+        "spearman_vs_float": 0.9880451896010972
+      }
+    },
+    {
+      "bits": 5,
+      "per_octave": 1.5,
+      "X": {
+        "entropy_bits": 4.515835235989151,
+        "efficiency": 0.9031670471978301,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.11256440745144669,
+        "spearman_vs_float": 0.9961975372564492
+      },
+      "Y": {
+        "entropy_bits": 4.041851733222556,
+        "efficiency": 0.8083703466445111,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.10661910424098296,
+        "spearman_vs_float": 0.9942636321807317
+      }
+    },
+    {
+      "bits": 5,
+      "per_octave": 2.0,
+      "X": {
+        "entropy_bits": 4.713170234844939,
+        "efficiency": 0.9426340469689878,
+        "saturation_frac": 0.06667886216043171,
+        "code0_frac": 0.09652733315040092,
+        "spearman_vs_float": 0.997326527576117
+      },
+      "Y": {
+        "entropy_bits": 4.433905745345676,
+        "efficiency": 0.8867811490691352,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.09097838348730145,
+        "spearman_vs_float": 0.9965757254292383
+      }
+    },
+    {
+      "bits": 5,
+      "per_octave": 3.0,
+      "X": {
+        "entropy_bits": 4.265942139077497,
+        "efficiency": 0.8531884278154994,
+        "saturation_frac": 0.2608006341656758,
+        "code0_frac": 0.07826458123723284,
+        "spearman_vs_float": 0.9808940613119923
+      },
+      "Y": {
+        "entropy_bits": 4.472763758168633,
+        "efficiency": 0.8945527516337266,
+        "saturation_frac": 0.17857251745480046,
+        "code0_frac": 0.0746059331077167,
+        "spearman_vs_float": 0.9927642677909831
+      }
+    },
+    {
+      "bits": 6,
+      "per_octave": 0.5,
+      "X": {
+        "entropy_bits": 3.0598538898901277,
+        "efficiency": 0.5099756483150213,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.1944266593493704,
+        "spearman_vs_float": 0.976846261663074
+      },
+      "Y": {
+        "entropy_bits": 2.6216065887693523,
+        "efficiency": 0.4369344314615587,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.2076587700844538,
+        "spearman_vs_float": 0.9623227105834514
+      }
+    },
+    {
+      "bits": 6,
+      "per_octave": 0.75,
+      "X": {
+        "entropy_bits": 3.591056512913473,
+        "efficiency": 0.5985094188189122,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.15820604286716058,
+        "spearman_vs_float": 0.988163554670736
+      },
+      "Y": {
+        "entropy_bits": 3.124441856043379,
+        "efficiency": 0.5207403093405631,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.1577792005853837,
+        "spearman_vs_float": 0.9804449999280476
+      }
+    },
+    {
+      "bits": 6,
+      "per_octave": 1.0,
+      "X": {
+        "entropy_bits": 3.972324349606924,
+        "efficiency": 0.6620540582678206,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.13707734991920487,
+        "spearman_vs_float": 0.9926736930220127
+      },
+      "Y": {
+        "entropy_bits": 3.502147211543712,
+        "efficiency": 0.583691201923952,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.13222964114759597,
+        "spearman_vs_float": 0.9880451896010972
+      }
+    },
+    {
+      "bits": 6,
+      "per_octave": 1.5,
+      "X": {
+        "entropy_bits": 4.515835235989151,
+        "efficiency": 0.7526392059981918,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.11256440745144669,
+        "spearman_vs_float": 0.9961975372564492
+      },
+      "Y": {
+        "entropy_bits": 4.041851733222556,
+        "efficiency": 0.6736419555370926,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.10661910424098296,
+        "spearman_vs_float": 0.9942636321807317
+      }
+    },
+    {
+      "bits": 6,
+      "per_octave": 2.0,
+      "X": {
+        "entropy_bits": 4.908609304299784,
+        "efficiency": 0.8181015507166306,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.09652733315040092,
+        "spearman_vs_float": 0.9976317137578755
+      },
+      "Y": {
+        "entropy_bits": 4.433905745345676,
+        "efficiency": 0.738984290890946,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.09097838348730145,
+        "spearman_vs_float": 0.9965757254292383
+      }
+    },
+    {
+      "bits": 6,
+      "per_octave": 3.0,
+      "X": {
+        "entropy_bits": 5.466708275146829,
+        "efficiency": 0.9111180458578049,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.07826458123723284,
+        "spearman_vs_float": 0.9987643342662361
+      },
+      "Y": {
+        "entropy_bits": 4.992376391234784,
+        "efficiency": 0.832062731872464,
+        "saturation_frac": 0.0,
+        "code0_frac": 0.0746059331077167,
+        "spearman_vs_float": 0.99833754524199
+      }
+    }
+  ],
+  "reduced": {
+    "X": {
+      "p50": 5.155050147458511,
+      "p99": 75779.29837628275,
+      "max": 278291.8719978629,
+      "octaves_p1_to_p999": 26.2791948647262,
+      "q4k2_entropy_bits": 3.2815863588141765,
+      "q4k2_saturation_frac": 0.3151315588889905
+    },
+    "Y": {
+      "p50": 2.5075988699139558,
+      "p99": 1685.2070910499058,
+      "max": 3145.002727920761,
+      "octaves_p1_to_p999": 20.670616014067356,
+      "q4k2_entropy_bits": 3.2610126999450504,
+      "q4k2_saturation_frac": 0.2687581938473734
+    }
+  },
+  "quantile_reference": [
+    {
+      "bits": 3,
+      "entropy_bits": 2.999999984577669,
+      "spearman_vs_float": 0.98453869246138
+    },
+    {
+      "bits": 4,
+      "entropy_bits": 3.99999996848394,
+      "spearman_vs_float": 0.9960782756837765
+    },
+    {
+      "bits": 5,
+      "entropy_bits": 4.99999993629386,
+      "spearman_vs_float": 0.9990241595232041
+    },
+    {
+      "bits": 6,
+      "entropy_bits": 5.999999142400806,
+      "spearman_vs_float": 0.9997554191465151
+    }
+  ]
+}
