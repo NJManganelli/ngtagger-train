@@ -13,12 +13,16 @@ Tier / config matrix (13 trainings):
   Tier B  (per config): A + refit info WITHOUT angles (crossing/hit counts,
           layer mask, window multiplicity/truncation, per-hit position pulls
           and residuals aggregated per track, and the refit-kick deltas
-          variant-minus-reference on rInv/phi/tanl/z0/d0). The COMBINED chi2
-          totals are NOT used in B (they mix position + angle terms); on v2.6
-          split-schema nano the pure position sums (spxChi2IncX/YTot) ARE.
-  Tier C  (per config): B + bending-angle (alpha) features, and the
-          spxChi2IncRPhiTot total is now allowed.
-  Tier D  (per config): C + beta features and spxChi2IncRZTot.
+          variant-minus-reference on rInv/phi/tanl/z0/d0), plus the pure
+          position chi2 sums spxChi2IncX/YTot.
+  Tier C  (per config): B + bending-angle (alpha) features and
+          spxChi2IncAlphaTot.
+  Tier D  (per config): C + beta features and spxChi2IncBetaTot.
+
+Requires v2.6+ nano (4-way split chi2 columns). The joint x+alpha / y+beta
+chi2 combinations are not used as inputs anywhere: they mix a high-precision
+position term with a near-inert angle term, which dilutes the discriminant.
+v2.5 nano carrying only the unified columns is rejected at load.
 
 IMPORTANT caveat: the production ran useAngles=alphaBeta for ALL variants, so
 the Kalman filter itself always used the full (alpha+beta) angle payload. The
@@ -60,9 +64,10 @@ TIER_DESCRIPTIONS = {
     "A-spx": "classic-7 TrackQuality features rebuilt from the SCENARIO table's refit-repacked "
              "hw track word (nStubs via the implicit index link) - the refit's effect at "
              "baseline-feature level; simultaneous-storage mode only",
-    "B": "A + refit counters/occupancy, position pulls/residuals, refit-kick deltas (no angles, no chi2)",
-    "C": "B + alpha (bending-angle) features + chi2IncRPhiTot",
-    "D": "C + beta features + chi2IncRZTot (full refit visibility)",
+    "B": "A + refit counters/occupancy, position pulls/residuals, refit-kick deltas, "
+         "position chi2 sums X/YTot (no angles)",
+    "C": "B + alpha (bending-angle) features + chi2IncAlphaTot",
+    "D": "C + beta features + chi2IncBetaTot (full refit visibility)",
 }
 
 # ---------------------------------------------------------------------------
@@ -114,36 +119,30 @@ _SPEC_NFEAT = {0: 17, 1: 24}
 
 _SENTINEL = -900.0  # values <= this are the -999 fill; test with (x > _SENTINEL)
 
-# chi2 column schemas: simulation v2.5 nano carries the unified r-phi/r-z
-# combinations; v2.6 (RefitSidecarSpec v0.5) splits them per measurement
-# dimension. The loader detects which schema a file carries; for split files it
-# synthesizes the unified columns EXACTLY (rphi = X + Alpha, rz = Y + Beta;
-# non-applied terms are exactly 0, sentinel sums stay < -900) so every legacy
-# feature is directly comparable across schemas, and the split columns
-# additionally feed pure position/angle chi2 features into the tier study.
-_CHI2_TOT_UNIFIED = ["spxChi2IncRPhiTot", "spxChi2IncRZTot"]
+# Per-dimension chi2 totals (sim v2.6+). The joint x+alpha / y+beta
+# combinations that v2.5 nano carried are deliberately NOT used as inputs: they
+# mix a position term the OT seed predicts to O(um) with an angle term measured
+# ~30-80x worse than it is predicted, so the sum dilutes any discriminant built
+# on it. v2.5 nano is rejected outright rather than up-converted.
 _CHI2_TOT_SPLIT = ["spxChi2IncXTot", "spxChi2IncYTot", "spxChi2IncAlphaTot", "spxChi2IncBetaTot"]
-_CHI2_HIT_UNIFIED = ["chi2IncRPhi", "chi2IncRZ"]
-_CHI2_HIT_SPLIT = ["chi2IncX", "chi2IncY", "chi2IncAlpha", "chi2IncBeta"]
 
 
-def _detect_chi2_schema(files: list[str], var_tbl: str) -> str:
-    """'split' (sim v2.6 / spec v0.5) or 'unified' (v2.5), from the first file's
-    branch names. Mixing schemas across input files is not supported."""
+def _require_split_chi2(files: list[str], var_tbl: str) -> None:
+    """Reject inputs that lack the v2.6 4-way split chi2 columns."""
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
-    if f"{var_tbl}_{_CHI2_TOT_SPLIT[0]}" in keys:
-        return "split"
-    if f"{var_tbl}_{_CHI2_TOT_UNIFIED[0]}" in keys:
-        return "unified"
+    missing = [c for c in _CHI2_TOT_SPLIT if f"{var_tbl}_{c}" not in keys]
+    if not missing:
+        return
+    if f"{var_tbl}_spxChi2IncRPhiTot" in keys:
+        raise RuntimeError(
+            f"{files[0]}: table {var_tbl!r} carries the pre-v2.6 unified chi2 columns "
+            f"(spxChi2IncRPhiTot/RZTot). The joint x+alpha / y+beta combinations are no "
+            f"longer accepted as inputs - reproduce the nano with v2.6+ software, which "
+            f"writes spxChi2IncX/Y/Alpha/BetaTot.")
     raise RuntimeError(
-        f"table {var_tbl!r} in {files[0]} carries neither the split (v2.6) nor "
-        f"the unified (v2.5) chi2 columns")
-
-
-def _chi2_schema_of(var) -> str:
-    """Schema of an already-loaded variant record (split columns present?)."""
-    return "split" if all(f in var.fields for f in _CHI2_TOT_SPLIT) else "unified"
+        f"{files[0]}: table {var_tbl!r} carries no recognizable refit chi2 columns "
+        f"(missing {missing}).")
 
 # Working points for the fake-rate report: fraction of REAL (label-positive)
 # tracks kept by the score cut. Fake rate = fraction of label-negative tracks
@@ -178,7 +177,7 @@ _REF_TRUTH = ["genuine", "looselyGenuine", "combinatoric", "unknown",
 # per-track extension columns from the variant track table (tier B core)
 _VAR_EXT = ["spxRefitPerformed", "spxSeedCovOK", "spxNCrossings", "spxNAcceptedHits",
             "spxLayerHitMask", "spxMaxWindowMult", "spxAnyWindowTruncated", "spxNKFUpdates",
-            "spxChi2IncRPhiTot", "spxChi2IncRZTot"]
+            "spxChi2IncXTot", "spxChi2IncYTot", "spxChi2IncAlphaTot", "spxChi2IncBetaTot"]
 # variant-table hw columns for the scenario-hw baseline (classic-7 minus nStubs,
 # which the scenario tables do not persist - it comes from the reference table
 # via the implicit index link). Loaded in simultaneous-storage mode only.
@@ -188,7 +187,7 @@ _VAR_FLOAT = ["rInv", "phi", "tanL", "z0", "d0"]
 # per-hit link columns aggregated per track
 _HIT_COLS = ["trackIdx", "layer", "windowMult", "windowTruncated", "hasAlpha", "hasBeta",
              "resX", "resY", "pullX", "pullY", "pullAlpha", "pullBeta",
-             "sigAlpha", "sigBeta", "chi2IncRPhi", "chi2IncRZ"]
+             "sigAlpha", "sigBeta", "chi2IncX", "chi2IncY", "chi2IncAlpha", "chi2IncBeta"]
 
 
 def _log1p_clip(x: np.ndarray) -> np.ndarray:
@@ -241,27 +240,13 @@ def load_refit_tables(files: list[str], config: str, track_table: str = "L1TTrac
         # rezip into a record keyed by the bare column name (drop the prefix)
         return ak.zip({b: arrs[f"{prefix}_{b}"] for b in cols}, depth_limit=1)
 
-    schema = _detect_chi2_schema(files, var_tbl)
+    _require_split_chi2(files, var_tbl)
     ref = _load(ref_tbl, _REF_HW + _REF_FLOAT + _REF_TRUTH)
     # simultaneous storage: also read the scenario table's own hw word so the
     # scenario-hw baseline (tier 'A-spx') can be trained alongside.
     var_cols = _VAR_EXT + _VAR_FLOAT + (_VAR_HW if crossref_track_table else [])
-    hit_cols = list(_HIT_COLS)
-    if schema == "split":
-        var_cols = [c for c in var_cols if c not in _CHI2_TOT_UNIFIED] + _CHI2_TOT_SPLIT
-        hit_cols = [c for c in hit_cols if c not in _CHI2_HIT_UNIFIED] + _CHI2_HIT_SPLIT
     var = _load(var_tbl, var_cols)
-    hits = _load(hit_tbl, hit_cols)
-    if schema == "split":
-        # Synthesize the unified combinations exactly (spec v0.5 invariant:
-        # rphi = X + Alpha, rz = Y + Beta; sentinel sums stay below -900 and
-        # behave identically under every downstream sentinel test).
-        var = ak.with_field(var, var["spxChi2IncXTot"] + var["spxChi2IncAlphaTot"], "spxChi2IncRPhiTot")
-        var = ak.with_field(var, var["spxChi2IncYTot"] + var["spxChi2IncBetaTot"], "spxChi2IncRZTot")
-        hits = ak.with_field(hits, hits["chi2IncX"] + hits["chi2IncAlpha"], "chi2IncRPhi")
-        hits = ak.with_field(hits, hits["chi2IncY"] + hits["chi2IncBeta"], "chi2IncRZ")
-    print(f"refitq chi2 schema: {schema}"
-          + (" (unified columns synthesized as X+Alpha / Y+Beta)" if schema == "split" else ""))
+    hits = _load(hit_tbl, list(_HIT_COLS))
     # Validate the implicit index link (variant row i == reference row i) that
     # every downstream feature relies on; fail loudly if it does not hold.
     n_ref = ak.num(ref[_REF_HW[0]])
@@ -325,10 +310,6 @@ def _aggregate_hits_per_track(hits_flat: dict, n_tracks: int) -> dict:
     out["hit_sumPullY2"] = _sum_sq("pullY")
     out["hit_maxAbsResX"] = _max_abs("resX")
     out["hit_maxAbsResY"] = _max_abs("resY")
-    out["hit_sumChi2RPhi"] = np.zeros(n_tracks)  # filled below (log later)
-    acc = np.zeros(n_tracks, np.float64)
-    np.add.at(acc, idx, np.clip(hits_flat["chi2IncRPhi"].astype(np.float64), 0, None))
-    out["hit_sumChi2RPhi"] = acc
     # angle (alpha) aggregates
     out["hit_sumPullAlpha2"] = _sum_sq("pullAlpha", valid=has_a)
     out["hit_nHasAlpha"] = _count(has_a)
@@ -440,33 +421,28 @@ def build_refitq_dataset(ref, var, hits, tier: str, config: str, label: str = "g
         "hit_maxAbsResX": agg["hit_maxAbsResX"].astype(np.float32),
         "hit_maxAbsResY": agg["hit_maxAbsResY"].astype(np.float32),
     }
-    b_block = {**ext_cols, **kicks, **b_hit}
-
+    # Pure position chi2 belongs in B: with the angle terms split off it no
+    # longer mixes a well-predicted dimension with a near-inert one, which was
+    # B's original exclusion reason. The angle sums join their own tiers.
+    b_block = {
+        **ext_cols,
+        **kicks,
+        **b_hit,
+        "spxChi2IncXTot": _log1p_clip(var_flat["spxChi2IncXTot"]),
+        "spxChi2IncYTot": _log1p_clip(var_flat["spxChi2IncYTot"]),
+    }
     c_block = {
-        "spxChi2IncRPhiTot": _log1p_clip(var_flat["spxChi2IncRPhiTot"]),
+        "spxChi2IncAlphaTot": _log1p_clip(var_flat["spxChi2IncAlphaTot"]),
         "hit_sumPullAlpha2": agg["hit_sumPullAlpha2"].astype(np.float32),
         "hit_nHasAlpha": agg["hit_nHasAlpha"].astype(np.float32),
         "hit_meanSigAlpha": agg["hit_meanSigAlpha"].astype(np.float32),
     }
     d_block = {
-        "spxChi2IncRZTot": _log1p_clip(var_flat["spxChi2IncRZTot"]),
+        "spxChi2IncBetaTot": _log1p_clip(var_flat["spxChi2IncBetaTot"]),
         "hit_sumPullBeta2": agg["hit_sumPullBeta2"].astype(np.float32),
         "hit_nHasBeta": agg["hit_nHasBeta"].astype(np.float32),
         "hit_meanSigBeta": agg["hit_meanSigBeta"].astype(np.float32),
     }
-
-    # v2.6 split schema: the pure per-dimension chi2 sums become ADDITIONAL
-    # features. Position-only chi2 no longer mixes angle terms, so it becomes
-    # admissible in tier B (the mixing was B's exclusion reason); the pure
-    # angle sums join their angle tiers. The legacy combined features above
-    # are kept unchanged (synthesized on split files) so tier results stay
-    # comparable across v2.5/v2.6 nano.
-    if _chi2_schema_of(var) == "split":
-        split_flat = {b: ak.to_numpy(ak.flatten(var[b])) for b in _CHI2_TOT_SPLIT}
-        b_block["spxChi2IncXTot"] = _log1p_clip(split_flat["spxChi2IncXTot"])
-        b_block["spxChi2IncYTot"] = _log1p_clip(split_flat["spxChi2IncYTot"])
-        c_block["spxChi2IncAlphaTot"] = _log1p_clip(split_flat["spxChi2IncAlphaTot"])
-        d_block["spxChi2IncBetaTot"] = _log1p_clip(split_flat["spxChi2IncBetaTot"])
 
     blocks = dict(b_block)
     if tier in ("C", "D"):
@@ -559,7 +535,6 @@ def train_one(ref, var, hits, tier: str, config: str, output_dir: str,
             "config": (None if tag == "A" else config),
             "activeSP": (None if tag == "A" else CONFIG_ACTIVESP[config]),
             "label": label, "features": names, "n_features": len(names),
-            "chi2_schema": _chi2_schema_of(var),
             "test_auc": auc,
             "fake_rates": fake_rates,
             "fake_rate_definition": ("fraction of label-negative (fake) test tracks above the "
@@ -806,15 +781,20 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
     sumPullAlpha2 = _sum_sq_applied("pullAlpha")
     sumPullBeta2 = _sum_sq_applied("pullBeta")
 
-    # chi2 totals: features 9/10 of the PRODUCER CONTRACT are the r-phi/r-z
-    # combinations regardless of nano schema (on v2.6 split files the loader
-    # synthesizes them as X+Alpha / Y+Beta, matching the producer's in-flight
-    # recombination) - deployed conifer models stay valid on both schemas.
-    # Producer already maps sentinel -> 0 and passthrough -> 0.
-    chi2rphi = var_flat["spxChi2IncRPhiTot"].astype(np.float64)
-    chi2rz = var_flat["spxChi2IncRZTot"].astype(np.float64)
-    chi2rphi = np.where(chi2rphi > _SENTINEL, chi2rphi, 0.0)
-    chi2rz = np.where(chi2rz > _SENTINEL, chi2rz, 0.0)
+    # The ONLY place the joint combinations still appear: features 9/10 of the
+    # DEPLOYED producer contract (REFIT_BDT_FEATURES v0/v1) are the r-phi/r-z
+    # sums, so the exported conifer model must be trained on them or it would not
+    # match what L1SmartPixelsTrackProducer feeds it in-flight. Recombined here
+    # exactly as the producer does (posOr0 per component, then add) rather than
+    # read from a column, since the joint columns no longer exist in v2.6 nano.
+    # Retiring them from the contract requires a REFIT_BDT_FEATURES version bump
+    # and a redeploy - not something the loader may decide unilaterally.
+    def _pos_or_0(name):
+        v = var_flat[name].astype(np.float64)
+        return np.where(v > _SENTINEL, v, 0.0)
+
+    chi2rphi = _pos_or_0("spxChi2IncXTot") + _pos_or_0("spxChi2IncAlphaTot")
+    chi2rz = _pos_or_0("spxChi2IncYTot") + _pos_or_0("spxChi2IncBetaTot")
 
     cols = [
         var_flat["spxNCrossings"].astype(np.float32),          # 0
@@ -1030,7 +1010,6 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
         "n_features": nfeat_expected, "features": names, "config": config, "activeSP": CONFIG_ACTIVESP[config],
         "label": label, "track_table": track_table,
         "crossref_track_table": crossref_track_table,
-        "chi2_schema": _chi2_schema_of(var),
         "margin_semantics": "raw_logit_margin",
         "conifer_decision_function": "sum(tree_values)+init_predict, then *norm (float32)",
         "test_auc": auc,
