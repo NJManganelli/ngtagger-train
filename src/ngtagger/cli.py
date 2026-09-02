@@ -195,6 +195,51 @@ def main(argv=None):
     p_vs.add_argument("--seed", type=int, default=0, help="--kernel-scan toy seed")
     p_vs.add_argument("--no-plot", action="store_true", help="skip PNG output")
 
+    p_cq = sub.add_parser("calibrate-chi2-quant",
+                          help="calibrate the per-field refit chi2 delta quantizer "
+                               "constants (bits, codes-per-octave) from nano files")
+    p_cq.add_argument("-i", "--inputs", nargs="+", required=True,
+                      help="digiRefit nano files; shell globs are expanded internally "
+                           "so quoted patterns work too")
+    p_cq.add_argument("-o", "--output", default=None, help="write the full report as JSON")
+    p_cq.add_argument("--config", default=None,
+                      help="digiRefit config suffix (e.g. AAAA); default = the last one "
+                           "present in the first file")
+    p_cq.add_argument("--extended", action="store_true",
+                      help="use the Ext (extended-track) tables instead of the prompt ones")
+    p_cq.add_argument("--label", default="clean", choices=["clean", "genuine"],
+                      help="'clean' (default) = every accepted IT hit came from the "
+                           "track's own TP: the failure mode the refit controls, and ~17x "
+                           "more negatives so quantization actually resolves. 'genuine' = "
+                           "the deployed fake-rejection objective, which cannot resolve "
+                           "these effects on samples of this size.")
+    p_cq.add_argument("--bits", nargs="+", type=int, default=None,
+                      help="candidate field widths (default 3 4 5 6)")
+    p_cq.add_argument("--k-grid", nargs="+", type=float, default=None,
+                      help="candidate codes-per-octave values")
+    p_cq.add_argument("--tol", type=float, default=0.001,
+                      help="max |single-feature dAUC| vs unquantized to count as parity")
+    p_cq.add_argument("--sat-max", type=float, default=0.10,
+                      help="max fraction allowed in the top code (an information sink "
+                           "no training can undo)")
+    p_cq.add_argument("--allow-pull-derived", action="store_true",
+                      help="accept pre-v2.6 nano by reconstructing the per-dimension "
+                           "totals from the per-hit pulls (exact, but the joint columns "
+                           "are otherwise rejected)")
+    p_cq.add_argument("--bdt-bits", nargs="+", type=int, default=None,
+                      help="field widths measured with real fits (default 4 5 6); the "
+                           "wider --bits grid is only used for the cheap diagnostics")
+    p_cq.add_argument("--bdt-k-grid", nargs="+", type=float, default=None,
+                      help="codes-per-octave values measured with real fits "
+                           "(default 0.75 1.0 1.5 2.0 3.0)")
+    p_cq.add_argument("--no-bdt", action="store_true",
+                      help="proxy scan only, no fits: much faster, but the single-feature "
+                           "proxy is optimistic for the angle fields")
+    p_cq.add_argument("--quick", action="store_true", help="fewer trees in the validation fit")
+    p_cq.add_argument("--n-boot", type=int, default=400)
+    p_cq.add_argument("--max-events", type=int, default=None)
+    p_cq.add_argument("--seed", type=int, default=0)
+
     p_ins = sub.add_parser("inspect-nano", help="print tagger-relevant tables of a nano file")
     p_ins.add_argument("file")
 
@@ -315,6 +360,10 @@ def main(argv=None):
         else:
             run_vertex_dxy_smoke(args.realdata, args.outdir, track_table=args.track_table,
                                  d0_gate=args.d0_gate, make_plot=not args.no_plot)
+    elif args.cmd == "calibrate-chi2-quant":
+        from ngtagger.train.chi2quant import run
+
+        run(args)
     elif args.cmd == "inspect-nano":
         import uproot
 

@@ -1,0 +1,110 @@
+inputs: 2 file(s); config AAAA
+tables: ref=L1TTrack var=L1TSmartPixelsTrackDigiRefitAAAA hits=L1TSmartPixelsRefitHitDigiRefitAAAA
+source: reconstructed from per-hit pulls (pre-v2.6 nano)
+refit tracks: 32799  label 'clean': pos=14871 neg=17928
+
+X: span 28.2 octaves, median 15.7, p99 2.86e+05, max 8.35e+05
+  measuring 14 candidate(s) with fits (saturation <= 10%)
+    bits=4 k=0.75     sat= 0.02%  dAUC=-0.00095 [-0.00138, -0.00043]
+    bits=4 k=1.0      sat= 8.38%  dAUC=-0.00064 [-0.00099, -0.00026]
+    bits=4 quantile   sat= 6.25%  dAUC=-0.00108 [-0.00149, -0.00067]
+    bits=5 k=0.75     sat= 0.00%  dAUC=-0.00095 [-0.00138, -0.00043]
+    bits=5 k=1.0      sat= 0.00%  dAUC=-0.00047 [-0.00082, -0.00012]
+    bits=5 k=1.5      sat= 0.00%  dAUC=-0.00040 [-0.00073, -0.00009]
+    bits=5 k=2.0      sat= 6.67%  dAUC=-0.00012 [-0.00037, +0.00021]
+    bits=5 quantile   sat= 3.13%  dAUC=-0.00024 [-0.00052, +0.00004]
+    bits=6 k=0.75     sat= 0.00%  dAUC=-0.00095 [-0.00138, -0.00043]
+    bits=6 k=1.0      sat= 0.00%  dAUC=-0.00047 [-0.00082, -0.00012]
+    bits=6 k=1.5      sat= 0.00%  dAUC=-0.00040 [-0.00073, -0.00009]
+    bits=6 k=2.0      sat= 0.00%  dAUC=+0.00001 [-0.00027, +0.00031]
+    bits=6 k=3.0      sat= 0.00%  dAUC=-0.00007 [-0.00033, +0.00022]
+    bits=6 quantile   sat= 1.56%  dAUC=+0.00006 [-0.00017, +0.00029]
+  chosen: bits=4 k=0.75  dAUC=-0.00095 sat=0.02% H=3.59/4 rho=0.9882 top code from c>=6.61e+05
+  statistical parity would need bits=5 quantile LUT (dAUC -0.00024); the choice above is 4 bits within the 0.001 tolerance
+
+Y: span 22.3 octaves, median 7.67, p99 5.49e+03, max 8.64e+03
+  measuring 14 candidate(s) with fits (saturation <= 10%)
+    bits=4 k=0.75     sat= 0.00%  dAUC=-0.00113 [-0.00158, -0.00067]
+    bits=4 k=1.0      sat= 0.00%  dAUC=-0.00053 [-0.00087, -0.00020]
+    bits=4 quantile   sat= 6.25%  dAUC=-0.00106 [-0.00140, -0.00070]
+    bits=5 k=0.75     sat= 0.00%  dAUC=-0.00113 [-0.00158, -0.00067]
+    bits=5 k=1.0      sat= 0.00%  dAUC=-0.00053 [-0.00087, -0.00020]
+    bits=5 k=1.5      sat= 0.00%  dAUC=-0.00059 [-0.00086, -0.00029]
+    bits=5 k=2.0      sat= 0.00%  dAUC=-0.00011 [-0.00032, +0.00013]
+    bits=5 quantile   sat= 3.13%  dAUC=-0.00057 [-0.00086, -0.00031]
+    bits=6 k=0.75     sat= 0.00%  dAUC=-0.00113 [-0.00158, -0.00067]
+    bits=6 k=1.0      sat= 0.00%  dAUC=-0.00053 [-0.00087, -0.00020]
+    bits=6 k=1.5      sat= 0.00%  dAUC=-0.00059 [-0.00086, -0.00029]
+    bits=6 k=2.0      sat= 0.00%  dAUC=-0.00011 [-0.00032, +0.00013]
+    bits=6 k=3.0      sat= 0.00%  dAUC=-0.00021 [-0.00039, +0.00000]
+    bits=6 quantile   sat= 1.56%  dAUC=-0.00033 [-0.00053, -0.00008]
+  chosen: bits=4 k=1.0  dAUC=-0.00053 sat=0.00% H=3.50/4 rho=0.9880 top code from c>=2.32e+04
+  statistical parity would need bits=5 k=2.0 (dAUC -0.00011); the choice above is 4 bits within the 0.001 tolerance
+
+Alpha: span 23.4 octaves, median 14.4, p99 2.12e+04, max 7.67e+05
+  measuring 16 candidate(s) with fits (saturation <= 10%)
+    bits=4 k=0.75     sat= 0.01%  dAUC=-0.01591 [-0.01813, -0.01361]
+    bits=4 k=1.0      sat= 0.95%  dAUC=-0.01144 [-0.01330, -0.00978]
+    bits=4 k=1.5      sat= 5.98%  dAUC=-0.01029 [-0.01177, -0.00868]
+    bits=4 quantile   sat= 6.07%  dAUC=-0.01218 [-0.01395, -0.01039]
+    bits=5 k=0.75     sat= 0.00%  dAUC=-0.01591 [-0.01813, -0.01361]
+    bits=5 k=1.0      sat= 0.00%  dAUC=-0.01144 [-0.01330, -0.00978]
+    bits=5 k=1.5      sat= 0.00%  dAUC=-0.01029 [-0.01177, -0.00868]
+    bits=5 k=2.0      sat= 0.64%  dAUC=-0.00816 [-0.00971, -0.00677]
+    bits=5 k=3.0      sat= 5.10%  dAUC=-0.00625 [-0.00754, -0.00488]
+    bits=5 quantile   sat= 3.04%  dAUC=-0.00824 [-0.00958, -0.00686]
+    bits=6 k=0.75     sat= 0.00%  dAUC=-0.01591 [-0.01813, -0.01361]
+    bits=6 k=1.0      sat= 0.00%  dAUC=-0.01144 [-0.01330, -0.00978]
+    bits=6 k=1.5      sat= 0.00%  dAUC=-0.01029 [-0.01177, -0.00868]
+    bits=6 k=2.0      sat= 0.00%  dAUC=-0.00816 [-0.00971, -0.00677]
+    bits=6 k=3.0      sat= 0.00%  dAUC=-0.00625 [-0.00754, -0.00488]
+    bits=6 quantile   sat= 1.52%  dAUC=-0.00442 [-0.00548, -0.00327]
+  chosen: bits=6 quantile LUT  dAUC=-0.00442 sat=1.52% H=5.97/6 rho=0.9997 top code from c>=1.13e+04   <-- NO PARITY IN GRID
+  Alpha: nothing in the grid reaches dAUC >= -0.001 with saturation <= 0.1; widen --bits (this field wants more resolution than the grid offers).
+  no measured config for Alpha is statistically equal to unquantized within this grid
+
+Beta: span 22.7 octaves, median 10.9, p99 7.58e+04, max 9.16e+05
+  measuring 14 candidate(s) with fits (saturation <= 10%)
+    bits=4 k=0.75     sat= 0.01%  dAUC=-0.00931 [-0.01051, -0.00818]
+    bits=4 k=1.0      sat= 4.74%  dAUC=-0.00699 [-0.00794, -0.00601]
+    bits=4 quantile   sat= 6.06%  dAUC=-0.01023 [-0.01137, -0.00927]
+    bits=5 k=0.75     sat= 0.00%  dAUC=-0.00931 [-0.01051, -0.00818]
+    bits=5 k=1.0      sat= 0.00%  dAUC=-0.00699 [-0.00794, -0.00601]
+    bits=5 k=1.5      sat= 0.00%  dAUC=-0.00599 [-0.00681, -0.00509]
+    bits=5 k=2.0      sat= 2.68%  dAUC=-0.00487 [-0.00565, -0.00415]
+    bits=5 quantile   sat= 3.03%  dAUC=-0.00617 [-0.00699, -0.00544]
+    bits=6 k=0.75     sat= 0.00%  dAUC=-0.00931 [-0.01051, -0.00818]
+    bits=6 k=1.0      sat= 0.00%  dAUC=-0.00699 [-0.00794, -0.00601]
+    bits=6 k=1.5      sat= 0.00%  dAUC=-0.00599 [-0.00681, -0.00509]
+    bits=6 k=2.0      sat= 0.00%  dAUC=-0.00487 [-0.00565, -0.00415]
+    bits=6 k=3.0      sat= 0.00%  dAUC=-0.00371 [-0.00450, -0.00294]
+    bits=6 quantile   sat= 1.52%  dAUC=-0.00350 [-0.00421, -0.00285]
+  chosen: bits=6 quantile LUT  dAUC=-0.00350 sat=1.52% H=5.97/6 rho=0.9997 top code from c>=5.93e+04   <-- NO PARITY IN GRID
+  Beta: nothing in the grid reaches dAUC >= -0.001 with saturation <= 0.1; widen --bits (this field wants more resolution than the grid offers).
+  no measured config for Beta is statistically equal to unquantized within this grid
+
+validating all four chosen codes jointly (paired, 5-fold OOF)...
+  AUC float=0.99628  coded=0.99580  dAUC=-0.00048 [-0.00064, -0.00032]
+
+  // Refit chi2 delta encoding, per field. Log form:
+  //   q(c) = clamp(round(k*log2(1+c)), 0, 2^bits-1)
+  // LUT form: code = count of thresholds < c (c <= 0 -> 0).
+  // Calibrated by ngtagger-train `calibrate-chi2-quant`. CONTRACT: keep in
+  // lockstep with the python mirror; changing any value forces a retrain.
+  inline constexpr int kChi2XBits = 4;
+  inline constexpr double kChi2XPerOctave = 0.75;
+  inline constexpr int kChi2YBits = 4;
+  inline constexpr double kChi2YPerOctave = 1.0;
+  inline constexpr int kChi2AlphaBits = 6;
+  inline constexpr std::array<float, 63> kChi2AlphaEdges = {0.0563498f, 0.203853f, 0.42007f, 0.654246f, 0.954738f, 1.25448f, 1.58517f, 1.96477f, 2.32245f, 2.68716f, 3.0832f, 3.50207f, 3.94858f, 4.3634f, 4.7957f, 5.2085f, 5.67942f, 6.17225f, 6.68341f, 7.21105f, 7.76847f, 8.34886f, 8.9436f, 9.55257f, 10.2087f, 10.8579f, 11.5274f, 12.1909f, 12.9234f, 13.6139f, 14.4131f, 15.2022f, 16.047f, 16.9079f, 17.8961f, 19.0325f, 20.285f, 21.4184f, 22.6533f, 24.16f, 25.8284f, 27.4426f, 29.299f, 31.447f, 33.8828f, 36.8519f, 39.9871f, 43.7681f, 48.2617f, 53.4066f, 60.0189f, 69.5447f, 82.3135f, 98.6991f, 122.583f, 154.044f, 212.849f, 301.401f, 459.306f, 785.416f, 1432.22f, 3444.56f, 11329.1f};
+  inline constexpr int kChi2BetaBits = 6;
+  inline constexpr std::array<float, 63> kChi2BetaEdges = {0.113258f, 0.296478f, 0.50378f, 0.701486f, 0.907868f, 1.10418f, 1.30688f, 1.51188f, 1.70832f, 1.93386f, 2.13892f, 2.34687f, 2.56457f, 2.7905f, 3.01672f, 3.2522f, 3.51438f, 3.76767f, 4.06612f, 4.37611f, 4.70448f, 5.04852f, 5.42099f, 5.83505f, 6.30692f, 6.81972f, 7.39827f, 8.07573f, 8.8432f, 9.72034f, 10.889f, 12.5002f, 14.6013f, 17.7388f, 24.292f, 42.4633f, 79.7484f, 133.249f, 205.817f, 308.602f, 423.198f, 552.229f, 702.392f, 884.811f, 1119.54f, 1369.36f, 1689.41f, 2040.34f, 2455.2f, 2943.87f, 3499.74f, 4120.36f, 4913.6f, 5732.55f, 6735.5f, 8147.87f, 9819.38f, 11812f, 14763.5f, 18626.4f, 24039.9f, 35182.1f, 59324.6f};
+
+CHI2_QUANT = {
+    'X': {'bits': 4, 'k': 0.75},
+    'Y': {'bits': 4, 'k': 1.0},
+    'Alpha': {'bits': 6, 'k': None, 'edges': [0.05635, 0.203853, 0.42007, 0.654246, 0.954738, 1.254475, 1.585174, 1.964772, 2.322447, 2.687159, 3.083197, 3.502067, 3.948582, 4.363404, 4.795702, 5.208499, 5.679422, 6.172253, 6.683407, 7.211046, 7.768473, 8.348865, 8.943596, 9.552574, 10.208665, 10.857919, 11.527414, 12.190946, 12.923373, 13.613875, 14.413106, 15.20223, 16.047031, 16.907949, 17.89605, 19.032461, 20.284963, 21.418428, 22.653288, 24.159991, 25.828397, 27.442613, 29.299031, 31.447021, 33.882763, 36.851868, 39.987082, 43.768136, 48.261714, 53.406558, 60.018888, 69.544739, 82.313473, 98.69907, 122.583282, 154.044349, 212.848828, 301.40101, 459.306313, 785.416257, 1432.21788, 3444.560892, 11329.054258]},
+    'Beta': {'bits': 6, 'k': None, 'edges': [0.113258, 0.296478, 0.50378, 0.701486, 0.907868, 1.104177, 1.306879, 1.511876, 1.708316, 1.933861, 2.138922, 2.346872, 2.564574, 2.7905, 3.016716, 3.252198, 3.514381, 3.767671, 4.066117, 4.376112, 4.704482, 5.048516, 5.420992, 5.835046, 6.30692, 6.81972, 7.398272, 8.075727, 8.843204, 9.720342, 10.88895, 12.500151, 14.601298, 17.738751, 24.292032, 42.463273, 79.748395, 133.24891, 205.817392, 308.60248, 423.1985, 552.228955, 702.392077, 884.811233, 1119.540072, 1369.356843, 1689.409658, 2040.340417, 2455.199458, 2943.86751, 3499.744994, 4120.364885, 4913.599719, 5732.545977, 6735.497096, 8147.867294, 9819.378295, 11811.959782, 14763.511396, 18626.409242, 24039.874385, 35182.070535, 59324.578425]},
+}
+
+wrote eval_refitq/quantstudy/chi2quant_clamp_on.json

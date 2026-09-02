@@ -140,6 +140,51 @@ the angles separate strongly. Do not starve the angle fields.
    reduce the bits required, and improve discrimination. This is the highest
    value follow-up here, ahead of any further bit tuning.
 
+## Per-field constants (the pipeline tool)
+
+`ngtagger calibrate-chi2-quant -i '<glob>'` runs this calibration over a glob of
+nano files and emits pasteable C++/Python constants plus the evidence. It reads
+v2.6 split columns directly, or reconstructs the totals exactly from per-hit
+pulls with `--allow-pull-derived` for pre-v2.6 files. Each field gets its own
+`(bits, k)`; a per-width equal-frequency LUT is measured alongside the log form,
+so a log shortfall can be attributed to the code shape rather than the budget.
+
+Selection: fewest bits accepted by `--tol` and `--sat-max`; among those, prefer
+codes statistically indistinguishable from unquantized; then least saturation.
+Candidates are filtered only on label-free criteria and then re-measured with
+real fits — the single-feature proxy is used solely to shortlist, because its
+*ordering* disagrees with fits (it prefers k=0.5 for X, which a fit shows losing
+0.0022, over k=1.0-1.25, which fits put at parity).
+
+Result on the reference sample (`clamp_on_f{1,2}`, label `clean`, isolated
+per-field paired dAUC vs unquantized):
+
+| field | chosen | dAUC | statistical parity would need |
+|---|---|---|---|
+| X | 4 bits, k=0.75 | -0.00095 | 5 bits quantile (-0.00024) |
+| Y | 4 bits, k=1.0 | -0.00053 | 5 bits, k=2.0 (-0.00011) |
+| Alpha | 6 bits, quantile LUT | -0.00442 | not reached by 6 bits |
+| Beta | 6 bits, quantile LUT | -0.00350 | not reached by 6 bits |
+
+Jointly, all four coded vs all four float: **dAUC -0.00048** [-0.00064,
+-0.00032]. The joint loss is an order of magnitude below the per-field isolated
+losses because the four fields are mutually redundant — with the other three at
+full precision, every individual field looks nearly free.
+
+Two conclusions worth separating:
+
+- **Position needs 4 bits and the code shape does not matter.** At 4 bits the
+  quantile LUT (-0.0011) is no better than log (-0.00095 / -0.00053), so the log
+  form is the right choice: one multiply and a clamp, no threshold table.
+- **The angle fields are not quantizer-limited, they are information-rich.**
+  The quantile LUT roughly matches log at 6 bits (Alpha -0.0044 vs -0.0063,
+  Beta -0.0035 vs -0.0037) and the loss only halves per added bit
+  (4/5/6 bits -> -0.012 / -0.008 / -0.0044 for Alpha), so parity would need
+  ~8 bits. Since the refit BDT sits INSIDE the producer, ahead of any
+  transmission boundary, full-precision angle inputs are available on chip and
+  quantizing them buys only comparator width. Quantize the angles only for a
+  study of what could cross a hardware boundary, and then quote the loss.
+
 ## Methodology notes
 
 - Scores are 5-fold out-of-fold, so all negatives enter the AUC while every
