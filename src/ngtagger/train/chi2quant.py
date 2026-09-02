@@ -19,6 +19,15 @@ identical encoding, and changing one requires retraining plus a lockstep
 producer update. Hence this module: run it over a glob of nano files and it
 emits the constants, the evidence, and pasteable C++/Python.
 
+SCOPE, and read this before quoting a result. This calibrates the encoding of a
+DERIVED quantity (the chi2 delta) computed from measurements that the sensor has
+already quantized: ~16 bits per cluster carry x, y, cotAlpha and possibly
+cotBeta, so no unquantized measurement exists in the real chain. The upstream
+question - how to split those 16 bits - dominates this one, and the answer here
+is conditional on it. Run this tool on nano produced with a given allocation;
+do not read its output as allocation-independent. See
+planningAndPatches/v2p7-refit-study-program.md in the smartpixels repo.
+
 Method. The scan metric is the SINGLE-FEATURE AUC of the code compared with
 that of the unquantized value: it isolates one field (no other field can mask
 its loss), needs no model fit, and so is cheap enough to run routinely. The

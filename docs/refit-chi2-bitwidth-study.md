@@ -180,10 +180,28 @@ Two conclusions worth separating:
   The quantile LUT roughly matches log at 6 bits (Alpha -0.0044 vs -0.0063,
   Beta -0.0035 vs -0.0037) and the loss only halves per added bit
   (4/5/6 bits -> -0.012 / -0.008 / -0.0044 for Alpha), so parity would need
-  ~8 bits. Since the refit BDT sits INSIDE the producer, ahead of any
-  transmission boundary, full-precision angle inputs are available on chip and
-  quantizing them buys only comparator width. Quantize the angles only for a
-  study of what could cross a hardware boundary, and then quote the loss.
+  ~8 bits.
+
+  **CORRECTED 2026-09-02 — do not act on the recommendation this section
+  originally carried.** It argued that since the refit BDT sits inside the
+  producer, ahead of any transmission boundary, full-precision angle inputs are
+  available on chip and quantizing them buys only comparator width. That is
+  false: the sensor emits ~16 bits per cluster of unique information (x, y,
+  cotAlpha, possibly cotBeta), so the MEASUREMENTS are already quantized before
+  the producer sees them and no unquantized value exists anywhere in the real
+  chain. Everything above was measured on float sim values, so the "angles need
+  ~8 bits" result is an upper bound conditioned on a sensor that will not be
+  built: with 2-3 bit sensor angles the derived chi2 carries far less
+  information and needs far fewer bits.
+
+  The two questions are ordered and were done backwards. Sensor allocation is
+  upstream and dominant; encoding of derived quantities is downstream and is a
+  rerun of `calibrate-chi2-quant` once an allocation is fixed. See
+  `planningAndPatches/v2p7-refit-study-program.md` (smartpixels repo) for the
+  program that supersedes this. One further caveat recorded there: this study
+  valued alpha/beta only through the refit chi2, which undervalues them, because
+  the pixel-only preprocessing stage runs with no OT track or stub information
+  and cluster angles are one of its few track-agnostic handles.
 
 ## Methodology notes
 
