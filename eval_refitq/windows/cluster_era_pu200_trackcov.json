@@ -1,0 +1,95 @@
+{
+  "files": [
+    "/tmp/v2p6_pu_trackcov.root"
+  ],
+  "config": "AAAA",
+  "n_events": 60,
+  "n_crossings": 28182,
+  "hit_model": "clusters (SiPixelRecHit)",
+  "digi_era_reference": {
+    "windowMult": {
+      "1": 6.09,
+      "2": 6.07,
+      "3": 5.64,
+      "4": 5.14
+    },
+    "wrongFrac": {
+      "1": 0.477,
+      "2": 0.254,
+      "3": 0.196,
+      "4": 0.178
+    },
+    "pullWidth": {
+      "pullX": 2.04,
+      "pullY": 1.61,
+      "pullAlpha": 2.2,
+      "pullBeta": 1.3
+    }
+  },
+  "layers": {
+    "1": {
+      "windowMult_mean": 2.1253396337861785,
+      "windowMult_digi_era": 6.09,
+      "wrong_frac": 0.48375664500886,
+      "wrong_frac_digi_era": 0.477,
+      "merged_frac": 0.030242173656231542,
+      "innovSigX_um": 306.0247802734375
+    },
+    "2": {
+      "windowMult_mean": 2.142650348730096,
+      "windowMult_digi_era": 6.07,
+      "wrong_frac": 0.20502697723384655,
+      "wrong_frac_digi_era": 0.254,
+      "merged_frac": 0.011185682326621925,
+      "innovSigX_um": 11.617873191833496
+    },
+    "3": {
+      "windowMult_mean": 2.0847547974413647,
+      "windowMult_digi_era": 5.64,
+      "wrong_frac": 0.13486140724946696,
+      "wrong_frac_digi_era": 0.196,
+      "merged_frac": 0.008528784648187633,
+      "innovSigX_um": 8.01156234741211
+    },
+    "4": {
+      "windowMult_mean": 1.8848985054650904,
+      "windowMult_digi_era": 5.14,
+      "wrong_frac": 0.09502565246486727,
+      "wrong_frac_digi_era": 0.178,
+      "merged_frac": 0.005576622797233995,
+      "innovSigX_um": 5.645633220672607
+    }
+  },
+  "pull_width": {
+    "pullX": {
+      "correct": 3.0040247869809704,
+      "wrong": 1.5197370209633818,
+      "digi_era_correct": 2.04
+    },
+    "pullY": {
+      "correct": 1.9235344088634267,
+      "wrong": 2.0360848345166227,
+      "digi_era_correct": 1.61
+    },
+    "pullAlpha": {
+      "correct": 2.325019984885089,
+      "wrong": 5.202519840625059,
+      "digi_era_correct": 2.2
+    },
+    "pullBeta": {
+      "correct": 1.3411907552347262,
+      "wrong": 55.76460621284502,
+      "digi_era_correct": 1.3
+    }
+  },
+  "cpe_sigma_um": {
+    "sigX": {
+      "median": 3.000000238418579,
+      "digital_limit": 7.216878364870323
+    },
+    "sigY": {
+      "median": 12.5,
+      "digital_limit": 28.86751345948129
+    }
+  }
+}
