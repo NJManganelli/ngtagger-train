@@ -395,3 +395,104 @@ def jet_constituents(events, link_table: str = "L1SC4NGJetCands", tagger_window:
     if tagger_window:
         nested = nested[nested.inTagger & (nested.candIdx >= 0)]
     return nested
+
+
+# ---------------------------------------------------------------------------
+# Clusters tier (L1PFTrkNanoSmartPixClusters)
+# ---------------------------------------------------------------------------
+CLUSTER_TABLE = "L1TSmartPixelsCluster"
+
+
+class _SmartPixelsClusterBase(base.NanoCollection):
+    """Untruncated IT clusters.
+
+    No cross-reference to tracks exists and none is possible: a cluster is a
+    detector object that knows nothing about any track. The join to a refit
+    crossing is on (event, detId) and is an analysis-level operation.
+
+    The derived accessors below are the ones that are awkward to recompute
+    correctly by hand, because both are per-MODULE quantities and the table is
+    flat per event.
+    """
+
+    @property
+    def n_on_module(self):
+        """How many clusters share this cluster's module, broadcast per cluster.
+
+        This is the size of the candidate pool a refit crossing on that module
+        faces (measured 20-40 at PU200), as opposed to the post-window
+        multiplicity the sidecar reports.
+        """
+        import awkward as ak
+        import numpy as np
+
+        det = self.detId
+        counts = ak.num(det)
+        flat = ak.to_numpy(ak.flatten(det))
+        ev = np.repeat(np.arange(len(counts)), ak.to_numpy(counts))
+        key = ev.astype(np.int64) * (1 << 32) + flat.astype(np.int64)
+        order = np.argsort(key, kind="stable")
+        sk = key[order]
+        uniq, inv, cnt = np.unique(sk, return_inverse=True, return_counts=True)
+        out = np.empty(len(flat), dtype=np.int32)
+        out[order] = cnt[inv]
+        return ak.unflatten(out, counts)
+
+    @property
+    def charge_rank(self):
+        """Rank of this cluster by charge within its module, 0 = highest.
+
+        A SmartPixels sensor cannot read out every cluster in the L1 latency
+        budget: the plan is to form outputs only for some number of the
+        highest-charge clusters and defer the rest to a Level-1 Accept, at which
+        point they are useless for the trigger. So charge rank is the readout
+        gate, and "does the cluster the track needs survive rank < N" is a
+        first-class efficiency question rather than a diagnostic.
+        """
+        import awkward as ak
+        import numpy as np
+
+        det, q = self.detId, self.charge
+        counts = ak.num(det)
+        fdet = ak.to_numpy(ak.flatten(det)).astype(np.int64)
+        fq = ak.to_numpy(ak.flatten(q)).astype(np.float64)
+        ev = np.repeat(np.arange(len(counts)), ak.to_numpy(counts))
+        key = ev.astype(np.int64) * (1 << 32) + fdet
+        # sort by (module, -charge) so position within a module IS the rank
+        order = np.lexsort((-fq, key))
+        sk = key[order]
+        starts = np.r_[True, sk[1:] != sk[:-1]]
+        grp = np.cumsum(starts) - 1
+        pos = np.arange(len(sk)) - np.flatnonzero(starts)[grp]
+        out = np.empty(len(fdet), dtype=np.int32)
+        out[order] = pos
+        return ak.unflatten(out, counts)
+
+
+SmartPixelsCluster = awkward.mixin_class(behavior)(_SmartPixelsClusterBase)
+
+
+class L1ClustersNanoSchema(L1NanoSchema):
+    """L1NanoSchema plus the untruncated IT cluster table.
+
+    Separate from L1NanoSchema on purpose: the cluster table only exists in the
+    L1PFTrkNanoSmartPixClusters tier, and registering its mixin unconditionally
+    would make a missing table look like a schema bug rather than the wrong tier.
+    """
+
+    mixins = {**L1NanoSchema.mixins, CLUSTER_TABLE: "SmartPixelsCluster"}
+
+    @classmethod
+    def behavior(cls):
+        return behavior
+
+
+def require_clusters_tier(events):
+    """Fail with an actionable message if this file is not the Clusters tier."""
+    if CLUSTER_TABLE not in events.fields:
+        raise SystemExit(
+            f"this file has no {CLUSTER_TABLE} table, so it is not the Clusters tier.\n"
+            "Produce one with:\n"
+            "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
+            "--variant digiRefit:1111 --needs-truth -o <out>.py")
+    return events[CLUSTER_TABLE]
