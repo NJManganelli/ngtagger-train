@@ -90,7 +90,7 @@ def load(paths):
     # sensor angle + CPE sigma, present once the cluster table reads SmartPixelsRecHit
     optional = {"localCotAlpha": "clLocalCotAlpha", "localCotBeta": "clLocalCotBeta",
                 "sigAlpha": "clSigAlpha", "sigBeta": "clSigBeta",
-                "sigX": "sigX", "sigY": "sigY"}
+                "sigX": "sigX", "sigY": "sigY", "hasAlpha": "clHasAlpha"}
     rcols = ["pt", "eta"]
 
     H = uproot.concatenate([f"{f}:Events" for f in files],
@@ -445,17 +445,13 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     The angle terms use the SENSOR estimate and its sigma, not truth, so the rule
     itself is deployable -- unlike anything scanned on truth angles.
 
-    *** RESULTS ARE CURRENTLY CONFOUNDED. DO NOT TUNE ON THEM. ***
-    SmartPixelsRecHitProducer deliberately gives NO angle to clusters with no
-    simlink, pending re-derivation of the smarthit_noise_* payload (which is an
-    inverse CDF of the old, broken production-momentum angle). Measured
-    consequence: clusters WITH a TrackingParticle have hasAlpha 99.5%, clusters
-    WITHOUT one have hasAlpha 0.0%. So "reports an angle" is a perfect proxy for
-    "is a real cluster", and a large angle weight is partly buying that proxy
-    rather than any angle information -- which is why the optimum runs to the top
-    of any grid. The scan becomes meaningful once noise clusters carry a
-    (re-derived) angle; until then treat the optimum as an upper bound polluted by
-    truth leakage, and the LIMITS block below as the honest comparison.
+    HISTORY WORTH KEEPING. This scan was meaningless until 2026-09-05, because
+    SmartPixelsRecHitProducer gave NO angle to clusters with no simlink: hasAlpha
+    was 99.5% for TP-linked clusters and 0.0% for unlinked ones, so "reports an
+    angle" was a perfect proxy for "is real" and any angle weight bought that
+    proxy rather than angle information. The scan now runs a LEAK SELF-CHECK on
+    every invocation and says so if the two rates diverge again -- a measured
+    guard, not a comment that can go stale.
     """
     xi, ci = P["xi"], P["ci"]
     need = ("clLocalCotAlpha", "clLocalCotBeta", "clSigAlpha", "clSigBeta")
@@ -527,7 +523,7 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     wr0, wz0 = 1.0, float(bestpos)
 
     # 1D: bending angle only
-    wgrid = [0.0, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0, 1024.0]
+    wgrid = [0.0, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0]
     a1 = {str(w): purity(wr0, wz0, w, 0.0)[0] for w in wgrid}
     res["alpha_only_scan"] = a1
     besta = max(a1, key=a1.get)
@@ -555,15 +551,24 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
            "beta_only_(0,0,0,1)": purity(0.0, 0.0, 0.0, 1.0)[0],
            "baseline_(1,1,1,1)": base}
     res["limits"] = lim
-    print("       *** CONFOUNDED: noise clusters currently carry NO angle, and")
-    print("           hasAlpha is 99.5% for TP-linked vs 0.0% for unlinked clusters,")
-    print("           so angle weight partly buys that proxy. Do not tune on this yet.")
+    # LEAK SELF-CHECK, measured rather than asserted. If unlinked clusters report
+    # an angle at a very different rate from TP-linked ones, then "has an angle" is
+    # a truth proxy and any angle weight is partly buying it. This was 99.5% vs
+    # 0.0% before the noise payload existed, which made the whole scan meaningless.
+    if "clHasAlpha" in K:
+        lk = K["tpIdx"] >= 0
+        ra, rb = float(K["clHasAlpha"][lk].mean()), float(K["clHasAlpha"][~lk].mean())
+        res["angle_presence_TPlinked"], res["angle_presence_unlinked"] = ra, rb
+        if abs(ra - rb) > 0.05:
+            print(f"       *** CONFOUNDED: hasAlpha {100*ra:.1f}% TP-linked vs {100*rb:.1f}% "
+                  "unlinked, so angle weight partly buys that proxy. Do not tune on this.")
+            res["CONFOUNDED"] = f"angle presence differs by {abs(ra-rb):.3f} between classes"
+        else:
+            print(f"       leak self-check OK: hasAlpha {100*ra:.1f}% TP-linked vs "
+                  f"{100*rb:.1f}% unlinked, so angle presence carries no class information")
     print("       LIMITS:")
     for k, v in sorted(lim.items(), key=lambda kv: -kv[1]):
         print(f"         {k:<28} {v:.4f}")
-    res["CONFOUNDED"] = ("noise clusters carry no angle pending re-derivation of "
-                         "smarthit_noise_*; hasAlpha is 99.5%/0.0% for TP-linked/unlinked, "
-                         "so angle weight partly buys a truth proxy")
     out["chi2_weight_scan"] = res
 
     ax = ax_row[0]

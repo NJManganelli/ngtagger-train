@@ -275,13 +275,19 @@ def main():
     sel_purity = float(yBv[picked & hastrue].mean()) if (picked & hastrue).any() else float("nan")
     recB["mva_as_selector_purity"] = sel_purity
     print(f"      MVA used AS the selector (top-1 per crossing): purity {sel_purity:.4f}")
-    # HONEST RE-SCORE. hasAlpha/hasBeta are currently a truth proxy: the producer
-    # gives noise clusters no angle pending re-derivation of smarthit_noise_*, so
-    # hasAlpha is 99.5% for TP-linked clusters and 0.0% for unlinked ones. Since
-    # every unlinked cluster is automatically a negative, those two features let the
-    # model separate a large slice of the negatives for free and the headline AUC is
-    # not achievable in a world where noise clusters report an angle. Re-score
-    # without them.
+    # LEAK SELF-CHECK, measured not asserted. Before the noise payload existed,
+    # unlinked clusters carried NO angle (hasAlpha 99.5% TP-linked vs 0.0%
+    # unlinked), so the angle features separated a slice of the negatives for free.
+    # Report the rates every run so a regression cannot hide.
+    if "hasAlpha" in names:
+        ia = names.index("hasAlpha")
+        lk = yBv  # positives are by definition TP-linked
+        ra, rb = float(FB[lk, ia].mean()), float(FB[~lk, ia].mean())
+        recB["angle_presence_positive"], recB["angle_presence_negative"] = ra, rb
+        flag = "CONFOUNDED" if abs(ra - rb) > 0.05 else "OK"
+        print(f"      leak self-check {flag}: hasAlpha {100*ra:.1f}% on positives vs "
+              f"{100*rb:.1f}% on negatives")
+    # Re-score without ANY angle feature, for the no-angle-information floor.
     # ALL angle features leak, not just the presence flags: dcot*_sig is zero-filled
     # when the sensor reports no angle, which is itself the tell. Drop the whole
     # angle block for the honest floor.
@@ -291,16 +297,15 @@ def main():
         pB2, _ = oof_score(FB[:, keep], yBv, gB)
         auc2 = roc_auc_score(yBv, pB2)
         recB["auc_no_angle_features"] = float(auc2)
-        recB["leakage_note"] = (
-            "every angle feature is a truth proxy TODAY: noise clusters carry no angle "
-            "(hasAlpha 99.5% TP-linked vs 0.0% unlinked) and dcot*_sig is zero-filled when "
-            "absent. auc with angles is an upper bound; auc_no_angle_features is the floor "
-            "with no angle information at all. The achievable value lies between, and is "
-            "only measurable once smarthit_noise_* is re-derived and noise clusters get an "
-            "angle.")
-        print(f"      NO angle features at all (honest floor): AUC {auc2:.4f}")
-        print(f"      => achievable value lies between {auc2:.4f} and {aucB:.4f}; the gap is")
-        print( "         unmeasurable until noise clusters carry a re-derived angle.")
+        recB["auc_note"] = (
+            "AUC SATURATES on this problem and is the wrong headline: positives are only "
+            "~2.4% of pairs and the position residual alone already separates most "
+            "negatives, so the no-angle floor is already 0.99. Compare "
+            "mva_as_selector_purity against the chi2 rule instead -- that is the quantity "
+            "the refit actually depends on.")
+        print(f"      NO angle features at all: AUC {auc2:.4f}")
+        print(f"      => AUC saturates (positives are {100*yBv.mean():.1f}% of pairs); the "
+              "operative number is the selector purity above, not AUC.")
     out["B_cluster_compatibility"] = recB
     fpr, tpr, _ = roc_curve(yBv, pB)
     axes[1].plot(fpr, tpr, label=f"all, AUC {aucB:.3f}")

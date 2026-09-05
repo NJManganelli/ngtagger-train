@@ -3,8 +3,8 @@
   "n_events": 25,
   "A_trust_gate": {
     "n_tracks": 3880,
-    "clean_fraction": 0.7639175257731958,
-    "auc": 0.9772723924355733,
+    "clean_fraction": 0.7641752577319587,
+    "auc": 0.9676683345773551,
     "features": [
       "spixNCrossings",
       "spixNAcceptedHits",
@@ -25,34 +25,34 @@
     "working_points": [
       {
         "keep_clean": 0.95,
-        "cut": 0.6927371054887774,
-        "kept_frac_of_all": 0.7561855670103093,
-        "purity": 0.9594410361281527
+        "cut": 0.5462932944297794,
+        "kept_frac_of_all": 0.7670103092783506,
+        "purity": 0.946236559139785
       },
       {
         "keep_clean": 0.9,
-        "cut": 0.9130349695682526,
-        "kept_frac_of_all": 0.7010309278350515,
-        "purity": 0.9805147058823529
+        "cut": 0.8588843584060668,
+        "kept_frac_of_all": 0.7030927835051546,
+        "purity": 0.9780058651026393
       },
       {
         "keep_clean": 0.8,
-        "cut": 0.9843260526657105,
-        "kept_frac_of_all": 0.6164948453608248,
-        "purity": 0.9912207357859532
+        "cut": 0.9813504934310913,
+        "kept_frac_of_all": 0.6170103092783505,
+        "purity": 0.9908103592314118
       },
       {
         "keep_clean": 0.6,
-        "cut": 0.996768569946289,
-        "kept_frac_of_all": 0.4605670103092783,
-        "purity": 0.9949636261891438
+        "cut": 0.9959499835968018,
+        "kept_frac_of_all": 0.4608247422680412,
+        "purity": 0.9955257270693513
       }
     ]
   },
   "B_cluster_compatibility": {
-    "n_pairs": 456845,
-    "positive_fraction": 0.024367126705994373,
-    "auc": 0.9996298458248971,
+    "n_pairs": 456854,
+    "positive_fraction": 0.02436883555796819,
+    "auc": 0.9995932275679626,
     "features": [
       "dx_sig",
       "dy_sig",
@@ -74,35 +74,37 @@
       "hasBeta"
     ],
     "first-visited (vs SEED track)": {
-      "auc": 0.9996055283527675,
+      "auc": 0.9995731184266277,
       "n": 103122,
       "pos_frac": 0.03632590523845542
     },
     "later (vs UPDATED track)": {
-      "auc": 0.9996272028172175,
-      "n": 353723,
-      "pos_frac": 0.020880745668220613
+      "auc": 0.9995865106658121,
+      "n": 353732,
+      "pos_frac": 0.02088304139857293
     },
-    "layer1_auc": 0.9996967269952655,
-    "layer2_auc": 0.9994586279312307,
-    "layer3_auc": 0.9995473731840915,
-    "layer4_auc": 0.9997606947656649,
-    "mva_as_selector_purity": 0.9922946814508551,
-    "auc_no_angle_features": 0.9895599327024005,
-    "leakage_note": "every angle feature is a truth proxy TODAY: noise clusters carry no angle (hasAlpha 99.5% TP-linked vs 0.0% unlinked) and dcot*_sig is zero-filled when absent. auc with angles is an upper bound; auc_no_angle_features is the floor with no angle information at all. The achievable value lies between, and is only measurable once smarthit_noise_* is re-derived and noise clusters get an angle.",
+    "layer1_auc": 0.9996779472134526,
+    "layer2_auc": 0.9993680534112924,
+    "layer3_auc": 0.9995046963562753,
+    "layer4_auc": 0.9997613124682132,
+    "mva_as_selector_purity": 0.992671239312224,
+    "angle_presence_positive": 1.0,
+    "angle_presence_negative": 0.996625691856565,
+    "auc_no_angle_features": 0.9897651747657846,
+    "auc_note": "AUC SATURATES on this problem and is the wrong headline: positives are only ~2.4% of pairs and the position residual alone already separates most negatives, so the no-angle floor is already 0.99. Compare mva_as_selector_purity against the chi2 rule instead -- that is the quantity the refit actually depends on.",
     "importance": {
-      "hasBeta": 0.3524310290813446,
-      "dcotB_sig": 0.20629458129405975,
-      "dx_sig": 0.16858313977718353,
-      "hasAlpha": 0.08561934530735016,
-      "is_first": 0.06808007508516312,
-      "dcotA_sig": 0.03949978947639465,
-      "dy_sig": 0.019391972571611404,
-      "sizeY": 0.008922170847654343,
-      "windowMult": 0.0077881887555122375,
-      "layer": 0.007177738007158041,
-      "size": 0.007023664191365242,
-      "projSeedSigY": 0.006411459296941757
+      "dcotB_sig": 0.3909038305282593,
+      "dx_sig": 0.2743140161037445,
+      "dcotA_sig": 0.1025933250784874,
+      "dy_sig": 0.037466373294591904,
+      "hasBeta": 0.03140610456466675,
+      "is_first": 0.029239734634757042,
+      "sizeY": 0.02588028274476528,
+      "hasAlpha": 0.019490687176585197,
+      "windowMult": 0.016124963760375977,
+      "projSeedSigY": 0.012454502284526825,
+      "layer": 0.012307561933994293,
+      "size": 0.011111626401543617
     }
   }
 }
