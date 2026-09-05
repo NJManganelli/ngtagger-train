@@ -2,9 +2,10 @@
   "config": "AAAA",
   "n_events": 25,
   "A_trust_gate": {
+    "auc_seed_sigma": 0.0003341444137525761,
     "n_tracks": 3880,
     "clean_fraction": 0.7641752577319587,
-    "auc": 0.9676683345773551,
+    "auc": 0.9696932334429914,
     "features": [
       "spixNCrossings",
       "spixNAcceptedHits",
@@ -25,34 +26,34 @@
     "working_points": [
       {
         "keep_clean": 0.95,
-        "cut": 0.5462932944297794,
-        "kept_frac_of_all": 0.7670103092783506,
-        "purity": 0.946236559139785
+        "cut": 0.5491345763206484,
+        "kept_frac_of_all": 0.7654639175257731,
+        "purity": 0.9481481481481482
       },
       {
         "keep_clean": 0.9,
-        "cut": 0.8588843584060668,
-        "kept_frac_of_all": 0.7030927835051546,
-        "purity": 0.9780058651026393
+        "cut": 0.8708634972572326,
+        "kept_frac_of_all": 0.7005154639175257,
+        "purity": 0.9816041206769683
       },
       {
         "keep_clean": 0.8,
-        "cut": 0.9813504934310913,
-        "kept_frac_of_all": 0.6170103092783505,
-        "purity": 0.9908103592314118
+        "cut": 0.982015335559845,
+        "kept_frac_of_all": 0.6157216494845361,
+        "purity": 0.9928840519045625
       },
       {
         "keep_clean": 0.6,
-        "cut": 0.9959499835968018,
-        "kept_frac_of_all": 0.4608247422680412,
-        "purity": 0.9955257270693513
+        "cut": 0.9958907008171082,
+        "kept_frac_of_all": 0.46030927835051544,
+        "purity": 0.996080627099664
       }
     ]
   },
   "B_cluster_compatibility": {
     "n_pairs": 456854,
     "positive_fraction": 0.02436883555796819,
-    "auc": 0.9995932275679626,
+    "auc": 0.999626436851152,
     "features": [
       "dx_sig",
       "dy_sig",
@@ -74,37 +75,37 @@
       "hasBeta"
     ],
     "first-visited (vs SEED track)": {
-      "auc": 0.9995731184266277,
+      "auc": 0.9996220220905627,
       "n": 103122,
       "pos_frac": 0.03632590523845542
     },
     "later (vs UPDATED track)": {
-      "auc": 0.9995865106658121,
+      "auc": 0.9996128564949008,
       "n": 353732,
       "pos_frac": 0.02088304139857293
     },
-    "layer1_auc": 0.9996779472134526,
-    "layer2_auc": 0.9993680534112924,
-    "layer3_auc": 0.9995046963562753,
-    "layer4_auc": 0.9997613124682132,
-    "mva_as_selector_purity": 0.992671239312224,
+    "layer1_auc": 0.9997063162939178,
+    "layer2_auc": 0.9994747366011646,
+    "layer3_auc": 0.9994930840676352,
+    "layer4_auc": 0.9997523981726129,
+    "mva_as_selector_purity": 0.9916376961383069,
     "angle_presence_positive": 1.0,
     "angle_presence_negative": 0.996625691856565,
-    "auc_no_angle_features": 0.9897651747657846,
+    "auc_no_angle_features": 0.9897248741892852,
     "auc_note": "AUC SATURATES on this problem and is the wrong headline: positives are only ~2.4% of pairs and the position residual alone already separates most negatives, so the no-angle floor is already 0.99. Compare mva_as_selector_purity against the chi2 rule instead -- that is the quantity the refit actually depends on.",
     "importance": {
-      "dcotB_sig": 0.3909038305282593,
-      "dx_sig": 0.2743140161037445,
-      "dcotA_sig": 0.1025933250784874,
-      "dy_sig": 0.037466373294591904,
-      "hasBeta": 0.03140610456466675,
-      "is_first": 0.029239734634757042,
-      "sizeY": 0.02588028274476528,
-      "hasAlpha": 0.019490687176585197,
-      "windowMult": 0.016124963760375977,
-      "projSeedSigY": 0.012454502284526825,
-      "layer": 0.012307561933994293,
-      "size": 0.011111626401543617
+      "dcotB_sig": 0.3408487141132355,
+      "dcotA_sig": 0.2660275101661682,
+      "dx_sig": 0.13212472200393677,
+      "dy_sig": 0.08055621385574341,
+      "hasBeta": 0.030556123703718185,
+      "is_first": 0.02777792327105999,
+      "sizeY": 0.02349809929728508,
+      "projSeedSigY": 0.014388618990778923,
+      "windowMult": 0.013262446969747543,
+      "hasAlpha": 0.012833072803914547,
+      "size": 0.012623331509530544,
+      "layer": 0.011105758138000965
     }
   }
 }

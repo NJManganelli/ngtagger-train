@@ -125,8 +125,15 @@ def load(paths):
     return X, T, K, cfg, n_ev
 
 
-def oof_score(Xf, y, groups, n_estimators=220, max_depth=5):
-    """Out-of-fold XGB score. Folds split on TRACK so a track never trains on itself."""
+def oof_score(Xf, y, groups, n_estimators=220, max_depth=5, seed=0):
+    """Out-of-fold XGB score. Folds split on TRACK so a track never trains on itself.
+
+    SEEDED. subsample/colsample_bytree are stochastic, so without a fixed seed the
+    same input gives a different AUC each run -- measured 0.9773 vs 0.9693 on
+    IDENTICAL events, which is larger than several differences this study is meant
+    to resolve. Any comparison between configurations has to be reproducible before
+    it can mean anything.
+    """
     pred = np.zeros(len(y))
     fold = groups % NFOLD
     for f in range(NFOLD):
@@ -135,7 +142,7 @@ def oof_score(Xf, y, groups, n_estimators=220, max_depth=5):
             continue
         m = xgb.XGBClassifier(n_estimators=n_estimators, max_depth=max_depth, learning_rate=0.08,
                               subsample=0.8, colsample_bytree=0.8, eval_metric="logloss",
-                              tree_method="hist", n_jobs=8)
+                              tree_method="hist", n_jobs=8, random_state=seed + f)
         m.fit(Xf[tr], y[tr])
         pred[te] = m.predict_proba(Xf[te])[:, 1]
     return pred, m
@@ -173,8 +180,13 @@ def main():
     print(f"\n(A) trust gate: {len(yA)} refit tracks, clean fraction {yA.mean():.4f}")
     pA, _ = oof_score(FA, yA, gA)
     aucA = roc_auc_score(yA, pA)
-    print(f"    out-of-fold AUC = {aucA:.4f}")
-    recA = {"n_tracks": int(len(yA)), "clean_fraction": float(yA.mean()), "auc": float(aucA),
+    # Seed spread: how much does the answer move on IDENTICAL data? Any claimed
+    # difference between configurations must exceed this to be real.
+    spread = [roc_auc_score(yA, oof_score(FA, yA, gA, seed=100 * k)[0]) for k in (1, 2, 3)]
+    recA_spread = float(np.std(spread + [aucA]))
+    print(f"    out-of-fold AUC = {aucA:.4f}   (seed spread over 4 seeds: "
+          f"{min(spread + [aucA]):.4f}-{max(spread + [aucA]):.4f}, sigma {recA_spread:.4f})")
+    recA = {"auc_seed_sigma": recA_spread, "n_tracks": int(len(yA)), "clean_fraction": float(yA.mean()), "auc": float(aucA),
             "features": feats_A + ["chi2ITSeedMinusRefit"], "working_points": []}
     for keep in (0.95, 0.90, 0.80, 0.60):
         cut = np.quantile(pA[yA], 1 - keep)
