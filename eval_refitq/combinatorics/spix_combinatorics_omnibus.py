@@ -503,82 +503,106 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
         d = has_true & np.isfinite(best)
         return float(picked_true[d].mean()) if d.any() else float("nan"), int(d.sum())
 
-    # SCALE INVARIANCE: argmin of the cost is unchanged by a global rescaling, so
-    # only RATIOS matter. w_rphi is therefore pinned to 1 and everything else is
-    # measured relative to it -- otherwise "down-weight position" and "up-weight
-    # angles" are the same move explored twice, and both scans run into a boundary
-    # that means nothing.
-    res = {"note": "w_rphi pinned to 1; the cost is scale-invariant so only ratios matter"}
+    # SCALE INVARIANCE: the argmin is unchanged by a global rescaling, so only
+    # RATIOS matter and w_rphi is pinned to 1. Four weights therefore have THREE
+    # free parameters, and they are scanned JOINTLY.
+    #
+    # The earlier version of this scan was wrong and is worth recording. It
+    # optimised GREEDILY: first w_rz at unit angle weights, then the angle weights
+    # at that frozen w_rz. That silently assumes the best position balance does not
+    # depend on how much the angles are trusted, which is false -- once the angles
+    # dominate, the position terms are a tiebreak and their optimal ratio changes.
+    # It also mislabelled "position + alpha" as an "alpha-only scan" while the
+    # LIMITS block used "alpha only" for alpha with NO position, so two different
+    # things carried the same name.
+    res = {"note": "w_rphi pinned to 1 (scale invariance); the remaining three weights "
+                   "are scanned JOINTLY, not greedily"}
     base, n_den = purity(1, 1, 1, 1)
     res["baseline_all_unit_weights"] = {"purity": base, "n_crossings": n_den}
-    print(f"   (6) baseline (1,1,1,1): purity {base:.4f} over {n_den} crossings")
+    print(f"   (6) baseline, all four terms at unit weight: purity {base:.4f} "
+          f"over {n_den} crossings")
 
-    # coarse scan of r-z relative to r-phi, at unit angle weights
-    grid = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
-    pos = {str(wz): purity(1.0, wz, 1, 1)[0] for wz in grid}
-    bestpos = max(pos, key=pos.get)
-    res["rz_over_rphi_scan"] = pos
-    res["rz_best"] = {"w_rz": float(bestpos), "purity": pos[bestpos]}
-    print(f"       r-z / r-phi best w_rz={bestpos} -> {pos[bestpos]:.4f}")
-    wr0, wz0 = 1.0, float(bestpos)
+    rzgrid = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0]
+    wgrid = [0.0, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0]
 
-    # 1D: bending angle only
-    wgrid = [0.0, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0, 16384.0]
-    a1 = {str(w): purity(wr0, wz0, w, 0.0)[0] for w in wgrid}
-    res["alpha_only_scan"] = a1
-    besta = max(a1, key=a1.get)
-    print(f"       1D alpha-only best w_alpha={besta} -> {a1[besta]:.4f}")
+    # 3D scan: (w_rphi=1, w_rz, w_alpha), beta OFF. The bending angle only, but
+    # the POSITION terms are scanned with it rather than frozen.
+    s3 = {}
+    for wz in rzgrid:
+        for wa in wgrid:
+            s3[f"{wz}_{wa}"] = purity(1.0, wz, wa, 0.0)[0]
+    b3 = max(s3, key=s3.get)
+    res["scan3D_rphi_rz_alpha"] = s3
+    res["best3D"] = {"w_rz": float(b3.split("_")[0]), "w_alpha": float(b3.split("_")[1]),
+                     "purity": s3[b3]}
+    print(f"       3D (w_rz, w_alpha; beta off) best {b3} -> {s3[b3]:.4f}")
 
-    # 2D: both angles
-    a2 = {}
-    for wa in wgrid:
-        for wb in wgrid:
-            a2[f"{wa}_{wb}"] = purity(wr0, wz0, wa, wb)[0]
-    res["alpha_beta_scan"] = a2
-    best2 = max(a2, key=a2.get)
-    res["best_overall"] = {"w_rphi": wr0, "w_rz": wz0,
-                           "w_alpha": float(best2.split("_")[0]),
-                           "w_beta": float(best2.split("_")[1]),
-                           "purity": a2[best2]}
-    print(f"       2D best (w_alpha,w_beta)={best2} -> {a2[best2]:.4f}   "
-          f"(baseline {base:.4f}, gain {a2[best2]-base:+.4f})")
-    # The optimum runs to the top of any angle grid, which means the scan is really
-    # saying "position contributes little". Test the LIMITS explicitly rather than
-    # reporting a boundary value as if it were an optimum.
-    lim = {"position_only_(1,wz,0,0)": purity(1.0, wz0, 0.0, 0.0)[0],
-           "angle_only_(0,0,1,1)": purity(0.0, 0.0, 1.0, 1.0)[0],
-           "alpha_only_(0,0,1,0)": purity(0.0, 0.0, 1.0, 0.0)[0],
-           "beta_only_(0,0,0,1)": purity(0.0, 0.0, 0.0, 1.0)[0],
-           "baseline_(1,1,1,1)": base}
-    res["limits"] = lim
-    # LEAK SELF-CHECK, measured rather than asserted. If unlinked clusters report
-    # an angle at a very different rate from TP-linked ones, then "has an angle" is
-    # a truth proxy and any angle weight is partly buying it. This was 99.5% vs
-    # 0.0% before the noise payload existed, which made the whole scan meaningless.
+    # 4D scan: (w_rphi=1, w_rz, w_alpha, w_beta). Fully joint.
+    s4 = {}
+    for wz in rzgrid:
+        for wa in wgrid:
+            for wb in wgrid:
+                s4[f"{wz}_{wa}_{wb}"] = purity(1.0, wz, wa, wb)[0]
+    b4 = max(s4, key=s4.get)
+    wz4, wa4, wb4 = (float(v) for v in b4.split("_"))
+    res["scan4D_rphi_rz_alpha_beta"] = s4
+    res["best4D"] = {"w_rphi": 1.0, "w_rz": wz4, "w_alpha": wa4, "w_beta": wb4,
+                     "purity": s4[b4]}
+    print(f"       4D (w_rz, w_alpha, w_beta) best {b4} -> {s4[b4]:.4f}   "
+          f"(baseline {base:.4f}, gain {s4[b4]-base:+.4f})")
+    # Does the 4D optimum contain the 3D one? If the best w_rz differs between the
+    # two, the greedy version could not have found this point.
+    if res["best3D"]["w_rz"] != wz4:
+        print(f"       NOTE best w_rz differs between the 3D ({res['best3D']['w_rz']}) and "
+              f"4D ({wz4}) scans, which is exactly what the greedy version could not see")
+    wr0, wz0 = 1.0, wz4
+    a1 = {str(w): s3[f"{wz4}_{w}"] for w in wgrid}   # alpha slice at the 4D-best w_rz
+    a2 = {f"{wa}_{wb}": s4[f"{wz4}_{wa}_{wb}"] for wa in wgrid for wb in wgrid}
+
+    # ABLATIONS: each row uses a STRICT SUBSET of the four terms, so a lower purity
+    # means that subset carries less information -- NOT that adding information hurt.
+    # Ordered smallest subset first so the monotone build-up is visible. These are a
+    # different thing from the SCANS above, which always keep the position terms and
+    # vary only the weights.
+    lim = [("alpha alone              (0,0,1,0)", purity(0.0, 0.0, 1.0, 0.0)[0]),
+           ("beta alone               (0,0,0,1)", purity(0.0, 0.0, 0.0, 1.0)[0]),
+           ("both angles, no position (0,0,1,1)", purity(0.0, 0.0, 1.0, 1.0)[0]),
+           ("position alone           (1,wz,0,0)", purity(1.0, wz0, 0.0, 0.0)[0]),
+           ("ALL four, unit weights   (1,1,1,1)", base),
+           ("ALL four, weights tuned  (4D best)", s4[b4])]
+    res["ablations"] = {k.strip(): v for k, v in lim}
+    print("       ABLATIONS -- each row is a STRICT SUBSET of the four terms, so purity")
+    print("       RISES as information is added. Subsets, not regressions:")
+    for k, v in lim:
+        print(f"         {k:<38} {v:.4f}")
+
+    # LEAK SELF-CHECK, measured not asserted. Before the noise payload existed,
+    # unlinked clusters carried NO angle (hasAlpha 99.5% TP-linked vs 0.0%
+    # unlinked), so "reports an angle" was a perfect proxy for "is real" and any
+    # angle weight bought that proxy. Recomputed every run so it cannot go stale.
     if "clHasAlpha" in K:
         lk = K["tpIdx"] >= 0
         ra, rb = float(K["clHasAlpha"][lk].mean()), float(K["clHasAlpha"][~lk].mean())
         res["angle_presence_TPlinked"], res["angle_presence_unlinked"] = ra, rb
         if abs(ra - rb) > 0.05:
             print(f"       *** CONFOUNDED: hasAlpha {100*ra:.1f}% TP-linked vs {100*rb:.1f}% "
-                  "unlinked, so angle weight partly buys that proxy. Do not tune on this.")
+                  "unlinked -- angle weight partly buys that proxy. Do not tune on this.")
             res["CONFOUNDED"] = f"angle presence differs by {abs(ra-rb):.3f} between classes"
         else:
             print(f"       leak self-check OK: hasAlpha {100*ra:.1f}% TP-linked vs "
                   f"{100*rb:.1f}% unlinked, so angle presence carries no class information")
-    print("       LIMITS:")
-    for k, v in sorted(lim.items(), key=lambda kv: -kv[1]):
-        print(f"         {k:<28} {v:.4f}")
     out["chi2_weight_scan"] = res
 
     ax = ax_row[0]
-    ax.plot(grid, [pos[str(w)] for w in grid], marker="o", label=r"scan $w_{rz}$ ($w_{r\phi}\equiv1$)")
-    ax.plot(wgrid, [a1[str(w)] for w in wgrid], marker="s",
-            label=r"scan $w_\alpha$ ($w_\beta=0$)")
-    ax.axhline(base, color="grey", ls=":", label="baseline (1,1,1,1)")
-    ax.set_xscale("symlog", linthresh=0.1); ax.set_xlabel("weight")
+    for wz in rzgrid:
+        ax.plot(wgrid, [s3[f"{wz}_{w}"] for w in wgrid], marker=".",
+                label=rf"$w_{{rz}}$={wz}")
+    ax.axhline(base, color="k", ls=":", label="baseline (1,1,1,1)")
+    ax.set_xscale("symlog", linthresh=0.1)
+    ax.set_xlabel(r"$w_\alpha$   ($w_{r\phi}\equiv1$, $w_\beta=0$)")
     ax.set_ylabel("hit-selection purity")
-    ax.set_title("(6) 1D weight scans"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+    ax.set_title("(6) 3D scan: position terms NOT frozen")
+    ax.legend(fontsize=6, ncol=2); ax.grid(alpha=.3)
 
     ax = ax_row[1]
     M2 = np.array([[a2[f"{wa}_{wb}"] for wb in wgrid] for wa in wgrid])
