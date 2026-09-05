@@ -1,0 +1,994 @@
+{
+  "meta": {
+    "fractions": [
+      [
+        1,
+        16
+      ],
+      [
+        1,
+        8
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        1,
+        1
+      ]
+    ],
+    "seeds": [
+      1,
+      2,
+      3
+    ],
+    "protocol": "stage-4 model/fit; epochs=min(320,40/frac); EarlyStopping(val_loss, patience=8); fixed full test split (seed 12345, 0.2)"
+  },
+  "runs": {
+    "1111__f1of16__s1": {
+      "view": "1111",
+      "fraction": 0.0625,
+      "seed": 1,
+      "n_train": 329,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 90,
+        "charm": 39,
+        "light": 97,
+        "gluon": 76,
+        "taup": 4,
+        "taum": 3,
+        "muon": 10,
+        "electron": 10
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 46,
+      "macro_auc": 0.5595520654404199,
+      "acc": 0.3584474885844749,
+      "per_flavor_auc": {
+        "b": 0.6768848805731293,
+        "charm": 0.470608566007048,
+        "light": 0.5186947503709431,
+        "gluon": 0.7220466506441877,
+        "taup": 0.462987511337473,
+        "taum": 0.6133435582822087,
+        "muon": 0.5556256019612994,
+        "electron": 0.45622500434707003
+      },
+      "fit_seconds": 5.0
+    },
+    "1111__f1of16__s2": {
+      "view": "1111",
+      "fraction": 0.0625,
+      "seed": 2,
+      "n_train": 329,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 90,
+        "charm": 39,
+        "light": 97,
+        "gluon": 76,
+        "taup": 4,
+        "taum": 3,
+        "muon": 10,
+        "electron": 10
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 103,
+      "macro_auc": 0.5864990034851081,
+      "acc": 0.3926940639269406,
+      "per_flavor_auc": {
+        "b": 0.6531371053379398,
+        "charm": 0.5257454594741122,
+        "light": 0.5142943721134354,
+        "gluon": 0.7173595903593413,
+        "taup": 0.4260099072071444,
+        "taum": 0.49095092024539877,
+        "muon": 0.5520707468698013,
+        "electron": 0.8124239262736914
+      },
+      "fit_seconds": 8.4
+    },
+    "1111__f1of16__s3": {
+      "view": "1111",
+      "fraction": 0.0625,
+      "seed": 3,
+      "n_train": 329,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 90,
+        "charm": 39,
+        "light": 97,
+        "gluon": 76,
+        "taup": 4,
+        "taum": 3,
+        "muon": 10,
+        "electron": 10
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 105,
+      "macro_auc": 0.5801326145010809,
+      "acc": 0.3698630136986301,
+      "per_flavor_auc": {
+        "b": 0.6310823948191023,
+        "charm": 0.5161290322580646,
+        "light": 0.5488939625086205,
+        "gluon": 0.7003095594680883,
+        "taup": 0.4163120072559827,
+        "taum": 0.5550613496932516,
+        "muon": 0.39977234918133264,
+        "electron": 0.8735002608242045
+      },
+      "fit_seconds": 8.6
+    },
+    "1111__f1of8__s1": {
+      "view": "1111",
+      "fraction": 0.125,
+      "seed": 1,
+      "n_train": 657,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 180,
+        "charm": 78,
+        "light": 193,
+        "gluon": 151,
+        "taup": 8,
+        "taum": 7,
+        "muon": 21,
+        "electron": 19
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 99,
+      "macro_auc": 0.6931968454656579,
+      "acc": 0.3721461187214612,
+      "per_flavor_auc": {
+        "b": 0.6857929136566906,
+        "charm": 0.5652751423149905,
+        "light": 0.5333796576874047,
+        "gluon": 0.7041750094614571,
+        "taup": 0.5996651084908952,
+        "taum": 0.7159509202453987,
+        "muon": 0.8598371421066456,
+        "electron": 0.8814988697617805
+      },
+      "fit_seconds": 9.7
+    },
+    "1111__f1of8__s2": {
+      "view": "1111",
+      "fraction": 0.125,
+      "seed": 2,
+      "n_train": 657,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 180,
+        "charm": 78,
+        "light": 193,
+        "gluon": 151,
+        "taup": 8,
+        "taum": 7,
+        "muon": 21,
+        "electron": 19
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 73,
+      "macro_auc": 0.6118808727284173,
+      "acc": 0.3789954337899543,
+      "per_flavor_auc": {
+        "b": 0.6373132319289272,
+        "charm": 0.5503252914068854,
+        "light": 0.5358404213078096,
+        "gluon": 0.7288944813018965,
+        "taup": 0.47763901486081073,
+        "taum": 0.5614263803680981,
+        "muon": 0.8080378250591016,
+        "electron": 0.5955703355938098
+      },
+      "fit_seconds": 7.4
+    },
+    "1111__f1of8__s3": {
+      "view": "1111",
+      "fraction": 0.125,
+      "seed": 3,
+      "n_train": 657,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 180,
+        "charm": 78,
+        "light": 193,
+        "gluon": 151,
+        "taup": 8,
+        "taum": 7,
+        "muon": 21,
+        "electron": 19
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 72,
+      "macro_auc": 0.6746375063634364,
+      "acc": 0.3439878234398782,
+      "per_flavor_auc": {
+        "b": 0.6633074587577212,
+        "charm": 0.5076579018704255,
+        "light": 0.520610854527596,
+        "gluon": 0.7228229753290483,
+        "taup": 0.5868276006418753,
+        "taum": 0.6510736196319019,
+        "muon": 0.8671044567025655,
+        "electron": 0.8776951834463571
+      },
+      "fit_seconds": 7.3
+    },
+    "1111__f1of4__s1": {
+      "view": "1111",
+      "fraction": 0.25,
+      "seed": 1,
+      "n_train": 1316,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 361,
+        "charm": 156,
+        "light": 387,
+        "gluon": 302,
+        "taup": 16,
+        "taum": 14,
+        "muon": 42,
+        "electron": 38
+      },
+      "epochs_budget": 160,
+      "epochs_ran": 85,
+      "macro_auc": 0.7015762998304697,
+      "acc": 0.4162861491628615,
+      "per_flavor_auc": {
+        "b": 0.683073839757108,
+        "charm": 0.5589793982108971,
+        "light": 0.5800662473093561,
+        "gluon": 0.7453008096419527,
+        "taup": 0.5775483150770948,
+        "taum": 0.7016871165644172,
+        "muon": 0.8828473863934856,
+        "electron": 0.8831072856894453
+      },
+      "fit_seconds": 11.0
+    },
+    "1111__f1of4__s2": {
+      "view": "1111",
+      "fraction": 0.25,
+      "seed": 2,
+      "n_train": 1316,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 361,
+        "charm": 156,
+        "light": 387,
+        "gluon": 302,
+        "taup": 16,
+        "taum": 14,
+        "muon": 42,
+        "electron": 38
+      },
+      "epochs_budget": 160,
+      "epochs_ran": 67,
+      "macro_auc": 0.7024489909717228,
+      "acc": 0.3980213089802131,
+      "per_flavor_auc": {
+        "b": 0.6743961352657004,
+        "charm": 0.5516095147736514,
+        "light": 0.5626240830912624,
+        "gluon": 0.7414094821590883,
+        "taup": 0.6200376752947743,
+        "taum": 0.7049846625766871,
+        "muon": 0.8867699851151388,
+        "electron": 0.8777603894974787
+      },
+      "fit_seconds": 9.9
+    },
+    "1111__f1of4__s3": {
+      "view": "1111",
+      "fraction": 0.25,
+      "seed": 3,
+      "n_train": 1316,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 361,
+        "charm": 156,
+        "light": 387,
+        "gluon": 302,
+        "taup": 16,
+        "taum": 14,
+        "muon": 42,
+        "electron": 38
+      },
+      "epochs_budget": 160,
+      "epochs_ran": 83,
+      "macro_auc": 0.7029389109754178,
+      "acc": 0.4170471841704718,
+      "per_flavor_auc": {
+        "b": 0.6833699765184488,
+        "charm": 0.557617240444565,
+        "light": 0.581448141104679,
+        "gluon": 0.7395139560535534,
+        "taup": 0.5858508337403195,
+        "taum": 0.7200153374233129,
+        "muon": 0.8760879082392085,
+        "electron": 0.8796078942792557
+      },
+      "fit_seconds": 11.1
+    },
+    "1111__f1of2__s1": {
+      "view": "1111",
+      "fraction": 0.5,
+      "seed": 1,
+      "n_train": 2630,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 722,
+        "charm": 311,
+        "light": 774,
+        "gluon": 604,
+        "taup": 32,
+        "taum": 27,
+        "muon": 84,
+        "electron": 76
+      },
+      "epochs_budget": 80,
+      "epochs_ran": 33,
+      "macro_auc": 0.7066925983478658,
+      "acc": 0.4185692541856925,
+      "per_flavor_auc": {
+        "b": 0.6918936300683507,
+        "charm": 0.5394890214150175,
+        "light": 0.5749331257444985,
+        "gluon": 0.7408886976829944,
+        "taup": 0.6201772134235679,
+        "taum": 0.7125,
+        "muon": 0.8818142019087646,
+        "electron": 0.8918448965397322
+      },
+      "fit_seconds": 7.7
+    },
+    "1111__f1of2__s2": {
+      "view": "1111",
+      "fraction": 0.5,
+      "seed": 2,
+      "n_train": 2630,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 722,
+        "charm": 311,
+        "light": 774,
+        "gluon": 604,
+        "taup": 32,
+        "taum": 27,
+        "muon": 84,
+        "electron": 76
+      },
+      "epochs_budget": 80,
+      "epochs_ran": 80,
+      "macro_auc": 0.7252335456623151,
+      "acc": 0.4246575342465753,
+      "per_flavor_auc": {
+        "b": 0.6915002766934387,
+        "charm": 0.5376931417728381,
+        "light": 0.5831957534847756,
+        "gluon": 0.7451487793911673,
+        "taup": 0.7297844135910138,
+        "taum": 0.7387269938650307,
+        "muon": 0.9082742316784871,
+        "electron": 0.8675447748217702
+      },
+      "fit_seconds": 16.1
+    },
+    "1111__f1of2__s3": {
+      "view": "1111",
+      "fraction": 0.5,
+      "seed": 3,
+      "n_train": 2630,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 722,
+        "charm": 311,
+        "light": 774,
+        "gluon": 604,
+        "taup": 32,
+        "taum": 27,
+        "muon": 84,
+        "electron": 76
+      },
+      "epochs_budget": 80,
+      "epochs_ran": 80,
+      "macro_auc": 0.7187699647506982,
+      "acc": 0.4254185692541857,
+      "per_flavor_auc": {
+        "b": 0.6946710339360763,
+        "charm": 0.5835117918134997,
+        "light": 0.5995512110509708,
+        "gluon": 0.7422731433709959,
+        "taup": 0.6742482383311239,
+        "taum": 0.6726226993865031,
+        "muon": 0.9049995622099641,
+        "electron": 0.8782820379064511
+      },
+      "fit_seconds": 15.6
+    },
+    "1111__f1of1__s1": {
+      "view": "1111",
+      "fraction": 1.0,
+      "seed": 1,
+      "n_train": 5260,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 1444,
+        "charm": 622,
+        "light": 1547,
+        "gluon": 1208,
+        "taup": 65,
+        "taum": 54,
+        "muon": 167,
+        "electron": 153
+      },
+      "epochs_budget": 40,
+      "epochs_ran": 40,
+      "macro_auc": 0.72961018595608,
+      "acc": 0.4375951293759513,
+      "per_flavor_auc": {
+        "b": 0.7061784897025172,
+        "charm": 0.5690769856329628,
+        "light": 0.5902880817537774,
+        "gluon": 0.7479597216876005,
+        "taup": 0.7059931626316891,
+        "taum": 0.7267638036809816,
+        "muon": 0.9114263199369582,
+        "electron": 0.8791949226221527
+      },
+      "fit_seconds": 14.2
+    },
+    "1111__f1of1__s2": {
+      "view": "1111",
+      "fraction": 1.0,
+      "seed": 2,
+      "n_train": 5260,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 1444,
+        "charm": 622,
+        "light": 1547,
+        "gluon": 1208,
+        "taup": 65,
+        "taum": 54,
+        "muon": 167,
+        "electron": 153
+      },
+      "epochs_budget": 40,
+      "epochs_ran": 40,
+      "macro_auc": 0.7215906610442202,
+      "acc": 0.4277016742770167,
+      "per_flavor_auc": {
+        "b": 0.693755702128296,
+        "charm": 0.5722824613716455,
+        "light": 0.5794601993688743,
+        "gluon": 0.7472092744922352,
+        "taup": 0.7340403265192214,
+        "taum": 0.6581288343558283,
+        "muon": 0.9053497942386831,
+        "electron": 0.8824986958789776
+      },
+      "fit_seconds": 14.1
+    },
+    "1111__f1of1__s3": {
+      "view": "1111",
+      "fraction": 1.0,
+      "seed": 3,
+      "n_train": 5260,
+      "n_test": 1314,
+      "train_class_counts": {
+        "b": 1444,
+        "charm": 622,
+        "light": 1547,
+        "gluon": 1208,
+        "taup": 65,
+        "taum": 54,
+        "muon": 167,
+        "electron": 153
+      },
+      "epochs_budget": 40,
+      "epochs_ran": 40,
+      "macro_auc": 0.7123390341601732,
+      "acc": 0.4254185692541857,
+      "per_flavor_auc": {
+        "b": 0.6892029733327351,
+        "charm": 0.5822241799945785,
+        "light": 0.5829110154437733,
+        "gluon": 0.7429297846669405,
+        "taup": 0.702853554733831,
+        "taum": 0.6113496932515338,
+        "muon": 0.9092198581560283,
+        "electron": 0.8780212137019648
+      },
+      "fit_seconds": 14.2
+    },
+    "0000__f1of16__s1": {
+      "view": "0000",
+      "fraction": 0.0625,
+      "seed": 1,
+      "n_train": 334,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 90,
+        "charm": 38,
+        "light": 100,
+        "gluon": 78,
+        "taup": 4,
+        "taum": 4,
+        "muon": 11,
+        "electron": 9
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 36,
+      "macro_auc": 0.506639252410213,
+      "acc": 0.28237951807228917,
+      "per_flavor_auc": {
+        "b": 0.6402397428519293,
+        "charm": 0.5414519155404605,
+        "light": 0.5129866810858507,
+        "gluon": 0.4543359627654215,
+        "taup": 0.501082187774203,
+        "taum": 0.4398429584599798,
+        "muon": 0.5007864763962324,
+        "electron": 0.46238809440762696
+      },
+      "fit_seconds": 4.0
+    },
+    "0000__f1of16__s2": {
+      "view": "0000",
+      "fraction": 0.0625,
+      "seed": 2,
+      "n_train": 334,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 90,
+        "charm": 38,
+        "light": 100,
+        "gluon": 78,
+        "taup": 4,
+        "taum": 4,
+        "muon": 11,
+        "electron": 9
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 44,
+      "macro_auc": 0.5048805016936762,
+      "acc": 0.30948795180722893,
+      "per_flavor_auc": {
+        "b": 0.6360512611765367,
+        "charm": 0.5385958245255682,
+        "light": 0.531680507469191,
+        "gluon": 0.6824221327326917,
+        "taup": 0.528985083357707,
+        "taum": 0.4408561296859169,
+        "muon": 0.2907309492675346,
+        "electron": 0.3897221253342634
+      },
+      "fit_seconds": 4.6
+    },
+    "0000__f1of16__s3": {
+      "view": "0000",
+      "fraction": 0.0625,
+      "seed": 3,
+      "n_train": 334,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 90,
+        "charm": 38,
+        "light": 100,
+        "gluon": 78,
+        "taup": 4,
+        "taum": 4,
+        "muon": 11,
+        "electron": 9
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 94,
+      "macro_auc": 0.6206356428049898,
+      "acc": 0.3697289156626506,
+      "per_flavor_auc": {
+        "b": 0.6007832348441251,
+        "charm": 0.48095741396100045,
+        "light": 0.5365173904505188,
+        "gluon": 0.7129141193027617,
+        "taup": 0.4720093594618309,
+        "taum": 0.4636524822695035,
+        "muon": 0.8264256069134118,
+        "electron": 0.8718255352367665
+      },
+      "fit_seconds": 8.1
+    },
+    "0000__f1of8__s1": {
+      "view": "0000",
+      "fraction": 0.125,
+      "seed": 1,
+      "n_train": 664,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 179,
+        "charm": 76,
+        "light": 199,
+        "gluon": 156,
+        "taup": 8,
+        "taum": 7,
+        "muon": 21,
+        "electron": 18
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 130,
+      "macro_auc": 0.6837670158071867,
+      "acc": 0.38403614457831325,
+      "per_flavor_auc": {
+        "b": 0.6510281711887483,
+        "charm": 0.597101156687172,
+        "light": 0.5523004785770202,
+        "gluon": 0.7436612485414614,
+        "taup": 0.5083357706931851,
+        "taum": 0.6716058763931104,
+        "muon": 0.8580173214319556,
+        "electron": 0.8880861029448402
+      },
+      "fit_seconds": 12.6
+    },
+    "0000__f1of8__s2": {
+      "view": "0000",
+      "fraction": 0.125,
+      "seed": 2,
+      "n_train": 664,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 179,
+        "charm": 76,
+        "light": 199,
+        "gluon": 156,
+        "taup": 8,
+        "taum": 7,
+        "muon": 21,
+        "electron": 18
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 59,
+      "macro_auc": 0.5269863796175204,
+      "acc": 0.3689759036144578,
+      "per_flavor_auc": {
+        "b": 0.6364414749519252,
+        "charm": 0.5630715150939363,
+        "light": 0.5387313808251755,
+        "gluon": 0.7447435734924643,
+        "taup": 0.5300965194501317,
+        "taum": 0.4387031408308004,
+        "muon": 0.33096442852540414,
+        "electron": 0.43313900377032577
+      },
+      "fit_seconds": 6.5
+    },
+    "0000__f1of8__s3": {
+      "view": "0000",
+      "fraction": 0.125,
+      "seed": 3,
+      "n_train": 664,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 179,
+        "charm": 76,
+        "light": 199,
+        "gluon": 156,
+        "taup": 8,
+        "taum": 7,
+        "muon": 21,
+        "electron": 18
+      },
+      "epochs_budget": 320,
+      "epochs_ran": 90,
+      "macro_auc": 0.6629259664952765,
+      "acc": 0.375,
+      "per_flavor_auc": {
+        "b": 0.6570077060202406,
+        "charm": 0.5089542312899318,
+        "light": 0.5544445251488324,
+        "gluon": 0.7287979692593712,
+        "taup": 0.44820122842936533,
+        "taum": 0.6552684903748733,
+        "muon": 0.8589269808782004,
+        "electron": 0.8918066005613965
+      },
+      "fit_seconds": 9.2
+    },
+    "0000__f1of4__s1": {
+      "view": "0000",
+      "fraction": 0.25,
+      "seed": 1,
+      "n_train": 1328,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 358,
+        "charm": 151,
+        "light": 398,
+        "gluon": 311,
+        "taup": 16,
+        "taum": 14,
+        "muon": 43,
+        "electron": 37
+      },
+      "epochs_budget": 160,
+      "epochs_ran": 72,
+      "macro_auc": 0.6748104991560963,
+      "acc": 0.39156626506024095,
+      "per_flavor_auc": {
+        "b": 0.661805370352175,
+        "charm": 0.5844654775194167,
+        "light": 0.5535621571744856,
+        "gluon": 0.757594963451219,
+        "taup": 0.46926001754899094,
+        "taum": 0.6381712259371835,
+        "muon": 0.8625466674247162,
+        "electron": 0.8710781138405834
+      },
+      "fit_seconds": 10.3
+    },
+    "0000__f1of4__s2": {
+      "view": "0000",
+      "fraction": 0.25,
+      "seed": 2,
+      "n_train": 1328,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 358,
+        "charm": 151,
+        "light": 398,
+        "gluon": 311,
+        "taup": 16,
+        "taum": 14,
+        "muon": 43,
+        "electron": 37
+      },
+      "epochs_budget": 160,
+      "epochs_ran": 96,
+      "macro_auc": 0.6907839619299154,
+      "acc": 0.39231927710843373,
+      "per_flavor_auc": {
+        "b": 0.6640905071375434,
+        "charm": 0.600764791107522,
+        "light": 0.5445205755836945,
+        "gluon": 0.7534834287274395,
+        "taup": 0.5368236326411231,
+        "taum": 0.6484929078014184,
+        "muon": 0.8912388424583546,
+        "electron": 0.8868570099822279
+      },
+      "fit_seconds": 12.8
+    },
+    "0000__f1of4__s3": {
+      "view": "0000",
+      "fraction": 0.25,
+      "seed": 3,
+      "n_train": 1328,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 358,
+        "charm": 151,
+        "light": 398,
+        "gluon": 311,
+        "taup": 16,
+        "taum": 14,
+        "muon": 43,
+        "electron": 37
+      },
+      "epochs_budget": 160,
+      "epochs_ran": 47,
+      "macro_auc": 0.6413263003626433,
+      "acc": 0.3870481927710843,
+      "per_flavor_auc": {
+        "b": 0.6617520317785607,
+        "charm": 0.48177683300477403,
+        "light": 0.5256599601320324,
+        "gluon": 0.723162078973969,
+        "taup": 0.49400409476455104,
+        "taum": 0.5232396149949341,
+        "muon": 0.8597039816552011,
+        "electron": 0.8613118075971232
+      },
+      "fit_seconds": 7.0
+    },
+    "0000__f1of2__s1": {
+      "view": "0000",
+      "fraction": 0.5,
+      "seed": 1,
+      "n_train": 2658,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 717,
+        "charm": 302,
+        "light": 797,
+        "gluon": 622,
+        "taup": 32,
+        "taum": 28,
+        "muon": 86,
+        "electron": 74
+      },
+      "epochs_budget": 80,
+      "epochs_ran": 64,
+      "macro_auc": 0.6834592740017023,
+      "acc": 0.411144578313253,
+      "per_flavor_auc": {
+        "b": 0.658346784947293,
+        "charm": 0.5660285490345106,
+        "light": 0.5674755936480266,
+        "gluon": 0.7501031946462292,
+        "taup": 0.5014331675928634,
+        "taum": 0.666919959473151,
+        "muon": 0.8740311179335569,
+        "electron": 0.8833358247379873
+      },
+      "fit_seconds": 13.8
+    },
+    "0000__f1of2__s2": {
+      "view": "0000",
+      "fraction": 0.5,
+      "seed": 2,
+      "n_train": 2658,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 717,
+        "charm": 302,
+        "light": 797,
+        "gluon": 622,
+        "taup": 32,
+        "taum": 28,
+        "muon": 86,
+        "electron": 74
+      },
+      "epochs_budget": 80,
+      "epochs_ran": 80,
+      "macro_auc": 0.6952252257883165,
+      "acc": 0.40963855421686746,
+      "per_flavor_auc": {
+        "b": 0.6776946507025252,
+        "charm": 0.5979265135501034,
+        "light": 0.5794870967134483,
+        "gluon": 0.7571236808148963,
+        "taup": 0.5458906112898508,
+        "taum": 0.607079533941236,
+        "muon": 0.909526787575568,
+        "electron": 0.8870729317189031
+      },
+      "fit_seconds": 16.1
+    },
+    "0000__f1of2__s3": {
+      "view": "0000",
+      "fraction": 0.5,
+      "seed": 3,
+      "n_train": 2658,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 717,
+        "charm": 302,
+        "light": 797,
+        "gluon": 622,
+        "taup": 32,
+        "taum": 28,
+        "muon": 86,
+        "electron": 74
+      },
+      "epochs_budget": 80,
+      "epochs_ran": 69,
+      "macro_auc": 0.6959589032415816,
+      "acc": 0.39683734939759036,
+      "per_flavor_auc": {
+        "b": 0.6748677063009699,
+        "charm": 0.5926062275847326,
+        "light": 0.5705692618507668,
+        "gluon": 0.7506524826844259,
+        "taup": 0.516408306522375,
+        "taum": 0.6654635258358663,
+        "muon": 0.868175185248356,
+        "electron": 0.9289285299051605
+      },
+      "fit_seconds": 14.4
+    },
+    "0000__f1of1__s1": {
+      "view": "0000",
+      "fraction": 1.0,
+      "seed": 1,
+      "n_train": 5315,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 1434,
+        "charm": 604,
+        "light": 1594,
+        "gluon": 1245,
+        "taup": 63,
+        "taum": 57,
+        "muon": 171,
+        "electron": 147
+      },
+      "epochs_budget": 40,
+      "epochs_ran": 40,
+      "macro_auc": 0.6830423124719607,
+      "acc": 0.39759036144578314,
+      "per_flavor_auc": {
+        "b": 0.6725123871818987,
+        "charm": 0.5866327815120063,
+        "light": 0.5710265867155198,
+        "gluon": 0.7522775952234693,
+        "taup": 0.5125475285171103,
+        "taum": 0.5757978723404256,
+        "muon": 0.8948774802433338,
+        "electron": 0.8986662680419221
+      },
+      "fit_seconds": 16.1
+    },
+    "0000__f1of1__s2": {
+      "view": "0000",
+      "fraction": 1.0,
+      "seed": 2,
+      "n_train": 5315,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 1434,
+        "charm": 604,
+        "light": 1594,
+        "gluon": 1245,
+        "taup": 63,
+        "taum": 57,
+        "muon": 171,
+        "electron": 147
+      },
+      "epochs_budget": 40,
+      "epochs_ran": 40,
+      "macro_auc": 0.6859584686469771,
+      "acc": 0.40737951807228917,
+      "per_flavor_auc": {
+        "b": 0.674987016268265,
+        "charm": 0.6000581906277462,
+        "light": 0.5720838141969778,
+        "gluon": 0.7560348554137375,
+        "taup": 0.5337233109096227,
+        "taum": 0.5643996960486323,
+        "muon": 0.885837739496276,
+        "electron": 0.9005431262145598
+      },
+      "fit_seconds": 15.6
+    },
+    "0000__f1of1__s3": {
+      "view": "0000",
+      "fraction": 1.0,
+      "seed": 3,
+      "n_train": 5315,
+      "n_test": 1328,
+      "train_class_counts": {
+        "b": 1434,
+        "charm": 604,
+        "light": 1594,
+        "gluon": 1245,
+        "taup": 63,
+        "taum": 57,
+        "muon": 171,
+        "electron": 147
+      },
+      "epochs_budget": 40,
+      "epochs_ran": 40,
+      "macro_auc": 0.672085134512504,
+      "acc": 0.3960843373493976,
+      "per_flavor_auc": {
+        "b": 0.6707830944794576,
+        "charm": 0.6081217490440112,
+        "light": 0.5415990767418025,
+        "gluon": 0.7512342729734035,
+        "taup": 0.4959344837671834,
+        "taum": 0.5842831813576495,
+        "muon": 0.8082703204654424,
+        "electron": 0.9164548972710815
+      },
+      "fit_seconds": 15.1
+    }
+  }
+}

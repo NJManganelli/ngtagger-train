@@ -1,0 +1,66 @@
+[skip] 1111__baseline already present
+[run] 1111__vertexdxy groups=['baseline', 'vertexdxy_pv']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1784660955.731748 5882997 pluggable_device_factory.cc:305] Could not identify NUMA node of platform GPU ID 0, defaulting to 0. Your kernel may not have been built with NUMA support.
+I0000 00:00:1784660955.731817 5882997 pluggable_device_factory.cc:271] Created TensorFlow device (/job:localhost/replica:0/task:0/device:GPU:0 with 0 MB memory) -> physical PluggableDevice (device: 0, name: METAL, pci bus id: <undefined>)
+WARNING:tensorflow:5 out of the last 5 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x3180c9d00> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+WARNING:tensorflow:6 out of the last 6 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x3180c9d00> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+[saved] 1111__vertexdxy: bestAUC(macro)=0.7223689051033415
+[run] 1111__refitbdt groups=['baseline', 'refitbdt']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1111__refitbdt: bestAUC(macro)=0.7328858665924831
+[run] 1111__both groups=['baseline', 'refitbdt', 'vertexdxy_pv']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1111__both: bestAUC(macro)=0.7216973330517351
+[run] 1100__baseline groups=['baseline']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1100__baseline: bestAUC(macro)=0.7128044711766828
+[run] 1100__vertexdxy groups=['baseline', 'vertexdxy_pv']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1100__vertexdxy: bestAUC(macro)=0.7069985304627332
+[run] 1100__refitbdt groups=['baseline', 'refitbdt']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1100__refitbdt: bestAUC(macro)=0.7153431788844066
+[run] 1100__both groups=['baseline', 'refitbdt', 'vertexdxy_pv']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1100__both: bestAUC(macro)=0.71399457797129
+[run] 0000__baseline groups=['baseline']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 0000__baseline: bestAUC(macro)=0.6859584686469771
+[run] 0000__vertexdxy groups=['baseline', 'vertexdxy_pv']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 0000__vertexdxy: bestAUC(macro)=0.6937832293291101
+[run] 1111__both__chargehead (charge head)
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1111__both__chargehead: bestAUC(macro)=0.721580400100736

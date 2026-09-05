@@ -69,7 +69,7 @@ def _discover(path):
     miss_h = [c for c in need_hit if f"{hit}_{c}" not in keys]
     miss_c = ([CLUSTER_TABLE] if not any(k.startswith(CLUSTER_TABLE + "_") for k in keys)
               else [c for c in ("layer", "detId", "localX", "localY", "charge",
-                                "truthPt", "truthCotAlpha", "truthCotBeta", "truthTpIdx")
+                                "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpIdx")
                     if f"{CLUSTER_TABLE}_{c}" not in keys])
     if miss_h or miss_c:
         raise SystemExit(
@@ -85,10 +85,10 @@ def _discover(path):
 def load(paths):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     hit, cfg, need_hit = _discover(files[0])
-    ccols = ["layer", "detId", "localX", "localY", "charge", "truthPt",
-             "truthCotAlpha", "truthCotBeta", "sizeX", "sizeY", "truthTpIdx"]
+    ccols = ["layer", "detId", "localX", "localY", "charge", "tpPt",
+             "tpLocalCotAlpha", "tpLocalCotBeta", "sizeX", "sizeY", "tpIdx"]
     # sensor angle + CPE sigma, present once the cluster table reads SmartPixelsRecHit
-    optional = {"recoCotAlpha": "clRecoCotAlpha", "recoCotBeta": "clRecoCotBeta",
+    optional = {"localCotAlpha": "clLocalCotAlpha", "localCotBeta": "clLocalCotBeta",
                 "sigAlpha": "clSigAlpha", "sigBeta": "clSigBeta",
                 "sigX": "sigX", "sigY": "sigY"}
     rcols = ["pt", "eta"]
@@ -175,9 +175,9 @@ def prepare(X, K):
         P["nsigy"] = np.where(good, dy / sy, np.inf)
     P["good"] = good
     # angle mismatch vs the track's expectation at this module
-    P["dCotA"] = K["truthCotAlpha"][ci] - X["projSeedCotAlpha"][xi]
-    P["dCotB"] = K["truthCotBeta"][ci] - X["projSeedCotBeta"][xi]
-    P["ang_ok"] = (K["truthCotAlpha"][ci] > SENTINEL) & (X["projSeedCotAlpha"][xi] > SENTINEL)
+    P["dCotA"] = K["tpLocalCotAlpha"][ci] - X["projSeedCotAlpha"][xi]
+    P["dCotB"] = K["tpLocalCotBeta"][ci] - X["projSeedCotBeta"][xi]
+    P["ang_ok"] = (K["tpLocalCotAlpha"][ci] > SENTINEL) & (X["projSeedCotAlpha"][xi] > SENTINEL)
     P["sel_gidx"] = selected_global_index(X, K)
     # over PAIRS: is this pair the crossing's selected cluster?
     P["is_selected"] = (P["sel_gidx"][P["xi"]] >= 0) & (P["ci"] == P["sel_gidx"][P["xi"]])
@@ -299,7 +299,7 @@ def study_angle_discrimination(X, K, P, ax_row, out):
     """(3) how much of the in-cone pool could an alpha/beta cut remove?
 
     UPPER BOUND, not a capability: the cluster angles here are UNSMEARED truth
-    (truthCotAlpha/Beta). A real smart-pixel angle carries the PixelAV response
+    (tpLocalCotAlpha/Beta). A real smart-pixel angle carries the PixelAV response
     smear, so achievable rejection is strictly worse than this.
     """
     m = in_cone(P, CONES["q95"]) & P["ang_ok"]
@@ -367,16 +367,16 @@ def study_true_containment(X, K, P, ax_row, out):
     track's TrackingParticle and sit on the module it crosses, how many does the
     cone hold?
 
-    This is the study that selClusterIdx and truthTpIdx were added for. Study (2)
+    This is the study that selClusterIdx and tpIdx were added for. Study (2)
     can only ever see clusters the current static window already offered, so it
     cannot detect a true cluster the window never showed the fit -- exactly the
     failure a cone redesign is meant to fix. Here the truth clusters are found by
-    joining truthTpIdx to the track's spixMatchedTpIdx, independently of what the
+    joining tpIdx to the track's spixMatchedTpIdx, independently of what the
     window did, so a cluster the window missed still counts against the cone.
     """
     xi, ci = P["xi"], P["ci"]
-    have = (X["trk_tpIdx"][xi] >= 0) & (K["truthTpIdx"][ci] >= 0)
-    is_true = have & (K["truthTpIdx"][ci] == X["trk_tpIdx"][xi])
+    have = (X["trk_tpIdx"][xi] >= 0) & (K["tpIdx"][ci] >= 0)
+    is_true = have & (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
     res = {"n_true_pairs": int(is_true.sum())}
     ax = ax_row[0]
     for cname, k in CONES.items():
@@ -458,10 +458,10 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     truth leakage, and the LIMITS block below as the honest comparison.
     """
     xi, ci = P["xi"], P["ci"]
-    need = ("clRecoCotAlpha", "clRecoCotBeta", "clSigAlpha", "clSigBeta")
+    need = ("clLocalCotAlpha", "clLocalCotBeta", "clSigAlpha", "clSigBeta")
     if not all(k in K for k in need):
         print("   (6) SKIPPED: cluster table lacks the sensor angle columns "
-              "(recoCotAlpha/recoCotBeta/sigAlpha/sigBeta)")
+              "(localCotAlpha/localCotBeta/sigAlpha/sigBeta)")
         out["chi2_weight_scan"] = {"skipped": "cluster table has no sensor angle columns"}
         for a in ax_row:
             a.axis("off")
@@ -470,9 +470,9 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     # per-pair residuals against the RUNNING projection (what the refit compares to)
     dx = (K["localX"][ci] - X["projLocalX"][xi]) / np.maximum(K["sigX"][ci], 1e-6)
     dy = (K["localY"][ci] - X["projLocalY"][xi]) / np.maximum(K["sigY"][ci], 1e-6)
-    okA = (K["clRecoCotAlpha"][ci] > SENTINEL) & (K["clSigAlpha"][ci] > 0) \
+    okA = (K["clLocalCotAlpha"][ci] > SENTINEL) & (K["clSigAlpha"][ci] > 0) \
           & (X["projCotAlpha"][xi] > SENTINEL)
-    okB = (K["clRecoCotBeta"][ci] > SENTINEL) & (K["clSigBeta"][ci] > 0) \
+    okB = (K["clLocalCotBeta"][ci] > SENTINEL) & (K["clSigBeta"][ci] > 0) \
           & (X["projCotBeta"][xi] > SENTINEL)
     # A cluster whose sensor reports NO angle must be neither rewarded nor punished
     # for it. Filling its normalized residual with 0 (the naive choice) makes it
@@ -482,14 +482,14 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     # normalized residual squared, i.e. 1, so a missing term contributes its mean
     # and the comparison stays fair across candidates with different term counts.
     NEUTRAL = 1.0
-    da2 = np.where(okA, ((K["clRecoCotAlpha"][ci] - X["projCotAlpha"][xi])
+    da2 = np.where(okA, ((K["clLocalCotAlpha"][ci] - X["projCotAlpha"][xi])
                          / np.maximum(K["clSigAlpha"][ci], 1e-9)) ** 2, NEUTRAL)
-    db2 = np.where(okB, ((K["clRecoCotBeta"][ci] - X["projCotBeta"][xi])
+    db2 = np.where(okB, ((K["clLocalCotBeta"][ci] - X["projCotBeta"][xi])
                          / np.maximum(K["clSigBeta"][ci], 1e-9)) ** 2, NEUTRAL)
 
     # the correct cluster for each crossing, from the TP join (window-independent)
-    have = (X["trk_tpIdx"][xi] >= 0) & (K["truthTpIdx"][ci] >= 0)
-    is_true = have & (K["truthTpIdx"][ci] == X["trk_tpIdx"][xi])
+    have = (X["trk_tpIdx"][xi] >= 0) & (K["tpIdx"][ci] >= 0)
+    is_true = have & (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
     ncross = len(X["layer"])
     has_true = np.zeros(ncross, dtype=bool)
     has_true[xi[is_true]] = True

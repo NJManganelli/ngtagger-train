@@ -18,14 +18,23 @@ per-cluster MVA hit AUC 0.9996 for that reason. This payload closes the leak.
 
 WHAT THE DISTRIBUTION IS. For a cluster with no simlink the sensor still sees a
 charge pattern and its network still emits an angle. The right stand-in is the
-INCLUSIVE distribution of angles the sensor reports on that layer -- a noise
-cluster should look like an arbitrary cluster, not like a flagged special case.
+distribution of angles the sensor reports for clusters THAT LOOK LIKE THIS ONE.
 So the CDF is taken over the RECO (post-response) angles of all clusters that
-report one, per layer. Using the TRUE angles instead would omit the sensor
-response and make noise clusters subtly sharper than real ones, which is exactly
-the kind of tell this is meant to remove.
+report one, binned in (layer, sizeY).
 
-Schema matches the payload it replaces: category(layer) -> binning(quantile).
+WHY sizeY CONDITIONING IS NOT OPTIONAL. A real sensor estimates the angle FROM
+the charge pattern, so the reported angle and the cluster shape are physically
+linked: measured mean sizeY rises 1.36 -> 6.51 across |cotBeta| bins for
+TP-linked clusters, because grazing tracks make long clusters. A draw conditioned
+only on layer breaks that link (2.56 -> 3.41, nearly flat), which is a NEW tell of
+exactly the kind this payload exists to remove -- a classifier can learn "sizeY
+inconsistent with the reported cotBeta => unlinked". Binning in sizeY restores
+the correlation without needing the network.
+
+Using TRUE angles instead of reco would omit the sensor response entirely and
+make noise clusters sharper than real ones: the same class of mistake.
+
+Schema: category(layer) -> category(sizeYbin) -> binning(quantile).
 
     pixi run python eval_spixel_angles/derive_noise_angle_payload.py \
         -i <clusters-tier nano.root> -o smarthit_noise_v5.json
@@ -43,13 +52,14 @@ import numpy as np
 import uproot
 
 CLUSTER_TABLE = "L1TSmartPixelsCluster"
-NQ = 40  # quantile bins, matching the payload this replaces
+NQ = 40           # quantile bins, matching the payload this replaces
+SIZEY_BINS = [1, 2, 3, 4, 5, 6, 8, 12]   # upper edges; last bucket is "12 or more"
 
 
 def build(paths, layers=(1, 2, 3, 4), use_truth=False):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     src = "truthCot" if use_truth else "recoCot"
-    cols = ["layer", f"{src}Alpha", f"{src}Beta", "hasAlpha", "hasBeta", "truthTpIdx"]
+    cols = ["layer", f"{src}Alpha", f"{src}Beta", "hasAlpha", "hasBeta", "tpIdx", "sizeY"]
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
     miss = [c for c in cols if f"{CLUSTER_TABLE}_{c}" not in keys]
@@ -64,20 +74,34 @@ def build(paths, layers=(1, 2, 3, 4), use_truth=False):
 
     edges = list(np.linspace(0.0, 1.0, NQ + 1))
     qmid = (np.array(edges[:-1]) + np.array(edges[1:])) / 2.0
+    # sizeY bucket index, same mapping the producer must use
+    sy = K["sizeY"].astype(int)
+    bucket = np.digitize(sy, SIZEY_BINS, right=True)
+    nb = len(SIZEY_BINS) + 1
     out = {}
-    print(f"files={len(files)} events={n_ev} clusters={len(K['layer'])} source={src}*")
+    print(f"files={len(files)} events={n_ev} clusters={len(K['layer'])} source={src}* "
+          f"sizeY buckets={nb}")
     for ang, hasf in (("Alpha", "hasAlpha"), ("Beta", "hasBeta")):
         per_layer = {}
         for L in layers:
-            m = (K["layer"] == L) & (K[hasf] > 0) & (K[f"{src}{ang}"] > -900)
-            v = K[f"{src}{ang}"][m]
-            if len(v) < 200:
-                raise SystemExit(f"layer {L} has only {len(v)} clusters with a reported "
-                                 f"cot{ang}; too few for a {NQ}-bin inverse CDF")
-            per_layer[L] = (np.quantile(v, qmid).tolist(), int(len(v)),
-                            float(np.median(v)), float(np.quantile(np.abs(v), 0.95)))
-            print(f"   cot{ang} L{L}: n={len(v):>7}  median {np.median(v):+.4f}  "
-                  f"|q95| {np.quantile(np.abs(v),0.95):.4f}")
+            base = (K["layer"] == L) & (K[hasf] > 0) & (K[f"{src}{ang}"] > -900)
+            if base.sum() < 200:
+                raise SystemExit(f"layer {L}: only {base.sum()} clusters report cot{ang}")
+            fallback = np.quantile(K[f"{src}{ang}"][base], qmid)
+            per_b = {}
+            thin = 0
+            for b in range(nb):
+                m = base & (bucket == b)
+                # Thin buckets fall back to the layer-inclusive CDF rather than
+                # producing a noisy 40-point curve from a handful of clusters.
+                if m.sum() < 200:
+                    per_b[b] = fallback.tolist(); thin += 1
+                else:
+                    per_b[b] = np.quantile(K[f"{src}{ang}"][m], qmid).tolist()
+            per_layer[L] = per_b
+            med = [f"{np.median(per_b[b]):+.3f}" for b in range(nb)]
+            print(f"   cot{ang} L{L}: n={base.sum():>7}  median by sizeY bucket "
+                  + " ".join(med) + (f"   ({thin} thin buckets used the inclusive CDF)" if thin else ""))
         out[ang] = per_layer
     return out, edges, files, n_ev, src
 
@@ -87,6 +111,9 @@ def correction(name, desc, per_layer, edges):
         "name": name,
         "version": 5,
         "inputs": [{"name": "layer", "type": "int", "description": "TBPX layer 1..4"},
+                   {"name": "sizeYbin", "type": "int",
+                    "description": f"index into upper edges {SIZEY_BINS}; conditioning the draw "
+                                   "on cluster length preserves the physical shape-angle link"},
                    {"name": "quantile", "type": "real",
                     "description": "uniform draw in [0,1); the caller supplies it, so the "
                                    "draw is the CALLER's to make deterministic"}],
@@ -95,10 +122,14 @@ def correction(name, desc, per_layer, edges):
         "data": {
             "nodetype": "category", "input": "layer",
             "content": [{"key": L,
-                         "value": {"nodetype": "binning", "input": "quantile",
-                                   "edges": edges, "content": vals,
-                                   "flow": "clamp"}}
-                        for L, (vals, _, _, _) in sorted(per_layer.items())]},
+                         "value": {"nodetype": "category", "input": "sizeYbin",
+                                   "content": [{"key": b,
+                                                "value": {"nodetype": "binning",
+                                                          "input": "quantile",
+                                                          "edges": edges, "content": vals,
+                                                          "flow": "clamp"}}
+                                               for b, vals in sorted(per_b.items())]}}
+                        for L, per_b in sorted(per_layer.items())]},
     }
 
 

@@ -1,0 +1,261 @@
+{
+  "views": {
+    "1111": {
+      "embedded_test_macro": 0.7429455020237243,
+      "seeds": {
+        "1": {
+          "scratch_macro": 0.72961018595608,
+          "delta_embedded_minus_scratch": 0.013335316067644376,
+          "delta_boot_std": 0.019709095032891456
+        },
+        "2": {
+          "scratch_macro": 0.7215906610442202,
+          "delta_embedded_minus_scratch": 0.02135484097950413,
+          "delta_boot_std": 0.022011148946728645
+        },
+        "3": {
+          "scratch_macro": 0.7123390341601732,
+          "delta_embedded_minus_scratch": 0.030606467863551146,
+          "delta_boot_std": 0.022606678894505437
+        }
+      },
+      "best_seed": 1,
+      "best_scratch_macro": 0.72961018595608,
+      "gap_embedded_minus_best_scratch": 0.013335316067644376,
+      "gap_boot_std": 0.019709095032891456,
+      "per_class": {
+        "b": {
+          "embedded": 0.7327320859693991,
+          "embedded_se_hm": 0.01681902229888807,
+          "scratch_best": 0.7061784897025172,
+          "scratch_se_hm": 0.01725618081338968,
+          "n_pos": 345
+        },
+        "charm": {
+          "embedded": 0.5944971537001897,
+          "embedded_se_hm": 0.02799731448288819,
+          "scratch_best": 0.5690769856329628,
+          "scratch_se_hm": 0.02792627200234873,
+          "n_pos": 124
+        },
+        "light": {
+          "embedded": 0.5889375352657207,
+          "embedded_se_hm": 0.016921618086719638,
+          "scratch_best": 0.5902880817537774,
+          "scratch_se_hm": 0.016916394646186834,
+          "n_pos": 436
+        },
+        "gluon": {
+          "embedded": 0.6549123561777654,
+          "embedded_se_hm": 0.01868585082529186,
+          "scratch_best": 0.7479597216876005,
+          "scratch_se_hm": 0.01733982825700167,
+          "n_pos": 307
+        },
+        "taup": {
+          "embedded": 0.7041093978929742,
+          "embedded_se_hm": 0.08869827942702807,
+          "scratch_best": 0.7059931626316891,
+          "scratch_se_hm": 0.08860173148062016,
+          "n_pos": 11
+        },
+        "taum": {
+          "embedded": 0.8127300613496933,
+          "embedded_se_hm": 0.08274556242485195,
+          "scratch_best": 0.7267638036809816,
+          "scratch_se_hm": 0.09162984862593182,
+          "n_pos": 10
+        },
+        "muon": {
+          "embedded": 0.9516504684353385,
+          "embedded_se_hm": 0.022374659385900875,
+          "scratch_best": 0.9114263199369582,
+          "scratch_se_hm": 0.029346507717714982,
+          "n_pos": 45
+        },
+        "electron": {
+          "embedded": 0.9039949573987133,
+          "embedded_se_hm": 0.03393205941209581,
+          "scratch_best": 0.8791949226221527,
+          "scratch_se_hm": 0.03728621484792679,
+          "n_pos": 36
+        }
+      }
+    },
+    "1100": {
+      "embedded_test_macro": 0.7574619744990285,
+      "seeds": {
+        "1": {
+          "scratch_macro": 0.7126701604912173,
+          "delta_embedded_minus_scratch": 0.04479181400781118,
+          "delta_boot_std": 0.01481240904716474
+        },
+        "2": {
+          "scratch_macro": 0.7093712142762612,
+          "delta_embedded_minus_scratch": 0.04809076022276737,
+          "delta_boot_std": 0.014661477267830628
+        },
+        "3": {
+          "scratch_macro": 0.7128044711766828,
+          "delta_embedded_minus_scratch": 0.04465750332234575,
+          "delta_boot_std": 0.014654575802716927
+        }
+      },
+      "best_seed": 3,
+      "best_scratch_macro": 0.7128044711766828,
+      "gap_embedded_minus_best_scratch": 0.04465750332234575,
+      "gap_boot_std": 0.014654575802716927,
+      "per_class": {
+        "b": {
+          "embedded": 0.7165296131293135,
+          "embedded_se_hm": 0.01682459396575051,
+          "scratch_best": 0.7110861190902003,
+          "scratch_se_hm": 0.016910143291328335,
+          "n_pos": 359
+        },
+        "charm": {
+          "embedded": 0.5910154179789107,
+          "embedded_se_hm": 0.02656844279022942,
+          "scratch_best": 0.5705505028661236,
+          "scratch_se_hm": 0.026518034000049952,
+          "n_pos": 139
+        },
+        "light": {
+          "embedded": 0.6028425696167632,
+          "embedded_se_hm": 0.017444223014081238,
+          "scratch_best": 0.5937524124620899,
+          "scratch_se_hm": 0.017480579881676103,
+          "n_pos": 390
+        },
+        "gluon": {
+          "embedded": 0.6770792252919748,
+          "embedded_se_hm": 0.018084708581913637,
+          "scratch_best": 0.775655138790986,
+          "scratch_se_hm": 0.016356197135342865,
+          "n_pos": 323
+        },
+        "taup": {
+          "embedded": 0.7635637716035879,
+          "embedded_se_hm": 0.07492245001042509,
+          "scratch_best": 0.7106213082476482,
+          "scratch_se_hm": 0.07836601854998126,
+          "n_pos": 14
+        },
+        "taum": {
+          "embedded": 0.8003435114503817,
+          "embedded_se_hm": 0.08443154373972821,
+          "scratch_best": 0.5396946564885496,
+          "scratch_se_hm": 0.09366909186410197,
+          "n_pos": 10
+        },
+        "muon": {
+          "embedded": 0.9922962962962962,
+          "embedded_se_hm": 0.009204377042691616,
+          "scratch_best": 0.914806100217865,
+          "scratch_se_hm": 0.028858755131697632,
+          "n_pos": 45
+        },
+        "electron": {
+          "embedded": 0.916025390625,
+          "embedded_se_hm": 0.030409168524899784,
+          "scratch_best": 0.88626953125,
+          "scratch_se_hm": 0.03453787760724787,
+          "n_pos": 40
+        }
+      }
+    },
+    "0000": {
+      "embedded_test_macro": 0.7469239283719106,
+      "seeds": {
+        "1": {
+          "scratch_macro": 0.6830423124719607,
+          "delta_embedded_minus_scratch": 0.0638816158999499,
+          "delta_boot_std": 0.014536438106790337
+        },
+        "2": {
+          "scratch_macro": 0.6859584686469771,
+          "delta_embedded_minus_scratch": 0.0609654597249335,
+          "delta_boot_std": 0.01664625864067903
+        },
+        "3": {
+          "scratch_macro": 0.672085134512504,
+          "delta_embedded_minus_scratch": 0.07483879385940662,
+          "delta_boot_std": 0.018574106666234363
+        }
+      },
+      "best_seed": 2,
+      "best_scratch_macro": 0.6859584686469771,
+      "gap_embedded_minus_best_scratch": 0.0609654597249335,
+      "gap_boot_std": 0.01664625864067903,
+      "per_class": {
+        "b": {
+          "embedded": 0.6929326389961119,
+          "embedded_se_hm": 0.01691285661720741,
+          "scratch_best": 0.674987016268265,
+          "scratch_se_hm": 0.017134072991364536,
+          "n_pos": 373
+        },
+        "charm": {
+          "embedded": 0.6056991188276369,
+          "embedded_se_hm": 0.02630336653964917,
+          "scratch_best": 0.6000581906277462,
+          "scratch_se_hm": 0.026307842251668673,
+          "n_pos": 142
+        },
+        "light": {
+          "embedded": 0.5833380410892941,
+          "embedded_se_hm": 0.017339126803951638,
+          "scratch_best": 0.5720838141969778,
+          "scratch_se_hm": 0.017364252181584685,
+          "n_pos": 401
+        },
+        "gluon": {
+          "embedded": 0.6365842084564355,
+          "embedded_se_hm": 0.019003781059569107,
+          "scratch_best": 0.7560348554137375,
+          "scratch_se_hm": 0.017348340423359025,
+          "n_pos": 299
+        },
+        "taup": {
+          "embedded": 0.729774787949693,
+          "embedded_se_hm": 0.08022456482550028,
+          "scratch_best": 0.5337233109096227,
+          "scratch_se_hm": 0.08201678480632534,
+          "n_pos": 13
+        },
+        "taum": {
+          "embedded": 0.8447315096251266,
+          "embedded_se_hm": 0.07086470753708207,
+          "scratch_best": 0.5643996960486323,
+          "scratch_se_hm": 0.08633317021138943,
+          "n_pos": 12
+        },
+        "muon": {
+          "embedded": 0.9635093903386586,
+          "embedded_se_hm": 0.020544539470449,
+          "scratch_best": 0.885837739496276,
+          "scratch_se_hm": 0.0341686390188511,
+          "n_pos": 41
+        },
+        "electron": {
+          "embedded": 0.9188217316923282,
+          "embedded_se_hm": 0.027655882809439907,
+          "scratch_best": 0.9005431262145598,
+          "scratch_se_hm": 0.030165086051403753,
+          "n_pos": 47
+        }
+      }
+    }
+  },
+  "headline": {
+    "absolute_bar_embedded_0000_test": 0.7469239283719106,
+    "absolute_bar_boot_std": 0.014281912912801672,
+    "absolute_bar_embedded_0000_alljets": 0.7375564152602689,
+    "gap0_embedded0000_minus_scratch0000": 0.0609654597249335,
+    "gap0_boot_std": 0.01664625864067903,
+    "scratch_1111_best_macro": 0.72961018595608,
+    "scratch_1111_boot_std": 0.015644482854058155,
+    "dist_scratch1111_to_bar": 0.017313742415830613,
+    "dist_std_quadrature": 0.021183080045634788
+  }
+}

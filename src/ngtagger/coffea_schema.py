@@ -469,7 +469,12 @@ class _SmartPixelsClusterBase(base.NanoCollection):
         return ak.unflatten(out, counts)
 
 
-SmartPixelsCluster = awkward.mixin_class(behavior)(_SmartPixelsClusterBase)
+# awkward.mixin_class registers the behavior under the CLASS NAME, so the class
+# must literally be called SmartPixelsCluster to match the mixins entry below --
+# registering _SmartPixelsClusterBase would silently give a plain record with no
+# charge_rank/n_on_module and no error until first use.
+SmartPixelsCluster = awkward.mixin_class(behavior)(
+    type("SmartPixelsCluster", (_SmartPixelsClusterBase,), {}))
 
 
 class L1ClustersNanoSchema(L1NanoSchema):

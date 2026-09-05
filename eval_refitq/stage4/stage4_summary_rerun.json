@@ -1,0 +1,1159 @@
+{
+  "stage": 4,
+  "cells": {
+    "1111__baseline": {
+      "view": "1111",
+      "activeSP": "1111",
+      "groups": [
+        "baseline"
+      ],
+      "refit_config": "AAAA",
+      "charge_head": false,
+      "n_features": 20,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality"
+      ],
+      "n_train": 5260,
+      "n_test": 1314,
+      "n_files": 10,
+      "build_seconds": 2.7,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.72961018595608,
+      "best_seed": 1,
+      "best_acc": 0.4375951293759513,
+      "best_per_flavor_auc": {
+        "b": 0.7061784897025172,
+        "charm": 0.5690769856329628,
+        "light": 0.5902880817537774,
+        "gluon": 0.7479597216876005,
+        "taup": 0.7059931626316891,
+        "taum": 0.7267638036809816,
+        "muon": 0.9114263199369582,
+        "electron": 0.8791949226221527
+      },
+      "macro_auc_mean": 0.7211799603868245,
+      "macro_auc_std": 0.007056896265913808,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.72961018595608,
+          "acc": 0.4375951293759513,
+          "per_flavor_auc": {
+            "b": 0.7061784897025172,
+            "charm": 0.5690769856329628,
+            "light": 0.5902880817537774,
+            "gluon": 0.7479597216876005,
+            "taup": 0.7059931626316891,
+            "taum": 0.7267638036809816,
+            "muon": 0.9114263199369582,
+            "electron": 0.8791949226221527
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.7215906610442202,
+          "acc": 0.4277016742770167,
+          "per_flavor_auc": {
+            "b": 0.693755702128296,
+            "charm": 0.5722824613716455,
+            "light": 0.5794601993688743,
+            "gluon": 0.7472092744922352,
+            "taup": 0.7340403265192214,
+            "taum": 0.6581288343558283,
+            "muon": 0.9053497942386831,
+            "electron": 0.8824986958789776
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.7123390341601732,
+          "acc": 0.4254185692541857,
+          "per_flavor_auc": {
+            "b": 0.6892029733327351,
+            "charm": 0.5822241799945785,
+            "light": 0.5829110154437733,
+            "gluon": 0.7429297846669405,
+            "taup": 0.702853554733831,
+            "taum": 0.6113496932515338,
+            "muon": 0.9092198581560283,
+            "electron": 0.8780212137019648
+          }
+        }
+      ]
+    },
+    "1111__vertexdxy": {
+      "view": "1111",
+      "activeSP": "1111",
+      "groups": [
+        "baseline",
+        "vertexdxy_pv"
+      ],
+      "refit_config": "AAAA",
+      "charge_head": false,
+      "n_features": 22,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "vtxpv_dxy",
+        "vtxpv_dz"
+      ],
+      "n_train": 5260,
+      "n_test": 1314,
+      "n_files": 10,
+      "build_seconds": 4.3,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.7223689051033415,
+      "best_seed": 1,
+      "best_acc": 0.423896499238965,
+      "best_per_flavor_auc": {
+        "b": 0.6969533808946919,
+        "charm": 0.5782122526429927,
+        "light": 0.5699123320306786,
+        "gluon": 0.7462388686361593,
+        "taup": 0.7073885439196261,
+        "taum": 0.7015337423312884,
+        "muon": 0.8993433149461518,
+        "electron": 0.8793688054251435
+      },
+      "macro_auc_mean": 0.7128182937252082,
+      "macro_auc_std": 0.006968013090360866,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.7223689051033415,
+          "acc": 0.423896499238965,
+          "per_flavor_auc": {
+            "b": 0.6969533808946919,
+            "charm": 0.5782122526429927,
+            "light": 0.5699123320306786,
+            "gluon": 0.7462388686361593,
+            "taup": 0.7073885439196261,
+            "taum": 0.7015337423312884,
+            "muon": 0.8993433149461518,
+            "electron": 0.8793688054251435
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.710145171750536,
+          "acc": 0.4162861491628615,
+          "per_flavor_auc": {
+            "b": 0.689096782877911,
+            "charm": 0.5889875304960693,
+            "light": 0.5682221897139036,
+            "gluon": 0.7433276510679316,
+            "taup": 0.6673411009558361,
+            "taum": 0.6777607361963189,
+            "muon": 0.8782068120129587,
+            "electron": 0.8682185706833594
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.7059408043217473,
+          "acc": 0.4193302891933029,
+          "per_flavor_auc": {
+            "b": 0.6877880976952184,
+            "charm": 0.5603483328815397,
+            "light": 0.5711270401872479,
+            "gluon": 0.7400120977263391,
+            "taup": 0.6727830879787902,
+            "taum": 0.6556748466257669,
+            "muon": 0.8844234305227213,
+            "electron": 0.8753695009563554
+          }
+        }
+      ]
+    },
+    "1111__refitbdt": {
+      "view": "1111",
+      "activeSP": "1111",
+      "groups": [
+        "baseline",
+        "refitbdt"
+      ],
+      "refit_config": "AAAA",
+      "charge_head": false,
+      "n_features": 21,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "refit_bdt_score"
+      ],
+      "n_train": 5260,
+      "n_test": 1314,
+      "n_files": 10,
+      "build_seconds": 36.3,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.7328858665924831,
+      "best_seed": 1,
+      "best_acc": 0.4353120243531202,
+      "best_per_flavor_auc": {
+        "b": 0.7068275975531326,
+        "charm": 0.5720859311466522,
+        "light": 0.5965026854193225,
+        "gluon": 0.7483769962057131,
+        "taup": 0.7333426358752528,
+        "taum": 0.7196319018404908,
+        "muon": 0.9054723754487348,
+        "electron": 0.8808468092505651
+      },
+      "macro_auc_mean": 0.7172946472263434,
+      "macro_auc_std": 0.014115623756825985,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.7328858665924831,
+          "acc": 0.4353120243531202,
+          "per_flavor_auc": {
+            "b": 0.7068275975531326,
+            "charm": 0.5720859311466522,
+            "light": 0.5965026854193225,
+            "gluon": 0.7483769962057131,
+            "taup": 0.7333426358752528,
+            "taum": 0.7196319018404908,
+            "muon": 0.9054723754487348,
+            "electron": 0.8808468092505651
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.7202954100856642,
+          "acc": 0.4277016742770167,
+          "per_flavor_auc": {
+            "b": 0.6929660040980543,
+            "charm": 0.5750271076172404,
+            "light": 0.5840956824308792,
+            "gluon": 0.7464361844935613,
+            "taup": 0.673829623944743,
+            "taum": 0.7021472392638037,
+            "muon": 0.9071885123894581,
+            "electron": 0.8806729264475743
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.6987026650008828,
+          "acc": 0.4185692541856925,
+          "per_flavor_auc": {
+            "b": 0.686507829676493,
+            "charm": 0.4893467064245053,
+            "light": 0.5747946751374057,
+            "gluon": 0.7423701839566035,
+            "taup": 0.6891090490476522,
+            "taum": 0.6924846625766872,
+            "muon": 0.8540057788284738,
+            "electron": 0.8610024343592418
+          }
+        }
+      ]
+    },
+    "1111__both": {
+      "view": "1111",
+      "activeSP": "1111",
+      "groups": [
+        "baseline",
+        "refitbdt",
+        "vertexdxy_pv"
+      ],
+      "refit_config": "AAAA",
+      "charge_head": false,
+      "n_features": 23,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "refit_bdt_score",
+        "vtxpv_dxy",
+        "vtxpv_dz"
+      ],
+      "n_train": 5260,
+      "n_test": 1314,
+      "n_files": 10,
+      "build_seconds": 36.2,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.7216973330517351,
+      "best_seed": 1,
+      "best_acc": 0.4193302891933029,
+      "best_per_flavor_auc": {
+        "b": 0.6947009467402522,
+        "charm": 0.575908105177555,
+        "light": 0.5742565463626674,
+        "gluon": 0.7461482974229255,
+        "taup": 0.6728528570431871,
+        "taum": 0.7201687116564417,
+        "muon": 0.9132825496891691,
+        "electron": 0.8762606503216831
+      },
+      "macro_auc_mean": 0.7094937781242079,
+      "macro_auc_std": 0.013523141713178172,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.7216973330517351,
+          "acc": 0.4193302891933029,
+          "per_flavor_auc": {
+            "b": 0.6947009467402522,
+            "charm": 0.575908105177555,
+            "light": 0.5742565463626674,
+            "gluon": 0.7461482974229255,
+            "taup": 0.6728528570431871,
+            "taum": 0.7201687116564417,
+            "muon": 0.9132825496891691,
+            "electron": 0.8762606503216831
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.7161441760842757,
+          "acc": 0.4216133942161339,
+          "per_flavor_auc": {
+            "b": 0.6866932890623831,
+            "charm": 0.5689346706424505,
+            "light": 0.5728485298112892,
+            "gluon": 0.7434085182226046,
+            "taup": 0.6749459289750925,
+            "taum": 0.7238496932515337,
+            "muon": 0.8821469223360475,
+            "electron": 0.8763258563728047
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.6906398252366129,
+          "acc": 0.4200913242009132,
+          "per_flavor_auc": {
+            "b": 0.6894213368032186,
+            "charm": 0.4882217403090268,
+            "light": 0.5802909030114314,
+            "gluon": 0.7416165020750513,
+            "taup": 0.6279913486360148,
+            "taum": 0.688957055214724,
+            "muon": 0.844987304088959,
+            "electron": 0.8636324117544775
+          }
+        }
+      ]
+    },
+    "1100__baseline": {
+      "view": "1100",
+      "activeSP": "1100",
+      "groups": [
+        "baseline"
+      ],
+      "refit_config": "AAII",
+      "charge_head": false,
+      "n_features": 20,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality"
+      ],
+      "n_train": 5280,
+      "n_test": 1320,
+      "n_files": 10,
+      "build_seconds": 2.7,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.7128044711766828,
+      "best_seed": 3,
+      "best_acc": 0.43787878787878787,
+      "best_per_flavor_auc": {
+        "b": 0.7110861190902003,
+        "charm": 0.5705505028661236,
+        "light": 0.5937524124620899,
+        "gluon": 0.775655138790986,
+        "taup": 0.7106213082476482,
+        "taum": 0.5396946564885496,
+        "muon": 0.914806100217865,
+        "electron": 0.88626953125
+      },
+      "macro_auc_mean": 0.7116152819813871,
+      "macro_auc_std": 0.0015877425775713643,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.7126701604912173,
+          "acc": 0.42727272727272725,
+          "per_flavor_auc": {
+            "b": 0.7079875593842301,
+            "charm": 0.5666335686742731,
+            "light": 0.5676068376068376,
+            "gluon": 0.7752700826939021,
+            "taup": 0.7269744038503609,
+            "taum": 0.5655725190839695,
+            "muon": 0.9147538126361655,
+            "electron": 0.8765624999999999
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.7093712142762612,
+          "acc": 0.396969696969697,
+          "per_flavor_auc": {
+            "b": 0.7019701506381179,
+            "charm": 0.5650314633982907,
+            "light": 0.5443865453542873,
+            "gluon": 0.7748167101924971,
+            "taup": 0.7315685845548019,
+            "taum": 0.5748854961832061,
+            "muon": 0.9048888888888889,
+            "electron": 0.877421875
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.7128044711766828,
+          "acc": 0.43787878787878787,
+          "per_flavor_auc": {
+            "b": 0.7110861190902003,
+            "charm": 0.5705505028661236,
+            "light": 0.5937524124620899,
+            "gluon": 0.775655138790986,
+            "taup": 0.7106213082476482,
+            "taum": 0.5396946564885496,
+            "muon": 0.914806100217865,
+            "electron": 0.88626953125
+          }
+        }
+      ]
+    },
+    "1100__vertexdxy": {
+      "view": "1100",
+      "activeSP": "1100",
+      "groups": [
+        "baseline",
+        "vertexdxy_pv"
+      ],
+      "refit_config": "AAII",
+      "charge_head": false,
+      "n_features": 22,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "vtxpv_dxy",
+        "vtxpv_dz"
+      ],
+      "n_train": 5280,
+      "n_test": 1320,
+      "n_files": 10,
+      "build_seconds": 4.2,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.7069985304627332,
+      "best_seed": 2,
+      "best_acc": 0.4159090909090909,
+      "best_per_flavor_auc": {
+        "b": 0.6960252058701619,
+        "charm": 0.6042860884873812,
+        "light": 0.5502067824648469,
+        "gluon": 0.7702829851784455,
+        "taup": 0.6810325968059505,
+        "taum": 0.5748854961832062,
+        "muon": 0.8901089324618737,
+        "electron": 0.8891601562499999
+      },
+      "macro_auc_mean": 0.7055228697858138,
+      "macro_auc_std": 0.0010499341732283446,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.7049277343215237,
+          "acc": 0.4166666666666667,
+          "per_flavor_auc": {
+            "b": 0.701703483198502,
+            "charm": 0.5831602288025634,
+            "light": 0.5510697546181418,
+            "gluon": 0.7726150587986871,
+            "taup": 0.66828921461387,
+            "taum": 0.5796183206106871,
+            "muon": 0.9009150326797386,
+            "electron": 0.8820507812499999
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.7069985304627332,
+          "acc": 0.4159090909090909,
+          "per_flavor_auc": {
+            "b": 0.6960252058701619,
+            "charm": 0.6042860884873812,
+            "light": 0.5502067824648469,
+            "gluon": 0.7702829851784455,
+            "taup": 0.6810325968059505,
+            "taum": 0.5748854961832062,
+            "muon": 0.8901089324618737,
+            "electron": 0.8891601562499999
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.7046423445731844,
+          "acc": 0.42954545454545456,
+          "per_flavor_auc": {
+            "b": 0.7096687236774599,
+            "charm": 0.5552604487113104,
+            "light": 0.5747808105872622,
+            "gluon": 0.7713403367998733,
+            "taup": 0.6679610588492672,
+            "taum": 0.5815267175572518,
+            "muon": 0.8919912854030502,
+            "electron": 0.884609375
+          }
+        }
+      ]
+    },
+    "1100__refitbdt": {
+      "view": "1100",
+      "activeSP": "1100",
+      "groups": [
+        "baseline",
+        "refitbdt"
+      ],
+      "refit_config": "AAII",
+      "charge_head": false,
+      "n_features": 21,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "refit_bdt_score"
+      ],
+      "n_train": 5280,
+      "n_test": 1320,
+      "n_files": 10,
+      "build_seconds": 31.6,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.7153431788844066,
+      "best_seed": 1,
+      "best_acc": 0.43106060606060603,
+      "best_per_flavor_auc": {
+        "b": 0.7070252377543123,
+        "charm": 0.567139176042739,
+        "light": 0.5743920595533499,
+        "gluon": 0.7749409218367176,
+        "taup": 0.7325530518486107,
+        "taum": 0.5791984732824427,
+        "muon": 0.9135511982570806,
+        "electron": 0.8739453125
+      },
+      "macro_auc_mean": 0.7149660789257521,
+      "macro_auc_std": 0.00028916561570819377,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.7153431788844066,
+          "acc": 0.43106060606060603,
+          "per_flavor_auc": {
+            "b": 0.7070252377543123,
+            "charm": 0.567139176042739,
+            "light": 0.5743920595533499,
+            "gluon": 0.7749409218367176,
+            "taup": 0.7325530518486107,
+            "taum": 0.5791984732824427,
+            "muon": 0.9135511982570806,
+            "electron": 0.8739453125
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.7149145393323415,
+          "acc": 0.4090909090909091,
+          "per_flavor_auc": {
+            "b": 0.7049440723016588,
+            "charm": 0.5692651636523127,
+            "light": 0.55575682382134,
+            "gluon": 0.774400601184358,
+            "taup": 0.7677751039159921,
+            "taum": 0.5629007633587786,
+            "muon": 0.9046448801742919,
+            "electron": 0.87962890625
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.7146405185605085,
+          "acc": 0.4303030303030303,
+          "per_flavor_auc": {
+            "b": 0.7114223519488463,
+            "charm": 0.5638253157000225,
+            "light": 0.5715164047422111,
+            "gluon": 0.7740341768339073,
+            "taup": 0.729763727849486,
+            "taum": 0.5868702290076336,
+            "muon": 0.8911372549019608,
+            "electron": 0.8885546875
+          }
+        }
+      ]
+    },
+    "1100__both": {
+      "view": "1100",
+      "activeSP": "1100",
+      "groups": [
+        "baseline",
+        "refitbdt",
+        "vertexdxy_pv"
+      ],
+      "refit_config": "AAII",
+      "charge_head": false,
+      "n_features": 23,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "refit_bdt_score",
+        "vtxpv_dxy",
+        "vtxpv_dz"
+      ],
+      "n_train": 5280,
+      "n_test": 1320,
+      "n_files": 10,
+      "build_seconds": 31.9,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.71399457797129,
+      "best_seed": 3,
+      "best_acc": 0.4318181818181818,
+      "best_per_flavor_auc": {
+        "b": 0.7060716118017734,
+        "charm": 0.5935404089937195,
+        "light": 0.5848580093741385,
+        "gluon": 0.7784467954948435,
+        "taup": 0.6916429665281121,
+        "taum": 0.5629007633587787,
+        "muon": 0.9076601307189542,
+        "electron": 0.8868359375
+      },
+      "macro_auc_mean": 0.7070184171330522,
+      "macro_auc_std": 0.005913587805546586,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.7075247911285117,
+          "acc": 0.4196969696969697,
+          "per_flavor_auc": {
+            "b": 0.69840492291282,
+            "charm": 0.5803032425879787,
+            "light": 0.5605569341053213,
+            "gluon": 0.7726336905453202,
+            "taup": 0.6499124917961059,
+            "taum": 0.6184732824427481,
+            "muon": 0.9040348583877996,
+            "electron": 0.8758789062500001
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.6995358822993553,
+          "acc": 0.40454545454545454,
+          "per_flavor_auc": {
+            "b": 0.6942454905666392,
+            "charm": 0.5590068165619917,
+            "light": 0.535541770057899,
+            "gluon": 0.7727020069496415,
+            "taup": 0.6860096259024284,
+            "taum": 0.5874809160305343,
+            "muon": 0.887355119825708,
+            "electron": 0.8739453125
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.71399457797129,
+          "acc": 0.4318181818181818,
+          "per_flavor_auc": {
+            "b": 0.7060716118017734,
+            "charm": 0.5935404089937195,
+            "light": 0.5848580093741385,
+            "gluon": 0.7784467954948435,
+            "taup": 0.6916429665281121,
+            "taum": 0.5629007633587787,
+            "muon": 0.9076601307189542,
+            "electron": 0.8868359375
+          }
+        }
+      ]
+    },
+    "0000__baseline": {
+      "view": "0000",
+      "activeSP": "0000",
+      "groups": [
+        "baseline"
+      ],
+      "refit_config": null,
+      "charge_head": false,
+      "n_features": 20,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality"
+      ],
+      "n_train": 5315,
+      "n_test": 1328,
+      "n_files": 10,
+      "build_seconds": 2.5,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.6859584686469771,
+      "best_seed": 2,
+      "best_acc": 0.40737951807228917,
+      "best_per_flavor_auc": {
+        "b": 0.674987016268265,
+        "charm": 0.6000581906277462,
+        "light": 0.5720838141969778,
+        "gluon": 0.7560348554137375,
+        "taup": 0.5337233109096227,
+        "taum": 0.5643996960486323,
+        "muon": 0.885837739496276,
+        "electron": 0.9005431262145598
+      },
+      "macro_auc_mean": 0.6803619718771472,
+      "macro_auc_std": 0.00597246567060528,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.6830423124719607,
+          "acc": 0.39759036144578314,
+          "per_flavor_auc": {
+            "b": 0.6725123871818987,
+            "charm": 0.5866327815120063,
+            "light": 0.5710265867155198,
+            "gluon": 0.7522775952234693,
+            "taup": 0.5125475285171103,
+            "taum": 0.5757978723404256,
+            "muon": 0.8948774802433338,
+            "electron": 0.8986662680419221
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.6859584686469771,
+          "acc": 0.40737951807228917,
+          "per_flavor_auc": {
+            "b": 0.674987016268265,
+            "charm": 0.6000581906277462,
+            "light": 0.5720838141969778,
+            "gluon": 0.7560348554137375,
+            "taup": 0.5337233109096227,
+            "taum": 0.5643996960486323,
+            "muon": 0.885837739496276,
+            "electron": 0.9005431262145598
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.672085134512504,
+          "acc": 0.3960843373493976,
+          "per_flavor_auc": {
+            "b": 0.6707830944794576,
+            "charm": 0.6081217490440112,
+            "light": 0.5415990767418025,
+            "gluon": 0.7512342729734035,
+            "taup": 0.4959344837671834,
+            "taum": 0.5842831813576495,
+            "muon": 0.8082703204654424,
+            "electron": 0.9164548972710815
+          }
+        }
+      ]
+    },
+    "0000__vertexdxy": {
+      "view": "0000",
+      "activeSP": "0000",
+      "groups": [
+        "baseline",
+        "vertexdxy_pv"
+      ],
+      "refit_config": null,
+      "charge_head": false,
+      "n_features": 22,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "vtxpv_dxy",
+        "vtxpv_dz"
+      ],
+      "n_train": 5315,
+      "n_test": 1328,
+      "n_files": 10,
+      "build_seconds": 3.7,
+      "seeds": [
+        1,
+        2,
+        3
+      ],
+      "best_macro_auc": 0.6937832293291101,
+      "best_seed": 1,
+      "best_acc": 0.411144578313253,
+      "best_per_flavor_auc": {
+        "b": 0.6748564771275773,
+        "charm": 0.589174168111536,
+        "light": 0.5712391082703167,
+        "gluon": 0.7530413981168198,
+        "taup": 0.5264112313541971,
+        "taum": 0.6448201621073961,
+        "muon": 0.8973221900051168,
+        "electron": 0.8934010995399206
+      },
+      "macro_auc_mean": 0.6860708231223761,
+      "macro_auc_std": 0.005616988897302969,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.6937832293291101,
+          "acc": 0.411144578313253,
+          "per_flavor_auc": {
+            "b": 0.6748564771275773,
+            "charm": 0.589174168111536,
+            "light": 0.5712391082703167,
+            "gluon": 0.7530413981168198,
+            "taup": 0.5264112313541971,
+            "taum": 0.6448201621073961,
+            "muon": 0.8973221900051168,
+            "electron": 0.8934010995399206
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.6805669127375461,
+          "acc": 0.3870481927710843,
+          "per_flavor_auc": {
+            "b": 0.6687113119885462,
+            "charm": 0.5773163432534498,
+            "light": 0.5449832807409738,
+            "gluon": 0.7573641974706747,
+            "taup": 0.5148873939748465,
+            "taum": 0.6176545086119554,
+            "muon": 0.8644038887941327,
+            "electron": 0.8992143770657897
+          }
+        },
+        {
+          "seed": 3,
+          "macro_auc": 0.6838623273004724,
+          "acc": 0.40286144578313254,
+          "per_flavor_auc": {
+            "b": 0.677099504512724,
+            "charm": 0.5941916252998599,
+            "light": 0.5538553831171801,
+            "gluon": 0.751819313487459,
+            "taup": 0.4713073998245101,
+            "taum": 0.6665400202634246,
+            "muon": 0.8436333314382094,
+            "electron": 0.9124520404604116
+          }
+        }
+      ]
+    },
+    "1111__both__chargehead": {
+      "view": "1111",
+      "activeSP": "1111",
+      "groups": [
+        "baseline",
+        "refitbdt",
+        "vertexdxy_pv"
+      ],
+      "refit_config": "AAAA",
+      "charge_head": true,
+      "n_features": 23,
+      "feature_names": [
+        "pt",
+        "pt_rel",
+        "pt_log",
+        "deta",
+        "dphi",
+        "mass",
+        "isPhoton",
+        "isElectronPlus",
+        "isElectronMinus",
+        "isMuonPlus",
+        "isMuonMinus",
+        "isNeutralHadron",
+        "isChargedHadronPlus",
+        "isChargedHadronMinus",
+        "z0",
+        "dxy",
+        "isfilled",
+        "puppiweight",
+        "emid",
+        "quality",
+        "refit_bdt_score",
+        "vtxpv_dxy",
+        "vtxpv_dz"
+      ],
+      "n_train": 5260,
+      "n_test": 1314,
+      "n_files": 10,
+      "build_seconds": 37.5,
+      "seeds": [
+        1,
+        2
+      ],
+      "best_macro_auc": 0.721580400100736,
+      "best_seed": 1,
+      "best_acc": 0.4277016742770167,
+      "best_per_flavor_auc": {
+        "b": 0.6974648898460986,
+        "charm": 0.5524261317430198,
+        "light": 0.5770333953313411,
+        "gluon": 0.7396627516181516,
+        "taup": 0.6832484476383172,
+        "taum": 0.7499233128834355,
+        "muon": 0.8927764644076701,
+        "electron": 0.8801078073378542
+      },
+      "macro_auc_mean": 0.720586817599023,
+      "macro_auc_std": 0.0009935825017129973,
+      "per_seed": [
+        {
+          "seed": 1,
+          "macro_auc": 0.721580400100736,
+          "acc": 0.4277016742770167,
+          "per_flavor_auc": {
+            "b": 0.6974648898460986,
+            "charm": 0.5524261317430198,
+            "light": 0.5770333953313411,
+            "gluon": 0.7396627516181516,
+            "taup": 0.6832484476383172,
+            "taum": 0.7499233128834355,
+            "muon": 0.8927764644076701,
+            "electron": 0.8801078073378542
+          }
+        },
+        {
+          "seed": 2,
+          "macro_auc": 0.71959323509731,
+          "acc": 0.4200913242009132,
+          "per_flavor_auc": {
+            "b": 0.684844677764317,
+            "charm": 0.5701748441312009,
+            "light": 0.5752805584000334,
+            "gluon": 0.7455369417335976,
+            "taup": 0.6683876369217889,
+            "taum": 0.7313650306748467,
+            "muon": 0.8914630942999738,
+            "electron": 0.8896930968527212
+          }
+        }
+      ]
+    }
+  },
+  "meta": {
+    "note": "Stage-4 jet-tagger variant matrix. Low-stats (~1000 evt/view), single-coherent-view nanos. AUC=one-vs-rest on held-out test.",
+    "caveats": [
+      "Low stats (~1000 events/view): treat significance skeptically.",
+      "Single-coherent-view: downstream vertex->PF->PUPPI->jet from ONE track config.",
+      "hgcClusterIdx absent on L1ExtPuppiCand -> cluster feature group N/A (unified-nano follow-up).",
+      "L1ExtPuppiCand.l1TrackIdx all -1 -> constituent->track link recovered via row-aligned L1PuppiCand."
+    ]
+  }
+}

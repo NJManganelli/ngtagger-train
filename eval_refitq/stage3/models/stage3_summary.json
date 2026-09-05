@@ -1,0 +1,134 @@
+{
+  "n_files": 10,
+  "spec_version": 1,
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ],
+  "test_fraction": 0.25,
+  "results": {
+    "AIII": {
+      "activeSP": "1000",
+      "best_val_auc": 0.9711635565764075,
+      "best_seed": 0,
+      "n_refit_tracks": 150060,
+      "n_pos": 145918,
+      "n_neg": 4142
+    },
+    "AAII": {
+      "activeSP": "1100",
+      "best_val_auc": 0.9706462782385544,
+      "best_seed": 2,
+      "n_refit_tracks": 167230,
+      "n_pos": 162032,
+      "n_neg": 5198
+    },
+    "AAAI": {
+      "activeSP": "1110",
+      "best_val_auc": 0.9747737103449705,
+      "best_seed": 4,
+      "n_refit_tracks": 168159,
+      "n_pos": 162778,
+      "n_neg": 5381
+    },
+    "AAAA": {
+      "activeSP": "1111",
+      "best_val_auc": 0.9704881902879263,
+      "best_seed": 2,
+      "n_refit_tracks": 168248,
+      "n_pos": 162824,
+      "n_neg": 5424
+    },
+    "IAII": {
+      "activeSP": "0100",
+      "best_val_auc": 0.9768061727176836,
+      "best_seed": 0,
+      "n_refit_tracks": 132544,
+      "n_pos": 128923,
+      "n_neg": 3621
+    },
+    "AAIA": {
+      "activeSP": "1101",
+      "best_val_auc": 0.9714744860875452,
+      "best_seed": 4,
+      "n_refit_tracks": 167798,
+      "n_pos": 162485,
+      "n_neg": 5313
+    },
+    "AIAA": {
+      "activeSP": "1011",
+      "best_val_auc": 0.9706691303410032,
+      "best_seed": 1,
+      "n_refit_tracks": 161145,
+      "n_pos": 156200,
+      "n_neg": 4945
+    },
+    "AIAI": {
+      "activeSP": "1010",
+      "best_val_auc": 0.9697870789375062,
+      "best_seed": 0,
+      "n_refit_tracks": 160671,
+      "n_pos": 155839,
+      "n_neg": 4832
+    },
+    "AIIA": {
+      "activeSP": "1001",
+      "best_val_auc": 0.97026923492305,
+      "best_seed": 3,
+      "n_refit_tracks": 157859,
+      "n_pos": 153261,
+      "n_neg": 4598
+    },
+    "IAAA": {
+      "activeSP": "0111",
+      "best_val_auc": 0.9753412796404622,
+      "best_seed": 4,
+      "n_refit_tracks": 138443,
+      "n_pos": 134169,
+      "n_neg": 4274
+    },
+    "IAAI": {
+      "activeSP": "0110",
+      "best_val_auc": 0.9761137394818789,
+      "best_seed": 4,
+      "n_refit_tracks": 138055,
+      "n_pos": 133907,
+      "n_neg": 4148
+    },
+    "IAIA": {
+      "activeSP": "0101",
+      "best_val_auc": 0.9762348346213806,
+      "best_seed": 3,
+      "n_refit_tracks": 136455,
+      "n_pos": 132484,
+      "n_neg": 3971
+    },
+    "IIAA": {
+      "activeSP": "0011",
+      "best_val_auc": 0.9766015586321066,
+      "best_seed": 0,
+      "n_refit_tracks": 103383,
+      "n_pos": 100493,
+      "n_neg": 2890
+    },
+    "IIAI": {
+      "activeSP": "0010",
+      "best_val_auc": 0.9757591584364653,
+      "best_seed": 1,
+      "n_refit_tracks": 99787,
+      "n_pos": 97255,
+      "n_neg": 2532
+    },
+    "IIIA": {
+      "activeSP": "0001",
+      "best_val_auc": 0.9730863437477314,
+      "best_seed": 0,
+      "n_refit_tracks": 79592,
+      "n_pos": 77888,
+      "n_neg": 1704
+    }
+  }
+}

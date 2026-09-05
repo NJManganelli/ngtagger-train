@@ -90,8 +90,8 @@ def load(paths):
              "spixChi2ITAtSeed", "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio",
              "spixRefitPerformed", "spixMatchedTpIdx"]
     ccols = ["layer", "detId", "localX", "localY", "sigX", "sigY", "charge",
-             "sizeX", "sizeY", "truthTpIdx"]
-    copt = ["size", "recoCotAlpha", "recoCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta"]
+             "sizeX", "sizeY", "tpIdx"]
+    copt = ["size", "localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta"]
 
     miss = [c for c in vcols if f"{VAR}_{c}" not in keys]
     if miss:
@@ -230,17 +230,17 @@ def main():
     if "size" in K:
         cols["size"] = K["size"][ci]
         cols["chargeDensity"] = K["charge"][ci] / np.maximum(K["size"][ci], 1)
-    if "recoCotAlpha" in K:
+    if "localCotAlpha" in K:
         sa = np.maximum(K["sigAlpha"][ci], 1e-9); sb = np.maximum(K["sigBeta"][ci], 1e-9)
-        cols["dcotA_sig"] = np.where(K["hasAlpha"][ci] > 0, (K["recoCotAlpha"][ci] - pa) / sa, 0.)
-        cols["dcotB_sig"] = np.where(K["hasBeta"][ci] > 0, (K["recoCotBeta"][ci] - pb) / sb, 0.)
+        cols["dcotA_sig"] = np.where(K["hasAlpha"][ci] > 0, (K["localCotAlpha"][ci] - pa) / sa, 0.)
+        cols["dcotB_sig"] = np.where(K["hasBeta"][ci] > 0, (K["localCotBeta"][ci] - pb) / sb, 0.)
         cols["hasAlpha"] = K["hasAlpha"][ci].astype(float)
         cols["hasBeta"] = K["hasBeta"][ci].astype(float)
 
-    valid = (px > SENTINEL) & (K["truthTpIdx"][ci] >= -1)
+    valid = (px > SENTINEL) & (K["tpIdx"][ci] >= -1)
     tp_of_trk = T["spixMatchedTpIdx"]
-    yB = (K["truthTpIdx"][ci] >= 0) & (tp_of_trk[X["gtrk"][xi]] >= 0) \
-         & (K["truthTpIdx"][ci] == tp_of_trk[X["gtrk"][xi]])
+    yB = (K["tpIdx"][ci] >= 0) & (tp_of_trk[X["gtrk"][xi]] >= 0) \
+         & (K["tpIdx"][ci] == tp_of_trk[X["gtrk"][xi]])
     names = list(cols)
     FB = np.nan_to_num(np.column_stack([cols[c].astype(np.float64) for c in names]),
                        nan=0., posinf=1e12, neginf=-1e12)[valid]

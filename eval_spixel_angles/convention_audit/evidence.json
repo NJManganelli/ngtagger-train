@@ -1,0 +1,342 @@
+{
+ "leg1_analytic": {
+  "det_R": 1.0,
+  "pure_swap_max_abs_err": 0.0,
+  "counterfactual_no_zflip_gives_minus_cotB_err": 0.0,
+  "det_Rbad": -1.0,
+  "conclusion": "det=+1 proper rotation; cotAlpha_cms==+cotBeta_pix and cotBeta_cms==+cotAlpha_pix exactly (max err ~1e-16). A sign flip only arises from an IMPROPER map (e.g. z not negated, det=-1). Distinguishers: (i) swap vs no-swap -> which pix angle is WIDE; (ii) sign flip -> mirror-asymmetry of the bending-angle distribution."
+ },
+ "leg2a_ranges": {
+  "part93_cotAlpha_q01_q99": [
+   -8.581656734693684,
+   8.61845632205956
+  ],
+  "part93_cotBeta_q01_q99": [
+   -3.6187342277179897,
+   3.681037865027876
+  ],
+  "part93_n_x_q01_q99": [
+   -25.406723080000003,
+   25.295207080000026
+  ],
+  "part93_n_y_q01_q99": [
+   -4.44474916,
+   4.429673280000001
+  ],
+  "part93_n_z_range": [
+   -4.989438,
+   -0.011773
+  ],
+  "eval_cotAtrue_q01_q99": [
+   -0.9578343898057937,
+   0.9594977116584777
+  ],
+  "eval_cotBtrue_q01_q99": [
+   -0.9881763106584549,
+   0.6559963566064831
+  ],
+  "eval_cotAtrue_median": -0.0011637894785962999,
+  "eval_cotBtrue_median": -0.17614805698394775,
+  "note": "pixelav cotAlpha is the WIDE axis (q01..q99 +-8.6, flat grid), cotBeta narrower (+-3.7). n_z strictly negative. In eval dumps cotAtrue is symmetric (med~0), cotBtrue is ASYMMETRIC (med=-0.176) -> Lorentz-offset bending-plane candidate."
+ },
+ "leg2b_pitch": {
+  "x_midplane_span": [
+   -99.98959109548645,
+   99.99782760460613
+  ],
+  "y_midplane_span": [
+   -24.997447289831662,
+   24.99254133794848
+  ],
+  "y_local_span": [
+   -99.976402,
+   99.976402
+  ],
+  "note": "pix x-midplane spans +-100um (LONG direction), y-midplane +-25um (SHORT). The wide angle (pix cotAlpha=n_x/n_z) elongates clusters along the LONG pix-x direction, as in CMSSW local-y (global z). So x_pix<->y_cms, y_pix<->x_cms: consistent with SWAP."
+ },
+ "leg2c_response": {
+  "n_rows": 108222,
+  "cotAtrue_asym": {
+   "q01": -0.9578343898057937,
+   "q05": -0.8270608901977539,
+   "med": -0.0011637894785962999,
+   "q95": 0.8238816738128661,
+   "q99": 0.9594977116584777,
+   "mean": -0.00224671745672822,
+   "frac_neg": 0.5007577017611946
+  },
+  "cotBtrue_asym": {
+   "q01": -0.9881763106584549,
+   "q05": -0.8671059429645538,
+   "med": -0.17614805698394775,
+   "q95": 0.529049801826477,
+   "q99": 0.6559963566064831,
+   "mean": -0.17405244708061218,
+   "frac_neg": 0.6206686256029273
+  },
+  "sigma_ratio_med": 1.067115306854248,
+  "sigmaA_edges_vs_center": [
+   0.022559979232028127,
+   0.03177147498354316
+  ],
+  "sigmaB_edges_vs_center": [
+   0.022917404770851135,
+   0.02619979507289827
+  ]
+ },
+ "leg3_cmssw_ranges": {
+  "n_crossings": 140754,
+  "per_layer_trk": {
+   "1": {
+    "n": 48981,
+    "cotAlpha": {
+     "q01": -0.28692391514778137,
+     "med": 0.03596574813127518,
+     "q99": 0.47521760463714596,
+     "min": -0.31429824233055115,
+     "max": 0.5592050552368164,
+     "frac_neg": 0.4414773075274086
+    },
+    "cotBeta": {
+     "q01": -5.286805915832519,
+     "med": -0.005037358961999416,
+     "q99": 5.297940158843993,
+     "min": -6.006256103515625,
+     "max": 6.033697605133057,
+     "frac_neg": 0.5013985014597497
+    }
+   },
+   "2": {
+    "n": 39196,
+    "cotAlpha": {
+     "q01": -0.14116727858781813,
+     "med": 0.010249500162899494,
+     "q99": 0.3848672911524778,
+     "min": -0.15979017317295074,
+     "max": 0.45393136143684387,
+     "frac_neg": 0.4630064292274722
+    },
+    "cotBeta": {
+     "q01": -3.5645676374435427,
+     "med": -0.006850946228951216,
+     "q99": 3.606581294536591,
+     "min": -5.313229084014893,
+     "max": 5.29359245300293,
+     "frac_neg": 0.5018624349423411
+    }
+   },
+   "3": {
+    "n": 29237,
+    "cotAlpha": {
+     "q01": -0.17509764015674592,
+     "med": 0.013786240480840206,
+     "q99": 0.2637592768669128,
+     "min": -0.1967461258172989,
+     "max": 0.33057159185409546,
+     "frac_neg": 0.4565105859014263
+    },
+    "cotBeta": {
+     "q01": -2.142102012634277,
+     "med": 0.006887893192470074,
+     "q99": 2.197518682479857,
+     "min": -3.170919418334961,
+     "max": 2.950732707977295,
+     "frac_neg": 0.497349249238978
+    }
+   },
+   "4": {
+    "n": 23340,
+    "cotAlpha": {
+     "q01": -0.1424338088929653,
+     "med": 0.008856032975018024,
+     "q99": 0.22905993387103082,
+     "min": -0.15841130912303925,
+     "max": 0.29937881231307983,
+     "frac_neg": 0.4616966580976864
+    },
+    "cotBeta": {
+     "q01": -1.5847044479846955,
+     "med": -0.004887202987447381,
+     "q99": 1.5770351994037632,
+     "min": -2.240196943283081,
+     "max": 2.1951184272766113,
+     "frac_neg": 0.5023136246786633
+    }
+   }
+  },
+  "parent_true": {
+   "n": 3075137,
+   "cotAlpha": {
+    "q01": -6.133434772491455,
+    "med": 0.016399729996919632,
+    "q99": 5.887666702270508,
+    "min": -834.6759643554688,
+    "max": 200558.375,
+    "frac_neg": 0.4704271712122094
+   },
+   "cotBeta": {
+    "q01": -8.992493629455566,
+    "med": 0.00020544137805700302,
+    "q99": 9.308789253234863,
+    "min": -883.19091796875,
+    "max": 48177.90234375,
+    "frac_neg": 0.4999582132438327
+   }
+  },
+  "b_localy": {
+   "min": -3.811415910720825,
+   "max": -3.810328483581543,
+   "mean": -3.8110804557800293,
+   "frac_neg": 1.0
+  },
+  "spec_doc_table_layer1": {
+   "cotAlpha": [
+    -0.27,
+    0.52
+   ],
+   "cotBeta": [
+    -5.0,
+    5.1
+   ]
+  }
+ },
+ "leg4_pulls": {
+  "n_hits": 66919,
+  "n_hasAlpha": 54437,
+  "n_hasBeta": 54376,
+  "pullAlpha_med_width": [
+   -0.11088155582547188,
+   3.478317813873291
+  ],
+  "pullBeta_med_width": [
+   -0.012697944417595863,
+   2.4806503915786746
+  ],
+  "pullBeta_width_vs_absCotBeta": {
+   "0-0.5": 2.578707885742187,
+   "0.5-1": 1.7979218745231629,
+   "1-2": 2.572382235527038,
+   "2-3": 2.7961257076263424,
+   "3-4": 3.420416774749756,
+   "4-6": 4.938765954971313
+  },
+  "sigAlpha_range_vs_parCotAlpha": [
+   0.015777587890625,
+   0.030406951904296875
+  ],
+  "sigAlpha_range_vs_parCotBeta": [
+   0.01470184326171875,
+   0.029445648193359375
+  ],
+  "sigBeta_range_vs_parCotAlpha": [
+   0.01851654052734375,
+   0.024471282958984375
+  ],
+  "sigBeta_range_vs_parCotBeta": [
+   0.01404571533203125,
+   0.027217864990234375
+  ],
+  "sigAlpha_med": 0.02252960205078125,
+  "sigBeta_med": 0.022800445556640625,
+  "caveat": "measured angles synthesized with payload sigma -> pull width ~1 by construction; keying (variation axis) is the discriminating observable."
+ },
+ "leg5a_lorentz_sign": {
+  "n_crossings_used": 126399,
+  "cms_xextent_dip_cotAlpha": {
+   "fit": -0.18541925992071823,
+   "argmin_bin": -0.13749999999999996
+  },
+  "cms_yextent_dip_cotBeta": {
+   "fit": -0.010798728362310897,
+   "argmin_bin": -0.09999999999999964
+  },
+  "pixelav_proxy_sigmacotB_peak": -0.15,
+  "prediction": {
+   "pure_swap": "cms alpha dip at ~-0.15 (same sign as pixelav cotB proxy)",
+   "mirrored": "cms alpha dip at ~+0.15"
+  }
+ },
+ "leg5b_counterfactual": {
+  "n_eval": 140754,
+  "summary": {
+   "spx_angle_alpha_sigma": {
+    "impl_med": 0.019524,
+    "cf_med": 0.025835,
+    "med_abs_log_ratio": 0.2902228672460598,
+    "frac_diff_gt20pct": 0.6441024766614093
+   },
+   "spx_angle_alpha_bias": {
+    "impl_med": -0.001216,
+    "cf_med": -0.000188,
+    "med_abs_diff": 0.007660000000000001,
+    "max_abs_diff": 0.019573
+   },
+   "spx_angle_beta_sigma": {
+    "impl_med": 0.022799,
+    "cf_med": 0.025089,
+    "med_abs_log_ratio": 0.23947509711393042,
+    "frac_diff_gt20pct": 0.6885275018827174
+   },
+   "spx_angle_beta_bias": {
+    "impl_med": -0.000188,
+    "cf_med": 0.002426,
+    "med_abs_diff": 0.006763999999999999,
+    "max_abs_diff": 0.029459000000000003
+   }
+  },
+  "clamp_fractions": {
+   "alpha_outside_payload_domain": 0.0,
+   "beta_outside_payload_domain": 2.8418375321482872e-05,
+   "beta_outside_source_coverage": 0.443561106611535,
+   "alpha_outside_source_coverage_impl": 0.0
+  },
+  "counterfactual_payload": "/Users/nmangane/smartpixels/ngtagger-train/eval_spixel_angles/convention_audit/scratch/counterfactual_noswap_Conv1D_Full-2bit.json"
+ },
+ "leg6_identity": {
+  "token": "x_cms=-y_pix",
+  "cset_description_has_token": true,
+  "corr_description_has_token": {
+   "spx_angle_alpha_sigma": true,
+   "spx_angle_alpha_bias": true,
+   "spx_angle_beta_sigma": true,
+   "spx_angle_beta_bias": true,
+   "spx_angle_valid_prob": true
+  },
+  "var_description_has_token": {
+   "spx_angle_alpha_sigma": {
+    "cotAlpha": true,
+    "cotBeta": true
+   },
+   "spx_angle_alpha_bias": {
+    "cotAlpha": true,
+    "cotBeta": true
+   },
+   "spx_angle_beta_sigma": {
+    "cotAlpha": true,
+    "cotBeta": true
+   },
+   "spx_angle_beta_bias": {
+    "cotAlpha": true,
+    "cotBeta": true
+   },
+   "spx_angle_valid_prob": {
+    "cotAlpha": true,
+    "cotBeta": true
+   }
+  },
+  "all_descriptions_ok": true,
+  "numeric_identical_to_eval_json": true,
+  "first_diffs": []
+ },
+ "leg1b_residual_sign": {
+  "max_err_true_minus_pred": [
+   0.0,
+   0.0
+  ],
+  "max_err_pred_minus_true": [
+   2.669304370880127,
+   2.959498643875122
+  ],
+  "conclusion": "residual columns are exactly (true - pred); extractor's negation to spec (pred-true) is required and correct"
+ }
+}

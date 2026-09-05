@@ -1,0 +1,46 @@
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[1111] dataset built in 3s n_train=5260 n_test=1314
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1784755722.009195 6436059 pluggable_device_factory.cc:305] Could not identify NUMA node of platform GPU ID 0, defaulting to 0. Your kernel may not have been built with NUMA support.
+I0000 00:00:1784755722.009284 6436059 pluggable_device_factory.cc:271] Created TensorFlow device (/job:localhost/replica:0/task:0/device:GPU:0 with 0 MB memory) -> physical PluggableDevice (device: 0, name: METAL, pci bus id: <undefined>)
+[saved] 1111__f1of16__s1: macro=0.5596 n_train=329
+[saved] 1111__f1of16__s2: macro=0.5865 n_train=329
+WARNING:tensorflow:5 out of the last 5 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x342cafb00> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+WARNING:tensorflow:6 out of the last 6 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x342cafb00> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+[saved] 1111__f1of16__s3: macro=0.5801 n_train=329
+[saved] 1111__f1of8__s1: macro=0.6932 n_train=657
+[saved] 1111__f1of8__s2: macro=0.6119 n_train=657
+[saved] 1111__f1of8__s3: macro=0.6746 n_train=657
+[saved] 1111__f1of4__s1: macro=0.7016 n_train=1316
+[saved] 1111__f1of4__s2: macro=0.7024 n_train=1316
+[saved] 1111__f1of4__s3: macro=0.7029 n_train=1316
+[saved] 1111__f1of2__s1: macro=0.7067 n_train=2630
+[saved] 1111__f1of2__s2: macro=0.7252 n_train=2630
+[saved] 1111__f1of2__s3: macro=0.7188 n_train=2630
+[saved] 1111__f1of1__s1: macro=0.7296 n_train=5260
+[saved] 1111__f1of1__s2: macro=0.7216 n_train=5260
+[saved] 1111__f1of1__s3: macro=0.7123 n_train=5260
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[0000] dataset built in 3s n_train=5315 n_test=1328
+[saved] 0000__f1of16__s1: macro=0.5066 n_train=334
+[saved] 0000__f1of16__s2: macro=0.5049 n_train=334
+[saved] 0000__f1of16__s3: macro=0.6206 n_train=334
+[saved] 0000__f1of8__s1: macro=0.6838 n_train=664
+[saved] 0000__f1of8__s2: macro=0.5270 n_train=664
+[saved] 0000__f1of8__s3: macro=0.6629 n_train=664
+[saved] 0000__f1of4__s1: macro=0.6748 n_train=1328
+[saved] 0000__f1of4__s2: macro=0.6908 n_train=1328
+[saved] 0000__f1of4__s3: macro=0.6413 n_train=1328
+[saved] 0000__f1of2__s1: macro=0.6835 n_train=2658
+[saved] 0000__f1of2__s2: macro=0.6952 n_train=2658
+[saved] 0000__f1of2__s3: macro=0.6960 n_train=2658
+[saved] 0000__f1of1__s1: macro=0.6830 n_train=5315
+[saved] 0000__f1of1__s2: macro=0.6860 n_train=5315
+[saved] 0000__f1of1__s3: macro=0.6721 n_train=5315
+[all done]

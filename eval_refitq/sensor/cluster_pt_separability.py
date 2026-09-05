@@ -11,11 +11,11 @@ refitted. Everything else is bandwidth spent on a hit no refit will ever use.
 
 WHY pT IS THE WRONG TARGET, AND WHAT WE USE INSTEAD. "high momentum" is a proxy
 for "traverses outward"; the thing we actually care about is the traversal. With
-truthTpIdx on every cluster we can measure the traversal directly: count the
+tpIdx on every cluster we can measure the traversal directly: count the
 distinct TBPX layers in which a given TrackingParticle deposits a cluster. So
 this script scores TWO targets and compares them:
 
-    TARGET_PT     truthPt > threshold                      (the usual proxy)
+    TARGET_PT     tpPt > threshold                      (the usual proxy)
     TARGET_TRAV   the TP deposits clusters in >= 3 IT layers  (what we mean)
 
 If they disagree substantially then pT-threshold thinking is mis-specifying the
@@ -72,7 +72,7 @@ def auc(score, label):
 def load(paths):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     cols = ["layer", "detId", "charge", "sizeX", "sizeY",
-            "truthPt", "truthCotAlpha", "truthCotBeta", "truthTpIdx", "truthChargeFrac"]
+            "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpIdx", "tpChargeFrac"]
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
     miss = [c for c in cols if f"{CLUSTER_TABLE}_{c}" not in keys]
@@ -94,12 +94,12 @@ def load(paths):
 def traversal_target(K):
     """Per cluster: how many distinct IT layers does its TP light up in this event?
 
-    Grouped on (event, truthTpIdx) so a TP is never mixed across events. Clusters
+    Grouped on (event, tpIdx) so a TP is never mixed across events. Clusters
     with no TP get 0 and are excluded from the traversal target entirely -- they
     cannot be scored against a property of a particle they have no link to.
     """
-    ok = K["truthTpIdx"] >= 0
-    key = np.where(ok, K["event"].astype(np.int64) * (1 << 20) + K["truthTpIdx"].astype(np.int64), -1)
+    ok = K["tpIdx"] >= 0
+    key = np.where(ok, K["event"].astype(np.int64) * (1 << 20) + K["tpIdx"].astype(np.int64), -1)
     nlay = np.zeros(len(key), dtype=np.int8)
     idx = np.flatnonzero(ok)
     order = np.lexsort((K["layer"][idx], key[idx]))
@@ -151,7 +151,7 @@ def main():
     trav = has_tp & (nlay >= MIN_TRAVERSED_LAYERS)
     agree = {}
     for thr in PT_THRESHOLDS:
-        hp = has_tp & (K["truthPt"] > thr)
+        hp = has_tp & (K["tpPt"] > thr)
         both = hp & trav
         agree[str(thr)] = {
             "frac_highpt": float(hp[has_tp].mean()),
@@ -169,7 +169,7 @@ def main():
 
     # ---- single-feature separability, per layer and per target ------------
     print("\n(2) single-feature AUC (sensor-observable features only)")
-    targets = {f"pt>{t}": (has_tp & (K['truthPt'] > t), has_tp) for t in PT_THRESHOLDS}
+    targets = {f"pt>{t}": (has_tp & (K['tpPt'] > t), has_tp) for t in PT_THRESHOLDS}
     targets[f"traverse>={MIN_TRAVERSED_LAYERS}L"] = (trav, has_tp)
     res = {}
     for tname, (lab, dom) in targets.items():
@@ -190,10 +190,10 @@ def main():
     print("\n(3) truth angles by class -- is 'grazing' really the confusable population?")
     ang = {}
     for tname, (lab, dom) in targets.items():
-        m = dom & (K["truthCotAlpha"] > SENTINEL)
+        m = dom & (K["tpLocalCotAlpha"] > SENTINEL)
         s, b = m & lab, m & ~lab
         rec = {}
-        for nm, arr in (("cotAlpha", np.abs(K["truthCotAlpha"])), ("cotBeta", np.abs(K["truthCotBeta"]))):
+        for nm, arr in (("cotAlpha", np.abs(K["tpLocalCotAlpha"])), ("cotBeta", np.abs(K["tpLocalCotBeta"]))):
             rec[nm] = {"signal_median": float(np.median(arr[s])) if s.any() else float("nan"),
                        "signal_p90": float(np.quantile(arr[s], 0.9)) if s.any() else float("nan"),
                        "bkg_median": float(np.median(arr[b])) if b.any() else float("nan"),
@@ -238,12 +238,12 @@ def main():
     print("\n(4b) ceiling: perfect angle vs raw shape, for pT selection")
     print("     alpha carries the BENDING, so its power must grow with radius")
     ceil = {}
-    dom = has_tp & (K["truthCotAlpha"] > SENTINEL)
+    dom = has_tp & (K["tpLocalCotAlpha"] > SENTINEL)
     for thr in PT_THRESHOLDS:
-        lab = dom & (K["truthPt"] > thr)
+        lab = dom & (K["tpPt"] > thr)
         rec = {}
-        for nm, sc in (("perfect_alpha", -np.abs(K["truthCotAlpha"])),
-                       ("perfect_beta", -np.abs(K["truthCotBeta"])),
+        for nm, sc in (("perfect_alpha", -np.abs(K["tpLocalCotAlpha"])),
+                       ("perfect_beta", -np.abs(K["tpLocalCotBeta"])),
                        ("raw_sizeX", -sx), ("raw_sizeY", -sy)):
             rec[nm] = {"auc_all": auc(sc[dom], lab[dom]),
                        "auc_per_layer": [auc(sc[dom & (K["layer"] == L)], lab[dom & (K["layer"] == L)])
@@ -258,7 +258,7 @@ def main():
 
     # ---- (5) how much could rule B possibly matter? ----------------------
     print("\n(5) charge-share near-ties: could the winner-takes-pixel rule flip the dominant TP?")
-    cf = K["truthChargeFrac"]
+    cf = K["tpChargeFrac"]
     m = cf > SENTINEL
     rec = {"n": int(m.sum())}
     for lo, hi, nm in ((0.0, 0.55, "<0.55 (near-tie, rule could flip)"),
@@ -300,8 +300,8 @@ def main():
     ax.set_title("(3) charge vs traversal"); ax.legend(fontsize=7); ax.grid(alpha=.3)
 
     ax = axes[1][1]
-    mm = dom & (K["truthCotBeta"] > SENTINEL)
-    ax.scatter(np.abs(K["truthCotBeta"][mm])[:20000], sy[mm][:20000], s=1, alpha=.05)
+    mm = dom & (K["tpLocalCotBeta"] > SENTINEL)
+    ax.scatter(np.abs(K["tpLocalCotBeta"][mm])[:20000], sy[mm][:20000], s=1, alpha=.05)
     ax.set_xlabel(r"$|\cot\beta|$ (truth)"); ax.set_ylabel("sizeY (pixels)")
     ax.set_xlim(0, 4); ax.set_ylim(0, 25)
     ax.set_title("(3) is sizeY an angle proxy?"); ax.grid(alpha=.3)

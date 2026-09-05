@@ -1,0 +1,6 @@
+/Users/nmangane/smartpixels/ngtagger-train/eval_spixel_angles/extract_pixelav_angle_payload.py:583: PydanticDeprecatedSince20: The `json` method is deprecated; use `model_dump_json` instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+  raw = cset.json(exclude_unset=True)  # schemav2 model -> json string
+[info] 1 file(s); variant=Conv2D_Max-2bit
+[info] mapping: spec_alpha<-cotBtrue/cotB; spec_beta<-cotAtrue
+[info] accumulated 108222 rows
+[ok] wrote eval_spixel_angles/spx_angle_response_Conv2D_Max-2bit.json

@@ -1,0 +1,83 @@
+==============================================================================
+STAGE-4 MATRIX: macro AUC (best-of-seed) [mean +/- std over seeds] | acc
+==============================================================================
+view                    baseline                 +refitBDT                   +vtxDxy                     +both
+1111  0.730 [0.721+/-0.007]|0.440.733 [0.717+/-0.014]|0.440.722 [0.713+/-0.007]|0.420.722 [0.709+/-0.014]|0.42
+1100  0.713 [0.712+/-0.002]|0.440.715 [0.715+/-0.000]|0.430.707 [0.706+/-0.001]|0.420.714 [0.707+/-0.006]|0.43
+0000  0.686 [0.680+/-0.006]|0.41                       N/A0.694 [0.686+/-0.006]|0.41                       N/A
+
+==============================================================================
+PER-FLAVOR AUC (best seed) — b / charm / light / gluon are the physics targets
+==============================================================================
+
+--- view 1111 (activeSP 1111) ---
+  featureset            b    charm    light    gluon     taup     taum     muon electron
+  baseline          0.706    0.569    0.590    0.748    0.706    0.727    0.911    0.879
+  +refitBDT         0.707    0.572    0.597    0.748    0.733    0.720    0.905    0.881
+  +vtxDxy           0.697    0.578    0.570    0.746    0.707    0.702    0.899    0.879
+  +both             0.695    0.576    0.574    0.746    0.673    0.720    0.913    0.876
+
+--- view 1100 (activeSP 1100) ---
+  featureset            b    charm    light    gluon     taup     taum     muon electron
+  baseline          0.711    0.571    0.594    0.776    0.711    0.540    0.915    0.886
+  +refitBDT         0.707    0.567    0.574    0.775    0.733    0.579    0.914    0.874
+  +vtxDxy           0.696    0.604    0.550    0.770    0.681    0.575    0.890    0.889
+  +both             0.706    0.594    0.585    0.778    0.692    0.563    0.908    0.887
+
+--- view 0000 (activeSP 0000) ---
+  featureset            b    charm    light    gluon     taup     taum     muon electron
+  baseline          0.675    0.600    0.572    0.756    0.534    0.564    0.886    0.901
+  +vtxDxy           0.675    0.589    0.571    0.753    0.526    0.645    0.897    0.893
+
+==============================================================================
+MARGINAL CONTRIBUTIONS (delta best macro AUC vs that view's baseline)
+==============================================================================
+
+view 1111: baseline macro AUC = 0.730
+   +refitBDT   : 0.733  (delta +0.0033)
+   +vtxDxy     : 0.722  (delta -0.0072)
+   +both       : 0.722  (delta -0.0079)
+      b-AUC +refitBDT : 0.707 (delta +0.0006) vs base b-AUC 0.706
+      b-AUC +vtxDxy   : 0.697 (delta -0.0092) vs base b-AUC 0.706
+      b-AUC +both     : 0.695 (delta -0.0115) vs base b-AUC 0.706
+
+view 1100: baseline macro AUC = 0.713
+   +refitBDT   : 0.715  (delta +0.0025)
+   +vtxDxy     : 0.707  (delta -0.0058)
+   +both       : 0.714  (delta +0.0012)
+      b-AUC +refitBDT : 0.707 (delta -0.0041) vs base b-AUC 0.711
+      b-AUC +vtxDxy   : 0.696 (delta -0.0151) vs base b-AUC 0.711
+      b-AUC +both     : 0.706 (delta -0.0050) vs base b-AUC 0.711
+
+view 0000: baseline macro AUC = 0.686
+   +vtxDxy     : 0.694  (delta +0.0078)
+      b-AUC +vtxDxy   : 0.675 (delta -0.0001) vs base b-AUC 0.675
+
+==============================================================================
+REFIT-VIEWS vs OT-ONLY BASELINE (does IT refit downstream help the tagger)
+==============================================================================
+0000 (OT-only) baseline macro AUC: 0.686
+  1111 baseline macro AUC: 0.730 (delta vs 0000 +0.0437)
+  1111 +both      macro AUC: 0.722 (delta vs 0000 baseline +0.0357)
+  1100 baseline macro AUC: 0.713 (delta vs 0000 +0.0268)
+  1100 +both      macro AUC: 0.714 (delta vs 0000 baseline +0.0280)
+
+==============================================================================
+FEATURE-SET RANKING (all cells by best macro AUC)
+==============================================================================
+  0.733  1111__refitbdt   (n_feat=21, n_test=1314)
+  0.730  1111__baseline   (n_feat=20, n_test=1314)
+  0.722  1111__vertexdxy   (n_feat=22, n_test=1314)
+  0.722  1111__both   (n_feat=23, n_test=1314)
+  0.722  1111__both__chargehead   (n_feat=23, n_test=1314)
+  0.715  1100__refitbdt   (n_feat=21, n_test=1320)
+  0.714  1100__both   (n_feat=23, n_test=1320)
+  0.713  1100__baseline   (n_feat=20, n_test=1320)
+  0.707  1100__vertexdxy   (n_feat=22, n_test=1320)
+  0.694  0000__vertexdxy   (n_feat=22, n_test=1328)
+  0.686  0000__baseline   (n_feat=20, n_test=1328)
+
+==============================================================================
+ARCH/HEAD RUN CONFIRMATION
+==============================================================================
+  charge-head model RAN: 1111__both__chargehead macro AUC 0.722 acc 0.43 (charge_head=True)

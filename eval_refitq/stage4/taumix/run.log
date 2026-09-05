@@ -1,0 +1,28 @@
+[load] 1111 groups=['baseline']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[inv] 1111: htt taus=96 (0.96/evt) verify={'n_dump': 1314, 'n_ours': 1314, 'pt_match': True, 'y_match': True}
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1784781023.418610 6694377 pluggable_device_factory.cc:305] Could not identify NUMA node of platform GPU ID 0, defaulting to 0. Your kernel may not have been built with NUMA support.
+I0000 00:00:1784781023.418937 6694377 pluggable_device_factory.cc:271] Created TensorFlow device (/job:localhost/replica:0/task:0/device:GPU:0 with 0 MB memory) -> physical PluggableDevice (device: 0, name: METAL, pci bus id: <undefined>)
+WARNING:tensorflow:5 out of the last 5 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x3360027a0> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+WARNING:tensorflow:6 out of the last 6 calls to <function TensorFlowTrainer.make_predict_function.<locals>.one_step_on_data_distributed at 0x3360027a0> triggered tf.function retracing. Tracing is expensive and the excessive number of tracings could be due to (1) creating @tf.function repeatedly in a loop, (2) passing tensors with different shapes, (3) passing Python objects instead of tensors. For (1), please define your @tf.function outside of the loop. For (2), @tf.function has reduce_retracing=True option that can avoid unnecessary retracing. For (3), please refer to https://www.tensorflow.org/guide/function#controlling_retracing and https://www.tensorflow.org/api_docs/python/tf/function for  more details.
+[saved] 1111__baseline_taumix: mixed macro=0.7189±0.0061
+[saved] 1111__baseline_ttonly_ctrl: mixed macro=0.7170±0.0075
+[load] 1111 groups=['baseline', 'refitbdt']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[saved] 1111__refitbdt_taumix: mixed macro=0.7159±0.0131
+[load] 0000 groups=['baseline']
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: divide by zero encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/lib/python3.12/site-packages/awkward/_nplikes/array_module.py:300: RuntimeWarning: invalid value encountered in divide
+  return impl(*broadcasted_args, **(kwargs or {}))
+[inv] 0000: htt taus=95 (0.95/evt) verify={'n_dump': 1328, 'n_ours': 1328, 'pt_match': True, 'y_match': True}
+[saved] 0000__baseline_taumix: mixed macro=0.7172±0.0058
+[saved] 0000__baseline_ttonly_ctrl: mixed macro=0.7085±0.0087
+[taumix] done
