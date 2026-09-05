@@ -1,0 +1,108 @@
+{
+  "config": "AAAA",
+  "n_events": 25,
+  "A_trust_gate": {
+    "n_tracks": 3880,
+    "clean_fraction": 0.7639175257731958,
+    "auc": 0.9772723924355733,
+    "features": [
+      "spixNCrossings",
+      "spixNAcceptedHits",
+      "spixLayerHitMask",
+      "spixMaxWindowMult",
+      "spixAnyWindowTruncated",
+      "spixNKFUpdates",
+      "spixChi2IncXTot",
+      "spixChi2IncYTot",
+      "spixChi2IncAlphaTot",
+      "spixChi2IncBetaTot",
+      "spixChi2ITAtSeed",
+      "spixChi2ITAtRefit",
+      "spixShiftChi2",
+      "spixLogDetRatio",
+      "chi2ITSeedMinusRefit"
+    ],
+    "working_points": [
+      {
+        "keep_clean": 0.95,
+        "cut": 0.6927371054887774,
+        "kept_frac_of_all": 0.7561855670103093,
+        "purity": 0.9594410361281527
+      },
+      {
+        "keep_clean": 0.9,
+        "cut": 0.9130349695682526,
+        "kept_frac_of_all": 0.7010309278350515,
+        "purity": 0.9805147058823529
+      },
+      {
+        "keep_clean": 0.8,
+        "cut": 0.9843260526657105,
+        "kept_frac_of_all": 0.6164948453608248,
+        "purity": 0.9912207357859532
+      },
+      {
+        "keep_clean": 0.6,
+        "cut": 0.996768569946289,
+        "kept_frac_of_all": 0.4605670103092783,
+        "purity": 0.9949636261891438
+      }
+    ]
+  },
+  "B_cluster_compatibility": {
+    "n_pairs": 456845,
+    "positive_fraction": 0.024367126705994373,
+    "auc": 0.9996298458248971,
+    "features": [
+      "dx_sig",
+      "dy_sig",
+      "sigX",
+      "sigY",
+      "charge",
+      "sizeX",
+      "sizeY",
+      "layer",
+      "is_first",
+      "windowMult",
+      "projSeedSigX",
+      "projSeedSigY",
+      "size",
+      "chargeDensity",
+      "dcotA_sig",
+      "dcotB_sig",
+      "hasAlpha",
+      "hasBeta"
+    ],
+    "first-visited (vs SEED track)": {
+      "auc": 0.9996055283527675,
+      "n": 103122,
+      "pos_frac": 0.03632590523845542
+    },
+    "later (vs UPDATED track)": {
+      "auc": 0.9996272028172175,
+      "n": 353723,
+      "pos_frac": 0.020880745668220613
+    },
+    "layer1_auc": 0.9996967269952655,
+    "layer2_auc": 0.9994586279312307,
+    "layer3_auc": 0.9995473731840915,
+    "layer4_auc": 0.9997606947656649,
+    "mva_as_selector_purity": 0.9922946814508551,
+    "auc_no_angle_features": 0.9895599327024005,
+    "leakage_note": "every angle feature is a truth proxy TODAY: noise clusters carry no angle (hasAlpha 99.5% TP-linked vs 0.0% unlinked) and dcot*_sig is zero-filled when absent. auc with angles is an upper bound; auc_no_angle_features is the floor with no angle information at all. The achievable value lies between, and is only measurable once smarthit_noise_* is re-derived and noise clusters get an angle.",
+    "importance": {
+      "hasBeta": 0.3524310290813446,
+      "dcotB_sig": 0.20629458129405975,
+      "dx_sig": 0.16858313977718353,
+      "hasAlpha": 0.08561934530735016,
+      "is_first": 0.06808007508516312,
+      "dcotA_sig": 0.03949978947639465,
+      "dy_sig": 0.019391972571611404,
+      "sizeY": 0.008922170847654343,
+      "windowMult": 0.0077881887555122375,
+      "layer": 0.007177738007158041,
+      "size": 0.007023664191365242,
+      "projSeedSigY": 0.006411459296941757
+    }
+  }
+}

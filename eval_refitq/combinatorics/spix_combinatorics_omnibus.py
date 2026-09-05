@@ -64,6 +64,7 @@ def _discover(path):
     need_hit = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
                 "projSeedLocalX", "projSeedLocalY", "projSeedSigX", "projSeedSigY",
                 "projSeedCotAlpha", "projSeedCotBeta", "projLocalX", "projLocalY",
+                "projCotAlpha", "projCotBeta",
                 "recoLocalX", "recoLocalY", "selClusterIdx"]
     miss_h = [c for c in need_hit if f"{hit}_{c}" not in keys]
     miss_c = ([CLUSTER_TABLE] if not any(k.startswith(CLUSTER_TABLE + "_") for k in keys)
@@ -86,6 +87,10 @@ def load(paths):
     hit, cfg, need_hit = _discover(files[0])
     ccols = ["layer", "detId", "localX", "localY", "charge", "truthPt",
              "truthCotAlpha", "truthCotBeta", "sizeX", "sizeY", "truthTpIdx"]
+    # sensor angle + CPE sigma, present once the cluster table reads SmartPixelsRecHit
+    optional = {"recoCotAlpha": "clRecoCotAlpha", "recoCotBeta": "clRecoCotBeta",
+                "sigAlpha": "clSigAlpha", "sigBeta": "clSigBeta",
+                "sigX": "sigX", "sigY": "sigY"}
     rcols = ["pt", "eta"]
 
     H = uproot.concatenate([f"{f}:Events" for f in files],
@@ -118,6 +123,14 @@ def load(paths):
     ncl = ak.to_numpy(ak.num(C[f"{CLUSTER_TABLE}_layer"]))
     ev_c = np.repeat(np.arange(len(ncl)), ncl)
     K = {c: ak.to_numpy(ak.flatten(C[f"{CLUSTER_TABLE}_{c}"])) for c in ccols}
+    with uproot.open(f"{files[0]}:Events") as t:
+        avail = set(t.keys())
+    got = [c for c in optional if f"{CLUSTER_TABLE}_{c}" in avail]
+    if got:
+        O = uproot.concatenate([f"{f}:Events" for f in files],
+                               filter_name=[f"{CLUSTER_TABLE}_{c}" for c in got])
+        for c in got:
+            K[optional[c]] = ak.to_numpy(ak.flatten(O[f"{CLUSTER_TABLE}_{c}"]))
     K["event"] = ev_c
     K["_evt_base"] = np.concatenate([[0], np.cumsum(ncl)])
 
@@ -403,12 +416,181 @@ def study_true_containment(X, K, P, ax_row, out):
     out["true_containment"] = res
 
 
+def study_chi2_weight_scan(X, K, P, ax_row, out):
+    """(6) WHICH selection chi2 picks the cleanest hits?
+
+    The refit currently selects the candidate minimising
+
+        sel = (dx/sigx)^2 + (dy/sigy)^2 + [alpha] (dcotA/sigA)^2 + [beta] (dcotB/sigB)^2
+
+    i.e. all four terms at unit weight. That is a choice, not a derivation: the
+    angle terms come from a sensor estimator whose resolution is not commensurate
+    with the CPE position resolution, and the r-phi and r-z terms are not equally
+    informative either. This scans the weights and asks which combination picks
+    the TRUTH-CORRECT cluster most often.
+
+    THE FIGURE OF MERIT is per-crossing hit-selection purity: of the crossings
+    where the correct cluster is present in the window at all, how often does the
+    weighted metric rank it first. That is the quantity the refit's parameter
+    resolution is downstream of -- measured earlier, one wrong hit annihilates the
+    refit gain, and the whole outsideIn win came from selection rather than from
+    fitting.
+
+    Scans, as requested:
+      * coarse over (w_rphi, w_rz) applied to the POSITION terms, from the
+        physics-informed default (1, 1);
+      * 1D over w_alpha alone (bending angle only, the beta term off);
+      * 2D over (w_alpha, w_beta).
+
+    The angle terms use the SENSOR estimate and its sigma, not truth, so the rule
+    itself is deployable -- unlike anything scanned on truth angles.
+
+    *** RESULTS ARE CURRENTLY CONFOUNDED. DO NOT TUNE ON THEM. ***
+    SmartPixelsRecHitProducer deliberately gives NO angle to clusters with no
+    simlink, pending re-derivation of the smarthit_noise_* payload (which is an
+    inverse CDF of the old, broken production-momentum angle). Measured
+    consequence: clusters WITH a TrackingParticle have hasAlpha 99.5%, clusters
+    WITHOUT one have hasAlpha 0.0%. So "reports an angle" is a perfect proxy for
+    "is a real cluster", and a large angle weight is partly buying that proxy
+    rather than any angle information -- which is why the optimum runs to the top
+    of any grid. The scan becomes meaningful once noise clusters carry a
+    (re-derived) angle; until then treat the optimum as an upper bound polluted by
+    truth leakage, and the LIMITS block below as the honest comparison.
+    """
+    xi, ci = P["xi"], P["ci"]
+    need = ("clRecoCotAlpha", "clRecoCotBeta", "clSigAlpha", "clSigBeta")
+    if not all(k in K for k in need):
+        print("   (6) SKIPPED: cluster table lacks the sensor angle columns "
+              "(recoCotAlpha/recoCotBeta/sigAlpha/sigBeta)")
+        out["chi2_weight_scan"] = {"skipped": "cluster table has no sensor angle columns"}
+        for a in ax_row:
+            a.axis("off")
+        return
+
+    # per-pair residuals against the RUNNING projection (what the refit compares to)
+    dx = (K["localX"][ci] - X["projLocalX"][xi]) / np.maximum(K["sigX"][ci], 1e-6)
+    dy = (K["localY"][ci] - X["projLocalY"][xi]) / np.maximum(K["sigY"][ci], 1e-6)
+    okA = (K["clRecoCotAlpha"][ci] > SENTINEL) & (K["clSigAlpha"][ci] > 0) \
+          & (X["projCotAlpha"][xi] > SENTINEL)
+    okB = (K["clRecoCotBeta"][ci] > SENTINEL) & (K["clSigBeta"][ci] > 0) \
+          & (X["projCotBeta"][xi] > SENTINEL)
+    # A cluster whose sensor reports NO angle must be neither rewarded nor punished
+    # for it. Filling its normalized residual with 0 (the naive choice) makes it
+    # cost-free, so any large angle weight simply selects angle-less clusters -- an
+    # artefact that made angle-only selection look catastrophic (0.064) and made
+    # huge weights look beneficial. The unbiased fill is the EXPECTATION of a
+    # normalized residual squared, i.e. 1, so a missing term contributes its mean
+    # and the comparison stays fair across candidates with different term counts.
+    NEUTRAL = 1.0
+    da2 = np.where(okA, ((K["clRecoCotAlpha"][ci] - X["projCotAlpha"][xi])
+                         / np.maximum(K["clSigAlpha"][ci], 1e-9)) ** 2, NEUTRAL)
+    db2 = np.where(okB, ((K["clRecoCotBeta"][ci] - X["projCotBeta"][xi])
+                         / np.maximum(K["clSigBeta"][ci], 1e-9)) ** 2, NEUTRAL)
+
+    # the correct cluster for each crossing, from the TP join (window-independent)
+    have = (X["trk_tpIdx"][xi] >= 0) & (K["truthTpIdx"][ci] >= 0)
+    is_true = have & (K["truthTpIdx"][ci] == X["trk_tpIdx"][xi])
+    ncross = len(X["layer"])
+    has_true = np.zeros(ncross, dtype=bool)
+    has_true[xi[is_true]] = True
+    inwin = P["good"]
+
+    def purity(wrphi, wrz, wa, wb):
+        """Fraction of crossings whose lowest-cost candidate is the correct one."""
+        cost = wrphi * dx * dx + wrz * dy * dy + wa * da2 + wb * db2
+        cost = np.where(inwin, cost, np.inf)
+        best = np.full(ncross, np.inf)
+        np.minimum.at(best, xi, cost)
+        picked_true = np.zeros(ncross, dtype=bool)
+        sel = np.isfinite(cost) & (cost <= best[xi]) & is_true
+        picked_true[xi[sel]] = True
+        d = has_true & np.isfinite(best)
+        return float(picked_true[d].mean()) if d.any() else float("nan"), int(d.sum())
+
+    # SCALE INVARIANCE: argmin of the cost is unchanged by a global rescaling, so
+    # only RATIOS matter. w_rphi is therefore pinned to 1 and everything else is
+    # measured relative to it -- otherwise "down-weight position" and "up-weight
+    # angles" are the same move explored twice, and both scans run into a boundary
+    # that means nothing.
+    res = {"note": "w_rphi pinned to 1; the cost is scale-invariant so only ratios matter"}
+    base, n_den = purity(1, 1, 1, 1)
+    res["baseline_all_unit_weights"] = {"purity": base, "n_crossings": n_den}
+    print(f"   (6) baseline (1,1,1,1): purity {base:.4f} over {n_den} crossings")
+
+    # coarse scan of r-z relative to r-phi, at unit angle weights
+    grid = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0]
+    pos = {str(wz): purity(1.0, wz, 1, 1)[0] for wz in grid}
+    bestpos = max(pos, key=pos.get)
+    res["rz_over_rphi_scan"] = pos
+    res["rz_best"] = {"w_rz": float(bestpos), "purity": pos[bestpos]}
+    print(f"       r-z / r-phi best w_rz={bestpos} -> {pos[bestpos]:.4f}")
+    wr0, wz0 = 1.0, float(bestpos)
+
+    # 1D: bending angle only
+    wgrid = [0.0, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0, 1024.0]
+    a1 = {str(w): purity(wr0, wz0, w, 0.0)[0] for w in wgrid}
+    res["alpha_only_scan"] = a1
+    besta = max(a1, key=a1.get)
+    print(f"       1D alpha-only best w_alpha={besta} -> {a1[besta]:.4f}")
+
+    # 2D: both angles
+    a2 = {}
+    for wa in wgrid:
+        for wb in wgrid:
+            a2[f"{wa}_{wb}"] = purity(wr0, wz0, wa, wb)[0]
+    res["alpha_beta_scan"] = a2
+    best2 = max(a2, key=a2.get)
+    res["best_overall"] = {"w_rphi": wr0, "w_rz": wz0,
+                           "w_alpha": float(best2.split("_")[0]),
+                           "w_beta": float(best2.split("_")[1]),
+                           "purity": a2[best2]}
+    print(f"       2D best (w_alpha,w_beta)={best2} -> {a2[best2]:.4f}   "
+          f"(baseline {base:.4f}, gain {a2[best2]-base:+.4f})")
+    # The optimum runs to the top of any angle grid, which means the scan is really
+    # saying "position contributes little". Test the LIMITS explicitly rather than
+    # reporting a boundary value as if it were an optimum.
+    lim = {"position_only_(1,wz,0,0)": purity(1.0, wz0, 0.0, 0.0)[0],
+           "angle_only_(0,0,1,1)": purity(0.0, 0.0, 1.0, 1.0)[0],
+           "alpha_only_(0,0,1,0)": purity(0.0, 0.0, 1.0, 0.0)[0],
+           "beta_only_(0,0,0,1)": purity(0.0, 0.0, 0.0, 1.0)[0],
+           "baseline_(1,1,1,1)": base}
+    res["limits"] = lim
+    print("       *** CONFOUNDED: noise clusters currently carry NO angle, and")
+    print("           hasAlpha is 99.5% for TP-linked vs 0.0% for unlinked clusters,")
+    print("           so angle weight partly buys that proxy. Do not tune on this yet.")
+    print("       LIMITS:")
+    for k, v in sorted(lim.items(), key=lambda kv: -kv[1]):
+        print(f"         {k:<28} {v:.4f}")
+    res["CONFOUNDED"] = ("noise clusters carry no angle pending re-derivation of "
+                         "smarthit_noise_*; hasAlpha is 99.5%/0.0% for TP-linked/unlinked, "
+                         "so angle weight partly buys a truth proxy")
+    out["chi2_weight_scan"] = res
+
+    ax = ax_row[0]
+    ax.plot(grid, [pos[str(w)] for w in grid], marker="o", label=r"scan $w_{rz}$ ($w_{r\phi}\equiv1$)")
+    ax.plot(wgrid, [a1[str(w)] for w in wgrid], marker="s",
+            label=r"scan $w_\alpha$ ($w_\beta=0$)")
+    ax.axhline(base, color="grey", ls=":", label="baseline (1,1,1,1)")
+    ax.set_xscale("symlog", linthresh=0.1); ax.set_xlabel("weight")
+    ax.set_ylabel("hit-selection purity")
+    ax.set_title("(6) 1D weight scans"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+
+    ax = ax_row[1]
+    M2 = np.array([[a2[f"{wa}_{wb}"] for wb in wgrid] for wa in wgrid])
+    im2 = ax.imshow(M2, origin="lower", aspect="auto", cmap="viridis")
+    ax.set_xticks(range(len(wgrid))); ax.set_xticklabels(wgrid, rotation=45, fontsize=7)
+    ax.set_yticks(range(len(wgrid))); ax.set_yticklabels(wgrid, fontsize=7)
+    ax.set_xlabel(r"$w_\beta$"); ax.set_ylabel(r"$w_\alpha$")
+    ax.set_title("(6) angle-weight scan (1D = bottom row)"); plt.colorbar(im2, ax=ax)
+
+
 STUDIES = [
     ("cone occupancy", study_cone_occupancy, 3),
     ("cone containment + size", study_cone_containment, 2),
     ("angle discrimination", study_angle_discrimination, 2),
     ("charge readout gate", study_charge_gate, 2),
     ("unbiased containment", study_true_containment, 2),
+    ("chi2 weight scan", study_chi2_weight_scan, 2),
 ]
 
 
