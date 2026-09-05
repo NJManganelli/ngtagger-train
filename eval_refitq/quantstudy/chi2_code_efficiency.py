@@ -55,9 +55,9 @@ def main():
 
     flat, sums, _ = load(args.files)
     ident = validate_identity(flat, sums)
-    m = flat["var_spxRefitPerformed"] > 0
+    m = flat["var_spixRefitPerformed"] > 0
     d = {k: sums[k][m] for k in DIMS}
-    nacc = np.maximum(flat["var_spxNAcceptedHits"][m].astype(float), 1.0)
+    nacc = np.maximum(flat["var_spixNAcceptedHits"][m].astype(float), 1.0)
 
     res = {"files": args.files, "identity": ident, "n_tracks": int(m.sum()),
            "dynamic_range": {}, "codes": [], "reduced": {}}

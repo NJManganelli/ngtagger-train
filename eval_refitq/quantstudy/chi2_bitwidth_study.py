@@ -64,9 +64,9 @@ _PULL_OF = {"X": "pullX", "Y": "pullY", "Alpha": "pullAlpha", "Beta": "pullBeta"
 
 REF_COLS = ["hwChi2RPhi", "hwChi2RZ", "hwBendChi2", "hwTanl", "hwZ0",
             "nStubs", "trkMVA1", "genuine"]
-VAR_COLS = ["spxRefitPerformed", "spxLayerHitMask", "spxMaxWindowMult",
-            "spxNCrossings", "spxNAcceptedHits", "spxAnyWindowTruncated",
-            "spxChi2IncRPhiTot", "spxChi2IncRZTot"]
+VAR_COLS = ["spixRefitPerformed", "spixLayerHitMask", "spixMaxWindowMult",
+            "spixNCrossings", "spixNAcceptedHits", "spixAnyWindowTruncated",
+            "spixChi2IncRPhiTot", "spixChi2IncRZTot"]
 HIT_COLS = ["trackIdx", "pullX", "pullY", "pullAlpha", "pullBeta",
             "selHitClass", "hitAccepted"]
 
@@ -111,7 +111,7 @@ def load(files):
     hits = _load_table(files, HIT, HIT_COLS)
 
     n_ref = ak.num(ref["genuine"])
-    n_var = ak.num(var["spxRefitPerformed"])
+    n_var = ak.num(var["spixRefitPerformed"])
     if not ak.all(n_ref == n_var):
         sys.exit("reference and variant track tables are not 1:1 per event")
 
@@ -150,12 +150,12 @@ def load(files):
 
 
 def validate_identity(flat, sums) -> dict:
-    """chi2IncXTot + chi2IncAlphaTot must equal the v2.5 joint spxChi2IncRPhiTot."""
+    """chi2IncXTot + chi2IncAlphaTot must equal the v2.5 joint spixChi2IncRPhiTot."""
     out = {}
     for joint, (a, b) in (("RPhi", ("X", "Alpha")), ("RZ", ("Y", "Beta"))):
-        stored = flat[f"var_spxChi2Inc{joint}Tot"].astype(np.float64)
+        stored = flat[f"var_spixChi2Inc{joint}Tot"].astype(np.float64)
         recon = sums[a] + sums[b]
-        m = (flat["var_spxRefitPerformed"] > 0) & (stored > SENTINEL) & (stored > 0)
+        m = (flat["var_spixRefitPerformed"] > 0) & (stored > SENTINEL) & (stored > 0)
         rel = np.abs(recon[m] - stored[m]) / np.maximum(stored[m], 1e-12)
         out[joint] = {
             "n": int(m.sum()),
@@ -252,10 +252,10 @@ def build_base(flat) -> tuple[np.ndarray, list[str]]:
         "orig_nStubs": flat["ref_nStubs"],
         "orig_hwTanl": flat["ref_hwTanl"],
         "orig_hwZ0": flat["ref_hwZ0"],
-        "spxLayerHitMask": flat["var_spxLayerHitMask"],
-        "spxNAcceptedHits": flat["var_spxNAcceptedHits"],
-        "spxAnyWindowTruncated": flat["var_spxAnyWindowTruncated"],
-        "occ3": occ_bits(flat["var_spxMaxWindowMult"]),
+        "spixLayerHitMask": flat["var_spixLayerHitMask"],
+        "spixNAcceptedHits": flat["var_spixNAcceptedHits"],
+        "spixAnyWindowTruncated": flat["var_spixAnyWindowTruncated"],
+        "occ3": occ_bits(flat["var_spixMaxWindowMult"]),
     }
     names = list(cols)
     return np.column_stack([np.asarray(cols[n], float) for n in names]), names
@@ -292,7 +292,7 @@ def main():
               f"p99={v['p99_rel_dev']:.3e}  max={v['max_rel_dev']:.3e}")
 
     # refit tracks only (passthrough tracks are never scored)
-    m = flat["var_spxRefitPerformed"] > 0
+    m = flat["var_spixRefitPerformed"] > 0
     if args.label == "genuine":
         y = (flat["ref_genuine"][m] > 0).astype(np.int32)
     else:

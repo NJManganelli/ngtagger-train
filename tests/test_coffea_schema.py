@@ -130,8 +130,8 @@ def _write_smartpixels(tmp_path, name):
     })
     tree["L1TSmartPixelsTrackDigiRefitAAAA"] = ak.zip({
         "pt": [[10.1, 5.2, 8.05]] * 2, "hwTanl": [[100, 200, 300]] * 2,
-        "spxRefitPerformed": [[True, False, True]] * 2,
-        "spxNKFUpdates": [[2, 0, 3]] * 2,
+        "spixRefitPerformed": [[True, False, True]] * 2,
+        "spixNKFUpdates": [[2, 0, 3]] * 2,
     })
     tree["L1TSmartPixelsRefitHitDigiRefitAAAA"] = ak.zip({
         "trackIdx": [[0, 0, 2]] * 2, "layer": [[1, 2, 1]] * 2,
@@ -151,7 +151,7 @@ def test_smartpixels_track_and_hit_crossref(tmp_path):
     trk = events.L1TSmartPixelsTrackDigiRefitAAAA
     # track-word hw decode reused from L1TrackWord mixin
     assert hasattr(trk, "tanlFromHw")
-    assert ak.all(trk.spxRefitPerformed[0] == [True, False, True])
+    assert ak.all(trk.spixRefitPerformed[0] == [True, False, True])
 
     # per-hit link table resolves trackIdx crossref back to the variant track
     hit = events.L1TSmartPixelsRefitHitDigiRefitAAAA

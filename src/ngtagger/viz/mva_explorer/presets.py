@@ -19,7 +19,7 @@ DIGIREFIT_JSONS = {
     "smarthit_true": os.path.join(SMARTPIXELS, "cmssw/work/spxsmoke/smarthit_true_v4fixed.json"),
     "smarthit_fake": os.path.join(SMARTPIXELS, "cmssw/work/spxsmoke/smarthit_fake_v4fixed.json"),
     "spx_angle": os.path.join(
-        SMARTPIXELS, "cmssw/work/spxsmoke/spx_angle_response_Conv1D_Full-2bit_v4fixed.json"),
+        SMARTPIXELS, "cmssw/work/spxsmoke/spix_angle_response_Conv1D_Full-2bit_v4fixed.json"),
 }
 
 # pretty axis labels for the known preset inputs (transform-aware: the payloads

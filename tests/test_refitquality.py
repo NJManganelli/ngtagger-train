@@ -39,12 +39,12 @@ def _synth(n_events=60, tracks_per_event=30, seed=0):
             # cleaner refit for genuine tracks
             kick = (0.002 if g else 0.05)
             var_rows.append({
-                "spxRefitPerformed": True, "spxSeedCovOK": True,
-                "spxNCrossings": 2, "spxNAcceptedHits": 2,
-                "spxLayerHitMask": 3, "spxMaxWindowMult": int(rng.integers(2, 6)),
-                "spxAnyWindowTruncated": (not g), "spxNKFUpdates": 2,
-                "spxChi2IncRPhiTot": float(rng.random() * (5 if g else 500)),
-                "spxChi2IncRZTot": float(rng.random() * (5 if g else 500)),
+                "spixRefitPerformed": True, "spixSeedCovOK": True,
+                "spixNCrossings": 2, "spixNAcceptedHits": 2,
+                "spixLayerHitMask": 3, "spixMaxWindowMult": int(rng.integers(2, 6)),
+                "spixAnyWindowTruncated": (not g), "spixNKFUpdates": 2,
+                "spixChi2IncRPhiTot": float(rng.random() * (5 if g else 500)),
+                "spixChi2IncRZTot": float(rng.random() * (5 if g else 500)),
                 "rInv": 0.01 + rng.normal(0, kick), "phi": 0.1 + rng.normal(0, kick),
                 "tanL": 0.5 + rng.normal(0, kick), "z0": 1.0 + rng.normal(0, kick),
                 "d0": rng.normal(0, kick),

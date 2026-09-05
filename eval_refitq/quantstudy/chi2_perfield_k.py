@@ -53,7 +53,7 @@ def main():
     args = ap.parse_args()
 
     flat, sums, _ = load(args.files)
-    m = flat["var_spxRefitPerformed"] > 0
+    m = flat["var_spixRefitPerformed"] > 0
     d = {k: sums[k][m] for k in DIMS}
     fl = {k: v[m] for k, v in flat.items()}
     y = ((fl["n_wrong_hits"] + fl["n_noise_hits"] == 0)

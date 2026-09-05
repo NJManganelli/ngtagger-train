@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Payload-level validation of the HashPRNG-factorized angle-synthesis compounds.
 
-For each smear compound (spx_angle_{alpha,beta}_smear = sigma * HashPRNG-stdnormal):
+For each smear compound (spix_angle_{alpha,beta}_smear = sigma * HashPRNG-stdnormal):
 the entropy IS the input tuple, so the throw distribution is sampled by evaluating at
 many float-distinct cotAlpha values WITHIN one (layer, cotAlpha-bin, cotBeta-bin) cell
 (sigma is constant per cell). Checks per sampled cell:
@@ -51,7 +51,7 @@ def main():
     raw = json.load(open(args.payload))
     alpha_edges = None
     for c in raw["corrections"]:
-        if c["name"] == "spx_angle_alpha_sigma":
+        if c["name"] == "spix_angle_alpha_sigma":
             alpha_edges = c["data"]["content"][0]["value"]["edges"][0]
     assert alpha_edges, "cannot find alpha edges"
 
@@ -59,9 +59,9 @@ def main():
     ok = True
 
     for x in ("alpha", "beta"):
-        comp = cset.compound[f"spx_angle_{x}_smear"]
-        sig_c = cset[f"spx_angle_{x}_sigma"]
-        bias_c = cset[f"spx_angle_{x}_bias"]
+        comp = cset.compound[f"spix_angle_{x}_smear"]
+        sig_c = cset[f"spix_angle_{x}_sigma"]
+        bias_c = cset[f"spix_angle_{x}_bias"]
         # several cells: 2 layers x 3 alpha bins x 2 cotBeta probes
         for layer in (1, 3):
             for ibin in (1, len(alpha_edges) // 2, len(alpha_edges) - 3):
@@ -86,15 +86,15 @@ def main():
                                                  f"mean={mean:.5f} std/sig={std/sig:.4f} ks_p={ks.pvalue:.2e}")
                     results["cells"].append(cell)
 
-    # fused shift compound: spx_angle_X_shift(inputs, 1.0) == bias(inputs) + smear(inputs)
+    # fused shift compound: spix_angle_X_shift(inputs, 1.0) == bias(inputs) + smear(inputs)
     rng_grid = [(l, float(a), float(cb), BLOCALY)
                 for l in (1, 2, 3, 4)
                 for a in np.linspace(-0.55, 0.55, 23)
                 for cb in (-2.0, -0.15, 0.6, 3.0)]
     for x in ("alpha", "beta"):
-        fused = np.array([cset.compound[f"spx_angle_{x}_shift"].evaluate(*pr, 1.0) for pr in rng_grid])
-        two = np.array([cset[f"spx_angle_{x}_bias"].evaluate(*pr)
-                        + cset.compound[f"spx_angle_{x}_smear"].evaluate(*pr) for pr in rng_grid])
+        fused = np.array([cset.compound[f"spix_angle_{x}_shift"].evaluate(*pr, 1.0) for pr in rng_grid])
+        two = np.array([cset[f"spix_angle_{x}_bias"].evaluate(*pr)
+                        + cset.compound[f"spix_angle_{x}_smear"].evaluate(*pr) for pr in rng_grid])
         maxdiff = float(np.max(np.abs(fused - two)))
         results[f"fused_vs_twopiece_{x}"] = dict(n=len(rng_grid), max_abs_diff=maxdiff)
         if maxdiff > 1e-12:
@@ -103,8 +103,8 @@ def main():
 
     # alpha-beta throw INDEPENDENCE (distinct entropy permutations)
     alphas = np.linspace(-0.05, 0.05, 2000)
-    za = np.array([cset["spx_angle_prng"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
-    zb = np.array([cset["spx_angle_prng_beta"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
+    za = np.array([cset["spix_angle_prng"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
+    zb = np.array([cset["spix_angle_prng_beta"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
     rho_ab = float(stats.spearmanr(za, zb).statistic)
     results["alpha_beta_throw_independence"] = dict(spearman=rho_ab, n=len(alphas))
     if abs(rho_ab) > 0.1:
@@ -113,14 +113,14 @@ def main():
 
     # determinism: repeated evals + fresh load (two-piece AND fused)
     probe = (2, 0.123456789, -0.4, BLOCALY)
-    v1 = cset.compound["spx_angle_alpha_smear"].evaluate(*probe)
-    v2 = cset.compound["spx_angle_alpha_smear"].evaluate(*probe)
+    v1 = cset.compound["spix_angle_alpha_smear"].evaluate(*probe)
+    v2 = cset.compound["spix_angle_alpha_smear"].evaluate(*probe)
     cset2 = correctionlib.CorrectionSet.from_file(args.payload)
-    v3 = cset2.compound["spx_angle_alpha_smear"].evaluate(*probe)
-    p1 = cset["spx_angle_prng"].evaluate(*probe)
-    p2 = cset2["spx_angle_prng"].evaluate(*probe)
-    f1 = cset.compound["spx_angle_alpha_shift"].evaluate(*probe, 1.0)
-    f2 = cset2.compound["spx_angle_alpha_shift"].evaluate(*probe, 1.0)
+    v3 = cset2.compound["spix_angle_alpha_smear"].evaluate(*probe)
+    p1 = cset["spix_angle_prng"].evaluate(*probe)
+    p2 = cset2["spix_angle_prng"].evaluate(*probe)
+    f1 = cset.compound["spix_angle_alpha_shift"].evaluate(*probe, 1.0)
+    f2 = cset2.compound["spix_angle_alpha_shift"].evaluate(*probe, 1.0)
     results["determinism"] = dict(repeat_identical=(v1 == v2), fresh_load_identical=(v1 == v3),
                                   prng_identical=(p1 == p2), fused_identical=(f1 == f2), value=v1)
     if not (v1 == v2 == v3 and p1 == p2 and f1 == f2):
@@ -129,8 +129,8 @@ def main():
 
     # valid_flat gate: U(0,1) + decorrelated from the smear deviate
     alphas = np.linspace(-0.05, 0.05, 2000)
-    flat = np.array([cset["spx_angle_valid_flat"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
-    z = np.array([cset["spx_angle_prng"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
+    flat = np.array([cset["spix_angle_valid_flat"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
+    z = np.array([cset["spix_angle_prng"].evaluate(1, float(a), 0.6, BLOCALY) for a in alphas])
     ks_u = stats.kstest(flat, "uniform")
     rho = float(stats.spearmanr(flat, z).statistic)
     results["gate"] = dict(ks_uniform_pval=float(ks_u.pvalue), in_unit=bool(((flat >= 0) & (flat <= 1)).all()),

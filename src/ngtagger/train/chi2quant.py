@@ -59,7 +59,7 @@ import uproot
 FIELDS = ("X", "Y", "Alpha", "Beta")
 SENTINEL = -900.0
 _PULL_OF = {"X": "pullX", "Y": "pullY", "Alpha": "pullAlpha", "Beta": "pullBeta"}
-_TOT_OF = {f: f"spxChi2Inc{f}Tot" for f in FIELDS}
+_TOT_OF = {f: f"spixChi2Inc{f}Tot" for f in FIELDS}
 
 DEFAULT_BITS_GRID = (3, 4, 5, 6)
 DEFAULT_K_GRID = (0.4, 0.5, 0.6, 0.75, 0.9, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0)
@@ -192,7 +192,7 @@ def load_sample(files: list[str], tables: Tables, allow_pull_derived: bool = Fal
         return {c: arrs[f"{prefix}_{c}"] for c in cols}
 
     ref = cat(tables.reference, ["genuine"])
-    var = cat(tables.variant, ["spxRefitPerformed", "spxNAcceptedHits"]
+    var = cat(tables.variant, ["spixRefitPerformed", "spixNAcceptedHits"]
               + ([_TOT_OF[f] for f in FIELDS] if tables.has_split else []))
     counts = ak.to_numpy(ak.num(ref["genuine"]))
     offsets = np.concatenate([[0], np.cumsum(counts)])
@@ -203,7 +203,7 @@ def load_sample(files: list[str], tables: Tables, allow_pull_derived: bool = Fal
         if not (allow_pull_derived and tables.has_pulls):
             raise RuntimeError(
                 f"{files[0]}: table {tables.variant!r} has no 4-way split chi2 columns "
-                f"(spxChi2IncX/Y/Alpha/BetaTot). This is pre-v2.6 nano. Reproduce it with "
+                f"(spixChi2IncX/Y/Alpha/BetaTot). This is pre-v2.6 nano. Reproduce it with "
                 f"v2.6+ software, or pass --allow-pull-derived to reconstruct the totals "
                 f"from the per-hit pulls (exact: chi2Inc<D>Tot == sum(pull<D>^2)).")
         hit_cols += [_PULL_OF[f] for f in FIELDS]
@@ -233,7 +233,7 @@ def load_sample(files: list[str], tables: Tables, allow_pull_derived: bool = Fal
     np.add.at(n_bad, gidx[acc_ok & ((cls == 1) | (cls == 2))], 1.0)
     np.add.at(n_acc, gidx[acc_ok], 1.0)
 
-    keep = ak.to_numpy(ak.flatten(var["spxRefitPerformed"])) > 0
+    keep = ak.to_numpy(ak.flatten(var["spixRefitPerformed"])) > 0
     labels = {
         "genuine": (ak.to_numpy(ak.flatten(ref["genuine"]))[keep] > 0).astype(np.int32),
         "clean": ((n_bad[keep] == 0) & (n_acc[keep] > 0)).astype(np.int32),
@@ -433,14 +433,14 @@ def _base_features(files, tables, n_expect, max_events=None):
         return {c: ak.to_numpy(ak.flatten(arrs[f"{prefix}_{c}"])) for c in cols}
 
     ref = cat(tables.reference, ["hwChi2RPhi", "hwChi2RZ", "hwBendChi2", "nStubs"])
-    var = cat(tables.variant, ["spxRefitPerformed", "spxLayerHitMask",
-                               "spxNAcceptedHits", "spxMaxWindowMult",
-                               "spxAnyWindowTruncated"])
-    keep = var["spxRefitPerformed"] > 0
-    occ = np.clip(np.floor(np.log2(1.0 + np.maximum(var["spxMaxWindowMult"], 0))), 0, 7)
+    var = cat(tables.variant, ["spixRefitPerformed", "spixLayerHitMask",
+                               "spixNAcceptedHits", "spixMaxWindowMult",
+                               "spixAnyWindowTruncated"])
+    keep = var["spixRefitPerformed"] > 0
+    occ = np.clip(np.floor(np.log2(1.0 + np.maximum(var["spixMaxWindowMult"], 0))), 0, 7)
     cols = [ref["hwChi2RPhi"], ref["hwChi2RZ"], ref["hwBendChi2"], ref["nStubs"],
-            var["spxLayerHitMask"], var["spxNAcceptedHits"],
-            var["spxAnyWindowTruncated"], occ]
+            var["spixLayerHitMask"], var["spixNAcceptedHits"],
+            var["spixAnyWindowTruncated"], occ]
     X = np.column_stack([np.asarray(c, float)[keep] for c in cols])
     assert len(X) == n_expect, f"base/delta row mismatch: {len(X)} vs {n_expect}"
     return X

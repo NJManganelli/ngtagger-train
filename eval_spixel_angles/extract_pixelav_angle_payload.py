@@ -105,17 +105,17 @@ CMS_PIX_TRANSFORM = (
 # the producer implements exactly the PRIMARY form -- one evaluate per angle).
 CONSUMER_CONTRACT = (
     "CONSUMER CONTRACT (PRIMARY, fused): cot(X)_meas = cot(X)_true"
-    " + spx_angle_X_shift(layer,cotAlpha,cotBeta,bLocalY, prngAcc=1.0), X in {alpha,beta}"
+    " + spix_angle_X_shift(layer,cotAlpha,cotBeta,bLocalY, prngAcc=1.0), X in {alpha,beta}"
     " -- ONE CompoundCorrection evaluate per angle; the trailing prngAcc input MUST be "
     "passed as 1.0 (it is the compound's internal accumulator seed). "
     "EQUIVALENT two-piece form (kept for visualization + cross-validation): "
-    "cot(X)_meas = cot(X)_true + spx_angle_X_bias(layer,cotAlpha,cotBeta,bLocalY)"
-    " + spx_angle_X_smear(layer,cotAlpha,cotBeta,bLocalY), where spx_angle_X_smear is the "
-    "stack [spx_angle_X_sigma, spx_angle_prng(_beta)] with output_op '*' => sigma*N(0,1). "
+    "cot(X)_meas = cot(X)_true + spix_angle_X_bias(layer,cotAlpha,cotBeta,bLocalY)"
+    " + spix_angle_X_smear(layer,cotAlpha,cotBeta,bLocalY), where spix_angle_X_smear is the "
+    "stack [spix_angle_X_sigma, spix_angle_prng(_beta)] with output_op '*' => sigma*N(0,1). "
     "The fused and two-piece forms agree bit-for-bit by construction (same rounded bias "
     "decimal, same prng node). Both reproduce a throw ~ N(bias, sigma) per bin. "
     "Validity gate: accept the synthesized angle pair iff "
-    "spx_angle_valid_flat(inputs) < spx_angle_valid_prob(inputs)."
+    "spix_angle_valid_flat(inputs) < spix_angle_valid_prob(inputs)."
 )
 
 # Determinism + correlation semantics of the HashPRNG factorization (empirically probed
@@ -126,18 +126,18 @@ PRNG_SEMANTICS = (
     "bit-identical synthesis; float-distinct angles give independent throws). All four "
     "inputs including the int 'layer' are entropy (int entropy verified working in the "
     "correctionlib C++ evaluator). Alpha and beta throws are INDEPENDENT, matching the "
-    "legacy producer's two independent engine draws: spx_angle_prng (alpha) hashes "
-    "(layer,cotAlpha,cotBeta,bLocalY); spx_angle_prng_beta hashes the DISTINCT "
-    "permutation (cotBeta,bLocalY,layer,cotAlpha); spx_angle_valid_flat hashes the "
+    "legacy producer's two independent engine draws: spix_angle_prng (alpha) hashes "
+    "(layer,cotAlpha,cotBeta,bLocalY); spix_angle_prng_beta hashes the DISTINCT "
+    "permutation (cotBeta,bLocalY,layer,cotAlpha); spix_angle_valid_flat hashes the "
     "REVERSED order (bLocalY,cotBeta,cotAlpha,layer). Distinct entropy permutations "
     "give decorrelated hash streams (verified empirically)."
 )
 
 # Entropy permutations -- pairwise distinct, the decorrelation mechanism.
 PRNG_HASH_ORDERS = {
-    "spx_angle_prng": ["layer", "cotAlpha", "cotBeta", "bLocalY"],
-    "spx_angle_prng_beta": ["cotBeta", "bLocalY", "layer", "cotAlpha"],
-    "spx_angle_valid_flat": ["bLocalY", "cotBeta", "cotAlpha", "layer"],
+    "spix_angle_prng": ["layer", "cotAlpha", "cotBeta", "bLocalY"],
+    "spix_angle_prng_beta": ["cotBeta", "bLocalY", "layer", "cotAlpha"],
+    "spix_angle_valid_flat": ["bLocalY", "cotBeta", "cotAlpha", "layer"],
 }
 
 def ALPHA_BETA_MAPPING(cols_true, cols_pred, cols_resid):
@@ -468,7 +468,7 @@ def _shift_inputs():
 
 def _prng_name(x):
     """The stdnormal throw node for angle x (distinct entropy permutations => independent)."""
-    return "spx_angle_prng" if x == "alpha" else "spx_angle_prng_beta"
+    return "spix_angle_prng" if x == "alpha" else "spix_angle_prng_beta"
 
 
 def _prng_correction(name, dist):
@@ -478,10 +478,10 @@ def _prng_correction(name, dist):
     what = ("standard-normal deviate (stdnormal)" if dist == "stdnormal"
             else "U(0,1) gate variate (stdflat)")
     role = {
-        "spx_angle_prng": "the cotAlpha smear throw",
-        "spx_angle_prng_beta": "the cotBeta smear throw (independent of alpha)",
-        "spx_angle_valid_flat": ("the validity gate: accept iff "
-                                 "spx_angle_valid_flat(inputs) < spx_angle_valid_prob(inputs)"),
+        "spix_angle_prng": "the cotAlpha smear throw",
+        "spix_angle_prng_beta": "the cotBeta smear throw (independent of alpha)",
+        "spix_angle_valid_flat": ("the validity gate: accept iff "
+                                 "spix_angle_valid_flat(inputs) < spix_angle_valid_prob(inputs)"),
     }[name]
     return cs.Correction(
         name=name,
@@ -495,21 +495,21 @@ def _prng_correction(name, dist):
 
 
 def _final_correction(x, acc, na, nb, prov):
-    """spx_angle_{x}_final: terminal node of the fused shift compound. Same
+    """spix_angle_{x}_final: terminal node of the fused shift compound. Same
     (layer category; cotAlpha,cotBeta,bLocalY multibinning) structure as the bias
     table, but each cell is the Formula '<bias> + prngAcc' -> bias + sigma*N(0,1)
     when reached through the compound."""
     return cs.Correction(
-        name=f"spx_angle_{x}_final",
+        name=f"spix_angle_{x}_final",
         description=(f"Fused-shift terminal for cot{x.capitalize()}: per-bin Formula "
                      f"'<bias> + prngAcc' with the SAME rounded bias constants as "
-                     f"spx_angle_{x}_bias. Only meaningful inside spx_angle_{x}_shift "
+                     f"spix_angle_{x}_bias. Only meaningful inside spix_angle_{x}_shift "
                      f"(where prngAcc has been updated to sigma*N(0,1)); standalone "
                      f"evaluation returns bias + whatever prngAcc is passed. "
                      + CONSUMER_CONTRACT + " " + prov),
         version=0,
         inputs=_shift_inputs(),
-        output=cs.Variable(name=f"spx_angle_{x}_final", type="real"),
+        output=cs.Variable(name=f"spix_angle_{x}_final", type="real"),
         data=cs.Category(
             nodetype="category", input="layer",
             content=[cs.CategoryItem(key=l, value=_final_multibinning(acc, na, nb))
@@ -518,44 +518,44 @@ def _final_correction(x, acc, na, nb, prov):
 
 
 def _smear_compound(x, prov):
-    """spx_angle_{x}_smear = spx_angle_{x}_sigma * spx_angle_prng[_beta] (output_op '*').
+    """spix_angle_{x}_smear = spix_angle_{x}_sigma * spix_angle_prng[_beta] (output_op '*').
     The two-piece stochastic term -- kept for visualization + cross-validation."""
     return cs.CompoundCorrection(
-        name=f"spx_angle_{x}_smear",
+        name=f"spix_angle_{x}_smear",
         description=(f"Stochastic term for cot{x.capitalize()} synthesis: CompoundCorrection "
-                     f"stack [spx_angle_{x}_sigma, {_prng_name(x)}], output_op '*' => "
+                     f"stack [spix_angle_{x}_sigma, {_prng_name(x)}], output_op '*' => "
                      f"sigma(inputs) * N(0,1). " + CONSUMER_CONTRACT + " " + PRNG_SEMANTICS
                      + " " + prov),
         inputs=_prng_inputs(),
-        output=cs.Variable(name=f"spx_angle_{x}_smear", type="real",
+        output=cs.Variable(name=f"spix_angle_{x}_smear", type="real",
                            description=f"additive stochastic term for cot{x.capitalize()}_meas"),
         inputs_update=[],
         input_op="*",
         output_op="*",
-        stack=[f"spx_angle_{x}_sigma", _prng_name(x)],
+        stack=[f"spix_angle_{x}_sigma", _prng_name(x)],
     )
 
 
 def _shift_compound(x, prov):
-    """spx_angle_{x}_shift: the FUSED bias + sigma*N(0,1) in ONE compound evaluate.
+    """spix_angle_{x}_shift: the FUSED bias + sigma*N(0,1) in ONE compound evaluate.
     Mechanism: prngAcc starts at 1.0 (consumer-passed); inputs_update=['prngAcc'] with
     input_op '*' folds each stack output into it (1 -> sigma -> sigma*z); the terminal
-    spx_angle_{x}_final returns bias + prngAcc; output_op 'last' emits that."""
+    spix_angle_{x}_final returns bias + prngAcc; output_op 'last' emits that."""
     return cs.CompoundCorrection(
-        name=f"spx_angle_{x}_shift",
+        name=f"spix_angle_{x}_shift",
         description=(f"FUSED synthesis shift for cot{x.capitalize()}: stack "
-                     f"[spx_angle_{x}_sigma, {_prng_name(x)}, spx_angle_{x}_final], "
+                     f"[spix_angle_{x}_sigma, {_prng_name(x)}, spix_angle_{x}_final], "
                      f"inputs_update=['prngAcc'], input_op '*', output_op 'last' => "
                      f"bias(inputs) + sigma(inputs)*N(0,1) in one evaluate "
                      f"(pass prngAcc=1.0). " + CONSUMER_CONTRACT + " " + PRNG_SEMANTICS
                      + " " + prov),
         inputs=_shift_inputs(),
-        output=cs.Variable(name=f"spx_angle_{x}_shift", type="real",
+        output=cs.Variable(name=f"spix_angle_{x}_shift", type="real",
                            description=f"additive total shift for cot{x.capitalize()}_meas"),
         inputs_update=["prngAcc"],
         input_op="*",
         output_op="last",
-        stack=[f"spx_angle_{x}_sigma", _prng_name(x), f"spx_angle_{x}_final"],
+        stack=[f"spix_angle_{x}_sigma", _prng_name(x), f"spix_angle_{x}_final"],
     )
 
 
@@ -601,23 +601,23 @@ def build_payload(variant, files, acc_alpha, acc_beta, diag, upstream):
         f"NN self-reported sigma median: alpha={diag['nn_sigma_alpha_med']} beta={diag['nn_sigma_beta_med']}."
     )
     corrs = [
-        _correction("spx_angle_alpha_sigma", "sigma(cotAlpha_NN - cotAlpha_true), robust (q84-q16)/2. " + prov,
+        _correction("spix_angle_alpha_sigma", "sigma(cotAlpha_NN - cotAlpha_true), robust (q84-q16)/2. " + prov,
                     lambda: _multibinning(acc_alpha, "sigma", na, nb)),
-        _correction("spx_angle_alpha_bias", "median(cotAlpha_NN - cotAlpha_true). " + prov,
+        _correction("spix_angle_alpha_bias", "median(cotAlpha_NN - cotAlpha_true). " + prov,
                     lambda: _multibinning(acc_alpha, "bias", na, nb)),
-        _correction("spx_angle_beta_sigma",
+        _correction("spix_angle_beta_sigma",
                     ("sigma(cotBeta_NN - cotBeta_true), robust. " if beta_measurable
                      else "beta NOT measurable in this variant (no cotA prediction); inert positive sigma. ") + prov,
                     lambda: _multibinning(acc_beta, "sigma", na, nb)),
-        _correction("spx_angle_beta_bias",
+        _correction("spix_angle_beta_bias",
                     ("median(cotBeta_NN - cotBeta_true). " if beta_measurable
                      else "beta NOT measurable in this variant; zero bias. ") + prov,
                     lambda: _multibinning(acc_beta, "bias", na, nb)),
-        _correction("spx_angle_valid_prob", "P(NN emits usable angle). No validity flag -> 1.0 everywhere. " + prov,
+        _correction("spix_angle_valid_prob", "P(NN emits usable angle). No validity flag -> 1.0 everywhere. " + prov,
                     lambda: _prob_multibinning(na, nb)),
-        _prng_correction("spx_angle_prng", "stdnormal"),
-        _prng_correction("spx_angle_prng_beta", "stdnormal"),
-        _prng_correction("spx_angle_valid_flat", "stdflat"),
+        _prng_correction("spix_angle_prng", "stdnormal"),
+        _prng_correction("spix_angle_prng_beta", "stdnormal"),
+        _prng_correction("spix_angle_valid_flat", "stdflat"),
         _final_correction("alpha", acc_alpha, na, nb, prov),
         _final_correction("beta", acc_beta, na, nb, prov),
     ]
@@ -688,7 +688,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     ext = ".json.gz" if args.gzip else ".json"
-    out = os.path.join(args.out_dir, f"spx_angle_response_{args.model_variant}{ext}")
+    out = os.path.join(args.out_dir, f"spix_angle_response_{args.model_variant}{ext}")
     raw = cset.json(exclude_unset=True)  # schemav2 model -> json string
     opener = gzip.open if args.gzip else open
     with opener(out, "wt") as f:

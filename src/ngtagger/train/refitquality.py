@@ -14,10 +14,10 @@ Tier / config matrix (13 trainings):
           layer mask, window multiplicity/truncation, per-hit position pulls
           and residuals aggregated per track, and the refit-kick deltas
           variant-minus-reference on rInv/phi/tanl/z0/d0), plus the pure
-          position chi2 sums spxChi2IncX/YTot.
+          position chi2 sums spixChi2IncX/YTot.
   Tier C  (per config): B + bending-angle (alpha) features and
-          spxChi2IncAlphaTot.
-  Tier D  (per config): C + beta features and spxChi2IncBetaTot.
+          spixChi2IncAlphaTot.
+  Tier D  (per config): C + beta features and spixChi2IncBetaTot.
 
 Requires v2.6+ nano (4-way split chi2 columns). The joint x+alpha / y+beta
 chi2 combinations are not used as inputs anywhere: they mix a high-precision
@@ -124,7 +124,7 @@ _SENTINEL = -900.0  # values <= this are the -999 fill; test with (x > _SENTINEL
 # mix a position term the OT seed predicts to O(um) with an angle term measured
 # ~30-80x worse than it is predicted, so the sum dilutes any discriminant built
 # on it. v2.5 nano is rejected outright rather than up-converted.
-_CHI2_TOT_SPLIT = ["spxChi2IncXTot", "spxChi2IncYTot", "spxChi2IncAlphaTot", "spxChi2IncBetaTot"]
+_CHI2_TOT_SPLIT = ["spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot"]
 
 
 def _require_split_chi2(files: list[str], var_tbl: str) -> None:
@@ -134,12 +134,12 @@ def _require_split_chi2(files: list[str], var_tbl: str) -> None:
     missing = [c for c in _CHI2_TOT_SPLIT if f"{var_tbl}_{c}" not in keys]
     if not missing:
         return
-    if f"{var_tbl}_spxChi2IncRPhiTot" in keys:
+    if f"{var_tbl}_spixChi2IncRPhiTot" in keys:
         raise RuntimeError(
             f"{files[0]}: table {var_tbl!r} carries the pre-v2.6 unified chi2 columns "
-            f"(spxChi2IncRPhiTot/RZTot). The joint x+alpha / y+beta combinations are no "
+            f"(spixChi2IncRPhiTot/RZTot). The joint x+alpha / y+beta combinations are no "
             f"longer accepted as inputs - reproduce the nano with v2.6+ software, which "
-            f"writes spxChi2IncX/Y/Alpha/BetaTot.")
+            f"writes spixChi2IncX/Y/Alpha/BetaTot.")
     raise RuntimeError(
         f"{files[0]}: table {var_tbl!r} carries no recognizable refit chi2 columns "
         f"(missing {missing}).")
@@ -175,9 +175,9 @@ _REF_TRUTH = ["genuine", "looselyGenuine", "combinatoric", "unknown",
               "tpPt", "tpPdgId", "tpFromHardInteraction"]
 
 # per-track extension columns from the variant track table (tier B core)
-_VAR_EXT = ["spxRefitPerformed", "spxSeedCovOK", "spxNCrossings", "spxNAcceptedHits",
-            "spxLayerHitMask", "spxMaxWindowMult", "spxAnyWindowTruncated", "spxNKFUpdates",
-            "spxChi2IncXTot", "spxChi2IncYTot", "spxChi2IncAlphaTot", "spxChi2IncBetaTot"]
+_VAR_EXT = ["spixRefitPerformed", "spixSeedCovOK", "spixNCrossings", "spixNAcceptedHits",
+            "spixLayerHitMask", "spixMaxWindowMult", "spixAnyWindowTruncated", "spixNKFUpdates",
+            "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot"]
 # variant-table hw columns for the scenario-hw baseline (classic-7 minus nStubs,
 # which the scenario tables do not persist - it comes from the reference table
 # via the implicit index link). Loaded in simultaneous-storage mode only.
@@ -399,12 +399,12 @@ def build_refitq_dataset(ref, var, hits, tier: str, config: str, label: str = "g
 
     # per-track extension columns (tier B, sans chi2 totals)
     ext_cols = {
-        "spxNCrossings": var_flat["spxNCrossings"].astype(np.float32),
-        "spxNAcceptedHits": var_flat["spxNAcceptedHits"].astype(np.float32),
-        "spxLayerHitMask": var_flat["spxLayerHitMask"].astype(np.float32),
-        "spxMaxWindowMult": var_flat["spxMaxWindowMult"].astype(np.float32),
-        "spxAnyWindowTruncated": var_flat["spxAnyWindowTruncated"].astype(np.float32),
-        "spxNKFUpdates": var_flat["spxNKFUpdates"].astype(np.float32),
+        "spixNCrossings": var_flat["spixNCrossings"].astype(np.float32),
+        "spixNAcceptedHits": var_flat["spixNAcceptedHits"].astype(np.float32),
+        "spixLayerHitMask": var_flat["spixLayerHitMask"].astype(np.float32),
+        "spixMaxWindowMult": var_flat["spixMaxWindowMult"].astype(np.float32),
+        "spixAnyWindowTruncated": var_flat["spixAnyWindowTruncated"].astype(np.float32),
+        "spixNKFUpdates": var_flat["spixNKFUpdates"].astype(np.float32),
     }
     # refit kicks: variant-minus-reference on the shared helix parameters
     kicks = {
@@ -428,17 +428,17 @@ def build_refitq_dataset(ref, var, hits, tier: str, config: str, label: str = "g
         **ext_cols,
         **kicks,
         **b_hit,
-        "spxChi2IncXTot": _log1p_clip(var_flat["spxChi2IncXTot"]),
-        "spxChi2IncYTot": _log1p_clip(var_flat["spxChi2IncYTot"]),
+        "spixChi2IncXTot": _log1p_clip(var_flat["spixChi2IncXTot"]),
+        "spixChi2IncYTot": _log1p_clip(var_flat["spixChi2IncYTot"]),
     }
     c_block = {
-        "spxChi2IncAlphaTot": _log1p_clip(var_flat["spxChi2IncAlphaTot"]),
+        "spixChi2IncAlphaTot": _log1p_clip(var_flat["spixChi2IncAlphaTot"]),
         "hit_sumPullAlpha2": agg["hit_sumPullAlpha2"].astype(np.float32),
         "hit_nHasAlpha": agg["hit_nHasAlpha"].astype(np.float32),
         "hit_meanSigAlpha": agg["hit_meanSigAlpha"].astype(np.float32),
     }
     d_block = {
-        "spxChi2IncBetaTot": _log1p_clip(var_flat["spxChi2IncBetaTot"]),
+        "spixChi2IncBetaTot": _log1p_clip(var_flat["spixChi2IncBetaTot"]),
         "hit_sumPullBeta2": agg["hit_sumPullBeta2"].astype(np.float32),
         "hit_nHasBeta": agg["hit_nHasBeta"].astype(np.float32),
         "hit_meanSigBeta": agg["hit_meanSigBeta"].astype(np.float32),
@@ -733,7 +733,7 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
 
     Row order is the shared reference/variant per-event flatten order; the
     per-hit link table's trackIdx indexes into it (global-offset applied). When
-    refit_only=True, rows are restricted to spxRefitPerformed==1 tracks (the
+    refit_only=True, rows are restricted to spixRefitPerformed==1 tracks (the
     producer never scores passthrough tracks - their trkMVA1 passes through).
 
     seed_npar / track_npar: the producer seeds the KF d0 as
@@ -793,15 +793,15 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
         v = var_flat[name].astype(np.float64)
         return np.where(v > _SENTINEL, v, 0.0)
 
-    chi2rphi = _pos_or_0("spxChi2IncXTot") + _pos_or_0("spxChi2IncAlphaTot")
-    chi2rz = _pos_or_0("spxChi2IncYTot") + _pos_or_0("spxChi2IncBetaTot")
+    chi2rphi = _pos_or_0("spixChi2IncXTot") + _pos_or_0("spixChi2IncAlphaTot")
+    chi2rz = _pos_or_0("spixChi2IncYTot") + _pos_or_0("spixChi2IncBetaTot")
 
     cols = [
-        var_flat["spxNCrossings"].astype(np.float32),          # 0
-        var_flat["spxNAcceptedHits"].astype(np.float32),       # 1
-        var_flat["spxLayerHitMask"].astype(np.float32),        # 2
-        var_flat["spxMaxWindowMult"].astype(np.float32),       # 3
-        var_flat["spxAnyWindowTruncated"].astype(np.float32),  # 4
+        var_flat["spixNCrossings"].astype(np.float32),          # 0
+        var_flat["spixNAcceptedHits"].astype(np.float32),       # 1
+        var_flat["spixLayerHitMask"].astype(np.float32),        # 2
+        var_flat["spixMaxWindowMult"].astype(np.float32),       # 3
+        var_flat["spixAnyWindowTruncated"].astype(np.float32),  # 4
         sumPullX2.astype(np.float32),                          # 5
         sumPullY2.astype(np.float32),                          # 6
         sumPullAlpha2.astype(np.float32),                     # 7
@@ -842,7 +842,7 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
     elif spec_version != 0:
         raise ValueError(f"build_spec_dataset: spec_version must be 0 or 1, got {spec_version}")
 
-    refit_mask = (var_flat["spxRefitPerformed"].astype(np.int64) == 1)
+    refit_mask = (var_flat["spixRefitPerformed"].astype(np.int64) == 1)
     aux = {"refit_mask": refit_mask, "n_tracks": n_tracks,
            "tpFromHardInteraction": ref_flat["tpFromHardInteraction"],
            "genuine": ref_flat["genuine"].astype(np.int64),

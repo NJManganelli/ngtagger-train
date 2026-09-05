@@ -44,10 +44,10 @@ for p in sorted(prefixes):
         break
 
 print("\n== chi2 tail check (AAAA variant) ==")
-c = tree["L1TSmartPixelsTrackDigiRefitAAAA_spxChi2IncRPhiTot"].array(library="np")
+c = tree["L1TSmartPixelsTrackDigiRefitAAAA_spixChi2IncRPhiTot"].array(library="np")
 flat = np.concatenate(c) if c.dtype == object else np.asarray(c).ravel()
-flat = np.asarray(uproot.open(f"{NANO}:Events")["L1TSmartPixelsTrackDigiRefitAAAA_spxChi2IncRPhiTot"].array().to_numpy() if False else [])
+flat = np.asarray(uproot.open(f"{NANO}:Events")["L1TSmartPixelsTrackDigiRefitAAAA_spixChi2IncRPhiTot"].array().to_numpy() if False else [])
 import awkward as ak
-arr = ak.to_numpy(ak.flatten(tree["L1TSmartPixelsTrackDigiRefitAAAA_spxChi2IncRPhiTot"].array()))
+arr = ak.to_numpy(ak.flatten(tree["L1TSmartPixelsTrackDigiRefitAAAA_spixChi2IncRPhiTot"].array()))
 print(f"  chi2IncRPhiTot: max={arr.max():.3e}, n>2e6: {(arr > 2e6).sum()}, "
       f"q99={np.quantile(arr, 0.99):.3e}, q999={np.quantile(arr, 0.999):.3e}")

@@ -60,7 +60,7 @@ def main():
 
     ref_cols = [c for _, c, _, _, _ in PARAMS] + [t for _, _, t, _, _ in PARAMS] + \
                [args.label, "tpFromHardInteraction"]
-    var_cols = [c for _, c, _, _, _ in PARAMS] + ["spxRefitPerformed", "spxNAcceptedHits"]
+    var_cols = [c for _, c, _, _, _ in PARAMS] + ["spixRefitPerformed", "spixNAcceptedHits"]
     hit_cols = ["trackIdx", "selHitClass", "hitAccepted"]
 
     def cat(prefix, cols):
@@ -85,7 +85,7 @@ def main():
     np.add.at(n_wrong, g[acc & ((cls == 1) | (cls == 2))], 1.0)
 
     # refit tracks with a usable TP match
-    m = (V["spxRefitPerformed"] > 0) & (R[args.label] > 0) & (R["tp_pt"] > 0)
+    m = (V["spixRefitPerformed"] > 0) & (R[args.label] > 0) & (R["tp_pt"] > 0)
     print(f"refit tracks with {args.label} TP match: {int(m.sum())} of {n_tracks}")
     nw = n_wrong[m]
     pv = R["tpFromHardInteraction"][m] > 0

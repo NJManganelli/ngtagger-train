@@ -352,13 +352,13 @@ def _synth_refit_tables(n_events=8, tracks_per_event=12, seed=1):
                 "unknown": False, "tpPt": 10.0, "tpFromHardInteraction": g,
             })
             var_rows.append({
-                "spxRefitPerformed": bool(it % 4 != 3),  # some passthrough
-                "spxSeedCovOK": True, "spxNCrossings": 2,
-                "spxNAcceptedHits": 2, "spxLayerHitMask": 3,
-                "spxMaxWindowMult": 2, "spxAnyWindowTruncated": False,
-                "spxNKFUpdates": 2,
-                "spxChi2IncRPhiTot": float(rng.random() * 10),
-                "spxChi2IncRZTot": float(rng.random() * 10),
+                "spixRefitPerformed": bool(it % 4 != 3),  # some passthrough
+                "spixSeedCovOK": True, "spixNCrossings": 2,
+                "spixNAcceptedHits": 2, "spixLayerHitMask": 3,
+                "spixMaxWindowMult": 2, "spixAnyWindowTruncated": False,
+                "spixNKFUpdates": 2,
+                "spixChi2IncRPhiTot": float(rng.random() * 10),
+                "spixChi2IncRZTot": float(rng.random() * 10),
                 "rInv": 0.01, "phi": 0.1, "tanL": 0.5, "z0": 1.0, "d0": 0.0,
             })
             for lyr in (1, 2):
@@ -397,7 +397,7 @@ def test_tkq_rows_synthetic(tmp_path):
     rows = tkq_rows(ref, var, hits, "AAAA", cj)
     assert rows.shape[1] == len(COLUMNS)
     n_refit = int(np.sum(np.asarray(
-        [v for ev in var["spxRefitPerformed"].tolist() for v in ev])))
+        [v for ev in var["spixRefitPerformed"].tolist() for v in ev])))
     assert len(rows) == n_refit
     score = rows[:, COLUMNS.index("score")]
     assert np.all((score > 0) & (score < 1))

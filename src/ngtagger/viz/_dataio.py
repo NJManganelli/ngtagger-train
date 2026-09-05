@@ -71,10 +71,10 @@ _SIDE_COLS = ["trackIdx", "layer", "resX", "resY", "cotAlphaMeas", "cotBetaMeas"
               "chi2IncRPhi", "chi2IncRZ", "selChi2Margin", "selHitClass",
               "hitAccepted", "hasAlpha", "hasBeta", "windowMult", "windowTruncated"]
 _TRK_COLS = ["rInv", "phi", "tanL", "z0", "d0", "pt", "chi2XYRed", "chi2ZRed",
-             "spxNAcceptedHits", "spxLayerHitMask", "spxChi2IncRPhiTot",
-             "spxChi2IncRZTot", "spxRefitPerformed", "spxSeedCovOK",
-             "spxParametrizedSeed", "spxMaxWindowMult", "spxNCrossings",
-             "spxNKFUpdates"]
+             "spixNAcceptedHits", "spixLayerHitMask", "spixChi2IncRPhiTot",
+             "spixChi2IncRZTot", "spixRefitPerformed", "spixSeedCovOK",
+             "spixParametrizedSeed", "spixMaxWindowMult", "spixNCrossings",
+             "spixNKFUpdates"]
 _STUB_COLS = ["trackIdx", "layer", "isBarrel", "r", "x", "y", "z"]
 
 
@@ -176,13 +176,13 @@ def load_nano(nano_file, layer_radii=(3.0, 6.8, 10.9, 16.0), max_events=None):
                                d0=float(tv[v]["d0"][i]), pt=float(tv[v]["pt"][i]),
                                chi2XYRed=float(tv[v]["chi2XYRed"][i]),
                                chi2ZRed=float(tv[v]["chi2ZRed"][i]),
-                               nAcc=int(tv[v]["spxNAcceptedHits"][i]),
-                               nUpd=int(tv[v]["spxNKFUpdates"][i]),
-                               layerMask=int(tv[v]["spxLayerHitMask"][i]),
-                               chi2RPhiTot=float(tv[v]["spxChi2IncRPhiTot"][i]),
-                               chi2RZTot=float(tv[v]["spxChi2IncRZTot"][i]),
-                               refitPerformed=bool(tv[v]["spxRefitPerformed"][i]),
-                               maxWinMult=int(tv[v]["spxMaxWindowMult"][i]))
+                               nAcc=int(tv[v]["spixNAcceptedHits"][i]),
+                               nUpd=int(tv[v]["spixNKFUpdates"][i]),
+                               layerMask=int(tv[v]["spixLayerHitMask"][i]),
+                               chi2RPhiTot=float(tv[v]["spixChi2IncRPhiTot"][i]),
+                               chi2RZTot=float(tv[v]["spixChi2IncRZTot"][i]),
+                               refitPerformed=bool(tv[v]["spixRefitPerformed"][i]),
+                               maxWinMult=int(tv[v]["spixMaxWindowMult"][i]))
             data.tracks.append(TrackRecord(event=e, idx=i, seed=seed, truth=truth,
                                            hits=hits, stubs=stubs, real=real, genvtx=genvtx))
     return data

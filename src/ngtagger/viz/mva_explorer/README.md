@@ -72,7 +72,7 @@ stacks that include it — cannot be rendered as a static grid; they are skipped
 and listed in the meta/status line, while their physical sub-corrections are
 exported normally. **Exception — synthesis envelopes**: a compound of exactly
 the shape `[sigma-like correction, hashprng stdnormal]` with `output_op "*"`
-(the SmartPixels angle-smear factorization, e.g. `spx_angle_alpha_smear`)
+(the SmartPixels angle-smear factorization, e.g. `spix_angle_alpha_smear`)
 appears in the correction dropdown as `<name> [envelope]` and renders the
 **deterministic envelope**: the matching `*_bias` grid (0 when absent) as the
 central curve with bias ± 1σ and ± 2σ bands, labelled *"synthesis envelope,
