@@ -64,11 +64,11 @@ def _discover(path):
     need_hit = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
                 "projSeedLocalX", "projSeedLocalY", "projSeedSigX", "projSeedSigY",
                 "projSeedCotAlpha", "projSeedCotBeta", "projLocalX", "projLocalY",
-                "recoLocalX", "recoLocalY"]
+                "recoLocalX", "recoLocalY", "selClusterIdx"]
     miss_h = [c for c in need_hit if f"{hit}_{c}" not in keys]
     miss_c = ([CLUSTER_TABLE] if not any(k.startswith(CLUSTER_TABLE + "_") for k in keys)
               else [c for c in ("layer", "detId", "localX", "localY", "charge",
-                                "truthPt", "truthCotAlpha", "truthCotBeta")
+                                "truthPt", "truthCotAlpha", "truthCotBeta", "truthTpIdx")
                     if f"{CLUSTER_TABLE}_{c}" not in keys])
     if miss_h or miss_c:
         raise SystemExit(
@@ -85,7 +85,7 @@ def load(paths):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     hit, cfg, need_hit = _discover(files[0])
     ccols = ["layer", "detId", "localX", "localY", "charge", "truthPt",
-             "truthCotAlpha", "truthCotBeta", "sizeX", "sizeY"]
+             "truthCotAlpha", "truthCotBeta", "sizeX", "sizeY", "truthTpIdx"]
     rcols = ["pt", "eta"]
 
     H = uproot.concatenate([f"{f}:Events" for f in files],
@@ -107,10 +107,19 @@ def load(paths):
         flat = ak.to_numpy(ak.flatten(R[f"{REF}_{c}"]))
         X[f"trk_{c}"] = flat[off[ev_x] + X["trackIdx"].astype(np.int64)]
 
+    vtrk = uproot.concatenate([f"{f}:Events" for f in files],
+                              filter_name=[f"{hit.replace('RefitHit', 'Track')}_spixMatchedTpIdx"])
+    vname = f"{hit.replace('RefitHit', 'Track')}_spixMatchedTpIdx"
+    mtp = ak.to_numpy(ak.flatten(vtrk[vname]))
+    nmt = ak.to_numpy(ak.num(vtrk[vname]))
+    offm = np.concatenate([[0], np.cumsum(nmt)])
+    X["trk_tpIdx"] = mtp[offm[ev_x] + X["trackIdx"].astype(np.int64)]
+
     ncl = ak.to_numpy(ak.num(C[f"{CLUSTER_TABLE}_layer"]))
     ev_c = np.repeat(np.arange(len(ncl)), ncl)
     K = {c: ak.to_numpy(ak.flatten(C[f"{CLUSTER_TABLE}_{c}"])) for c in ccols}
     K["event"] = ev_c
+    K["_evt_base"] = np.concatenate([[0], np.cumsum(ncl)])
 
     print(f"files={len(files)} config={cfg} events={n_ev} "
           f"crossings={len(X['layer'])} clusters={len(K['layer'])}")
@@ -156,7 +165,9 @@ def prepare(X, K):
     P["dCotA"] = K["truthCotAlpha"][ci] - X["projSeedCotAlpha"][xi]
     P["dCotB"] = K["truthCotBeta"][ci] - X["projSeedCotBeta"][xi]
     P["ang_ok"] = (K["truthCotAlpha"][ci] > SENTINEL) & (X["projSeedCotAlpha"][xi] > SENTINEL)
-    P["is_selected"] = match_selected(X, K, P)
+    P["sel_gidx"] = selected_global_index(X, K)
+    # over PAIRS: is this pair the crossing's selected cluster?
+    P["is_selected"] = (P["sel_gidx"][P["xi"]] >= 0) & (P["ci"] == P["sel_gidx"][P["xi"]])
     return P
 
 
@@ -164,36 +175,25 @@ def in_cone(P, k):
     return P["good"] & (np.abs(P["nsigx"]) < k) & (np.abs(P["nsigy"]) < k)
 
 
-def match_selected(X, K, P):
-    """Boolean over PAIRS: is this cluster the one the crossing selected?
+def selected_global_index(X, K):
+    """Global cluster-table row of each crossing's SELECTED cluster, or -1.
 
-    Matched as the NEAREST cluster on the module to the stored reco position,
-    not by equality. Both tables write positions with 10-bit nano mantissa
-    precision, which on a ~0.5 cm coordinate is ~5 um -- comparable to the 25 um
-    x pitch -- so an equality test finds essentially nothing (measured: 1 match in
-    3368 crossings). Nearest-match is immune to that.
-
-    A selClusterIdx column on the refit hit table would make this exact and is the
-    right long-term fix; until then this is a reconstruction of a link the file
-    does not carry.
+    Uses the EXACT selClusterIdx link. Position matching was tried first and is
+    unsafe: both tables store coordinates at 10-bit nano mantissa precision, which
+    disagrees by up to 9.7 um against a 25 um pitch, so it can silently pick a
+    neighbouring cluster.
     """
-    xi, ci = P["xi"], P["ci"]
-    acc = (X["hitAccepted"] > 0) & (X["recoLocalX"] > SENTINEL)
-    d2 = ((K["localX"][ci] - X["recoLocalX"][xi]) ** 2
-          + (K["localY"][ci] - X["recoLocalY"][xi]) ** 2)
-    d2 = np.where(acc[xi], d2, np.inf)
-    best = np.full(len(X["layer"]), np.inf)
-    np.minimum.at(best, xi, d2)
-    sel = np.isfinite(d2) & (d2 <= best[xi]) & acc[xi]
-    # guard against ties selecting two clusters for one crossing
-    first = np.zeros(len(X["layer"]), dtype=bool)
-    keep = np.zeros(len(xi), dtype=bool)
-    idx = np.flatnonzero(sel)
-    for j in idx:                      # ties are rare; cheap loop over matches only
-        if not first[xi[j]]:
-            first[xi[j]] = True
-            keep[j] = True
-    return keep
+    g = np.where(X["selClusterIdx"] >= 0,
+                 K["_evt_base"][X["event"]] + X["selClusterIdx"].astype(np.int64), -1)
+    ok = g >= 0
+    if ok.any():
+        bad = int((K["detId"][g[ok]] != X["detId"][ok]).sum())
+        if bad:
+            raise SystemExit(
+                f"selClusterIdx integrity check FAILED on {bad} crossings: the cluster it "
+                "points at is on a different module. The refit and cluster tables have "
+                "diverged in filter or iteration order; do not trust any result from this file.")
+    return g
 
 
 # --------------------------------------------------------------------------
@@ -349,11 +349,66 @@ def study_charge_gate(X, K, P, ax_row, out):
     out["charge_gate"] = res
 
 
+def study_true_containment(X, K, P, ax_row, out):
+    """(5) UNBIASED containment: of the clusters that genuinely belong to this
+    track's TrackingParticle and sit on the module it crosses, how many does the
+    cone hold?
+
+    This is the study that selClusterIdx and truthTpIdx were added for. Study (2)
+    can only ever see clusters the current static window already offered, so it
+    cannot detect a true cluster the window never showed the fit -- exactly the
+    failure a cone redesign is meant to fix. Here the truth clusters are found by
+    joining truthTpIdx to the track's spixMatchedTpIdx, independently of what the
+    window did, so a cluster the window missed still counts against the cone.
+    """
+    xi, ci = P["xi"], P["ci"]
+    have = (X["trk_tpIdx"][xi] >= 0) & (K["truthTpIdx"][ci] >= 0)
+    is_true = have & (K["truthTpIdx"][ci] == X["trk_tpIdx"][xi])
+    res = {"n_true_pairs": int(is_true.sum())}
+    ax = ax_row[0]
+    for cname, k in CONES.items():
+        m = is_true & P["good"]
+        if m.sum() < 20:
+            continue
+        inside = m & in_cone(P, k)
+        eff = []
+        for L in LAYERS:
+            sel = m & (X["layer"][xi] == L)
+            eff.append(float(inside[sel].mean()) if sel.any() else np.nan)
+        ax.plot(LAYERS, eff, marker="o", label=f"{cname} (unbiased)")
+        res[cname] = {"per_layer_eff": eff, "overall_eff": float(inside[m].mean())}
+    # the biased version, for direct contrast on the same axes
+    bc = out.get("cone_containment", {})
+    for cname in CONES:
+        if cname in bc:
+            ax.plot(LAYERS, bc[cname]["per_layer_eff"], marker="s", ls="--", alpha=.6,
+                    label=f"{cname} (window-conditioned)")
+    ax.set_xlabel("TBPX layer"); ax.set_ylabel("containment efficiency")
+    ax.set_title("(5) TRUE containment vs window-conditioned")
+    ax.legend(fontsize=6); ax.grid(alpha=.3); ax.set_ylim(0, 1.05)
+
+    # how many true clusters does a track even have on the module it crosses?
+    ax = ax_row[1]
+    n_true = np.bincount(xi[is_true], minlength=len(X["layer"]))
+    for L in LAYERS:
+        sel = X["layer"] == L
+        if sel.any():
+            ax.plot(L, n_true[sel].mean(), marker="o", color="C0")
+    res["mean_true_clusters_on_module"] = [
+        float(n_true[X["layer"] == L].mean()) if (X["layer"] == L).any() else float("nan")
+        for L in LAYERS]
+    ax.plot(LAYERS, res["mean_true_clusters_on_module"], color="C0")
+    ax.set_xlabel("TBPX layer"); ax.set_ylabel("true clusters on crossed module")
+    ax.set_title("(5) how many are there to find"); ax.grid(alpha=.3)
+    out["true_containment"] = res
+
+
 STUDIES = [
     ("cone occupancy", study_cone_occupancy, 3),
     ("cone containment + size", study_cone_containment, 2),
     ("angle discrimination", study_angle_discrimination, 2),
     ("charge readout gate", study_charge_gate, 2),
+    ("unbiased containment", study_true_containment, 2),
 ]
 
 
