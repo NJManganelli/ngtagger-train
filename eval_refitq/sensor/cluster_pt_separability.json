@@ -1,0 +1,966 @@
+{
+  "n_events": 25,
+  "n_clusters": 662993,
+  "traversal": {
+    "frac_clusters_with_tp": 0.8682173114949931,
+    "layer_count_hist": [
+      87371,
+      67857,
+      91722,
+      102225,
+      313818
+    ]
+  },
+  "target_agreement": {
+    "1.0": {
+      "frac_highpt": 0.11834328778260733,
+      "frac_traversing": 0.7227711935957972,
+      "frac_both": 0.08737157370635591,
+      "P_traverse_given_highpt": 0.7382892206514878,
+      "P_highpt_given_traverse": 0.12088413937982372
+    },
+    "2.0": {
+      "frac_highpt": 0.025541066880696014,
+      "frac_traversing": 0.7227711935957972,
+      "frac_both": 0.019406832956349828,
+      "P_traverse_given_highpt": 0.7598285947490138,
+      "P_highpt_given_traverse": 0.026850589963056705
+    }
+  },
+  "single_feature_auc": {
+    "pt>1.0": {
+      "charge": {
+        "auc_all": 0.45810610267615454,
+        "auc_per_layer": [
+          0.46899290944852,
+          0.46101617258587974,
+          0.4394517359186329,
+          0.4184752206844105
+        ]
+      },
+      "sizeX": {
+        "auc_all": 0.445035899701494,
+        "auc_per_layer": [
+          0.4704760744854873,
+          0.46540746266685135,
+          0.4261583838366184,
+          0.38874182059660906
+        ]
+      },
+      "sizeY": {
+        "auc_all": 0.5192521613713157,
+        "auc_per_layer": [
+          0.4960803342685881,
+          0.5118904849553808,
+          0.5293999953600583,
+          0.5332346746382656
+        ]
+      },
+      "nBoxPix": {
+        "auc_all": 0.4789533042217608,
+        "auc_per_layer": [
+          0.48018308156376976,
+          0.49172273665499727,
+          0.47166072186435654,
+          0.4466356910671246
+        ]
+      },
+      "chargeDensity": {
+        "auc_all": 0.49493460833376673,
+        "auc_per_layer": [
+          0.5031978119515126,
+          0.4824255458454175,
+          0.48966071010104933,
+          0.505849816694197
+        ]
+      },
+      "chargePerSizeY": {
+        "auc_all": 0.4353039921546946,
+        "auc_per_layer": [
+          0.4684228879016526,
+          0.44623471993213215,
+          0.41599777208914945,
+          0.3963092720355782
+        ]
+      },
+      "aspect_sizeY_over_sizeX": {
+        "auc_all": 0.5473023835582722,
+        "auc_per_layer": [
+          0.5117465679603206,
+          0.5271333531458732,
+          0.5735389176447621,
+          0.6104423592228804
+        ]
+      },
+      "minus_sizeY": {
+        "auc_all": 0.48074783862868425,
+        "auc_per_layer": [
+          0.5039196657314119,
+          0.48810951504461925,
+          0.47060000463994167,
+          0.4667653253617345
+        ]
+      }
+    },
+    "pt>2.0": {
+      "charge": {
+        "auc_all": 0.4506474445615334,
+        "auc_per_layer": [
+          0.4594385077322076,
+          0.45330099804503104,
+          0.43841286508971006,
+          0.41564197459636965
+        ]
+      },
+      "sizeX": {
+        "auc_all": 0.4468275838434696,
+        "auc_per_layer": [
+          0.4717116288055414,
+          0.4657990746881527,
+          0.43036608892913925,
+          0.38450194788012726
+        ]
+      },
+      "sizeY": {
+        "auc_all": 0.5068510031952579,
+        "auc_per_layer": [
+          0.4812072967009249,
+          0.49705141346575915,
+          0.525339695680546,
+          0.5282852181578418
+        ]
+      },
+      "nBoxPix": {
+        "auc_all": 0.47024964139844766,
+        "auc_per_layer": [
+          0.4683540301767771,
+          0.4813881225695471,
+          0.47198910160261887,
+          0.44290775840466573
+        ]
+      },
+      "chargeDensity": {
+        "auc_all": 0.5008957826785975,
+        "auc_per_layer": [
+          0.5106001804804721,
+          0.49059448124640725,
+          0.49053567480352994,
+          0.5128474365568373
+        ]
+      },
+      "chargePerSizeY": {
+        "auc_all": 0.4443212288476305,
+        "auc_per_layer": [
+          0.47598891828860357,
+          0.4568053068396674,
+          0.42308805030463315,
+          0.4026406166199961
+        ]
+      },
+      "aspect_sizeY_over_sizeX": {
+        "auc_all": 0.5363622812011046,
+        "auc_per_layer": [
+          0.5000115366214736,
+          0.5151370907394901,
+          0.5658361319951889,
+          0.6096238473255083
+        ]
+      },
+      "minus_sizeY": {
+        "auc_all": 0.4931489968047421,
+        "auc_per_layer": [
+          0.5187927032990751,
+          0.5029485865342409,
+          0.474660304319454,
+          0.4717147818421582
+        ]
+      }
+    },
+    "traverse>=3L": {
+      "charge": {
+        "auc_all": 0.20948903435764527,
+        "auc_per_layer": [
+          0.1569982204938793,
+          0.20425457302155786,
+          0.3723054554019117,
+          0.4213405954611314
+        ]
+      },
+      "sizeX": {
+        "auc_all": 0.5001902870324474,
+        "auc_per_layer": [
+          0.475239285387545,
+          0.48196874763999115,
+          0.3458290550848347,
+          0.36390557293316167
+        ]
+      },
+      "sizeY": {
+        "auc_all": 0.15090476076858117,
+        "auc_per_layer": [
+          0.09681324770927364,
+          0.10993520390047545,
+          0.42904734459144495,
+          0.4964169894914319
+        ]
+      },
+      "nBoxPix": {
+        "auc_all": 0.21297712307459282,
+        "auc_per_layer": [
+          0.16455926800584725,
+          0.20094917089408051,
+          0.33259511532946107,
+          0.38850682969375916
+        ]
+      },
+      "chargeDensity": {
+        "auc_all": 0.5811375359462287,
+        "auc_per_layer": [
+          0.5981554429312887,
+          0.6040529246281163,
+          0.6014845341112438,
+          0.5724346337052639
+        ]
+      },
+      "chargePerSizeY": {
+        "auc_all": 0.5989262691813345,
+        "auc_per_layer": [
+          0.5974599574130932,
+          0.617046016211579,
+          0.4376209860504306,
+          0.4195172197906619
+        ]
+      },
+      "aspect_sizeY_over_sizeX": {
+        "auc_all": 0.2373241515809423,
+        "auc_per_layer": [
+          0.18335225465632682,
+          0.21618450914591275,
+          0.576746081998388,
+          0.6125961564666598
+        ]
+      },
+      "minus_sizeY": {
+        "auc_all": 0.8490952392314188,
+        "auc_per_layer": [
+          0.9031867522907263,
+          0.8900647960995245,
+          0.570952655408555,
+          0.503583010508568
+        ]
+      }
+    }
+  },
+  "truth_angles_by_class": {
+    "pt>1.0": {
+      "cotAlpha": {
+        "signal_median": 0.1017303466796875,
+        "signal_p90": 0.285400390625,
+        "bkg_median": 0.1903076171875,
+        "bkg_p90": 0.9110107421875
+      },
+      "cotBeta": {
+        "signal_median": 1.041015625,
+        "signal_p90": 3.90966796875,
+        "bkg_median": 0.9866943359375,
+        "bkg_p90": 4.048828125
+      }
+    },
+    "pt>2.0": {
+      "cotAlpha": {
+        "signal_median": 0.0965728759765625,
+        "signal_p90": 0.275146484375,
+        "bkg_median": 0.1793212890625,
+        "bkg_p90": 0.840576171875
+      },
+      "cotBeta": {
+        "signal_median": 0.991455078125,
+        "signal_p90": 3.680614948272705,
+        "bkg_median": 0.994384765625,
+        "bkg_p90": 4.04296875
+      }
+    },
+    "traverse>=3L": {
+      "cotAlpha": {
+        "signal_median": 0.184600830078125,
+        "signal_p90": 0.9159278869628906,
+        "bkg_median": 0.1578216552734375,
+        "bkg_p90": 0.5408077239990234
+      },
+      "cotBeta": {
+        "signal_median": 0.69384765625,
+        "signal_p90": 1.84130859375,
+        "bkg_median": 2.84814453125,
+        "bkg_p90": 5.9814453125
+      }
+    }
+  },
+  "working_points": {
+    "pt>1.0": [
+      {
+        "feature": "charge",
+        "keep_target": 0.9,
+        "cut": 11000.0,
+        "eff": 0.924223073648361,
+        "frac_all_clusters_kept": 0.9388435466330335,
+        "enrichment": 0.984427146528188
+      },
+      {
+        "feature": "charge",
+        "keep_target": 0.95,
+        "cut": 9504.0,
+        "eff": 0.9728130826030152,
+        "frac_all_clusters_kept": 0.976845916243646,
+        "enrichment": 0.9958715764957706
+      },
+      {
+        "feature": "charge",
+        "keep_target": 0.99,
+        "cut": 8000.0,
+        "eff": 0.9917646540714317,
+        "frac_all_clusters_kept": 0.9918974604862218,
+        "enrichment": 0.9998661087258707
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.9,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.9,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.9,
+        "cut": 2.0,
+        "eff": 0.9480923650562969,
+        "frac_all_clusters_kept": 0.9444114366719827,
+        "enrichment": 1.0038975898018405
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.9,
+        "cut": 2263.1111111111113,
+        "eff": 0.9000161477371148,
+        "frac_all_clusters_kept": 0.8699476392493685,
+        "enrichment": 1.034563584210299
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.95,
+        "cut": 1874.6666666666667,
+        "eff": 0.951057676781022,
+        "frac_all_clusters_kept": 0.929884542286431,
+        "enrichment": 1.0227696380913374
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.99,
+        "cut": 1041.6355555555556,
+        "eff": 0.9899884029887993,
+        "frac_all_clusters_kept": 0.9883413073162596,
+        "enrichment": 1.001666525177433
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.9,
+        "cut": 5834.666666666667,
+        "eff": 0.9024823475873813,
+        "frac_all_clusters_kept": 0.9234497639075644,
+        "enrichment": 0.9772944699975235
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.95,
+        "cut": 5416.0,
+        "eff": 0.9509255589319006,
+        "frac_all_clusters_kept": 0.9610925225234616,
+        "enrichment": 0.9894214517819092
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.99,
+        "cut": 4749.333333333333,
+        "eff": 0.9911187445868381,
+        "frac_all_clusters_kept": 0.9931048500578504,
+        "enrichment": 0.9980001049527685
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.9,
+        "cut": 0.4,
+        "eff": 0.9063284449729159,
+        "frac_all_clusters_kept": 0.8396482413806282,
+        "enrichment": 1.0794144503686993
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.95,
+        "cut": 0.3333333333333333,
+        "eff": 0.9563717502679057,
+        "frac_all_clusters_kept": 0.908542411513111,
+        "enrichment": 1.0526440352686877
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.99,
+        "cut": 0.14285714285714285,
+        "eff": 0.9913389410020405,
+        "frac_all_clusters_kept": 0.9828081623009545,
+        "enrichment": 1.0086800039197006
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.9,
+        "cut": -6.0,
+        "eff": 0.9294784280911906,
+        "frac_all_clusters_kept": 0.9308000736594502,
+        "enrichment": 0.9985800972672214
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.95,
+        "cut": -7.0,
+        "eff": 0.9515274291334537,
+        "frac_all_clusters_kept": 0.9519007265184444,
+        "enrichment": 0.9996078400041188
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.99,
+        "cut": -11.0,
+        "eff": 0.9915884969392699,
+        "frac_all_clusters_kept": 0.9912529402976259,
+        "enrichment": 1.000338517675966
+      }
+    ],
+    "pt>2.0": [
+      {
+        "feature": "charge",
+        "keep_target": 0.9,
+        "cut": 11000.0,
+        "eff": 0.9236838525370697,
+        "frac_all_clusters_kept": 0.9388435466330335,
+        "enrichment": 0.983852800447603
+      },
+      {
+        "feature": "charge",
+        "keep_target": 0.95,
+        "cut": 9504.0,
+        "eff": 0.9721126377363624,
+        "frac_all_clusters_kept": 0.976845916243646,
+        "enrichment": 0.9951545290525603
+      },
+      {
+        "feature": "charge",
+        "keep_target": 0.99,
+        "cut": 8000.0,
+        "eff": 0.991905863147871,
+        "frac_all_clusters_kept": 0.9918974604862218,
+        "enrichment": 1.0000084713006978
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.9,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.9,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.9,
+        "cut": 2.0,
+        "eff": 0.9493946401850089,
+        "frac_all_clusters_kept": 0.9444114366719827,
+        "enrichment": 1.005276517542594
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.9,
+        "cut": 2374.6666666666665,
+        "eff": 0.9001496395048293,
+        "frac_all_clusters_kept": 0.8589682117778681,
+        "enrichment": 1.047942900752666
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.95,
+        "cut": 1909.9720000000027,
+        "eff": 0.9499387838389335,
+        "frac_all_clusters_kept": 0.9240039470346859,
+        "enrichment": 1.028067885302306
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.99,
+        "cut": 1079.3142857142861,
+        "eff": 0.9899333424023943,
+        "frac_all_clusters_kept": 0.9872972193557578,
+        "enrichment": 1.0026700399787984
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.9,
+        "cut": 5834.666666666667,
+        "eff": 0.9022581961637872,
+        "frac_all_clusters_kept": 0.9234497639075644,
+        "enrichment": 0.9770517373309996
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.95,
+        "cut": 5416.0,
+        "eff": 0.9507549993198204,
+        "frac_all_clusters_kept": 0.9610925225234616,
+        "enrichment": 0.9892439874815603
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.99,
+        "cut": 4749.333333333333,
+        "eff": 0.9909536117535029,
+        "frac_all_clusters_kept": 0.9931048500578504,
+        "enrichment": 0.9978338255983523
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.9,
+        "cut": 0.45966735966735905,
+        "eff": 0.8999455856346076,
+        "frac_all_clusters_kept": 0.8227830069038362,
+        "enrichment": 1.0937824166071892
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.95,
+        "cut": 0.3333333333333333,
+        "eff": 0.9588491361719494,
+        "frac_all_clusters_kept": 0.908542411513111,
+        "enrichment": 1.0553708049523591
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.99,
+        "cut": 0.14285714285714285,
+        "eff": 0.9917018092776493,
+        "frac_all_clusters_kept": 0.9828081623009545,
+        "enrichment": 1.0090492196929592
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.9,
+        "cut": -5.0,
+        "eff": 0.9079717045299959,
+        "frac_all_clusters_kept": 0.8984559311492611,
+        "enrichment": 1.0105912522259857
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.95,
+        "cut": -7.0,
+        "eff": 0.9568766154264726,
+        "frac_all_clusters_kept": 0.9519007265184444,
+        "enrichment": 1.0052273191619754
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.99,
+        "cut": -11.0,
+        "eff": 0.9921779349748333,
+        "frac_all_clusters_kept": 0.9912529402976259,
+        "enrichment": 1.000933157057703
+      }
+    ],
+    "traverse>=3L": [
+      {
+        "feature": "charge",
+        "keep_target": 0.9,
+        "cut": 11000.0,
+        "eff": 0.9232507216802109,
+        "frac_all_clusters_kept": 0.9388435466330335,
+        "enrichment": 0.9833914553614999
+      },
+      {
+        "feature": "charge",
+        "keep_target": 0.95,
+        "cut": 9752.0,
+        "eff": 0.9522260920145273,
+        "frac_all_clusters_kept": 0.9613444239448805,
+        "enrichment": 0.9905150207321783
+      },
+      {
+        "feature": "charge",
+        "keep_target": 0.99,
+        "cut": 8000.0,
+        "eff": 0.9916931663313648,
+        "frac_all_clusters_kept": 0.9918974604862218,
+        "enrichment": 0.9997940370219752
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.9,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeX",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.9,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "sizeY",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.9,
+        "cut": 2.0,
+        "eff": 0.9284737394932735,
+        "frac_all_clusters_kept": 0.9444114366719827,
+        "enrichment": 0.9831242014234048
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.95,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "nBoxPix",
+        "keep_target": 0.99,
+        "cut": 1.0,
+        "eff": 1.0,
+        "frac_all_clusters_kept": 1.0,
+        "enrichment": 1.0
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.9,
+        "cut": 2135.8171428571404,
+        "eff": 0.8999983174816064,
+        "frac_all_clusters_kept": 0.8903933484126736,
+        "enrichment": 1.0107873324593628
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.95,
+        "cut": 1750.6666666666667,
+        "eff": 0.9501421728042534,
+        "frac_all_clusters_kept": 0.9426185934519529,
+        "enrichment": 1.0079815732519646
+      },
+      {
+        "feature": "chargeDensity",
+        "keep_target": 0.99,
+        "cut": 1125.3333333333333,
+        "eff": 0.9900755450758696,
+        "frac_all_clusters_kept": 0.9855425956617363,
+        "enrichment": 1.0045994454568345
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.9,
+        "cut": 6249.6,
+        "eff": 0.9000824434012831,
+        "frac_all_clusters_kept": 0.9021319546507951,
+        "enrichment": 0.9977281469313374
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.95,
+        "cut": 5500.0,
+        "eff": 0.9546561292943277,
+        "frac_all_clusters_kept": 0.9591294286875762,
+        "enrichment": 0.9953360836822935
+      },
+      {
+        "feature": "chargePerSizeY",
+        "keep_target": 0.99,
+        "cut": 4749.333333333333,
+        "eff": 0.9918301714005523,
+        "frac_all_clusters_kept": 0.9931048500578504,
+        "enrichment": 0.9987164712193038
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.9,
+        "cut": 0.32,
+        "eff": 0.9000055282747216,
+        "frac_all_clusters_kept": 0.9086084270580346,
+        "enrichment": 0.9905317862710473
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.95,
+        "cut": 0.2,
+        "eff": 0.9638571013092396,
+        "frac_all_clusters_kept": 0.9647668087738134,
+        "enrichment": 0.9990570701061638
+      },
+      {
+        "feature": "aspect_sizeY_over_sizeX",
+        "keep_target": 0.99,
+        "cut": 0.1111111111111111,
+        "eff": 0.9905658790076988,
+        "frac_all_clusters_kept": 0.9905510908200174,
+        "enrichment": 1.0000149292528355
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.9,
+        "cut": -3.0,
+        "eff": 0.934706268342455,
+        "frac_all_clusters_kept": 0.7630198289849937,
+        "enrichment": 1.2250091450255585
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.95,
+        "cut": -4.0,
+        "eff": 0.9838958953761991,
+        "frac_all_clusters_kept": 0.8481034428843929,
+        "enrichment": 1.1601130777514324
+      },
+      {
+        "feature": "minus_sizeY",
+        "keep_target": 0.99,
+        "cut": -5.0,
+        "eff": 0.9918830505500633,
+        "frac_all_clusters_kept": 0.8984559311492611,
+        "enrichment": 1.1039863126968228
+      }
+    ]
+  },
+  "perfect_angle_ceiling": {
+    "pt>1.0": {
+      "perfect_alpha": {
+        "auc_all": 0.6723489761352539,
+        "auc_per_layer": [
+          0.5355862975120544,
+          0.6612682938575745,
+          0.7383163571357727,
+          0.82890385389328
+        ]
+      },
+      "perfect_beta": {
+        "auc_all": 0.47998157143592834,
+        "auc_per_layer": [
+          0.5065338015556335,
+          0.48729801177978516,
+          0.46561625599861145,
+          0.45909804105758667
+        ]
+      },
+      "raw_sizeX": {
+        "auc_all": 0.5549543442980214,
+        "auc_per_layer": [
+          0.5295197003628358,
+          0.5345877816052449,
+          0.5738264979807985,
+          0.6112443523183043
+        ]
+      },
+      "raw_sizeY": {
+        "auc_all": 0.48075477398190863,
+        "auc_per_layer": [
+          0.5039246409729918,
+          0.48810479790116057,
+          0.47060739415316966,
+          0.4667753155623648
+        ]
+      }
+    },
+    "pt>2.0": {
+      "perfect_alpha": {
+        "auc_all": 0.6700872182846069,
+        "auc_per_layer": [
+          0.5376824140548706,
+          0.6505130529403687,
+          0.7326638698577881,
+          0.830143928527832
+        ]
+      },
+      "perfect_beta": {
+        "auc_all": 0.4935345947742462,
+        "auc_per_layer": [
+          0.5215875506401062,
+          0.49972283840179443,
+          0.47421059012413025,
+          0.470106303691864
+        ]
+      },
+      "raw_sizeX": {
+        "auc_all": 0.5531633891909495,
+        "auc_per_layer": [
+          0.5282845196877807,
+          0.5341965550327628,
+          0.5696199967422679,
+          0.6154846511057319
+        ]
+      },
+      "raw_sizeY": {
+        "auc_all": 0.4931554384725059,
+        "auc_per_layer": [
+          0.518797231076313,
+          0.5029443935557231,
+          0.4746671897388269,
+          0.47172423988328377
+        ]
+      }
+    }
+  },
+  "charge_share": {
+    "n": 662993,
+    "<0.55 (near-tie, rule could flip)": 0.006693886662453449,
+    "0.55-0.9 (shared, unlikely to flip)": 0.03472585683408422,
+    ">0.9 (clean)": 0.9585802565034623
+  }
+}
