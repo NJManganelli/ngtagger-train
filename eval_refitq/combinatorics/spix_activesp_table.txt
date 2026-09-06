@@ -24,6 +24,10 @@ activeSP refit search cost vs CONE WIDTH
   >=2hit/>=3hit : fraction of tracks the refit gave that many hits. 0% for every
                   two-layer build is structural, not performance.
 
+  qX is the cone WIDTH you choose (an input); pXX is where a track sits in the
+  resulting distribution (an output). They look alike and are unrelated.
+  Full definitions of every term: spix_glossary.txt, written beside this file.
+
               combinations / track   |     p99 (busy track)     |       containment        |    viability    
 cfg    nSP       q99   q99.9  q99.99 |      q99   q99.9  q99.99 |      q99   q99.9  q99.99 |   >=2hit  >=3hit
 -------------------------------------------------------------------------------------------------------------

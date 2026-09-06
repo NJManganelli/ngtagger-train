@@ -1,0 +1,93 @@
+SmartPixels combinatorics omnibus -- GLOSSARY
+Definitions for every term this script prints or plots.
+==========================================================================
+
+crossing
+    One track's PREDICTED intersection with one instrumented module. The unit most per-layer
+    quantities are counted in -- not a track, not a cluster. One track normally has one
+    crossing per instrumented layer, occasionally two where it clips overlapping modules.
+
+cluster
+    A reconstructed group of adjacent fired pixels: one measurement. NOT a single pixel -- an
+    inclined track fires several pixels and they form one cluster.
+
+cone / search window
+    The region around the predicted position on a module inside which clusters are accepted as
+    CANDIDATES for the refit. Half-width is k times the projected track uncertainty, applied
+    per axis (local x and local y independently).
+
+qX  (cone quantile)
+    HOW WIDE THE CONE IS -- an INPUT, a design choice. Expressed as the central Gaussian
+    probability per axis: k = Phi^-1((1+X/100)/2), so q68->k=1.00, q95->k=1.96, q99->k=2.58,
+    q99.9->k=3.29, q99.99->k=3.89. NOMINAL ONLY: it assumes unit-width pulls. Ours are
+    0.81-1.52, so qX is NOT the achieved efficiency. Use the measured containment for that.
+
+pXX  (percentile)
+    WHERE A TRACK SITS in a distribution over tracks -- an OUTPUT. p99 = the 99th-percentile
+    track, i.e. 1 track in 100 is busier. NOT a cone width. qX and pXX look alike and are
+    unrelated: qX is the window you choose, pXX describes the spread of what that window
+    returns.
+
+k  /  k_sigma
+    Cone half-width in units of the projected track uncertainty. The quantity actually used in
+    the cut |residual| < k*sigma.
+
+containment
+    MEASURED hit-finding efficiency, per crossing, CONDITIONAL ON THE HIT EXISTING.
+    Denominator: crossings where the correct cluster exists on that module. Numerator: those
+    where it also falls inside the cone. So it does not penalise a hit that was never
+    produced, and it is NOT the probability the refit then PICKS that cluster (that is
+    selection, measured separately). Averaged over crossings, so builds instrumenting
+    different layers average different layer mixes -- L1 crossings are intrinsically harder,
+    which is why an L1-instrumented build scores lower without the algorithm being worse.
+
+correct / true cluster
+    The cluster whose DOMINANT TrackingParticle is the TP the track was matched to. Dominance
+    is by charge, winner-takes-pixel.
+
+combinations / track
+    The number of (L1,L2,L3,L4) hit tuples one refit must test = PRODUCT of the candidate
+    counts over INSTRUMENTED layers. A layer with no candidate contributes a factor of 1, not
+    0, because the refit skips it and carries on. Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 ->
+    6. Pinned by tests/test_combination_counting.py.
+
+activeSP  /  A  /  I
+    Four-character mask, one character per TBPX layer L1,L2,L3,L4. A = that layer IS
+    instrumented with smart pixels; I = it is not. An uninstrumented layer delivers NO data at
+    L1 latency at all -- conventional pixels are read out only after an L1 accept -- so it
+    contributes nothing to L1 track building, not even a position. Each mask is therefore a
+    candidate DETECTOR BUILD, not an algorithm setting. Example: AAII = L1 and L2
+    instrumented, L3 and L4 not.
+
+nSP
+    Number of instrumented layers = count of 'A' in the mask.
+
+>=2hit / >=3hit  (viability)
+    Fraction of tracks to which the refit actually attached that many hits. 0% for every two-
+    layer build is STRUCTURAL (only two layers exist to be hit), not a performance statement.
+
+projSeedSig{X,Y}
+    Projected track uncertainty from the OT SEED covariance alone -- single shot, no refit
+    updates. The naive cone.
+
+projSig{X,Y}
+    RUNNING projected track uncertainty: after multiple-scattering Q has been added and before
+    this layer's own update. The refit-order cone. Tightens as the refit walks inward, so the
+    same layer has different widths in different builds depending on how deep it is visited.
+
+outsideIn
+    The refit's layer visit order: outermost instrumented layer first, working inward. The
+    FIRST-visited layer gets no update and so carries the raw seed cone.
+
+pull
+    (measured - predicted) / claimed uncertainty. Width 1.0 means the claimed uncertainty is
+    honest; 4.1 means it claims 4x better precision than it has.
+
+Q  (process noise)
+    Multiple-scattering term added to the covariance before projecting, so the cone grows to
+    reflect material the track passed through. Without it the covariance only ever shrank.
+
+max  (AVOID)
+    Largest single-track value in the sample. An extreme-value statistic on a heavy tail: it
+    DOES NOT CONVERGE and grows with the number of events processed (AIAI: 54 at 100 events,
+    550 at 500). Rankings built on it reverse when events are added. Use p99.

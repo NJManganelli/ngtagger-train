@@ -39,6 +39,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
+import textwrap
+
 import numpy as np
 from statistics import NormalDist
 import uproot
@@ -53,6 +55,121 @@ REF = "L1TTrack"
 # eta bin EDGES for the cot(theta) resolution study; cot(theta) = sinh(eta)
 ETA_RES_EDGES = np.array([0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4])
 Z_HALF_RANGE_CM = 15.0   # +-z0 span a seeding stage would have to slice
+
+
+# --------------------------------------------------------------------------
+# GLOSSARY -- every term this script prints or plots, defined
+# --------------------------------------------------------------------------
+# Written out as spix_glossary.txt on every run, printed at startup, and rendered
+# into the spare panel of the sweep figure. Assume the reader has NOT been in the
+# conversation these numbers came from: several of these terms look like each other
+# (qX vs pXX), several are conditional in ways that change their meaning
+# (containment), and one is a trap (max). None of that is guessable from a column
+# heading.
+GLOSSARY = [
+    ("crossing",
+     "One track's PREDICTED intersection with one instrumented module. The unit "
+     "most per-layer quantities are counted in -- not a track, not a cluster. One "
+     "track normally has one crossing per instrumented layer, occasionally two "
+     "where it clips overlapping modules."),
+    ("cluster",
+     "A reconstructed group of adjacent fired pixels: one measurement. NOT a single "
+     "pixel -- an inclined track fires several pixels and they form one cluster."),
+    ("cone / search window",
+     "The region around the predicted position on a module inside which clusters are "
+     "accepted as CANDIDATES for the refit. Half-width is k times the projected "
+     "track uncertainty, applied per axis (local x and local y independently)."),
+    ("qX  (cone quantile)",
+     "HOW WIDE THE CONE IS -- an INPUT, a design choice. Expressed as the central "
+     "Gaussian probability per axis: k = Phi^-1((1+X/100)/2), so q68->k=1.00, "
+     "q95->k=1.96, q99->k=2.58, q99.9->k=3.29, q99.99->k=3.89. NOMINAL ONLY: it "
+     "assumes unit-width pulls. Ours are 0.81-1.52, so qX is NOT the achieved "
+     "efficiency. Use the measured containment for that."),
+    ("pXX  (percentile)",
+     "WHERE A TRACK SITS in a distribution over tracks -- an OUTPUT. p99 = the "
+     "99th-percentile track, i.e. 1 track in 100 is busier. NOT a cone width. "
+     "qX and pXX look alike and are unrelated: qX is the window you choose, pXX "
+     "describes the spread of what that window returns."),
+    ("k  /  k_sigma",
+     "Cone half-width in units of the projected track uncertainty. The quantity "
+     "actually used in the cut |residual| < k*sigma."),
+    ("containment",
+     "MEASURED hit-finding efficiency, per crossing, CONDITIONAL ON THE HIT "
+     "EXISTING. Denominator: crossings where the correct cluster exists on that "
+     "module. Numerator: those where it also falls inside the cone. So it does not "
+     "penalise a hit that was never produced, and it is NOT the probability the "
+     "refit then PICKS that cluster (that is selection, measured separately). "
+     "Averaged over crossings, so builds instrumenting different layers average "
+     "different layer mixes -- L1 crossings are intrinsically harder, which is why "
+     "an L1-instrumented build scores lower without the algorithm being worse."),
+    ("correct / true cluster",
+     "The cluster whose DOMINANT TrackingParticle is the TP the track was matched "
+     "to. Dominance is by charge, winner-takes-pixel."),
+    ("combinations / track",
+     "The number of (L1,L2,L3,L4) hit tuples one refit must test = PRODUCT of the "
+     "candidate counts over INSTRUMENTED layers. A layer with no candidate "
+     "contributes a factor of 1, not 0, because the refit skips it and carries on. "
+     "Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 -> 6. Pinned by "
+     "tests/test_combination_counting.py."),
+    ("activeSP  /  A  /  I",
+     "Four-character mask, one character per TBPX layer L1,L2,L3,L4. A = that layer "
+     "IS instrumented with smart pixels; I = it is not. An uninstrumented layer "
+     "delivers NO data at L1 latency at all -- conventional pixels are read out only "
+     "after an L1 accept -- so it contributes nothing to L1 track building, not even "
+     "a position. Each mask is therefore a candidate DETECTOR BUILD, not an "
+     "algorithm setting. Example: AAII = L1 and L2 instrumented, L3 and L4 not."),
+    ("nSP", "Number of instrumented layers = count of 'A' in the mask."),
+    (">=2hit / >=3hit  (viability)",
+     "Fraction of tracks to which the refit actually attached that many hits. 0% for "
+     "every two-layer build is STRUCTURAL (only two layers exist to be hit), not a "
+     "performance statement."),
+    ("projSeedSig{X,Y}",
+     "Projected track uncertainty from the OT SEED covariance alone -- single shot, "
+     "no refit updates. The naive cone."),
+    ("projSig{X,Y}",
+     "RUNNING projected track uncertainty: after multiple-scattering Q has been "
+     "added and before this layer's own update. The refit-order cone. Tightens as "
+     "the refit walks inward, so the same layer has different widths in different "
+     "builds depending on how deep it is visited."),
+    ("outsideIn",
+     "The refit's layer visit order: outermost instrumented layer first, working "
+     "inward. The FIRST-visited layer gets no update and so carries the raw seed "
+     "cone."),
+    ("pull",
+     "(measured - predicted) / claimed uncertainty. Width 1.0 means the claimed "
+     "uncertainty is honest; 4.1 means it claims 4x better precision than it has."),
+    ("Q  (process noise)",
+     "Multiple-scattering term added to the covariance before projecting, so the "
+     "cone grows to reflect material the track passed through. Without it the "
+     "covariance only ever shrank."),
+    ("max  (AVOID)",
+     "Largest single-track value in the sample. An extreme-value statistic on a "
+     "heavy tail: it DOES NOT CONVERGE and grows with the number of events "
+     "processed (AIAI: 54 at 100 events, 550 at 500). Rankings built on it reverse "
+     "when events are added. Use p99."),
+]
+
+
+def _glossary_text(width=94, terms=None):
+    out = []
+    for term, body in GLOSSARY:
+        if terms is not None and term not in terms:
+            continue
+        out.append(f"{term}")
+        out.extend("    " + l for l in textwrap.wrap(body, width - 4))
+        out.append("")
+    return "\n".join(out).rstrip()
+
+
+def write_glossary(outdir):
+    txt = ("SmartPixels combinatorics omnibus -- GLOSSARY\n"
+           "Definitions for every term this script prints or plots.\n"
+           + "=" * 74 + "\n\n" + _glossary_text())
+    p = os.path.join(outdir, "spix_glossary.txt")
+    with open(p, "w") as fh:
+        fh.write(txt + "\n")
+    return p
+
 
 def robust_sigma(a):
     """MAD-scaled width and the half 16-84 interval, as (mad, q68).
@@ -1265,6 +1382,10 @@ def _write_sweep_table(res, sfx, out, n_ev):
         "  >=2hit/>=3hit : fraction of tracks the refit gave that many hits. 0% for every",
         "                  two-layer build is structural, not performance.",
         "",
+        "  qX is the cone WIDTH you choose (an input); pXX is where a track sits in the",
+        "  resulting distribution (an output). They look alike and are unrelated.",
+        "  Full definitions of every term: spix_glossary.txt, written beside this file.",
+        "",
         hdr, "-" * len(sub)]
     group = {1: "1 instrumented layer", 2: "2 instrumented layers",
              3: "3 instrumented layers", 4: "4 instrumented layers"}
@@ -1451,8 +1572,17 @@ def study_combination_sweep(X, K, P, ax_row, out):
         a.set_xlabel("cone quantile qX", fontsize=8)
         a.set_ylabel("combinations / track", fontsize=8)
         f2.colorbar(mesh, ax=a, label="tracks")
-    for i in range(len(sfx), nrow * ncol):
-        axs[i // ncol][i % ncol].axis("off")
+    spare = [(i // ncol, i % ncol) for i in range(len(sfx), nrow * ncol)]
+    for r_, c_ in spare:
+        axs[r_][c_].axis("off")
+    if spare:
+        # A colour scale and two axis labels do not tell a reader what any of this
+        # means, so the legend travels WITH the figure rather than living in a file
+        # they may never open.
+        a = axs[spare[0][0]][spare[0][1]]
+        a.text(0.0, 1.0, _glossary_text(width=52, terms=[
+            "activeSP  /  A  /  I", "qX  (cone quantile)", "combinations / track"]),
+            transform=a.transAxes, va="top", ha="left", fontsize=5.4, family="monospace")
     f2.suptitle("(10) refit search space: L1xL2xL3xL4 combinations vs cone quantile, "
                 "per activeSP configuration", y=1.002)
     f2.tight_layout()
@@ -1764,6 +1894,9 @@ def main():
            # studies that need to re-read the file for OTHER activeSP variants
            "_inputs": [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])]}
 
+    gp = write_glossary(args.outdir)
+    print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
+
     ncols = max(n for _, _, n in STUDIES)
     fig, axes = plt.subplots(len(STUDIES), ncols, figsize=(5.2 * ncols, 4.2 * len(STUDIES)))
     axes = np.atleast_2d(axes)
@@ -1773,6 +1906,13 @@ def main():
         for c in range(n, ncols):
             axes[row][c].axis("off")
     fig.suptitle(f"SmartPixels combinatorics omnibus — {cfg}, {n_ev} events", y=1.005)
+    # qX vs pXX is the confusion most likely to survive into a slide, so it is
+    # stamped on the figure itself rather than only in the glossary file.
+    fig.text(0.5, -0.004,
+             "qX = cone WIDTH chosen (input; k = Phi^-1((1+X/100)/2), nominal, assumes unit pulls)   |   "
+             "pXX = percentile over TRACKS (output)   |   containment = MEASURED, conditional on the "
+             "hit existing   |   see spix_glossary.txt",
+             ha="center", va="top", fontsize=7.5)
     fig.tight_layout()
     png = os.path.join(args.outdir, "spix_combinatorics_omnibus.png")
     fig.savefig(png, dpi=130, bbox_inches="tight")
