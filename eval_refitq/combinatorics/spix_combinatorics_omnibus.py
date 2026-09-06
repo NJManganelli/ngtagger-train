@@ -48,6 +48,22 @@ PT_EDGES = np.array([2, 3, 4, 6, 10, 20, 1e9])
 ETA_EDGES = np.array([-2.4, -1.6, -0.8, 0.0, 0.8, 1.6, 2.4])
 CLUSTER_TABLE = "L1TSmartPixelsCluster"
 REF = "L1TTrack"
+# eta bin EDGES for the cot(theta) resolution study; cot(theta) = sinh(eta)
+ETA_RES_EDGES = np.array([0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4])
+Z_HALF_RANGE_CM = 15.0   # +-z0 span a seeding stage would have to slice
+
+def robust_sigma(a):
+    """MAD-scaled width and the half 16-84 interval, as (mad, q68).
+
+    Both are quoted because they disagree exactly when it matters: the
+    cot(theta) residual has tails, and a plain std would chase them.
+    """
+    a = a[np.isfinite(a)]
+    if len(a) < 20:
+        return float("nan"), float("nan")
+    mad = 1.4826 * np.median(np.abs(a - np.median(a)))
+    lo, hi = np.percentile(a, [16, 84])
+    return float(mad), float(0.5 * (hi - lo))
 
 
 # --------------------------------------------------------------------------
@@ -64,7 +80,7 @@ def _discover(path):
     need_hit = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
                 "projSeedLocalX", "projSeedLocalY", "projSeedSigX", "projSeedSigY",
                 "projSeedCotAlpha", "projSeedCotBeta", "projLocalX", "projLocalY",
-                "projCotAlpha", "projCotBeta",
+                "projCotAlpha", "projCotBeta", "projSigX", "projSigY",
                 "recoLocalX", "recoLocalY", "selClusterIdx"]
     miss_h = [c for c in need_hit if f"{hit}_{c}" not in keys]
     miss_c = ([CLUSTER_TABLE] if not any(k.startswith(CLUSTER_TABLE + "_") for k in keys)
@@ -90,7 +106,18 @@ def load(paths):
     # sensor angle + CPE sigma, present once the cluster table reads SmartPixelsRecHit
     optional = {"localCotAlpha": "clLocalCotAlpha", "localCotBeta": "clLocalCotBeta",
                 "sigAlpha": "clSigAlpha", "sigBeta": "clSigBeta",
-                "sigX": "sigX", "sigY": "sigY", "hasAlpha": "clHasAlpha"}
+                "sigX": "sigX", "sigY": "sigY", "hasAlpha": "clHasAlpha",
+                # global frame: cluster POSITION (globalR/Z/Phi) and the sensor's
+                # estimate of the track DIRECTION there (gClPhi/gClCotTheta), with
+                # rotated uncertainties. Study (7); absent in older files.
+                "globalR": "globalR", "globalZ": "globalZ", "globalPhi": "globalPhi",
+                "globalClusterPhi": "gClPhi",
+                "globalClusterCotTheta": "gClCotTheta",
+                "sigGlobalClusterPhi": "gSigPhi",
+                "sigGlobalClusterCotTheta": "gSigCotTheta",
+                "tpGlobalClusterPhi": "tpGClPhi",
+                "tpGlobalClusterCotTheta": "tpGClCotTheta",
+                "hasBeta": "clHasBeta"}
     rcols = ["pt", "eta"]
 
     H = uproot.concatenate([f"{f}:Events" for f in files],
@@ -174,6 +201,18 @@ def prepare(X, K):
         P["nsigx"] = np.where(good, dx / sx, np.inf)
         P["nsigy"] = np.where(good, dy / sy, np.inf)
     P["good"] = good
+    # Same displacement against the REFIT-ORDER projection: the running covariance
+    # after multiple-scattering Q, before this layer's update. projSig* is present on
+    # every crossing, including the ones whose window came up empty, so this arm is
+    # not silently restricted to crossings that already found a hit.
+    dxr = K["localX"][ci] - X["projLocalX"][xi]
+    dyr = K["localY"][ci] - X["projLocalY"][xi]
+    sxr, syr = X["projSigX"][xi], X["projSigY"][xi]
+    good_rf = (sxr > 0) & (syr > 0) & (X["projLocalX"][xi] > SENTINEL)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        P["nsigx_rf"] = np.where(good_rf, dxr / sxr, np.inf)
+        P["nsigy_rf"] = np.where(good_rf, dyr / syr, np.inf)
+    P["good_rf"] = good_rf
     # angle mismatch vs the track's expectation at this module
     P["dCotA"] = K["tpLocalCotAlpha"][ci] - X["projSeedCotAlpha"][xi]
     P["dCotB"] = K["tpLocalCotBeta"][ci] - X["projSeedCotBeta"][xi]
@@ -186,6 +225,10 @@ def prepare(X, K):
 
 def in_cone(P, k):
     return P["good"] & (np.abs(P["nsigx"]) < k) & (np.abs(P["nsigy"]) < k)
+
+
+def in_cone_refit(P, k):
+    return P["good_rf"] & (np.abs(P["nsigx_rf"]) < k) & (np.abs(P["nsigy_rf"]) < k)
 
 
 def selected_global_index(X, K):
@@ -523,7 +566,15 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
           f"over {n_den} crossings")
 
     rzgrid = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0]
-    wgrid = [0.0, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0]
+    # The angle-weight grid runs to 1e6 rather than stopping at 4096 because it
+    # RAILED there: the earlier scan reported its optimum sitting exactly on the
+    # ceiling, which means the optimum was outside the range and the reported
+    # weights were an artefact of where the grid stopped. A scan that ends on its
+    # own boundary has not found a maximum, it has found an edge. Extending far
+    # enough to see the purity PLATEAU is what distinguishes "the angles should be
+    # weighted very heavily" from "we never looked far enough".
+    wgrid = [0.0, 0.25, 1.0, 4.0, 16.0, 64.0, 256.0, 1024.0, 4096.0,
+             16384.0, 65536.0, 262144.0, 1048576.0]
 
     # 3D scan: (w_rphi=1, w_rz, w_alpha), beta OFF. The bending angle only, but
     # the POSITION terms are scanned with it rather than frozen.
@@ -613,13 +664,634 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     ax.set_title("(6) angle-weight scan (1D = bottom row)"); plt.colorbar(im2, ax=ax)
 
 
+
+def study_refit_cone_occupancy(X, K, P, ax_row, out):
+    """(9) Candidates per crossing: naive SEED cone vs outsideIn REFIT-ORDER cone.
+
+    THIS IS THE HALF OF THE COMBINATORICS QUESTION THAT WAS NEVER BUILT. Study (1)
+    projects with the OT seed covariance -- one shot, no updates -- which answers
+    "how many clusters would a naive projection have to test". The actual refit
+    walks outsideIn and tightens its covariance at every layer, so the number it
+    must test is smaller, and by how much is the thing that decides whether the
+    per-track combinatorics are affordable. Nothing measured it until projSig*
+    existed.
+
+    IT ONLY BECAME MEANINGFUL AFTER THE Q TERM. Before process noise the running
+    covariance was up to 2.7x too tight (correct-hit pull width 4.13 at L1), so a
+    refit-order cone would have looked spectacularly better than the seed cone for
+    the worst possible reason -- it was lying about its own precision and would
+    have thrown away real hits. Any number from this study taken before Q is not a
+    physics result, it is the bug.
+
+    The reduction reported here is therefore an HONEST one: the covariance now
+    passes a two-sided pull test (see eval_refitq/windows/q_acceptance.py).
+    """
+    xlay = X["layer"]
+    res = {}
+    ax = ax_row[0]
+    for cname, k in CONES.items():
+        ms, mr = in_cone(P, k), in_cone_refit(P, k)
+        cs = np.bincount(P["xi"][ms], minlength=len(xlay)).astype(float)
+        cr = np.bincount(P["xi"][mr], minlength=len(xlay)).astype(float)
+        P[f"cnt_rf_{cname}"] = cr
+        ys = [cs[xlay == L].mean() if (xlay == L).any() else np.nan for L in LAYERS]
+        yr = [cr[xlay == L].mean() if (xlay == L).any() else np.nan for L in LAYERS]
+        ax.plot(LAYERS, ys, marker="o", ls="--", label=f"seed {cname}")
+        ax.plot(LAYERS, yr, marker="s", label=f"refit-order {cname}")
+        res[cname] = {"seed_per_layer": [float(v) for v in ys],
+                      "refit_per_layer": [float(v) for v in yr],
+                      "reduction_per_layer": [float(a / b) if b > 0 else float("nan")
+                                              for a, b in zip(ys, yr)]}
+    tot = np.bincount(P["xi"], minlength=len(xlay)).astype(float)
+    ax.plot(LAYERS, [tot[xlay == L].mean() for L in LAYERS], marker="^", ls=":",
+            color="k", label="all on module")
+    ax.set_yscale("log"); ax.set_xlabel("TBPX layer")
+    ax.set_ylabel("candidates / crossing")
+    ax.set_title("(9) seed cone vs refit-order cone")
+    ax.legend(fontsize=7); ax.grid(alpha=.3)
+
+    # cone half-width itself, in microns: the mechanism behind the count above
+    ax = ax_row[1]
+    hs, hr = [], []
+    for L in LAYERS:
+        m = xlay == L
+        a = X["projSeedSigX"][m]; b = X["projSigX"][m]
+        hs.append(float(np.median(a[a > 0]) * 1e4) if (a > 0).any() else np.nan)
+        hr.append(float(np.median(b[b > 0]) * 1e4) if (b > 0).any() else np.nan)
+    ax.plot(LAYERS, hs, marker="o", ls="--", label="seed sigma_x")
+    ax.plot(LAYERS, hr, marker="s", label="refit-order sigma_x")
+    ax.set_xlabel("TBPX layer"); ax.set_ylabel(r"median projected $\sigma_x$ [$\mu$m]")
+    ax.set_title("(9) projection cone half-width"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+    res["median_sigma_x_um"] = {"seed": hs, "refit": hr}
+
+    # does the gain survive at low pT, where scattering is worst?
+    ax = ax_row[2]
+    idx = np.digitize(X["trk_pt"], PT_EDGES) - 1
+    ctr = [0.5 * (PT_EDGES[i] + min(PT_EDGES[i + 1], 40)) for i in range(len(PT_EDGES) - 1)]
+    for cname in CONES:
+        cs = P[f"cnt_{cname}"] if f"cnt_{cname}" in P else None
+        cr = P[f"cnt_rf_{cname}"]
+        if cs is None:
+            continue
+        ratio = []
+        for i in range(len(PT_EDGES) - 1):
+            m = idx == i
+            if not m.any():
+                ratio.append(np.nan); continue
+            a, b = cs[m].mean(), cr[m].mean()
+            ratio.append(float(a / b) if b > 0 else np.nan)
+        ax.plot(ctr, ratio, marker="o", label=cname)
+        res.setdefault("reduction_vs_pt", {})[cname] = {
+            "bin_centres": [float(c) for c in ctr], "ratio": ratio}
+    ax.axhline(1.0, color="k", lw=.8, ls=":")
+    ax.set_xlabel(r"track $p_T$ [GeV]"); ax.set_ylabel("seed / refit-order candidates")
+    ax.set_title("(9) combinatorics reduction vs $p_T$"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+
+    print("\n=== (9) refit-order cone vs naive seed cone ===")
+    print(f"  median projected sigma_x [um] by layer")
+    print(f"    seed        : " + "  ".join(f"{v:7.1f}" for v in hs))
+    print(f"    refit-order : " + "  ".join(f"{v:7.1f}" for v in hr))
+    for cname in CONES:
+        r = res[cname]
+        print(f"  {cname}: candidates/crossing seed "
+              + "/".join(f"{v:.2f}" for v in r["seed_per_layer"])
+              + "  refit " + "/".join(f"{v:.2f}" for v in r["refit_per_layer"])
+              + "  reduction " + "/".join(f"{v:.2f}x" for v in r["reduction_per_layer"]))
+    out["refit_cone_occupancy"] = res
+
+
+def study_z0_resolution(X, K, P, ax_row, out):
+    """(7) sigma(cot theta), and the z0 resolution it implies.
+
+    THE QUESTION. A cluster measures both a POSITION (globalR, globalZ) and a
+    DIRECTION (globalClusterCotTheta), so on its own it determines a longitudinal
+    impact parameter:
+
+        z0 = z - r * cot(theta)         =>   sigma(z0) = r * sigma(cot theta)
+
+    If that z0 is sharp, a seeding Hough transform gains a third nearly free
+    dimension: clusters can be sliced by z0 BEFORE the (phi0, q/pT) transform
+    runs, and since random k-layer coincidences scale as the per-cell density to
+    the k-th power, the fake rate falls as the CUBE of the slicing factor for a
+    3-layer seed. `doc/SmartPixelsSeedingAndFitting.md` (sections 6, 11, 12)
+    makes this the single largest factor in the design and flags it as ASSUMED.
+    This measures it.
+
+    THE SUPPRESSION FACTOR is Z_range / (4 sigma), not Z_range / (slice width).
+    A hit must vote into every slice its z0 could belong to, so it occupies
+    ~4 sigma / w of the w-wide slices and the w cancels. Choosing a fine slicing
+    buys nothing on its own -- only a small sigma does.
+
+    *** THIS RESIDUAL IS CIRCULAR. IT IS NOT A PHYSICAL RESOLUTION. ***
+    SmartPixelsRecHitProducer builds the truth angle as the dominant TP's helix
+    PROPAGATED TO THE HIT, with no multiple scattering (:292-319, and the file's
+    own header at :32-40), then forms the reco angle as
+    `cotB = trueCotB + corrBetaShift_->evaluate(...)` (:330-331). The nano truth
+    column is that same trueCotBeta() rotated to global
+    (L1SmartPixelsClusterTableProducer.cc:199-202). So (reco - truth) is
+    IDENTICALLY the PixelAV payload draw, and what this study measures is the
+    payload's own width, not how well a sensor knows a real track's direction.
+    The tell is in the output below: sigma comes out equal for pT > 2 and for
+    0.5-2 GeV to 0.3%, where a physical resolution would degrade toward low pT.
+
+    What is missing is the scattering between the vertex and the module. It is
+    not fatal for z0 -- a kink at radius r_s moves the EXTRAPOLATED z0 by
+    r_s * delta(cot theta), not r * delta, so material outside the measurement
+    radius does not bias it, and L1 has almost nothing inside it. Estimated
+    inflation is +0% (L1, eta 0) to +27% (L4, eta 2, 0.5 GeV). See
+    doc/SmartPixelsSeedingAndFitting.md section 4a.
+
+    THE NEXT STEP is a closure test: with the dominant TP's production vz on the
+    cluster truth block, compare z0_pred = globalZ - globalR * globalClusterCotTheta
+    against the TP's actual z0. That is non-circular, and it is UNIFORM across PU
+    and signal (TrackingParticles are post-mixing; 86.5% of clusters carry one).
+    It gives a PESSIMISTIC BOUND rather than the true resolution, because the
+    simulated cluster pairs a scattered position with an unscattered angle: the
+    residual carries +(r - r_s)*delta where the physical term is -r_s*delta. Taken
+    together with the number below it brackets the answer, which is enough to
+    design against.
+
+    NOT PSimHit. It is the only scattering-aware angle available, but it is
+    signal-only at ~1.7% of PU200 clusters, so any resolution derived from it
+    describes a population with different pT and eta spectra from pileup and would
+    carry that asymmetry into everything downstream. SmartPixelsRecHitProducer
+    already refuses PSimHit as a production input for this reason (:36-39); the
+    same rule applies to using it as a validation reference.
+
+    Resolving this EXACTLY needs the angle to come from the simulated cluster
+    SHAPE for every cluster, rather than from helix-truth plus a payload draw.
+    Until then, read every number below as the payload smear.
+
+    METHOD. Robust widths only (MAD*1.4826 and the half 16-84 interval) -- the
+    residual has tails a plain std would chase.
+
+    BINNING IN ETA IS NOT OPTIONAL. cot(theta) is read out of cluster LENGTH,
+    which is shortest at eta ~ 0, so the resolution is expected to be worst
+    exactly where most tracks are. A single global number would be a fiction.
+    The binning variable is the TRUE angle, eta = asinh(tpGlobalClusterCotTheta),
+    so it is not the quantity being measured.
+
+    PULLS. sigGlobalClusterCotTheta is the estimator's own claimed uncertainty.
+    Every weighted vote in the seeding design inherits it, so its pull width is
+    checked here rather than trusted; a width far from 1.0 means the segment
+    lengths would be set from a miscalibrated sigma.
+    """
+    need = ("gClCotTheta", "tpGClCotTheta", "globalR", "globalZ")
+    if not all(k in K for k in need):
+        print("   (7) SKIPPED: cluster table lacks the global-frame angle columns "
+              "(globalClusterCotTheta / tpGlobalClusterCotTheta / globalR / globalZ)")
+        out["z0_resolution"] = {"skipped": "no global-frame angle columns"}
+        for a in ax_row:
+            a.axis("off")
+        return
+
+    ok = (K["tpIdx"] >= 0) & (K["gClCotTheta"] > SENTINEL) & (K["tpGClCotTheta"] > SENTINEL)
+    if "clHasBeta" in K:
+        ok &= K["clHasBeta"] > 0
+    d = K["gClCotTheta"] - K["tpGClCotTheta"]          # cot(theta) residual
+    dz0 = K["globalR"] * d                              # cm; z0 = z - r cot(theta)
+    eta = np.arcsinh(K["tpGClCotTheta"])                # cot(theta) = sinh(eta)
+    lay = K["layer"]
+    Zspan = 2.0 * Z_HALF_RANGE_CM
+
+    res = {"n_clusters_used": int(ok.sum()),
+           "definition": "sigma = robust width of (reco - truth) on the same cluster",
+           "suppression_formula": "Z_range / (4 sigma_z0), w cancels",
+           "RETRACTED_sigma_z0": (
+               "EVERY sigma_z0 AND SLICE COUNT BELOW IS INVALID. They assume "
+               "globalClusterCotTheta is the global polar slope dz/dr. It is not: "
+               "median |tpGlobalClusterCotTheta + tpLocalCotBeta| = 0.0104, i.e. the "
+               "column is -localCotBeta, and its magnitude falls 1.75/1.05/0.67/0.48 "
+               "across L1-L4 where a true dz/dr would be layer-independent. Testing "
+               "self-consistency of z0 across one track's clusters: raw z gives 3.10 cm "
+               "RMS, z - r*cot gives 5.95 cm -- the correction is worse than nothing. "
+               "sigma_cotTheta itself is still the payload smear of a real (local beta) "
+               "angle. See doc/SmartPixelsSeedingAndFitting.md section 4a."),
+           "CIRCULAR": (
+               "NOT A PHYSICAL RESOLUTION. SmartPixelsRecHitProducer builds the truth "
+               "angle as the TP's helix propagated to the hit with NO multiple scattering "
+               "(:292-319), then sets reco = truth + PixelAV draw (:330-331); the nano "
+               "truth column is that same value rotated (L1SmartPixelsClusterTableProducer"
+               ".cc:199-202). So (reco - truth) IS the payload draw and every sigma below "
+               "is the payload's own width. Tell: sigma is equal for pT>2 and 0.5-2 GeV to "
+               "0.3%, where a physical resolution would degrade toward low pT. Treat these "
+               "as an OPTIMISTIC BOUND. See doc/SmartPixelsSeedingAndFitting.md section 4a.")}
+
+    # ---- per layer, and per layer x |eta| -----------------------------------
+    per_layer = {}
+    for L in LAYERS:
+        m = ok & (lay == L)
+        s_cot = robust_sigma(d[m])
+        s_z0 = robust_sigma(dz0[m])
+        per_layer[f"L{L}"] = {
+            "n": int(m.sum()),
+            "median_r_cm": float(np.median(K["globalR"][m])) if m.any() else float("nan"),
+            "sigma_cotTheta_mad": s_cot[0], "sigma_cotTheta_q68": s_cot[1],
+            "sigma_z0_cm_mad": s_z0[0], "sigma_z0_cm_q68": s_z0[1],
+            "z0_slices": float(Zspan / (4.0 * s_z0[0])) if s_z0[0] == s_z0[0] else float("nan"),
+        }
+    res["per_layer"] = per_layer
+
+    eta_tab = {}
+    for i in range(len(ETA_RES_EDGES) - 1):
+        lo, hi = ETA_RES_EDGES[i], ETA_RES_EDGES[i + 1]
+        me = ok & (np.abs(eta) >= lo) & (np.abs(eta) < hi)
+        row = {}
+        for L in LAYERS:
+            s = robust_sigma(dz0[me & (lay == L)])
+            row[f"L{L}"] = s[0]
+        row["n"] = int(me.sum())
+        row["sigma_cotTheta_mad"] = robust_sigma(d[me])[0]
+        eta_tab[f"{lo:.1f}-{hi:.1f}"] = row
+    res["vs_abs_eta"] = eta_tab
+
+    # ---- the two design targets separately ---------------------------------
+    if "tpPt" in K:
+        for nm, sel in (("A_pt_gt_2", ok & (K["tpPt"] > 2.0)),
+                        ("B_pt_0p5_to_2", ok & (K["tpPt"] > 0.5) & (K["tpPt"] <= 2.0))):
+            s = robust_sigma(dz0[sel])
+            res.setdefault("by_target", {})[nm] = {
+                "n": int(sel.sum()), "sigma_z0_cm_mad": s[0],
+                "z0_slices": float(Zspan / (4.0 * s[0])) if s[0] == s[0] else float("nan")}
+
+    # ---- cluster-weighted headline + the pull check -------------------------
+    s_all = robust_sigma(dz0[ok])
+    res["overall"] = {"sigma_z0_cm_mad": s_all[0], "sigma_z0_cm_q68": s_all[1],
+                      "z0_slices": float(Zspan / (4.0 * s_all[0])) if s_all[0] == s_all[0]
+                      else float("nan"),
+                      "sigma_for_30_slices_cm": float(Zspan / 120.0)}
+    if "gSigCotTheta" in K:
+        pm = ok & (K["gSigCotTheta"] > 0)
+        pull = d[pm] / K["gSigCotTheta"][pm]
+        pw = robust_sigma(pull)
+        res["pull"] = {"n": int(pm.sum()), "width_mad": pw[0], "width_q68": pw[1],
+                       "median": float(np.median(pull)) if pm.any() else float("nan"),
+                       "note": "width far from 1.0 => the stored sigma is miscalibrated"}
+
+    print(f"   (7) sigma(z0) overall {s_all[0]*1e4:.0f} um "
+          f"-> {res['overall']['z0_slices']:.1f} usable z0 slices "
+          f"(design assumed 30, which needs {Zspan/120.0*1e4:.0f} um)")
+    for L in LAYERS:
+        p = per_layer[f"L{L}"]
+        print(f"       L{L}: r={p['median_r_cm']:.1f} cm  sigma(cot)={p['sigma_cotTheta_mad']:.4f}"
+              f"  sigma(z0)={p['sigma_z0_cm_mad']*1e4:.0f} um  slices={p['z0_slices']:.1f}")
+    if "pull" in res:
+        print(f"       pull width {res['pull']['width_mad']:.3f} (want ~1.0)")
+
+    # ---- figures -------------------------------------------------------------
+    ax = ax_row[0]
+    for k_eta, row in eta_tab.items():
+        ys = [row[f"L{L}"] * 1e4 for L in LAYERS]
+        ax.plot(LAYERS, ys, marker="o", label=rf"$|\eta|$ {k_eta}")
+    ax.axhline(Zspan / 120.0 * 1e4, color="k", ls=":", lw=1)
+    ax.text(4.05, Zspan / 120.0 * 1e4, " 30 slices", fontsize=6, va="center")
+    ax.set_yscale("log"); ax.set_xlabel("TBPX layer")
+    ax.set_ylabel(r"robust $\sigma(z_0)$ [$\mu$m]")
+    ax.set_title(r"(7) per-cluster $z_0$ resolution"); ax.legend(fontsize=6); ax.grid(alpha=.3)
+
+    ax = ax_row[1]
+    if "pull" in res:
+        pm = ok & (K["gSigCotTheta"] > 0)
+        ax.hist(np.clip(d[pm] / K["gSigCotTheta"][pm], -5, 5), bins=80,
+                histtype="step", density=True, label=f"pull (w={res['pull']['width_mad']:.2f})")
+    rng = np.nanpercentile(np.abs(d[ok]), 99) if ok.any() else 1.0
+    ax.hist(np.clip(d[ok] / max(rng, 1e-9), -5, 5), bins=80, histtype="step", density=True,
+            label=r"$\Delta\cot\theta$ / q99")
+    ax.set_xlabel("normalized residual"); ax.set_ylabel("density")
+    ax.set_title(r"(7) $\cot\theta$ residual and pull"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+    out["z0_resolution"] = res
+
+
+# --------------------------------------------------------------------------
+# (8) Hough example panels
+# --------------------------------------------------------------------------
+B_FIELD_T = 3.8
+# phi_pos = phi0 - C_BEND * r[cm] * kappa[1/GeV]. The DIRECTION turns twice as
+# fast as the position azimuth, which is what makes a cluster a SEGMENT.
+C_BEND = 0.29979246 * B_FIELD_T / 2.0 / 100.0
+HOUGH_PT_POINTS = (1.0, 2.0, 5.0, 10.0, 20.0)
+HOUGH_ETA_POINTS = (0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4)
+LAYER_COLOR = {1: "#d62728", 2: "#ff7f0e", 3: "#1f77b4", 4: "#2ca02c"}  # red/orange/blue/green
+BAND_ALPHA = (0.95, 0.40, 0.10)      # |d| < 1 sigma, 1-3 sigma, > 3 sigma
+CONE_DPHI, CONE_DETA = 0.20, 0.20
+SECTOR_DPHI = 2.0 * np.pi / 9.0
+Z0_SLICE_NSIG = 2.0
+SECTOR_DRAW_CAP = 3000
+
+
+def _wrap(a):
+    return (a + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def _half_turn(phi_pos, phi_dir):
+    """asin(C_BEND * r * kappa): the half turn from the beamline out to the hit.
+
+    EXACT, not the small-angle form. For a helix from the origin the position
+    azimuth lags phi0 by asin(c*r*kappa) and the direction by twice that, so
+    phi_p - phi_d = asin(c*r*kappa) -- but `globalClusterPhi` carries a PI
+    OFFSET (its direction vector points inward), so what is actually stored
+    gives phi_p - phi_d = pi - asin(c*r*kappa).
+
+    Verified against truth on this sample: with kappa = sin(half)/(c*r) the
+    reconstructed curvature satisfies |kappa|*pT = 1.008 (p25-p75 0.979-1.044)
+    for tpPt > 2 GeV. The naive linear form (phi_p - phi_d)/(c*r) is wrong by a
+    median factor of ~90 because it misreads the pi offset as a huge bend.
+    """
+    return _wrap(np.pi - _wrap(phi_pos - phi_dir))
+
+
+def _hough_bands(centre, sigma, slope, intercept, xlo, xhi, has_angle):
+    """Split y = intercept + slope*x into |x-centre| < 1s, 1-3s, >3s.
+
+    Returns three (N,2,2) arrays for LineCollection. A cluster whose sensor
+    reports NO angle has centre=sigma=0, which makes bands 1 and 2 empty and
+    band 3 span the full range in two pieces -- i.e. it constrains nothing and
+    is drawn faintest across the whole line. That is the correct behaviour and
+    needs no special case.
+    """
+    ok = has_angle & np.isfinite(sigma) & (sigma > 0) & np.isfinite(centre)
+    c = np.where(ok, centre, 0.0)
+    s = np.where(ok, sigma, 0.0)
+
+    def seg(a, b):
+        a, b = np.clip(a, xlo, xhi), np.clip(b, xlo, xhi)
+        m = b > a
+        if not m.any():
+            return None
+        x0, x1 = a[m], b[m]
+        return np.stack([np.stack([x0, intercept[m] + slope[m] * x0], -1),
+                         np.stack([x1, intercept[m] + slope[m] * x1], -1)], 1)
+
+    full = np.full_like(c, xlo), np.full_like(c, xhi)
+    spans = [[(c - s, c + s)],
+             [(c - 3 * s, c - s), (c + s, c + 3 * s)],
+             [(full[0], c - 3 * s), (c + 3 * s, full[1])]]
+    out = []
+    for band in spans:
+        parts = [p for p in (seg(a, b) for a, b in band) if p is not None]
+        out.append(np.concatenate(parts) if parts else np.empty((0, 2, 2)))
+    return out
+
+
+def _draw_hough(ax, sel, K, xlo, xhi, mode, truth, rasterize, shade=True):
+    """One Hough panel. mode='rphi' -> (kappa, phi0); mode='rz' -> (cotTheta, z0).
+
+    shade=False draws the classic POSITION-ONLY Hough line: full range, one shade
+    per layer, no angle information used. That is the honest fallback while the
+    direction columns carry a per-module orientation convention (see the module
+    docstring of study 8).
+    """
+    from matplotlib.collections import LineCollection
+    r = K["globalR"][sel]
+    if not shade and mode == "rphi":
+        phi_p = K["globalPhi"][sel]
+        slope, intercept = C_BEND * r, _wrap(phi_p - truth["phi0"])
+        for L in LAYERS:
+            m = K["layer"][sel] == L
+            if not m.any():
+                continue
+            x0 = np.full(int(m.sum()), xlo); x1 = np.full(int(m.sum()), xhi)
+            segs = np.stack([np.stack([x0, intercept[m] + slope[m] * x0], -1),
+                             np.stack([x1, intercept[m] + slope[m] * x1], -1)], 1)
+            ax.add_collection(LineCollection(segs, colors=LAYER_COLOR[L], linewidths=0.6,
+                                             alpha=0.45, rasterized=rasterize))
+        ax.set_xlim(xlo, xhi)
+        return
+    if mode == "rphi":
+        phi_p = K["globalPhi"][sel]
+        slope = C_BEND * r
+        intercept = _wrap(phi_p - truth["phi0"])          # plot relative to truth
+        half = _half_turn(phi_p, K["gClPhi"][sel])
+        centre = np.sin(half) / np.maximum(slope, 1e-12)
+        sigma = K["gSigPhi"][sel] * np.abs(np.cos(half)) / np.maximum(slope, 1e-12)
+        has = K["gClPhi"][sel] > SENTINEL
+    else:
+        slope = -r
+        intercept = K["globalZ"][sel]
+        centre = K["gClCotTheta"][sel]
+        sigma = K["gSigCotTheta"][sel]
+        has = K["gClCotTheta"][sel] > SENTINEL
+    for L in LAYERS:
+        m = K["layer"][sel] == L
+        if not m.any():
+            continue
+        bands = _hough_bands(centre[m], sigma[m], slope[m], intercept[m], xlo, xhi, has[m])
+        for b, segs in enumerate(bands):
+            if len(segs):
+                ax.add_collection(LineCollection(
+                    segs, colors=LAYER_COLOR[L], linewidths=0.6, alpha=BAND_ALPHA[b],
+                    rasterized=rasterize))
+    ax.set_xlim(xlo, xhi)
+
+
+def study_hough_examples(X, K, P, ax_row, out):
+    """(8) worked Hough transforms for example TrackingParticles.
+
+    WHAT IS DRAWN. For each (pT, eta) cell one real TP is picked from the file
+    and two populations are shown around it: a CONE (legible, shows the signal
+    structure) and the full phi SECTOR one processing node would see (honest,
+    shows the PU200 background it sits in). Each gets three panels: the r-z
+    plane, the r-phi plane, and the r-phi plane again after z0 slicing.
+
+    WHY A CLUSTER IS A SEGMENT, NOT A LINE. Position and direction turn at
+    different rates -- phi_p = phi0 - c*r*kappa but phi_d = phi0 - 2*c*r*kappa --
+    so a cluster's own angle fixes kappa_hat = (phi_p - phi_d)/(c*r) with
+    sigma = sigma(phi_d)/(c*r). The Hough line is drawn dark within 1 sigma of
+    that, mid to 3 sigma, faint beyond. Layers: L1 red, L2 orange, L3 blue,
+    L4 green.
+
+    THE r-z PLANE IS THE SAME CONSTRUCTION. z0 = z - r*cot(theta), so a cluster
+    is a segment of slope -r there too, and the slope encodes the layer: L1's
+    short lever arm makes a nearly flat, tightly-determined z0, L4's a steep and
+    loose one. That is the whole reason z0 slicing works, drawn rather than
+    asserted.
+
+    ETA COVERAGE IS A RESULT, NOT A PLOTTING PROBLEM. TBPX is a barrel: measured
+    on this file, the fraction of TPs lighting >=3 layers is 0.87 at |eta| 0.2-1.0
+    but 0.21 at 1.4-1.8 and 0.03 above 1.8. The high-eta cells are therefore
+    nearly empty, and that emptiness is the acceptance limit of barrel-only
+    seeding (|eta| <~ 1.4). Those tracks leave TBPX for TFPX, which is out of
+    SmartPixels scope.
+
+    THE ANGLE SIGMAS ARE THE STORED ONES and sigGlobalClusterCotTheta is known to
+    be ~21% optimistic (study 7), so the bands here are correspondingly tight.
+    They are also drawn from a truth angle that neglects multiple scattering --
+    see the CIRCULAR note in study (7).
+    """
+    from matplotlib.backends.backend_pdf import PdfPages
+    need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
+            "gSigPhi", "gSigCotTheta", "tpGClPhi", "tpGClCotTheta")
+    if not all(k in K for k in need):
+        print("   (8) SKIPPED: cluster table lacks the global-frame columns")
+        out["hough_examples"] = {"skipped": "no global-frame columns"}
+        for a in ax_row:
+            a.axis("off")
+        return
+
+    # ---- per-TP aggregates, fully vectorised -------------------------------
+    ok = (K["tpIdx"] >= 0) & (K["tpGClPhi"] > SENTINEL) & (K["tpGClCotTheta"] > SENTINEL)
+    key = K["event"].astype(np.int64) * (1 << 20) + K["tpIdx"].astype(np.int64)
+    ukey, inv = np.unique(key[ok], return_inverse=True)
+    cnt = np.bincount(inv).astype(float)
+    laymask = np.zeros(len(ukey), dtype=np.int64)
+    np.bitwise_or.at(laymask, inv, (1 << K["layer"][ok].astype(np.int64)))
+    nlay = sum(((laymask >> L) & 1) for L in LAYERS)
+
+    r_ok = K["globalR"][ok]
+    half = _half_turn(K["globalPhi"][ok], K["tpGClPhi"][ok])
+    kap = np.sin(half) / (C_BEND * r_ok)
+    phi0 = _wrap(K["globalPhi"][ok] + half)
+    # NOTE z0 here is NOT trustworthy: globalClusterCotTheta is -localCotBeta,
+    # not dz/dr (see doc section 4a retraction). Kept only so the r-z panels can
+    # be drawn as BLOCKED rather than silently wrong.
+    z0 = K["globalZ"][ok] - r_ok * K["tpGClCotTheta"][ok]
+
+    def mean_by(v):
+        return np.bincount(inv, weights=v) / cnt
+
+    def median_by(v):
+        """Per-TP median. A MEAN is unusable for kappa: a cluster at small r has
+        kappa bounded only by 1/(C*r) ~ 60, so a single bad one (secondary,
+        merged cluster, broken pi convention) drags the mean by an order of
+        magnitude -- which is exactly what put the truth marker at kappa = -2.7
+        for a 2.5 GeV track before this was fixed."""
+        order = np.lexsort((v, inv))
+        vs, gs = v[order], inv[order]
+        g = np.arange(len(cnt))
+        lo = np.searchsorted(gs, g, "left")
+        return vs[lo + (np.searchsorted(gs, g, "right") - lo) // 2]
+    tp_pt = median_by(K["tpPt"][ok])
+    tp_cot = median_by(K["tpGClCotTheta"][ok])
+    tp_eta = np.arcsinh(tp_cot)
+    tp_z0 = median_by(z0)
+    # kappa's SIGN cannot be taken from the direction columns: their orientation
+    # convention varies per module, so (phi_p - phi_d) is sometimes the small bend
+    # and sometimes pi minus it, with either sign. |kappa| = 1/tpPt is exact from
+    # truth; take the sign from how the POSITION azimuth turns with radius, since
+    # phi_p = phi0 - asin(C*r*kappa) means dphi_p/dr < 0 for kappa > 0.
+    rc, phi_c = K["globalR"][ok], K["globalPhi"][ok]
+    ref = np.arctan2(np.bincount(inv, weights=np.sin(phi_c)),
+                     np.bincount(inv, weights=np.cos(phi_c)))     # circular mean
+    phi_rel = _wrap(phi_c - ref[inv])                             # wrap-safe residual
+    cov = (np.bincount(inv, weights=rc * phi_rel)
+           - np.bincount(inv, weights=rc) * np.bincount(inv, weights=phi_rel) / cnt)
+    tp_kap = np.where(cov > 0, -1.0, 1.0) / np.maximum(tp_pt, 1e-6)
+    # phi0 is circular: average via unit vectors
+    tp_phi0 = np.arctan2(mean_by(np.sin(phi0)), mean_by(np.cos(phi0)))
+    tp_ev = (ukey >> 20).astype(np.int64)
+
+    clu_eta = np.arcsinh(K["globalZ"] / np.maximum(K["globalR"], 1e-6))
+    res, pages = {"cells": {}}, []
+
+    for pt_t in HOUGH_PT_POINTS:
+        for eta_t in HOUGH_ETA_POINTS:
+            cell = f"pt{pt_t:g}_eta{eta_t:g}"
+            cand = (np.abs(np.abs(tp_eta) - eta_t) < 0.15) & \
+                   (np.abs(np.log(np.maximum(tp_pt, 1e-6) / pt_t)) < np.log(1.3)) & (nlay >= 2)
+            if not cand.any():
+                res["cells"][cell] = {"found": False,
+                                      "reason": "no TP within (dEta<0.15, pT within 30%, >=2 layers)"}
+                pages.append((cell, None))
+                continue
+            idx = np.flatnonzero(cand)[np.lexsort((cnt[cand], nlay[cand]))[-1]]
+            truth = {"phi0": tp_phi0[idx], "kap": tp_kap[idx],
+                     "z0": tp_z0[idx], "cot": tp_cot[idx]}
+            ev = tp_ev[idx]
+            same_ev = K["event"] == ev
+            dphi = _wrap(K["globalPhi"] - tp_phi0[idx])
+            cone = same_ev & (np.abs(dphi) < CONE_DPHI) & \
+                   (np.abs(clu_eta - tp_eta[idx]) < CONE_DETA)
+            sect = same_ev & (np.abs(dphi) < 0.5 * SECTOR_DPHI)
+            if sect.sum() > SECTOR_DRAW_CAP:      # keep the PDF finite
+                keep = np.zeros(sect.sum(), bool)
+                keep[np.random.default_rng(0).choice(sect.sum(), SECTOR_DRAW_CAP, False)] = True
+                si = np.flatnonzero(sect); sect = np.zeros_like(sect); sect[si[keep]] = True
+            res["cells"][cell] = {
+                "found": True, "event": int(ev), "tpIdx": int(ukey[idx] & ((1 << 20) - 1)),
+                "tp_pt": float(tp_pt[idx]), "tp_eta": float(tp_eta[idx]),
+                "n_layers": int(nlay[idx]), "n_clusters_tp": int(cnt[idx]),
+                "n_cone": int(cone.sum()), "n_sector": int(sect.sum()),
+                "n_candidate_tps": int(cand.sum())}
+            pages.append((cell, (idx, truth, cone, sect)))
+
+    # ---- render -------------------------------------------------------------
+    pdf_path = os.path.join(out["_outdir"], "spix_hough_examples.pdf")
+    with PdfPages(pdf_path) as pdf:
+        for cell, payload in pages:
+            fig, axs = plt.subplots(2, 3, figsize=(16.5, 9))
+            if payload is None:
+                for a in axs.ravel():
+                    a.axis("off")
+                axs[0][1].text(0.5, 0.5, f"{cell}\n\nno TrackingParticle found\n"
+                               "barrel-only acceptance ends near |eta| 1.4",
+                               ha="center", va="center", fontsize=13)
+            else:
+                idx, truth, cone, sect = payload
+                kmax = max(0.6, 1.6 * abs(truth["kap"]))
+                for row, (sel, nm, rast) in enumerate(
+                        ((cone, "cone", False), (sect, "phi sector", True))):
+                    a = axs[row][1]
+                    _draw_hough(a, sel, K, -kmax, kmax, "rphi", truth, rast, shade=False)
+                    a.plot(truth["kap"], 0.0, "k*", ms=11, zorder=5)
+                    a.axvline(truth["kap"], color="k", lw=0.6, ls=":")
+                    a.set_ylim(-0.30, 0.30); a.grid(alpha=.25)
+                    a.set_xlabel(r"$q/p_T$ [GeV$^{-1}$]")
+                    a.set_ylabel(r"$\phi_0 - \phi_0^{\rm true}$ [rad]")
+                    a.set_title(f"{nm}: r-$\\phi$, position-only ({int(sel.sum())} clusters)", fontsize=9)
+
+                    # The r-z plane and the z0 slicing both need a GLOBAL polar
+                    # direction. globalClusterCotTheta is -localCotBeta, so both
+                    # are blocked rather than drawn wrong.
+                    for col, what in ((0, "r-z plane"), (2, r"r-$\phi$ after $z_0$ slicing")):
+                        a = axs[row][col]
+                        a.axis("off")
+                        a.text(0.5, 0.5, f"{nm}: {what}\n\nBLOCKED\n\n"
+                               "globalClusterCotTheta is $-$localCotBeta,\n"
+                               "not dz/dr, so $z_0 = z - r\\cot\\theta$ is invalid.\n"
+                               "See doc SmartPixelsSeedingAndFitting.md §4a.",
+                               ha="center", va="center", fontsize=8.5,
+                               bbox=dict(boxstyle="round", fc="#ffe8e8", ec="#d62728"))
+                c = res["cells"][cell]
+                fig.suptitle(f"{cell}   |   TP $p_T$={c['tp_pt']:.2f} GeV, $\\eta$={c['tp_eta']:+.2f}, "
+                             f"{c['n_layers']} TBPX layers   |   L1 red, L2 orange, L3 blue, L4 green; "
+                             f"shade = 1/3$\\sigma$ of the cluster's own angle", fontsize=10)
+            fig.tight_layout()
+            pdf.savefig(fig, dpi=110)
+            plt.close(fig)
+    res["pdf"] = pdf_path
+    res["n_pages"] = len(pages)
+    res["n_cells_found"] = sum(1 for v in res["cells"].values() if v.get("found"))
+    print(f"   (8) wrote {pdf_path} ({len(pages)} cells, "
+          f"{res['n_cells_found']} with a TP)")
+
+    # inline: one representative cell, before and after z0 slicing
+    shown = next((c for c in ("pt2_eta0.4", "pt2_eta0", "pt5_eta0.4")
+                  if res["cells"].get(c, {}).get("found")), None)
+    if shown:
+        idx, truth, cone, sect = dict(pages)[shown]
+        kmax = max(0.6, 1.6 * abs(truth["kap"]))
+        for a, (s, lab, rast) in zip(ax_row, ((cone, "cone", False), (sect, "phi sector", True))):
+            _draw_hough(a, s, K, -kmax, kmax, "rphi", truth, rast, shade=False)
+            a.plot(truth["kap"], 0.0, "k*", ms=10, zorder=5)
+            a.set_ylim(-0.30, 0.30); a.grid(alpha=.25)
+            a.set_xlabel(r"$q/p_T$ [GeV$^{-1}$]"); a.set_ylabel(r"$\phi_0-\phi_0^{\rm true}$")
+            a.set_title(f"(8) {shown} {lab} ({int(s.sum())})", fontsize=9)
+    else:
+        for a in ax_row:
+            a.axis("off")
+    out["hough_examples"] = res
+
+
 STUDIES = [
     ("cone occupancy", study_cone_occupancy, 3),
+    ("refit-order cone", study_refit_cone_occupancy, 3),
     ("cone containment + size", study_cone_containment, 2),
     ("angle discrimination", study_angle_discrimination, 2),
     ("charge readout gate", study_charge_gate, 2),
     ("unbiased containment", study_true_containment, 2),
     ("chi2 weight scan", study_chi2_weight_scan, 2),
+    ("z0 resolution (seeding)", study_z0_resolution, 2),
+    ("hough examples", study_hough_examples, 2),
 ]
 
 
@@ -633,7 +1305,10 @@ def main():
     hit, cfg, X, K, n_ev = load(args.inputs)
     P = prepare(X, K)
     out = {"config": cfg, "n_events": n_ev, "n_crossings": int(len(X["layer"])),
-           "n_clusters": int(len(K["layer"]))}
+           "n_clusters": int(len(K["layer"])),
+           # side-artefact directory for studies that write their own files;
+           # stripped before the JSON is dumped
+           "_outdir": args.outdir}
 
     ncols = max(n for _, _, n in STUDIES)
     fig, axes = plt.subplots(len(STUDIES), ncols, figsize=(5.2 * ncols, 4.2 * len(STUDIES)))
@@ -648,6 +1323,7 @@ def main():
     png = os.path.join(args.outdir, "spix_combinatorics_omnibus.png")
     fig.savefig(png, dpi=130, bbox_inches="tight")
     js = os.path.join(args.outdir, "spix_combinatorics_omnibus.json")
+    out.pop("_outdir", None)
     with open(js, "w") as fh:
         json.dump(out, fh, indent=2)
     print(f"\nwrote {png}\nwrote {js}")
