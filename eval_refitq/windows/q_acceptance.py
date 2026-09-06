@@ -22,10 +22,20 @@ CALIBRATION RESULT (PU200, 25 events, correct-hit pull width in x, target 1.0).
 The scale scanned is digiRefitMultScattTerm; L4 is first-visited under outsideIn
 so it gets no Q by construction and is unchanged throughout.
 
-    term        L1      L2      L3      L4
-    0 (off)   4.127   2.787   2.114   1.126
-    0.00075   1.524   1.261   0.811   1.126     <- TMTT default, ADOPTED
-    0.00150   1.056   0.785   0.461   1.126
+    term        L1      L2      L3      L4     |  L1 pT-span
+    0 (off)   4.127   2.787   2.114   1.126    |    2.657
+    0.00075   1.524   1.261   0.811   1.126    |    0.286   <- ADOPTED
+    0.00150   1.056   0.785   0.461   1.126    |    0.391
+    0.00300   0.617   0.445   0.242   1.126    |    0.412
+
+THE SHAPE CRITERION PICKS 0.00075 ON ITS OWN, and this is the load-bearing
+result. The L1 pT-span is MINIMISED at 0.00075 and rises again at 0.00150 and
+0.00300: over-inflating C reintroduces pT structure with the opposite sign, the
+same way under-inflating does. So the criterion that CANNOT be gamed by a scale
+factor -- flatness, not centring -- has an interior optimum, and it sits on the
+value TMTT derives from tracker material rather than anywhere near the values
+that centre the pulls better. Centring and flatness disagree, and flatness is
+the one carrying the physics.
 
 NO SINGLE CONSTANT CENTRES ALL THREE, and the miss is monotone in VISIT DEPTH,
 not in material: under outsideIn the visit order is L4 -> L3 -> L2 -> L1, and the
@@ -35,13 +45,12 @@ number of accumulated updates rather than the radiation length is the single-hel
 approximation leaking, so fitting a per-layer scale to it would be absorbing a
 model error into a physics constant. Left alone until the seed-gap term exists.
 
-WHY 0.00075 RATHER THAN THE BETTER-CENTRED 0.00150: the two errors are not
-symmetric for our purpose. 0.00150 drives L3 to 0.461, i.e. a covariance roughly
-2x too LARGE, which over-opens the search cone and admits exactly the
-combinatorics this refit exists to suppress. 0.00075 under-corrects (L1 at 1.52)
-but never over-opens any layer, and it is the value TMTT derives from the tracker
-material rather than one fitted to these pulls. An honest under-correction beats
-a tuned over-correction.
+The centring criterion, taken alone, would have preferred 0.00150 or 0.00300 --
+and that is the trap this test exists to avoid. Both over-open the cone badly
+(L3 at 0.461 and 0.242 is a covariance 2x to 4x too LARGE) while admitting exactly
+the combinatorics the refit exists to suppress, and both are WORSE by the shape
+criterion. Had this test only checked pull widths it would have recommended a
+term four times too large.
 """
 from __future__ import annotations
 
