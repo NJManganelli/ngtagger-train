@@ -41,6 +41,44 @@ containment
     different layers average different layer mixes -- L1 crossings are intrinsically harder,
     which is why an L1-instrumented build scores lower without the algorithm being worse.
 
+local frame  /  local x, local y
+    The module's own coordinate system. LOCAL X is the FINE-pitch axis (25 um) and points
+    along r-phi, i.e. the BENDING plane; LOCAL Y is the coarse axis (100 um) and points along
+    z. Verified from the CPE resolutions: median sigX = 3.0 um against sigY = 12.5 um. Local z
+    is the module NORMAL.
+
+cotAlpha  (ALPHA = BENDING)
+    p_x_local / p_z_local, PixelAV convention -- the track's angle in the local x direction,
+    hence the BENDING-PLANE (r-phi) angle. NOTE it carries almost no pT information by itself:
+    median |cotAlpha| is flat against pT at every layer (L1: 0.147 / 0.148 / 0.148 / 0.146
+    over pT 2-3, 3-5, 5-10, 10+ GeV), because its value at a barrel module is set by geometry
+    and module tilt rather than by curvature. Its use is COMPATIBILITY -- does this cluster's
+    angle match what the track predicts here -- not measuring pT.
+
+cotBeta  (BETA = LONGITUDINAL)
+    p_y_local / p_z_local -- the angle in the local y (z) direction, hence the LONGITUDINAL
+    (r-z) angle, essentially cot(theta) at the module. Verified: corr(|cotBeta|, |global
+    cot(theta)|) = +0.956 with median difference 0.0089. The correlation WITHOUT absolute
+    values is only +0.19, because the sign of local y relative to global z flips module to
+    module -- the same orientation ambiguity that produced the global-direction sense bug.
+
+cone is 2D, not phi-only
+    The candidate cut is a BOX in both local coordinates: |dx| < k*sigma_x AND |dy| <
+    k*sigma_y, applied independently per axis. So it constrains r-phi and z together. It uses
+    POSITION ONLY -- no angle information enters the candidate count, so every combination
+    number here is the no-angle case, and applying alpha/beta compatibility on top would
+    reduce it further.
+
+module boundary  (KNOWN BIAS)
+    Candidates are joined to a crossing by EXACT detId, so a cluster just across a module edge
+    is invisible even when it lies geometrically inside the cone. Modules are 3.38 x 4.33 cm.
+    Measured fraction of crossings whose cone reaches past an edge: 5.0% / 6.7% / 8.2% at q99
+    / q99.9 / q99.99 for the refit-order cone, and 8.6% / 11.6% / 14.2% for the seed cone;
+    worst at L4 (14.9%), which is first-visited and so has the widest cone, mildest at L1
+    (2.4%). Combination counts are therefore biased LOW by roughly that much. Separately, the
+    real system does not project to one module at all -- it sees the aggregate clusters of an
+    eta x phi sector board -- so these are a FLOOR that assumes perfect module targeting.
+
 correct / true cluster
     The cluster whose DOMINANT TrackingParticle is the TP the track was matched to. Dominance
     is by charge, winner-takes-pixel.
