@@ -43,7 +43,43 @@ term each layer "wants" grows the later it is visited (L1 ~0.0015, L2 ~0.0011,
 L3 ~0.0006). Material does not vary that way across TBPX. A trend that tracks the
 number of accumulated updates rather than the radiation length is the single-helix
 approximation leaking, so fitting a per-layer scale to it would be absorbing a
-model error into a physics constant. Left alone until the seed-gap term exists.
+model error into a physics constant.
+
+WHY RUNNING THE FILTER AGAINST THE PARTICLE'S DIRECTION OF TRAVEL IS FINE. The
+particle crossed L1..L4 on its way OUT and was scattered most by the time it
+reached L4, which is the hit this fit incorporates FIRST. That sounds like the Q
+bookkeeping must be backwards. It is not, because the outbound scattering is not
+an uncertainty for us: we never extrapolate from the production vertex. The seed
+is an OT-only fit, so every kink the particle took inboard of the OT is already
+baked into WHERE THE OT TRACK IS. It is not error, it is just the trajectory. The
+only variance we owe is for material between CONSECUTIVE CONSTRAINT POINTS in the
+fit's own visit order, which is what nCross counts. Covariance transport for an
+unmodelled kink is also symmetric under swapping the two endpoints (the linearised
+transport is invertible and the kink is small), which is why CMSSW propagates
+oppositeToMomentum with the same MaterialEffectsUpdator it uses alongMomentum.
+Energy loss is the one effect that genuinely is NOT reversible -- backwards you
+must add dE/dx back rather than subtract it -- and it is not modelled here at all.
+
+THE FIT-ORDER PICTURE MAKES A FALSIFIABLE PREDICTION AND IT HOLDS. If Q is
+tracking material between constraint points, then Q-off widths should degrade
+monotonically with VISIT DEPTH and each degraded layer should carry the 1/pT
+fingerprint (width RISING toward low pT), while L4 -- charged nothing, being
+first-visited -- should show no scattering deficit at all. Q-off widths by pT bin:
+
+    L4   1.07  0.98  1.33  1.38  1.69     rises with pT: NOT scattering
+    L3   2.14  2.08  2.43  2.40  1.67
+    L1   4.68  3.42  3.43  2.20  2.02     falls with pT: scattering
+
+L1 loses a factor 2.3 from high pT to low, the textbook 1/(beta p) signature. L4
+slopes the OTHER WAY and is already ~1.0 where scattering would hurt most.
+
+THAT KILLS THE SEED-GAP-SCATTERING EXPLANATION OF L4, which earlier versions of
+this file asserted. Missing multiple scattering makes a pull width blow up at LOW
+pT; L4's blows up at HIGH pT. The sign is wrong, so no MS term of any scale fixes
+it -- adding one would spoil the already-correct low-pT bins to chase the high-pT
+ones. L4's residual is the OT seed covariance being too OPTIMISTIC at high pT
+(a seed-quality problem) or a pT-independent residual floor, and it should be
+chased there rather than by inventing a seed-gap Q.
 
 The centring criterion, taken alone, would have preferred 0.00150 or 0.00300 --
 and that is the trap this test exists to avoid. Both over-open the cone badly
