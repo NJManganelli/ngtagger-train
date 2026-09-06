@@ -1112,9 +1112,16 @@ SWEEP_ORDER = ["AIII", "IAII", "IIAI", "IIIA",
                "AAII", "AIAI", "AIIA", "IAAI", "IAIA", "IIAA",
                "AAAI", "AAIA", "AIAA", "IAAA",
                "AAAA"]
-# Cone quantile the human-readable table is evaluated at. The CSV carries all of
-# them, so this only sets which one is printed, never which one is computed.
-SWEEP_TABLE_REF_Q = 0.99
+# CONE WIDTHS the design table is evaluated at. These are the realistic knob: the
+# cone quantile IS how wide the search window is, so it sets both how many true
+# hits enter the refit and how much combinatorics comes with them. One total-work
+# number cannot express that trade, so every cone gets its own column.
+#
+# NOMINAL, NOT MEASURED. k = Phi^-1((1+q)/2) assumes unit-width pulls, and ours are
+# 0.81 to 1.52 depending on layer and visit depth (see q_acceptance.py), so a
+# "q99.99 cone" does NOT deliver 99.99% true-hit containment. That is exactly why
+# the table also carries MEASURED containment beside the cost.
+SWEEP_TABLE_CONES = [0.99, 0.999, 0.9999]
 
 
 def _variant_crossings(files, suffix):
@@ -1126,7 +1133,15 @@ def _variant_crossings(files, suffix):
                            filter_name=[f"{hit}_{c}" for c in cols])
     ncross = ak.to_numpy(ak.num(H[f"{hit}_layer"]))
     X = {c: ak.to_numpy(ak.flatten(H[f"{hit}_{c}"])) for c in cols}
-    X["event"] = np.repeat(np.arange(len(ncross)), ncross)
+    ev = np.repeat(np.arange(len(ncross)), ncross)
+    X["event"] = ev
+    # The matched TP is per TRACK and per VARIANT (each variant refits separately),
+    # so it has to come from THIS variant's track table, not the one load() picked.
+    tname = f"{hit.replace('RefitHit', 'Track')}_spixMatchedTpIdx"
+    V = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tname])
+    mtp = ak.to_numpy(ak.flatten(V[tname]))
+    offm = np.concatenate([[0], np.cumsum(ak.to_numpy(ak.num(V[tname])))])
+    X["trk_tpIdx"] = mtp[offm[ev] + X["trackIdx"].astype(np.int64)]
     return X
 
 
@@ -1157,7 +1172,17 @@ def _combinations_per_track(X, K, kvals):
     tk2 = u2 // 8
     ut, invt = np.unique(tk2, return_inverse=True)
 
-    out = {}
+    # TRUE-hit containment, the benefit side of widening the cone. A pair is the
+    # true one when the cluster's dominant TP is the TP the track was matched to.
+    # Denominator counts only crossings where such a cluster EXISTS on the module,
+    # so a layer that simply had no true cluster does not count as an inefficiency.
+    is_true = (K["tpIdx"][ci] >= 0) & (X["trk_tpIdx"][xi] >= 0) & \
+              (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
+    have_true = np.zeros(len(X["layer"]), bool)
+    have_true[xi[is_true]] = True
+    n_have = int(have_true.sum())
+
+    out, cont = {}, {}
     for k in kvals:
         m = (nx < k) & (ny < k)
         cnt = np.bincount(xi[m], minlength=len(X["layer"])).astype(np.float64)
@@ -1165,78 +1190,76 @@ def _combinations_per_track(X, K, kvals):
         prod = np.ones(len(ut), dtype=np.float64)
         np.multiply.at(prod, invt, np.maximum(n_tl, 1.0))
         out[k] = prod
-    return out, len(ut)
+        found = np.zeros(len(X["layer"]), bool)
+        found[xi[is_true & m]] = True
+        cont[k] = float((found & have_true).sum() / n_have) if n_have else float("nan")
+    return out, len(ut), cont, n_have
 
 
 
 def _write_sweep_table(res, sfx, out, n_ev):
-    """Persistent activeSP cost table: human-readable at one cone, CSV at all cones.
+    """Persistent activeSP design table: cost AND containment at each cone width.
 
-    Emitted by the omnibus rather than kept in a message, so it is regenerated
-    whenever the sample, the process noise, the payloads or the refit change. Every
-    number here moved at least once during development; a pasted table would now be
-    quietly wrong.
+    THE CONE WIDTH IS THE DESIGN KNOB, so it gets a column rather than a single
+    chosen value. Widening the window admits more true hits into the refit and more
+    combinatorics with them; a lone total-work number cannot express that trade and
+    would let a build look cheap purely because it was quoted at a tight cone.
+    Every cone therefore carries both its cost (TOTAL work) and what that cost
+    bought (measured true-hit containment).
 
-    p99 IS DELIBERATELY NOT ALONE. It inverts the ranking: at q99, AAAA beats AIII
-    on p99 (12 vs 15) and loses 14x on the worst case (672 vs 48), because
-    multiplying four layers lets a rare busy track explode while a one-layer build
-    structurally cannot. Throughput budget reads TOTAL, buffer and latency budget
-    read MAX, and they disagree -- so both are always in the table and neither is
-    presented as the answer.
+    CONTAINMENT IS MEASURED, NOT ASSUMED. The quantile is nominal: k =
+    Phi^-1((1+q)/2) presumes unit-width pulls and ours run 0.81 to 1.52 depending
+    on layer and visit depth, so a "q99.99 cone" does not deliver 99.99%. The
+    denominator counts only crossings where a truth-matched cluster actually exists
+    on the module, so a layer that had no true cluster is not scored as an
+    inefficiency.
+
+    Emitted on every run rather than pasted into a message: every number here moved
+    at least once during development.
     """
     order = [s for s in SWEEP_ORDER if s in sfx] + [s for s in sfx if s not in SWEEP_ORDER]
-    qs = res["quantiles"]
-    res["_tail_support_tracks"] = {}
-    ref = min(range(len(qs)), key=lambda i: abs(qs[i] - SWEEP_TABLE_REF_Q))
-    kref = res["k_sigma"][ref]
-
-    # HOW MANY TRACKS EACH TAIL COLUMN ACTUALLY RESTS ON. A percentile deep in the
-    # tail of a small sample is one track wearing a statistic's name, and the
-    # temptation to reason from it is strong -- the four L1+L2 builds below report
-    # an IDENTICAL max because it is literally the same track. Printing the support
-    # next to the column is the only thing that reliably stops that.
+    cones = res["table_cones"]
+    ck = [f"{q:.4f}" for q in cones]
     ntrk_ref = max((res[s]["n_tracks"] for s in order), default=0)
-    sup = {"p99": ntrk_ref * 0.01, "p99.9": ntrk_ref * 0.001,
-           "p99.99": ntrk_ref * 0.0001, "max": 1.0}
-    thin = [c for c, v in sup.items() if v < 10]
-    mark = {c: ("*" if c in thin else "") for c in sup}
 
-    hdr = (f"{'cfg':<6}{'nSP':>4}{'p99' + mark['p99']:>8}{'p99.9' + mark['p99.9']:>8}"
-           f"{'p99.99' + mark['p99.99']:>9}{'max' + mark['max']:>7}"
-           f"{'mean':>7}{'TOTAL':>11}{'<hits>':>8}{'>=2hit':>8}{'>=3hit':>8}")
+    def qlab(q):
+        return ("q%g" % (q * 100)).rstrip("0").rstrip(".") if q * 100 % 1 else "q%d" % (q * 100)
+
+    labs = [qlab(q) for q in cones]
+    hdr = (f"{'cfg':<6}{'nSP':>4}  " + "".join(f"{'TOT ' + l:>12}" for l in labs)
+           + "  " + "".join(f"{'cont ' + l:>11}" for l in labs)
+           + f"{'<hits>':>8}{'>=2hit':>8}{'>=3hit':>8}")
     lines = [
-        "activeSP refit search cost",
+        "activeSP refit search cost vs CONE WIDTH",
         f"  sample        : {n_ev} events, PU200, {ntrk_ref:,} tracks per config",
-        f"  cone          : q{qs[ref] * 100:.0f}, k={kref:.3f} per axis (two-sided Gaussian)",
-        "  combinations  : product of candidate counts over INSTRUMENTED layers only;",
-        "                  a layer with no candidate contributes 1, not 0",
-        "  TOTAL         : summed combinations over all tracks = throughput budget",
-        "  max           : worst single track = buffer/latency budget",
-        "  tail support  : " + "  ".join(
-            f"{c}<-{v:,.0f} trk" for c, v in sup.items()),
-    ]
-    if thin:
-        lines += [
-            "  * CAUTION     : " + ", ".join(thin) + " rest on fewer than 10 tracks at this",
-            "                  sample size and are NOT yet statistically meaningful. Read TOTAL",
-            "                  (robust) and treat the deep tail as indicative only; identical",
-            "                  values across builds mean the same track, not a shared limit.",
-        ]
-    lines += ["", hdr, "-" * len(hdr)]
-    group_label = {1: "1 instrumented layer", 2: "2 instrumented layers",
-                   3: "3 instrumented layers", 4: "4 instrumented layers"}
+        "  cone          : nominal per-axis two-sided Gaussian, k = Phi^-1((1+q)/2)",
+        "                  " + " | ".join(
+            f"{l} k={res['table_k_sigma'][i]:.3f}" for i, l in enumerate(labs)),
+        "  TOT <cone>    : summed L1xL2xL3xL4 combinations over all tracks at that cone",
+        "                  = throughput budget. Product spans INSTRUMENTED layers only;",
+        "                  a layer with no candidate contributes 1, not 0.",
+        "  cont <cone>   : MEASURED fraction of crossings whose true cluster falls in the",
+        "                  cone. The nominal quantile is NOT the achieved containment --",
+        "                  pull widths are 0.81-1.52, so this is measured, not assumed.",
+        "  >=2hit/>=3hit : fraction of tracks the refit gave that many hits. 0% for every",
+        "                  two-layer build is structural, not performance.",
+        "",
+        hdr, "-" * len(hdr)]
+    group = {1: "1 instrumented layer", 2: "2 instrumented layers",
+             3: "3 instrumented layers", 4: "4 instrumented layers"}
     last_n = None
-    for s in order:
-        n = s.count("A")
+    for st in order:
+        n = st.count("A")
         if n != last_n:
-            lines.append(f"--- {group_label.get(n, str(n))} ---")
+            lines.append(f"--- {group.get(n, str(n))} ---")
             last_n = n
-        r = res[s]
-        f = r["frac_tracks_with_hits"]
+        r, f = res[st], res[st]["frac_tracks_with_hits"]
+        bc = r["by_cone"]
         lines.append(
-            f"{s:<6}{n:>4}{r['p99'][ref]:>8.0f}{r['p999'][ref]:>8.0f}{r['p9999'][ref]:>9.0f}"
-            f"{r['max'][ref]:>7.0f}{r['mean'][ref]:>7.2f}{r['total_work'][ref]:>11,.0f}"
-            f"{r['mean_accepted_hits']:>8.2f}{100 * f['ge2']:>7.0f}%{100 * f['ge3']:>7.0f}%")
+            f"{st:<6}{n:>4}  "
+            + "".join(f"{bc[c]['total_work']:>12,.0f}" for c in ck)
+            + "  " + "".join(f"{100 * bc[c]['true_hit_containment']:>10.1f}%" for c in ck)
+            + f"{r['mean_accepted_hits']:>8.2f}{100 * f['ge2']:>7.0f}%{100 * f['ge3']:>7.0f}%")
     txt = "\n".join(lines)
     tp = os.path.join(out["_outdir"], "spix_activesp_table.txt")
     with open(tp, "w") as fh:
@@ -1246,18 +1269,16 @@ def _write_sweep_table(res, sfx, out, n_ev):
 
     cp = os.path.join(out["_outdir"], "spix_activesp_table.csv")
     with open(cp, "w") as fh:
-        fh.write("activeSP,n_sp_layers,cone_q,k_sigma,p99,p99_9,p99_99,max,mean,"
-                 "total_work,mean_accepted_hits,frac_ge2hit,frac_ge3hit\n")
-        for s in order:
-            r, f = res[s], res[s]["frac_tracks_with_hits"]
-            for i, q in enumerate(qs):
-                fh.write(f"{s},{s.count('A')},{q:.2f},{res['k_sigma'][i]:.4f},"
-                         f"{r['p99'][i]:.0f},{r['p999'][i]:.0f},{r['p9999'][i]:.0f},"
-                         f"{r['max'][i]:.0f},{r['mean'][i]:.4f},{r['total_work'][i]:.0f},"
+        fh.write("activeSP,n_sp_layers,cone_q,k_sigma,total_work,mean,median,p99,max,"
+                 "true_hit_containment,mean_accepted_hits,frac_ge2hit,frac_ge3hit\n")
+        for st in order:
+            r, f = res[st], res[st]["frac_tracks_with_hits"]
+            for c, d in sorted(r["by_cone"].items(), key=lambda kv: float(kv[0])):
+                fh.write(f"{st},{st.count('A')},{float(c):.4f},{d['k_sigma']:.4f},"
+                         f"{d['total_work']:.0f},{d['mean']:.4f},{d['median']:.0f},"
+                         f"{d['p99']:.0f},{d['max']:.0f},{d['true_hit_containment']:.5f},"
                          f"{r['mean_accepted_hits']:.4f},{f['ge2']:.4f},{f['ge3']:.4f}\n")
     print(f"   (10) wrote {cp}")
-    res["_tail_support_tracks"] = {c: float(v) for c, v in sup.items()}
-    res["_stats_limited_columns"] = thin
     res["_table"] = os.path.basename(tp)
     res["_csv"] = os.path.basename(cp)
 
@@ -1317,10 +1338,17 @@ def study_combination_sweep(X, K, P, ax_row, out):
         return
 
     kvals = [NormalDist().inv_cdf(0.5 * (1.0 + q)) for q in SWEEP_Q]
-    res, per_cfg = {"quantiles": SWEEP_Q, "k_sigma": [float(k) for k in kvals]}, {}
+    tabq = [q for q in SWEEP_TABLE_CONES]
+    ktab = [NormalDist().inv_cdf(0.5 * (1.0 + q)) for q in tabq]
+    # one pass over the join covers plot cones and the wider design cones
+    allq = list(SWEEP_Q) + [q for q in tabq if q not in SWEEP_Q]
+    allk = kvals + [k for q, k in zip(tabq, ktab) if q not in SWEEP_Q]
+    res, per_cfg = {"quantiles": SWEEP_Q, "k_sigma": [float(k) for k in kvals],
+                    "table_cones": tabq,
+                    "table_k_sigma": [float(k) for k in ktab]}, {}
     for s in sfx:
         Xv = _variant_crossings(files, s)
-        combos, ntrk = _combinations_per_track(Xv, K, kvals)
+        combos, ntrk, cont, n_have = _combinations_per_track(Xv, K, allk)
         per_cfg[s] = combos
         # Viability: an uninstrumented layer yields no L1 hit at all, so a build can
         # simply run out of hits. Counted from the refit's OWN acceptance rather than
@@ -1332,6 +1360,17 @@ def study_combination_sweep(X, K, P, ax_row, out):
         frac = {f"ge{j}": float((nacc >= j).mean()) for j in (1, 2, 3, 4)}
         res[s] = {"n_tracks": int(ntrk), "frac_tracks_with_hits": frac,
                   "mean_accepted_hits": float(nacc.mean()),
+                  "n_crossings_with_true_cluster": int(n_have),
+                  # keyed by CONE quantile: each is a different design point
+                  "by_cone": {f"{q:.4f}": {
+                      "k_sigma": float(k),
+                      "total_work": float(combos[k].sum()),
+                      "mean": float(combos[k].mean()),
+                      "median": float(np.median(combos[k])),
+                      "p99": float(np.percentile(combos[k], 99)),
+                      "max": float(combos[k].max()),
+                      "true_hit_containment": float(cont[k]),
+                  } for q, k in zip(allq, allk)},
                   "median": [float(np.median(combos[k])) for k in kvals],
                   "mean": [float(combos[k].mean()) for k in kvals],
                   "p99": [float(np.percentile(combos[k], 99)) for k in kvals],
