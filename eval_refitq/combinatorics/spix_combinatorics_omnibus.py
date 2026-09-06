@@ -1104,6 +1104,18 @@ SWEEP_Q = [0.90, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99]
 SWEEP_COMBO_EDGES = np.array([1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 4096, 1 << 30],
                              dtype=float)
 
+# Report order: grouped by how many layers are INSTRUMENTED, and within a group by
+# which ones. Grouping this way is the point -- the interesting comparisons are
+# between builds of equal cost in ASICs, where the only difference is WHICH layers
+# were chosen, and those differ by more than an order of magnitude in search cost.
+SWEEP_ORDER = ["AIII", "IAII", "IIAI", "IIIA",
+               "AAII", "AIAI", "AIIA", "IAAI", "IAIA", "IIAA",
+               "AAAI", "AAIA", "AIAA", "IAAA",
+               "AAAA"]
+# Cone quantile the human-readable table is evaluated at. The CSV carries all of
+# them, so this only sets which one is printed, never which one is computed.
+SWEEP_TABLE_REF_Q = 0.99
+
 
 def _variant_crossings(files, suffix):
     """Crossings for ONE activeSP variant. Only the columns the sweep needs."""
@@ -1154,6 +1166,100 @@ def _combinations_per_track(X, K, kvals):
         np.multiply.at(prod, invt, np.maximum(n_tl, 1.0))
         out[k] = prod
     return out, len(ut)
+
+
+
+def _write_sweep_table(res, sfx, out, n_ev):
+    """Persistent activeSP cost table: human-readable at one cone, CSV at all cones.
+
+    Emitted by the omnibus rather than kept in a message, so it is regenerated
+    whenever the sample, the process noise, the payloads or the refit change. Every
+    number here moved at least once during development; a pasted table would now be
+    quietly wrong.
+
+    p99 IS DELIBERATELY NOT ALONE. It inverts the ranking: at q99, AAAA beats AIII
+    on p99 (12 vs 15) and loses 14x on the worst case (672 vs 48), because
+    multiplying four layers lets a rare busy track explode while a one-layer build
+    structurally cannot. Throughput budget reads TOTAL, buffer and latency budget
+    read MAX, and they disagree -- so both are always in the table and neither is
+    presented as the answer.
+    """
+    order = [s for s in SWEEP_ORDER if s in sfx] + [s for s in sfx if s not in SWEEP_ORDER]
+    qs = res["quantiles"]
+    res["_tail_support_tracks"] = {}
+    ref = min(range(len(qs)), key=lambda i: abs(qs[i] - SWEEP_TABLE_REF_Q))
+    kref = res["k_sigma"][ref]
+
+    # HOW MANY TRACKS EACH TAIL COLUMN ACTUALLY RESTS ON. A percentile deep in the
+    # tail of a small sample is one track wearing a statistic's name, and the
+    # temptation to reason from it is strong -- the four L1+L2 builds below report
+    # an IDENTICAL max because it is literally the same track. Printing the support
+    # next to the column is the only thing that reliably stops that.
+    ntrk_ref = max((res[s]["n_tracks"] for s in order), default=0)
+    sup = {"p99": ntrk_ref * 0.01, "p99.9": ntrk_ref * 0.001,
+           "p99.99": ntrk_ref * 0.0001, "max": 1.0}
+    thin = [c for c, v in sup.items() if v < 10]
+    mark = {c: ("*" if c in thin else "") for c in sup}
+
+    hdr = (f"{'cfg':<6}{'nSP':>4}{'p99' + mark['p99']:>8}{'p99.9' + mark['p99.9']:>8}"
+           f"{'p99.99' + mark['p99.99']:>9}{'max' + mark['max']:>7}"
+           f"{'mean':>7}{'TOTAL':>11}{'<hits>':>8}{'>=2hit':>8}{'>=3hit':>8}")
+    lines = [
+        "activeSP refit search cost",
+        f"  sample        : {n_ev} events, PU200, {ntrk_ref:,} tracks per config",
+        f"  cone          : q{qs[ref] * 100:.0f}, k={kref:.3f} per axis (two-sided Gaussian)",
+        "  combinations  : product of candidate counts over INSTRUMENTED layers only;",
+        "                  a layer with no candidate contributes 1, not 0",
+        "  TOTAL         : summed combinations over all tracks = throughput budget",
+        "  max           : worst single track = buffer/latency budget",
+        "  tail support  : " + "  ".join(
+            f"{c}<-{v:,.0f} trk" for c, v in sup.items()),
+    ]
+    if thin:
+        lines += [
+            "  * CAUTION     : " + ", ".join(thin) + " rest on fewer than 10 tracks at this",
+            "                  sample size and are NOT yet statistically meaningful. Read TOTAL",
+            "                  (robust) and treat the deep tail as indicative only; identical",
+            "                  values across builds mean the same track, not a shared limit.",
+        ]
+    lines += ["", hdr, "-" * len(hdr)]
+    group_label = {1: "1 instrumented layer", 2: "2 instrumented layers",
+                   3: "3 instrumented layers", 4: "4 instrumented layers"}
+    last_n = None
+    for s in order:
+        n = s.count("A")
+        if n != last_n:
+            lines.append(f"--- {group_label.get(n, str(n))} ---")
+            last_n = n
+        r = res[s]
+        f = r["frac_tracks_with_hits"]
+        lines.append(
+            f"{s:<6}{n:>4}{r['p99'][ref]:>8.0f}{r['p999'][ref]:>8.0f}{r['p9999'][ref]:>9.0f}"
+            f"{r['max'][ref]:>7.0f}{r['mean'][ref]:>7.2f}{r['total_work'][ref]:>11,.0f}"
+            f"{r['mean_accepted_hits']:>8.2f}{100 * f['ge2']:>7.0f}%{100 * f['ge3']:>7.0f}%")
+    txt = "\n".join(lines)
+    tp = os.path.join(out["_outdir"], "spix_activesp_table.txt")
+    with open(tp, "w") as fh:
+        fh.write(txt + "\n")
+    print("\n" + txt)
+    print(f"\n   (10) wrote {tp}")
+
+    cp = os.path.join(out["_outdir"], "spix_activesp_table.csv")
+    with open(cp, "w") as fh:
+        fh.write("activeSP,n_sp_layers,cone_q,k_sigma,p99,p99_9,p99_99,max,mean,"
+                 "total_work,mean_accepted_hits,frac_ge2hit,frac_ge3hit\n")
+        for s in order:
+            r, f = res[s], res[s]["frac_tracks_with_hits"]
+            for i, q in enumerate(qs):
+                fh.write(f"{s},{s.count('A')},{q:.2f},{res['k_sigma'][i]:.4f},"
+                         f"{r['p99'][i]:.0f},{r['p999'][i]:.0f},{r['p9999'][i]:.0f},"
+                         f"{r['max'][i]:.0f},{r['mean'][i]:.4f},{r['total_work'][i]:.0f},"
+                         f"{r['mean_accepted_hits']:.4f},{f['ge2']:.4f},{f['ge3']:.4f}\n")
+    print(f"   (10) wrote {cp}")
+    res["_tail_support_tracks"] = {c: float(v) for c, v in sup.items()}
+    res["_stats_limited_columns"] = thin
+    res["_table"] = os.path.basename(tp)
+    res["_csv"] = os.path.basename(cp)
 
 
 def study_combination_sweep(X, K, P, ax_row, out):
@@ -1289,7 +1395,7 @@ def study_combination_sweep(X, K, P, ax_row, out):
     res["_figure"] = os.path.basename(p2)
 
     # ---- summary panels in the omnibus figure -------------------------------
-    order = sorted(sfx, key=lambda s: (s.count("A"), s))
+    order = [s for s in SWEEP_ORDER if s in sfx] + [s for s in sfx if s not in SWEEP_ORDER]
     cmap = plt.get_cmap("turbo")
     for a, stat, lab in ((ax_row[0], "total_work", "TOTAL combinations"),
                          (ax_row[1], "max", "worst-case (max)")):
@@ -1310,6 +1416,7 @@ def study_combination_sweep(X, K, P, ax_row, out):
     a.set_ylabel("fraction of tracks"); a.set_ylim(0, 1.02)
     a.set_title("(10) can this build even refit?")
     a.grid(alpha=.3); a.legend(fontsize=7)
+    _write_sweep_table(res, sfx, out, out.get("n_events", -1))
     out["combination_sweep"] = res
 
 
@@ -1338,8 +1445,11 @@ def study_hough_examples(X, K, P, ax_row, out):
     ETA COVERAGE IS A RESULT, NOT A PLOTTING PROBLEM. TBPX is a barrel: measured
     on this file, the fraction of TPs lighting >=3 layers is 0.87 at |eta| 0.2-1.0
     but 0.21 at 1.4-1.8 and 0.03 above 1.8. That is the acceptance limit of
-    barrel-only seeding (|eta| <~ 1.4); those tracks leave TBPX for TFPX, which is
-    out of SmartPixels scope.
+    barrel-only seeding (|eta| <~ 1.4). NOTE this is a BLOCKED DEPENDENCY, not a
+    scope decision: forward coverage is wanted, but there is no PixelAV angle
+    parametrisation for the disc sensors in their B-field configuration (a disc
+    sits perpendicular to B where a barrel sits parallel), so a disc cluster has
+    no usable angle yet. See doc/SmartPixelsSeedingAndFitting.md section 1.
 
     THE TP PER CELL IS THE TYPICAL ONE, NOT THE BEST ONE -- the median-ranked
     candidate by (n_layers, n_clusters). An earlier version took the argmax, which
