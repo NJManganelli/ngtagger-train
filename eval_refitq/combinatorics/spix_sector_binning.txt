@@ -1,0 +1,62 @@
+FIXED eta-phi BIN SIZING for a refit-only design  (study 11)
+
+  The pre-processing has NO TRACK KNOWLEDGE: it runs in parallel with OT track
+  finding and must finish before any track exists. The grid is therefore
+  absolute, and THE BIN IS THE SELECTION -- no cone cut is applied anywhere
+  here. The only track-dependent step is a projection choosing which bin to
+  read, so whatever landed in that bin is what a refit must test.
+
+  Bins must EXCEED the cone, because the cone is centred on the projection and
+  a fixed grid is not. The relevant cone is the SEED one (308 um at L1, not the
+  refit-order 37 um): binning precedes the refit, so sizing against the refit
+  cone would be circular.
+
+  desired cluster = the true cluster on the crossing's OWN module, i.e. what the
+  refit wants. Its offset from the naive projection:
+
+    L    r[cm]        n   dphi q68       q95       q99   deta q95       q99
+    L1    2.85    70985      3.54m    11.41m    38.10m    0.07292   0.12989
+    L2    5.95    63322      3.13m    10.04m    31.95m    0.03236   0.06580
+    L3   10.33    48715      2.53m     7.82m    23.40m    0.01584   0.03566
+    L4   14.50    39001      2.23m     6.45m    17.09m    0.00931   0.02145
+
+  HEAVY TAIL, and it sets the design: at L1 dphi q95 is 11.4 mrad but q99 is 38.1 mrad,
+  a factor 3.3. Demanding 99% containment costs that many times the width
+  95% would need, and the bin count per nonant falls accordingly.
+
+  GRID LAYOUTS. One grid gives the projection an arbitrary phase inside its
+  bin, so a one-bin read GUARANTEES NOTHING -- a cluster just past the edge is
+  in the neighbour. Offset grids (edges of one through centres of another) let
+  the track pick the grid whose bin centre it lands nearest, which is what makes
+  a one-bin read viable. The cost is storage: clusters are binned n_grids times.
+    1grid      1 grid,  1 bin read   -- baseline, no guarantee
+    1grid+nbr  1 grid,  9 bins read  -- 3x3 around the projection
+    2grid_phi  2 grids, 1 bin read   -- offset in phi only
+    4grid      4 grids, 1 bin read   -- offset in phi and eta
+
+  f = bin width / q99 offset.  cmb = mean combinations per track refit.
+  cont = MEASURED containment of the desired cluster.
+  Angle cuts at 3 sigma of the ML estimate; they are free once
+  the cluster has been read out, and they cut candidates without costing bins.
+
+  grid       ngrid reads     f bins/non |          cmb pos          cmb +a        cmb +a+b |      cont pos      cont +a    cont +a+b
+  1grid          1     1  0.25     73.3 |              1.0             1.0             1.0 |         18.7%        18.5%        18.1%
+  1grid          1     1  0.50     36.7 |              1.3             1.1             1.0 |         38.9%        38.7%        37.7%
+  1grid          1     1  1.00     18.3 |              3.8             2.0             1.2 |         60.8%        60.4%        58.7%
+  1grid          1     1  2.00      9.2 |             47.3             9.0             2.0 |         77.9%        77.3%        75.0%
+  1grid          1     1  4.00      4.6 |           2293.1            98.5             5.3 |         88.4%        87.7%        85.1%
+  1grid+nbr      1     9  0.25     73.3 |              2.4             1.6             1.1 |         65.3%        64.9%        63.1%
+  1grid+nbr      1     9  0.50     36.7 |             16.8             5.3             1.9 |         86.5%        85.9%        83.4%
+  1grid+nbr      1     9  1.00     18.3 |            453.5            45.1             5.6 |         96.5%        95.7%        92.8%
+  1grid+nbr      1     9  2.00      9.2 |          38364.1           774.8            18.2 |         99.2%        98.4%        95.3%
+  1grid+nbr      1     9  4.00      4.6 |        6323927.2         23449.5            56.2 |         99.7%        98.8%        95.7%
+  2grid_phi      2     1  0.25     73.3 |              1.0             1.0             1.0 |         20.6%        20.5%        20.0%
+  2grid_phi      2     1  0.50     36.7 |              1.3             1.2             1.0 |         43.6%        43.3%        42.2%
+  2grid_phi      2     1  1.00     18.3 |              4.1             2.1             1.2 |         66.0%        65.5%        63.7%
+  2grid_phi      2     1  2.00      9.2 |             49.7             9.9             2.3 |         81.6%        81.0%        78.6%
+  2grid_phi      2     1  4.00      4.6 |           2366.9           114.3             6.3 |         90.7%        89.9%        87.2%
+  4grid          4     1  0.25     73.3 |              1.0             1.0             1.0 |         21.1%        21.0%        20.5%
+  4grid          4     1  0.50     36.7 |              1.4             1.2             1.1 |         46.9%        46.6%        45.4%
+  4grid          4     1  1.00     18.3 |              4.4             2.2             1.3 |         73.8%        73.3%        71.2%
+  4grid          4     1  2.00      9.2 |             55.2            11.3             2.7 |         90.9%        90.2%        87.5%
+  4grid          4     1  4.00      4.6 |           2530.5           129.7             8.7 |         97.7%        96.9%        94.0%

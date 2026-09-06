@@ -179,6 +179,39 @@ GLOSSARY = [
      "Multiple-scattering term added to the covariance before projecting, so the "
      "cone grows to reflect material the track passed through. Without it the "
      "covariance only ever shrank."),
+    ("nonant",
+     "One ninth of the azimuth, 2*pi/9 = 698 mrad. The L1 track finder's phi sector, "
+     "carried in the nano as phiSector 0-8. Sectors OVERLAP: each spans about 1031 "
+     "mrad, so roughly 167 mrad of shared region per side, which is how tracks near a "
+     "boundary are still found. Note etaSector exists in the nano but is an unfilled "
+     "sentinel (constant 99), so there is no eta sectoring to inherit."),
+    ("fixed eta-phi grid  /  bin",
+     "In a refit-only design the pre-processing has NO TRACK KNOWLEDGE -- it runs in "
+     "parallel with OT track finding and must finish before any track exists. So "
+     "clusters are binned onto an ABSOLUTE eta-phi grid, and the only track-dependent "
+     "step is a projection choosing which bin to read. THE BIN IS THE SELECTION: no "
+     "cone cut is applied, and whatever landed in the bin is what a refit tests."),
+    ("f  (bin width multiple)",
+     "Bin width expressed as a multiple of that layer's q99 offset between the desired "
+     "cluster and the NAIVE projection. f=1 means the bin is as wide as the 99th "
+     "percentile offset. NAIVE because binning precedes the refit, so only the OT seed "
+     "projection exists (308 um at L1, not the refit-order 37 um) -- sizing against the "
+     "refit cone would be circular."),
+    ("offset grids  (1grid / 2grid_phi / 4grid)",
+     "A single grid leaves the projection at an arbitrary PHASE inside its bin, so a "
+     "one-bin read guarantees NOTHING: a cluster just past the edge sits in the "
+     "neighbour. Storing the same clusters in offset grids -- edges of one passing "
+     "through centres of another -- lets the track pick the grid whose bin centre its "
+     "projection lands nearest. Measured at matched containment (~90%, one read): "
+     "1grid needs f=4 and gives 2293 combinations per track; 4grid needs only f=2 and "
+     "gives 55, a 42x improvement for 4x the storage. 2grid_phi buys almost nothing "
+     "(2367) because the ETA phase is still arbitrary -- offsetting one dimension while "
+     "the other stays misaligned does not help. Both offsets are needed."),
+    ("reads",
+     "Bins fetched per track per layer. One grid read with its 3x3 neighbourhood is 9 "
+     "reads; an offset-grid layout reads 1. Fewer combinations can be bought with more "
+     "reads (1grid+nbr) or more storage (4grid), and which is preferable depends on "
+     "whether bandwidth or memory is the binding constraint."),
     ("max  (AVOID)",
      "Largest single-track value in the sample. An extreme-value statistic on a "
      "heavy tail: it DOES NOT CONVERGE and grows with the number of events "
@@ -232,7 +265,17 @@ def _discover(path):
                    (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k) for k in keys) if m})
     if not cfgs:
         raise SystemExit("no L1TSmartPixelsRefitHitDigiRefit* table in the input")
-    hit = f"L1TSmartPixelsRefitHitDigiRefit{cfgs[-1]}"
+    # PICK THE MOST-INSTRUMENTED CONFIG, not the alphabetically last one. On a
+    # multi-variant file (an activeSP sweep) sorted()[-1] is "IIIA" -- the build with
+    # only L4 instrumented -- so every single-config study silently ran on the least
+    # informative configuration in the file and reported three empty layers as
+    # though that were the result. Sorting by count of "A" fixes it; ties break
+    # alphabetically for reproducibility.
+    chosen = sorted(cfgs, key=lambda c: (c.count("A"), c))[-1]
+    if len(cfgs) > 1:
+        print(f"  {len(cfgs)} activeSP variants present {cfgs}; single-config studies "
+              f"use {chosen} (most instrumented). Study (10) covers all of them.")
+    hit = f"L1TSmartPixelsRefitHitDigiRefit{chosen}"
     need_hit = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
                 "projSeedLocalX", "projSeedLocalY", "projSeedSigX", "projSeedSigY",
                 "projSeedCotAlpha", "projSeedCotBeta", "projLocalX", "projLocalY",
@@ -251,7 +294,7 @@ def _discover(path):
             "Produce a Clusters-tier file:\n"
             "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
             "--variant digiRefit:1111 --needs-truth -o <out>.py")
-    return hit, cfgs[-1], need_hit
+    return hit, chosen, need_hit
 
 
 def load(paths):
@@ -1655,6 +1698,384 @@ def study_combination_sweep(X, K, P, ax_row, out):
     out["combination_sweep"] = res
 
 
+
+# --------------------------------------------------------------------------
+# (11) fixed eta-phi bin sizing for a refit-only design
+# --------------------------------------------------------------------------
+# WHY THE PER-MODULE CONE IS THE WRONG UNIT. A refit-only system never projects to
+# a single module. Each eta x phi sector board holds the aggregate clusters its
+# region produced, pre-binned in phi and eta, and a track's projection selects
+# which bins to read. So the candidate pool is set by the BIN, not by the cone, and
+# study (10) is a floor that assumes perfect module targeting.
+#
+# WHY THE BIN MUST EXCEED THE CONE. The cone is centred on the projection; a fixed
+# grid is not. A projection lands at an arbitrary phase within its bin, so the
+# desired cluster -- offset from the projection by up to the cone width -- falls in
+# a NEIGHBOURING bin whenever the projection sits near an edge. The bin therefore
+# has to be inflated relative to the cone, and by how much is an empirical
+# question, which is what this study answers.
+#
+# AND THE CONE IT MUST EXCEED IS THE SEED CONE, not the refit-order one. Binning
+# happens BEFORE any refit, so the only uncertainty available is the OT seed
+# projection: 308 um at L1 against the refit-order 37 um. Sizing bins against the
+# refit cone would be circular and would undersize them by an order of magnitude.
+SECTOR_TARGET = 0.99          # required containment of desired clusters
+# Bin width as a multiple of the per-layer q99 desired-cluster offset. Capped at 2:
+# q99 already fills a large part of a nonant at L1 (92 mrad against 698), so larger
+# multiples stop being a grid and become "read the whole sector".
+SECTOR_F = [0.25, 0.5, 1.0, 2.0, 4.0]
+SECTOR_ANG_NSIG = 3.0         # angle-compatibility cut, in sigma of the ML estimate
+# Grid layouts. A single grid gives the projection an arbitrary phase inside its
+# bin, so a one-bin read GUARANTEES NOTHING -- a cluster just past the edge sits in
+# the neighbour. Storing the same clusters in offset grids (edges of one passing
+# through centres of another) lets the track pick the grid whose bin centre its
+# projection lands nearest, which is what makes a one-bin read viable at all.
+# (label, phi offsets, eta offsets, bins read either side)
+SECTOR_GRIDS = [
+    ("1grid",        1, 1, 0),   # baseline: one grid, one bin. No guarantee.
+    ("1grid+nbr",    1, 1, 1),   # one grid, 3x3 = 9 bins read
+    ("2grid_phi",    2, 1, 0),   # offset in phi only, 2x storage, one bin read
+    ("4grid",        2, 2, 0),   # offset in phi and eta, 4x storage, one bin read
+]
+SECTOR_NBR = [0, 1]           # bins read either side of the projected bin
+
+
+def _helix_project(rinv, phi0, tanl, z0, r):
+    """Naive single-shot projection of an L1 track to radius r.
+
+    Validated against 256,876 truth-matched track-cluster pairs: position phi
+    residual 2.0 mrad, position z residual 910 um, direction phi residual 14.7 mrad
+    and direction cot(theta) residual 0.0190 -- the last two sitting at the sensor's
+    own angle resolution (sigma_beta ~ 0.0225), which is what confirms the formulas
+    rather than a bug. Note the DIRECTION azimuth turns by TWICE the position
+    azimuth (phi0 - 2*asin vs phi0 - asin); using the position form for the
+    direction gives 19.3 mrad instead of 14.7.
+    """
+    half = np.arcsin(np.clip(0.5 * rinv * r, -1.0, 1.0))
+    phi_pos = phi0 - half
+    small = np.abs(rinv) < 1e-9
+    s = np.where(small, r, 2.0 * half / np.where(small, 1.0, rinv))
+    z = z0 + tanl * s
+    eta = np.arcsinh(z / np.maximum(r, 1e-9))
+    return phi_pos, z, eta, phi0 - 2.0 * half
+
+
+def _phase_pick(x, w, ngrid):
+    """Choose the offset grid whose bin CENTRE the value lands nearest, and its bin.
+
+    Grid g has edges at (n + g/ngrid)*w. With ngrid=1 the phase is uniform and the
+    projection can sit arbitrarily close to an edge, which is exactly why a one-bin
+    read cannot guarantee capturing anything. With ngrid=2 the best grid always puts
+    the projection within w/4 of a centre.
+    """
+    ph = x / w
+    best_g = np.zeros(len(x), dtype=np.int64)
+    best_d = np.full(len(x), np.inf)
+    for g in range(ngrid):
+        d = np.abs(((ph - g / ngrid) % 1.0) - 0.5)
+        take = d < best_d
+        best_d = np.where(take, d, best_d)
+        best_g = np.where(take, g, best_g)
+    ib = np.floor(ph - best_g / ngrid).astype(np.int64)
+    return best_g, ib
+
+
+def _sector_counts(tr, cl, tev, cev, layer, r_nom, wphi, weta, gspec, want_c,
+                   xl, gil, have_ang):
+    """Candidates per crossing, and whether the desired cluster was among them.
+
+    Hash join on the fixed absolute grid rather than a track x cluster outer
+    product, which inside one nonant would be ~250M pairs on this sample.
+
+    NO CONE CUT IS APPLIED. The pre-processing runs with zero track knowledge, in
+    parallel with OT track finding, so the bin IS the selection: whatever landed in
+    the bin is what the refit must test. The only track-dependent step is choosing
+    which bin to read.
+    """
+    _, ngp, nge, nbr = gspec
+    csel = cl["layer"] == layer
+    if not csel.any():
+        return None
+    ca = np.flatnonzero(csel)
+    phi_p, _, eta_p, phi_dir = _helix_project(tr["rInv"], tr["phi"], tr["tanL"],
+                                              tr["z0"], r_nom)
+    gp_t, ip_t = _phase_pick(phi_p, wphi, ngp)
+    ge_t, ie_t = _phase_pick(eta_p, weta, nge)
+
+    n_x = len(want_c)
+    cand = np.zeros(n_x)
+    cand_a = np.zeros(n_x)
+    cand_ab = np.zeros(n_x)
+    found = np.zeros(n_x, bool)
+    found_a = np.zeros(n_x, bool)
+    found_ab = np.zeros(n_x, bool)
+
+    for gp in range(ngp):
+        ipc = np.floor(cl["phi"][ca] / wphi - gp / ngp).astype(np.int64)
+        for ge in range(nge):
+            iec = np.floor(cl["eta"][ca] / weta - ge / nge).astype(np.int64)
+            ck = (cev[ca].astype(np.int64) * 1000003 + ipc) * 1000003 + iec
+            o = np.argsort(ck, kind="stable")
+            cks, cis = ck[o], ca[o]
+            tsel = np.flatnonzero((gp_t == gp) & (ge_t == ge))
+            if not len(tsel):
+                continue
+            for dp in range(-nbr, nbr + 1):
+                for de in range(-nbr, nbr + 1):
+                    tk = ((tev[tsel].astype(np.int64) * 1000003 + ip_t[tsel] + dp)
+                          * 1000003 + ie_t[tsel] + de)
+                    lo = np.searchsorted(cks, tk, "left")
+                    hi = np.searchsorted(cks, tk, "right")
+                    n = hi - lo
+                    if n.sum() == 0:
+                        continue
+                    ti = np.repeat(tsel[np.arange(len(tk))], n)
+                    ramp = np.arange(n.sum()) - np.repeat(np.cumsum(n) - n, n)
+                    cj = cis[np.repeat(lo, n) + ramp]
+                    # expand track -> that track's crossings on this layer
+                    order = np.argsort(gil, kind="stable")
+                    gs, xs = gil[order], xl[order]
+                    l2 = np.searchsorted(gs, ti, "left")
+                    h2 = np.searchsorted(gs, ti, "right")
+                    n2 = h2 - l2
+                    keep = n2 > 0
+                    if not keep.any():
+                        continue
+                    idx = np.repeat(np.arange(len(ti))[keep], n2[keep])
+                    r2 = np.arange(n2[keep].sum()) - np.repeat(
+                        np.cumsum(n2[keep]) - n2[keep], n2[keep])
+                    xidx = xs[np.repeat(l2[keep], n2[keep]) + r2]
+                    cidx = cj[idx]
+                    ok_a = np.ones(len(cidx), bool)
+                    ok_ab = np.ones(len(cidx), bool)
+                    if have_ang:
+                        dph = np.abs(_wrap(cl["gphi"][cidx] - phi_dir[ti[idx]]))
+                        useA = (cl["sphi"][cidx] > 0) & (cl["gphi"][cidx] > SENTINEL)
+                        ok_a = ~useA | (dph < SECTOR_ANG_NSIG * cl["sphi"][cidx])
+                        dct = np.abs(cl["gcot"][cidx] - tr["tanL"][ti[idx]])
+                        useB = (cl["scot"][cidx] > 0) & (cl["gcot"][cidx] > SENTINEL)
+                        ok_ab = ok_a & (~useB | (dct < SECTOR_ANG_NSIG * cl["scot"][cidx]))
+                    cand += np.bincount(xidx, minlength=n_x)
+                    cand_a += np.bincount(xidx[ok_a], minlength=n_x)
+                    cand_ab += np.bincount(xidx[ok_ab], minlength=n_x)
+                    hitv = cidx == want_c[xidx]
+                    found[xidx[hitv]] = True
+                    found_a[xidx[hitv & ok_a]] = True
+                    found_ab[xidx[hitv & ok_ab]] = True
+    return {"pos": (cand, found), "pos+alpha": (cand_a, found_a),
+            "pos+alpha+beta": (cand_ab, found_ab)}
+
+
+def study_sector_binning(X, K, P, ax_row, out):
+    """(11) Fixed eta-phi bin sizing for a refit-only design.
+
+    THE PRE-PROCESSING HAS NO TRACK KNOWLEDGE. It runs in parallel with OT track
+    finding and must be finished before any track exists, so the grid is absolute
+    and track-independent. The ONLY track-dependent step is a projection choosing
+    which bin to read. That means THE BIN IS THE SELECTION -- there is no cone cut
+    anywhere in this study, and whatever landed in the bin is what a refit tests.
+
+    BINS MUST EXCEED THE CONE, because the cone is centred on the projection and a
+    fixed grid is not. And the relevant cone is the SEED one: binning precedes the
+    refit, so only the OT projection exists (308 um at L1, against the refit-order
+    37 um). Sizing against the refit cone would be circular.
+
+    DESIRED CLUSTER = the true cluster on the crossing's OWN module, which is what
+    the refit wants. An earlier version scored ANY cluster sharing the track's TP,
+    which admitted clusters elsewhere in the detector, inflated the L1 q99 offset
+    from 92 to 439 mrad, and produced 8e8 combinations per track -- pure artefact.
+    """
+    files = out.get("_inputs")
+    if not files:
+        return
+    tcols = ["rInv", "phi", "tanL", "z0", "pt"]
+    T = uproot.concatenate([f"{f}:Events" for f in files],
+                           filter_name=[f"{REF}_{c}" for c in tcols])
+    hitname = out.get("_hit_table", "")
+    tpname = f"{hitname.replace('RefitHit', 'Track')}_spixMatchedTpIdx"
+    MT = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tpname])
+    ntr = ak.to_numpy(ak.num(T[f"{REF}_rInv"]))
+    tr = {c: ak.to_numpy(ak.flatten(T[f"{REF}_{c}"])) for c in tcols}
+    tr["tp"] = ak.to_numpy(ak.flatten(MT[tpname]))
+    tev = np.repeat(np.arange(len(ntr)), ntr)
+    off = np.concatenate([[0], np.cumsum(ntr)])
+
+    cl = {"layer": K["layer"], "phi": K["globalPhi"],
+          "eta": np.arcsinh(K["globalZ"] / np.maximum(K["globalR"], 1e-9)),
+          "r": K["globalR"], "tpIdx": K["tpIdx"],
+          "gphi": K.get("gClPhi"), "gcot": K.get("gClCotTheta"),
+          "sphi": K.get("gSigPhi"), "scot": K.get("gSigCotTheta")}
+    cev = K["event"]
+    have_ang = cl["gphi"] is not None and cl["sphi"] is not None
+
+    xi, ci, _ = join_on_module(X, K)
+    is_true = (K["tpIdx"][ci] >= 0) & (X["trk_tpIdx"][xi] >= 0) & \
+              (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
+    want_c = np.full(len(X["layer"]), -1, dtype=np.int64)
+    want_c[xi[is_true]] = ci[is_true]
+    gi = off[X["event"]] + X["trackIdx"].astype(np.int64)
+
+    res = {"target_containment": SECTOR_TARGET, "f_scan": SECTOR_F,
+           "grids": [g[0] for g in SECTOR_GRIDS], "layers": {}}
+    for L in LAYERS:
+        xl = np.flatnonzero((X["layer"] == L) & (want_c >= 0))
+        if len(xl) < 200:
+            continue
+        cj = want_c[xl]
+        g = gi[xl]
+        pp, _, pe, _ = _helix_project(tr["rInv"][g], tr["phi"][g], tr["tanL"][g],
+                                      tr["z0"][g], cl["r"][cj])
+        dphi = np.abs(_wrap(cl["phi"][cj] - pp))
+        deta = np.abs(cl["eta"][cj] - pe)
+        res["layers"][L] = {
+            "r_nom_cm": float(np.median(cl["r"][cl["layer"] == L])),
+            "n_desired": int(len(cj)),
+            "dphi_q68_mrad": float(np.percentile(dphi, 68) * 1e3),
+            "dphi_q95_mrad": float(np.percentile(dphi, 95) * 1e3),
+            "dphi_q99_mrad": float(np.percentile(dphi, 99) * 1e3),
+            "deta_q95": float(np.percentile(deta, 95)),
+            "deta_q99": float(np.percentile(deta, 99)),
+        }
+    if not res["layers"]:
+        return
+
+    variants = ["pos", "pos+alpha", "pos+alpha+beta"] if have_ang else ["pos"]
+    tk = X["event"].astype(np.int64) * (1 << 20) + X["trackIdx"].astype(np.int64)
+    k2 = tk * 8 + X["layer"].astype(np.int64)
+    u2, i2 = np.unique(k2, return_inverse=True)
+    ut, it_ = np.unique(u2 // 8, return_inverse=True)
+    L1k = min(res["layers"])
+
+    scan = []
+    for gspec in SECTOR_GRIDS:
+        for f in SECTOR_F:
+            cand = {v: np.zeros(len(X["layer"])) for v in variants}
+            num = {v: 0 for v in variants}
+            den = 0
+            for L, d in res["layers"].items():
+                wphi = f * d["dphi_q99_mrad"] * 1e-3
+                weta = f * d["deta_q99"]
+                xl = np.flatnonzero(X["layer"] == L)
+                got = _sector_counts(tr, cl, tev, cev, L, d["r_nom_cm"], wphi, weta,
+                                     gspec, want_c, xl, gi[xl], have_ang)
+                if got is None:
+                    continue
+                dsel = want_c[xl] >= 0
+                den += int(dsel.sum())
+                for v in variants:
+                    c_, fnd = got[v]
+                    cand[v] += c_
+                    num[v] += int((fnd[xl] & dsel).sum())
+            row = {"grid": gspec[0], "n_grids": gspec[1] * gspec[2],
+                   "bins_read": (2 * gspec[3] + 1) ** 2, "f": f,
+                   "bins_per_nonant_L1": float(
+                       2 * np.pi / 9 / (f * res["layers"][L1k]["dphi_q99_mrad"] * 1e-3))}
+            for v in variants:
+                n_tl = np.bincount(i2, weights=cand[v], minlength=len(u2))
+                prod = np.ones(len(ut))
+                np.multiply.at(prod, it_, np.maximum(n_tl, 1.0))
+                row[f"combos_{v}"] = float(prod.mean())
+                row[f"cont_{v}"] = float(num[v] / max(den, 1))
+            scan.append(row)
+    res["scan"] = scan
+
+    # Pareto front: the only comparison that matters is at MATCHED containment,
+    # because any layout can look cheap by being undersized.
+    if ax_row is not None:
+        styles = {"1grid": ("o", "-"), "1grid+nbr": ("s", "-"),
+                  "2grid_phi": ("^", "--"), "4grid": ("D", "--")}
+        for a_, v, lab in ((ax_row[0], "pos", "position bin only"),
+                           (ax_row[1], "pos+alpha+beta", "bin + both angles")):
+            for gname in [g[0] for g in SECTOR_GRIDS]:
+                rows = [r for r in scan if r["grid"] == gname]
+                if not rows:
+                    continue
+                mk, ls = styles.get(gname, ("o", "-"))
+                a_.plot([100 * r[f"cont_{v}"] for r in rows],
+                        [r[f"combos_{v}"] for r in rows],
+                        marker=mk, ls=ls, ms=4,
+                        label=f"{gname} ({rows[0]['n_grids']}x store, {rows[0]['bins_read']} read)")
+            a_.set_yscale("log")
+            a_.set_xlabel("containment of the desired cluster [%]")
+            a_.set_ylabel("combinations / track refit")
+            a_.set_title(f"(11) {lab}")
+            a_.grid(alpha=.3)
+            a_.legend(fontsize=6)
+    _write_sector_table(res, out)
+    out["sector_binning"] = res
+    return res
+
+
+def _write_sector_table(res, out):
+    L1k = min(res["layers"])
+    lines = [
+        "FIXED eta-phi BIN SIZING for a refit-only design  (study 11)",
+        "",
+        "  The pre-processing has NO TRACK KNOWLEDGE: it runs in parallel with OT track",
+        "  finding and must finish before any track exists. The grid is therefore",
+        "  absolute, and THE BIN IS THE SELECTION -- no cone cut is applied anywhere",
+        "  here. The only track-dependent step is a projection choosing which bin to",
+        "  read, so whatever landed in that bin is what a refit must test.",
+        "",
+        "  Bins must EXCEED the cone, because the cone is centred on the projection and",
+        "  a fixed grid is not. The relevant cone is the SEED one (308 um at L1, not the",
+        "  refit-order 37 um): binning precedes the refit, so sizing against the refit",
+        "  cone would be circular.",
+        "",
+        "  desired cluster = the true cluster on the crossing's OWN module, i.e. what the",
+        "  refit wants. Its offset from the naive projection:",
+        "",
+        f"    {'L':2} {'r[cm]':>7} {'n':>8} {'dphi q68':>10} {'q95':>9} {'q99':>9}"
+        f" {'deta q95':>10} {'q99':>9}",
+    ]
+    for L, d in sorted(res["layers"].items()):
+        lines.append(f"    L{L} {d['r_nom_cm']:>7.2f} {d['n_desired']:>8} "
+                     f"{d['dphi_q68_mrad']:>9.2f}m {d['dphi_q95_mrad']:>8.2f}m "
+                     f"{d['dphi_q99_mrad']:>8.2f}m {d['deta_q95']:>10.5f} {d['deta_q99']:>9.5f}")
+    d1 = res["layers"][L1k]
+    lines += [
+        "",
+        f"  HEAVY TAIL, and it sets the design: at L{L1k} dphi q95 is "
+        f"{d1['dphi_q95_mrad']:.1f} mrad but q99 is {d1['dphi_q99_mrad']:.1f} mrad,",
+        f"  a factor {d1['dphi_q99_mrad'] / max(d1['dphi_q95_mrad'], 1e-9):.1f}. "
+        "Demanding 99% containment costs that many times the width",
+        "  95% would need, and the bin count per nonant falls accordingly.",
+        "",
+        "  GRID LAYOUTS. One grid gives the projection an arbitrary phase inside its",
+        "  bin, so a one-bin read GUARANTEES NOTHING -- a cluster just past the edge is",
+        "  in the neighbour. Offset grids (edges of one through centres of another) let",
+        "  the track pick the grid whose bin centre it lands nearest, which is what makes",
+        "  a one-bin read viable. The cost is storage: clusters are binned n_grids times.",
+        "    1grid      1 grid,  1 bin read   -- baseline, no guarantee",
+        "    1grid+nbr  1 grid,  9 bins read  -- 3x3 around the projection",
+        "    2grid_phi  2 grids, 1 bin read   -- offset in phi only",
+        "    4grid      4 grids, 1 bin read   -- offset in phi and eta",
+        "",
+        "  f = bin width / q99 offset.  cmb = mean combinations per track refit.",
+        "  cont = MEASURED containment of the desired cluster.",
+        f"  Angle cuts at {SECTOR_ANG_NSIG:g} sigma of the ML estimate; they are free once",
+        "  the cluster has been read out, and they cut candidates without costing bins.",
+        "",
+        f"  {'grid':<10}{'ngrid':>6}{'reads':>6}{'f':>6}{'bins/non':>9} | "
+        + "".join(f"{'cmb ' + v:>16}" for v in ("pos", "+a", "+a+b"))
+        + " | " + "".join(f"{'cont ' + v:>13}" for v in ("pos", "+a", "+a+b")),
+    ]
+    vs = ["pos", "pos+alpha", "pos+alpha+beta"]
+    for r in res["scan"]:
+        lines.append(
+            f"  {r['grid']:<10}{r['n_grids']:>6}{r['bins_read']:>6}{r['f']:>6.2f}"
+            f"{r['bins_per_nonant_L1']:>9.1f} | "
+            + "".join(f"{r.get('combos_' + v, float('nan')):>16.1f}" for v in vs)
+            + " | " + "".join(f"{100 * r.get('cont_' + v, float('nan')):>12.1f}%" for v in vs))
+    txt = "\n".join(lines)
+    p = os.path.join(out["_outdir"], "spix_sector_binning.txt")
+    with open(p, "w") as fh:
+        fh.write(txt + "\n")
+    print("\n" + txt)
+    print(f"\n   (11) wrote {p}")
+
+
+
 def study_hough_examples(X, K, P, ax_row, out):
     """(8) worked Hough transforms for example TrackingParticles.
 
@@ -1910,6 +2331,7 @@ STUDIES = [
     ("chi2 weight scan", study_chi2_weight_scan, 2),
     ("z0 resolution (seeding)", study_z0_resolution, 2),
     ("combination sweep (activeSP)", study_combination_sweep, 3),
+    ("sector bin sizing", study_sector_binning, 2),
     ("hough examples", study_hough_examples, 2),
 ]
 
@@ -1929,7 +2351,8 @@ def main():
            # stripped before the JSON is dumped
            "_outdir": args.outdir,
            # studies that need to re-read the file for OTHER activeSP variants
-           "_inputs": [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])]}
+           "_inputs": [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])],
+           "_hit_table": hit}
 
     gp = write_glossary(args.outdir)
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
@@ -1956,6 +2379,7 @@ def main():
     js = os.path.join(args.outdir, "spix_combinatorics_omnibus.json")
     out.pop("_outdir", None)
     out.pop("_inputs", None)
+    out.pop("_hit_table", None)
     with open(js, "w") as fh:
         json.dump(out, fh, indent=2)
     print(f"\nwrote {png}\nwrote {js}")

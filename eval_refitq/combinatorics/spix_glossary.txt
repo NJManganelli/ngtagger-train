@@ -125,6 +125,42 @@ Q  (process noise)
     Multiple-scattering term added to the covariance before projecting, so the cone grows to
     reflect material the track passed through. Without it the covariance only ever shrank.
 
+nonant
+    One ninth of the azimuth, 2*pi/9 = 698 mrad. The L1 track finder's phi sector, carried in
+    the nano as phiSector 0-8. Sectors OVERLAP: each spans about 1031 mrad, so roughly 167
+    mrad of shared region per side, which is how tracks near a boundary are still found. Note
+    etaSector exists in the nano but is an unfilled sentinel (constant 99), so there is no eta
+    sectoring to inherit.
+
+fixed eta-phi grid  /  bin
+    In a refit-only design the pre-processing has NO TRACK KNOWLEDGE -- it runs in parallel
+    with OT track finding and must finish before any track exists. So clusters are binned onto
+    an ABSOLUTE eta-phi grid, and the only track-dependent step is a projection choosing which
+    bin to read. THE BIN IS THE SELECTION: no cone cut is applied, and whatever landed in the
+    bin is what a refit tests.
+
+f  (bin width multiple)
+    Bin width expressed as a multiple of that layer's q99 offset between the desired cluster
+    and the NAIVE projection. f=1 means the bin is as wide as the 99th percentile offset.
+    NAIVE because binning precedes the refit, so only the OT seed projection exists (308 um at
+    L1, not the refit-order 37 um) -- sizing against the refit cone would be circular.
+
+offset grids  (1grid / 2grid_phi / 4grid)
+    A single grid leaves the projection at an arbitrary PHASE inside its bin, so a one-bin
+    read guarantees NOTHING: a cluster just past the edge sits in the neighbour. Storing the
+    same clusters in offset grids -- edges of one passing through centres of another -- lets
+    the track pick the grid whose bin centre its projection lands nearest. Measured at matched
+    containment (~90%, one read): 1grid needs f=4 and gives 2293 combinations per track; 4grid
+    needs only f=2 and gives 55, a 42x improvement for 4x the storage. 2grid_phi buys almost
+    nothing (2367) because the ETA phase is still arbitrary -- offsetting one dimension while
+    the other stays misaligned does not help. Both offsets are needed.
+
+reads
+    Bins fetched per track per layer. One grid read with its 3x3 neighbourhood is 9 reads; an
+    offset-grid layout reads 1. Fewer combinations can be bought with more reads (1grid+nbr)
+    or more storage (4grid), and which is preferable depends on whether bandwidth or memory is
+    the binding constraint.
+
 max  (AVOID)
     Largest single-track value in the sample. An extreme-value statistic on a heavy tail: it
     DOES NOT CONVERGE and grows with the number of events processed (AIAI: 54 at 100 events,
