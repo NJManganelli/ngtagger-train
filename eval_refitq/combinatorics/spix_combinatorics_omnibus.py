@@ -1228,10 +1228,21 @@ def study_combination_sweep(X, K, P, ax_row, out):
                   "mean_accepted_hits": float(nacc.mean()),
                   "median": [float(np.median(combos[k])) for k in kvals],
                   "mean": [float(combos[k].mean()) for k in kvals],
-                  "p99": [float(np.percentile(combos[k], 99)) for k in kvals]}
+                  "p99": [float(np.percentile(combos[k], 99)) for k in kvals],
+                  # p99 ALONE INVERTS THE RANKING and must not be quoted by itself.
+                  # At q99 AAAA beats AIII on p99 (12 vs 15) and loses badly on the
+                  # deep tail (672 vs 48), because multiplying four layers lets rare
+                  # busy tracks produce enormous products. Throughput budget and
+                  # worst-case budget disagree here, so both are reported.
+                  "p999": [float(np.percentile(combos[k], 99.9)) for k in kvals],
+                  "p9999": [float(np.percentile(combos[k], 99.99)) for k in kvals],
+                  "max": [float(combos[k].max()) for k in kvals],
+                  "total_work": [float(combos[k].sum()) for k in kvals]}
         print(f"   (10) {s}: median combos "
               + "/".join(f"{v:.0f}" for v in res[s]["median"])
-              + f"   p99 " + "/".join(f"{v:.0f}" for v in res[s]["p99"])
+              + f"   q99: p99={res[s]['p99'][-1]:.0f} p99.9={res[s]['p999'][-1]:.0f} "
+                f"p99.99={res[s]['p9999'][-1]:.0f} max={res[s]['max'][-1]:.0f} "
+                f"tot={res[s]['total_work'][-1]:,.0f}"
               + f"   <hits>={res[s]['mean_accepted_hits']:.2f}"
               + f"  >=2hit {100 * frac['ge2']:.0f}%  >=3hit {100 * frac['ge3']:.0f}%")
 
@@ -1247,11 +1258,18 @@ def study_combination_sweep(X, K, P, ax_row, out):
             g[:, j] = np.histogram(per_cfg[s][k], bins=SWEEP_COMBO_EDGES)[0]
         grids[s] = g
         vmax = max(vmax, g.max())
+    # Clip the shared y-range to the highest OCCUPIED bin. The top edge exists to
+    # catch an unbounded tail, but drawn literally it hands most of a log axis to
+    # empty space and makes every panel look identical.
+    occupied = max((np.flatnonzero(g.sum(axis=1)).max() for g in grids.values()
+                    if g.sum() > 0), default=len(SWEEP_COMBO_EDGES) - 2)
+    ytop = SWEEP_COMBO_EDGES[min(occupied + 1, len(SWEEP_COMBO_EDGES) - 1)]
     for i, s in enumerate(sfx):
         a = axs[i // ncol][i % ncol]
         mesh = a.pcolormesh(np.arange(len(kvals) + 1), SWEEP_COMBO_EDGES, grids[s],
                             norm=LogNorm(vmin=1, vmax=vmax), cmap="viridis")
         a.set_yscale("log")
+        a.set_ylim(1, ytop)
         a.set_xticks(np.arange(len(kvals)) + 0.5)
         a.set_xticklabels([f"{int(q * 100)}" for q in SWEEP_Q], fontsize=7)
         a.set_title(f"activeSP {s}  ({s.count('A')} SP layer"
@@ -1273,7 +1291,8 @@ def study_combination_sweep(X, K, P, ax_row, out):
     # ---- summary panels in the omnibus figure -------------------------------
     order = sorted(sfx, key=lambda s: (s.count("A"), s))
     cmap = plt.get_cmap("turbo")
-    for a, stat, lab in ((ax_row[0], "median", "median"), (ax_row[1], "p99", "99th pct")):
+    for a, stat, lab in ((ax_row[0], "total_work", "TOTAL combinations"),
+                         (ax_row[1], "max", "worst-case (max)")):
         for i, s in enumerate(order):
             a.plot([q * 100 for q in SWEEP_Q], res[s][stat], marker="o", ms=3,
                    color=cmap(i / max(len(order) - 1, 1)), label=s)
