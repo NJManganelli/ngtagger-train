@@ -38,7 +38,9 @@ import awkward as ak
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import LogNorm
 import numpy as np
+from statistics import NormalDist
 import uproot
 
 SENTINEL = -900.0
@@ -857,16 +859,14 @@ def study_z0_resolution(X, K, P, ax_row, out):
     res = {"n_clusters_used": int(ok.sum()),
            "definition": "sigma = robust width of (reco - truth) on the same cluster",
            "suppression_formula": "Z_range / (4 sigma_z0), w cancels",
-           "RETRACTED_sigma_z0": (
-               "EVERY sigma_z0 AND SLICE COUNT BELOW IS INVALID. They assume "
-               "globalClusterCotTheta is the global polar slope dz/dr. It is not: "
-               "median |tpGlobalClusterCotTheta + tpLocalCotBeta| = 0.0104, i.e. the "
-               "column is -localCotBeta, and its magnitude falls 1.75/1.05/0.67/0.48 "
-               "across L1-L4 where a true dz/dr would be layer-independent. Testing "
-               "self-consistency of z0 across one track's clusters: raw z gives 3.10 cm "
-               "RMS, z - r*cot gives 5.95 cm -- the correction is worse than nothing. "
-               "sigma_cotTheta itself is still the payload smear of a real (local beta) "
-               "angle. See doc/SmartPixelsSeedingAndFitting.md section 4a."),
+           "cotTheta_validated": (
+               "globalClusterCotTheta IS the global polar slope dz/dr, verified after the "
+               "module-flip fix: per-TP RMS of (z - r*cot) is 0.0087 cm against a 3.18 cm "
+               "do-nothing baseline, a 365x collapse. An earlier revision wrongly also "
+               "required |cot| to be layer-independent across the POPULATION; that is not a "
+               "valid test, because TBPX is a barrel and high-|eta| tracks only reach the "
+               "inner layers. Restricted to TPs that reach L4 the medians are flat "
+               "(0.577/0.532/0.494/0.477 on L1-L4)."),
            "CIRCULAR": (
                "NOT A PHYSICAL RESOLUTION. SmartPixelsRecHitProducer builds the truth "
                "angle as the TP's helix propagated to the hit with NO multiple scattering "
@@ -987,17 +987,25 @@ def _half_turn(phi_pos, phi_dir):
     """asin(C_BEND * r * kappa): the half turn from the beamline out to the hit.
 
     EXACT, not the small-angle form. For a helix from the origin the position
-    azimuth lags phi0 by asin(c*r*kappa) and the direction by twice that, so
-    phi_p - phi_d = asin(c*r*kappa) -- but `globalClusterPhi` carries a PI
-    OFFSET (its direction vector points inward), so what is actually stored
-    gives phi_p - phi_d = pi - asin(c*r*kappa).
+    azimuth lags phi0 by asin(c*r*kappa) and the DIRECTION by twice that, so
+    phi_p - phi_d = asin(c*r*kappa) and kappa = sin(phi_p - phi_d) / (c*r).
 
-    Verified against truth on this sample: with kappa = sin(half)/(c*r) the
-    reconstructed curvature satisfies |kappa|*pT = 1.008 (p25-p75 0.979-1.044)
-    for tpPt > 2 GeV. The naive linear form (phi_p - phi_d)/(c*r) is wrong by a
-    median factor of ~90 because it misreads the pi offset as a huge bend.
+    HISTORY, because the failure was silent and cost a full round of wrong
+    results: before the module-flip fix, `globalClusterPhi` was propagated
+    without accounting for modules being physically flipped within a ladder (a
+    real feature of the detector, not a code invention). The stored direction
+    then pointed inward on flipped modules, so phi_p - phi_d came out as
+    pi - asin(...) on some clusters and as +/-asin(...) on others -- correct
+    magnitude, scrambled sign. sin() absorbs the pi but NOT the sign, so kappa
+    came out with a random sign per cluster and any segment-shortening built on
+    it was meaningless.
+
+    Post-fix on spix_postq_500.root: median |phi_p - phi_d| = 0.098 with ZERO
+    clusters beyond 2.0 rad (the pi branch is gone), |kappa|*pT = 1.0035, and
+    the per-cluster sign agrees with truth 98.1% on clean >=3-layer topologies
+    (98.3/98.3/98.1/97.5 on L1-L4).
     """
-    return _wrap(np.pi - _wrap(phi_pos - phi_dir))
+    return _wrap(phi_pos - phi_dir)
 
 
 def _hough_bands(centre, sigma, slope, intercept, xlo, xhi, has_angle):
@@ -1084,6 +1092,208 @@ def _draw_hough(ax, sel, K, xlo, xhi, mode, truth, rasterize, shade=True):
     ax.set_xlim(xlo, xhi)
 
 
+
+# --------------------------------------------------------------------------
+# (10) combination sweep across activeSP configurations
+# --------------------------------------------------------------------------
+# Two-sided per-axis Gaussian quantiles, the SAME convention as CONES above
+# (q68 -> 1.0, q95 -> 1.96): a "qX cone" means each axis is within k sigma where
+# k = Phi^-1((1+X)/2). Joint containment of a 2D box is the square of that, so
+# these are per-axis levels and not the probability of keeping the true hit.
+SWEEP_Q = [0.90, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99]
+SWEEP_COMBO_EDGES = np.array([1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 4096, 1 << 30],
+                             dtype=float)
+
+
+def _variant_crossings(files, suffix):
+    """Crossings for ONE activeSP variant. Only the columns the sweep needs."""
+    hit = f"L1TSmartPixelsRefitHitDigiRefit{suffix}"
+    cols = ["trackIdx", "layer", "detId", "projLocalX", "projLocalY", "projSigX", "projSigY",
+            "hitAccepted"]
+    H = uproot.concatenate([f"{f}:Events" for f in files],
+                           filter_name=[f"{hit}_{c}" for c in cols])
+    ncross = ak.to_numpy(ak.num(H[f"{hit}_layer"]))
+    X = {c: ak.to_numpy(ak.flatten(H[f"{hit}_{c}"])) for c in cols}
+    X["event"] = np.repeat(np.arange(len(ncross)), ncross)
+    return X
+
+
+def _combinations_per_track(X, K, kvals):
+    """For each k, the number of L1xL2xL3xL4 hit combinations each track must search.
+
+    Counts are SUMMED over crossings within a layer before the product is taken:
+    a track that clips two overlapping modules at one layer has a single candidate
+    POOL there, so those crossings must add. Multiplying them would invent
+    combinations that the refit never considers, since it takes one hit per layer.
+
+    A layer with no candidate contributes a factor of 1, not 0. The refit skips it
+    and carries on; treating it as 0 would erase the track from the distribution
+    entirely and would bias the result toward the busy tracks.
+    """
+    xi, ci, _ = join_on_module(X, K)
+    dx = K["localX"][ci] - X["projLocalX"][xi]
+    dy = K["localY"][ci] - X["projLocalY"][xi]
+    sx, sy = X["projSigX"][xi], X["projSigY"][xi]
+    ok = (sx > 0) & (sy > 0) & (X["projLocalX"][xi] > SENTINEL)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        nx = np.where(ok, np.abs(dx / sx), np.inf)
+        ny = np.where(ok, np.abs(dy / sy), np.inf)
+
+    tkey = X["event"].astype(np.int64) * (1 << 20) + X["trackIdx"].astype(np.int64)
+    key2 = tkey * 8 + X["layer"].astype(np.int64)
+    u2, inv2 = np.unique(key2, return_inverse=True)
+    tk2 = u2 // 8
+    ut, invt = np.unique(tk2, return_inverse=True)
+
+    out = {}
+    for k in kvals:
+        m = (nx < k) & (ny < k)
+        cnt = np.bincount(xi[m], minlength=len(X["layer"])).astype(np.float64)
+        n_tl = np.bincount(inv2, weights=cnt, minlength=len(u2))
+        prod = np.ones(len(ut), dtype=np.float64)
+        np.multiply.at(prod, invt, np.maximum(n_tl, 1.0))
+        out[k] = prod
+    return out, len(ut)
+
+
+def study_combination_sweep(X, K, P, ax_row, out):
+    """(10) Search-space size vs cone quantile, for every non-trivial activeSP mask.
+
+    THE QUESTION THIS ANSWERS. Widening the cone buys hit-finding efficiency and
+    costs combinatorics, and adding smart-pixel layers tightens the cone for free.
+    Neither trade is readable from a covariance: the number that matters is how
+    many L1xL2xL3xL4 hit combinations a refit must actually search, and how its
+    DISTRIBUTION over tracks moves. A mean is not enough here, because the cost of
+    the tail is what sets the hardware budget -- hence a 2D histogram per
+    configuration rather than a curve.
+
+    EACH MASK IS A DETECTOR BUILD, NOT AN ALGORITHM SETTING. activeSP is which IT
+    layers are INSTRUMENTED with smart pixels. Smart pixels emit cluster data at L1
+    latency; a conventional pixel layer is not read out until after an L1 accept. So
+    an uninstrumented layer contributes NOTHING to L1 track building of any form --
+    not "position but no angle", nothing at all. Measured crossing counts by layer:
+    AAAA gives 436/374/296/227, AAII gives 435/373/0/0, IIIA gives 0/0/0/219.
+
+    That means a mask with fewer A's searching fewer layers is not an unfairness in
+    the comparison, it IS the trade: instrument less, get less information AND less
+    combinatorics. These 15 panels are a cost curve across candidate builds.
+
+    WHICH layers matters as much as HOW MANY, and asymmetrically. L1 is both the
+    busiest layer (seed-cone occupancy 1.98 vs 0.82 at L4) and the smallest radius,
+    so a build instrumenting only inner layers enters the densest region carrying
+    the full untightened OT-seed cone (~308 um). An outer-first build gets
+    progressive tightening before it arrives there. Two builds with the same number
+    of A's are not interchangeable.
+
+    COMBINATIONS ARE THE COST SIDE ONLY. A build can look cheap because it cannot do
+    the job. The third panel therefore carries the viability counterpart -- what
+    fraction of tracks even collect enough hits to refit -- and resolution/purity
+    per build is still missing and must not be inferred from these histograms.
+
+    The cone widths corroborate the outsideIn ordering: AAAA tightens monotonically
+    133.9 / 84.8 / 61.9 / 35.2 um from L4 in to L1, while AAII visits L2 FIRST
+    (235.8 um, no update yet) and then L1 (32.6 um). IIIA's only layer, L4, sits at
+    133.9 um -- identical to AAAA's L4, which is the check that a first-visited
+    layer receives no update in either configuration.
+    """
+    files = out.get("_inputs")
+    if not files:
+        return
+    with uproot.open(f"{files[0]}:Events") as t:
+        keys = set(t.keys())
+    sfx = sorted({m.group(1) for m in
+                  (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([AI]{4})_", k) for k in keys) if m})
+    if len(sfx) < 2:
+        print(f"   (10) SKIPPED: input has {len(sfx)} activeSP variant(s); the sweep needs the "
+              "15 non-trivial masks. Regenerate with a repeated --variant digiRefit:XXXX.")
+        for a in ax_row:
+            a.axis("off")
+        return
+
+    kvals = [NormalDist().inv_cdf(0.5 * (1.0 + q)) for q in SWEEP_Q]
+    res, per_cfg = {"quantiles": SWEEP_Q, "k_sigma": [float(k) for k in kvals]}, {}
+    for s in sfx:
+        Xv = _variant_crossings(files, s)
+        combos, ntrk = _combinations_per_track(Xv, K, kvals)
+        per_cfg[s] = combos
+        # Viability: an uninstrumented layer yields no L1 hit at all, so a build can
+        # simply run out of hits. Counted from the refit's OWN acceptance rather than
+        # from cone occupancy, since that is what it actually kept.
+        tk = Xv["event"].astype(np.int64) * (1 << 20) + Xv["trackIdx"].astype(np.int64)
+        ut2, inv3 = np.unique(tk, return_inverse=True)
+        nacc = np.bincount(inv3, weights=(Xv["hitAccepted"] > 0).astype(float),
+                           minlength=len(ut2))
+        frac = {f"ge{j}": float((nacc >= j).mean()) for j in (1, 2, 3, 4)}
+        res[s] = {"n_tracks": int(ntrk), "frac_tracks_with_hits": frac,
+                  "mean_accepted_hits": float(nacc.mean()),
+                  "median": [float(np.median(combos[k])) for k in kvals],
+                  "mean": [float(combos[k].mean()) for k in kvals],
+                  "p99": [float(np.percentile(combos[k], 99)) for k in kvals]}
+        print(f"   (10) {s}: median combos "
+              + "/".join(f"{v:.0f}" for v in res[s]["median"])
+              + f"   p99 " + "/".join(f"{v:.0f}" for v in res[s]["p99"])
+              + f"   <hits>={res[s]['mean_accepted_hits']:.2f}"
+              + f"  >=2hit {100 * frac['ge2']:.0f}%  >=3hit {100 * frac['ge3']:.0f}%")
+
+    # ---- per-configuration 2D histograms -----------------------------------
+    ncol = 4
+    nrow = int(np.ceil(len(sfx) / ncol))
+    f2, axs = plt.subplots(nrow, ncol, figsize=(4.6 * ncol, 3.8 * nrow), squeeze=False)
+    vmax = 1
+    grids = {}
+    for s in sfx:
+        g = np.zeros((len(SWEEP_COMBO_EDGES) - 1, len(kvals)))
+        for j, k in enumerate(kvals):
+            g[:, j] = np.histogram(per_cfg[s][k], bins=SWEEP_COMBO_EDGES)[0]
+        grids[s] = g
+        vmax = max(vmax, g.max())
+    for i, s in enumerate(sfx):
+        a = axs[i // ncol][i % ncol]
+        mesh = a.pcolormesh(np.arange(len(kvals) + 1), SWEEP_COMBO_EDGES, grids[s],
+                            norm=LogNorm(vmin=1, vmax=vmax), cmap="viridis")
+        a.set_yscale("log")
+        a.set_xticks(np.arange(len(kvals)) + 0.5)
+        a.set_xticklabels([f"{int(q * 100)}" for q in SWEEP_Q], fontsize=7)
+        a.set_title(f"activeSP {s}  ({s.count('A')} SP layer"
+                    f"{'s' if s.count('A') != 1 else ''})", fontsize=9)
+        a.set_xlabel("cone quantile qX", fontsize=8)
+        a.set_ylabel("combinations / track", fontsize=8)
+        f2.colorbar(mesh, ax=a, label="tracks")
+    for i in range(len(sfx), nrow * ncol):
+        axs[i // ncol][i % ncol].axis("off")
+    f2.suptitle("(10) refit search space: L1xL2xL3xL4 combinations vs cone quantile, "
+                "per activeSP configuration", y=1.002)
+    f2.tight_layout()
+    p2 = os.path.join(out["_outdir"], "spix_combination_sweep.png")
+    f2.savefig(p2, dpi=130, bbox_inches="tight")
+    plt.close(f2)
+    print(f"   (10) wrote {p2}")
+    res["_figure"] = os.path.basename(p2)
+
+    # ---- summary panels in the omnibus figure -------------------------------
+    order = sorted(sfx, key=lambda s: (s.count("A"), s))
+    cmap = plt.get_cmap("turbo")
+    for a, stat, lab in ((ax_row[0], "median", "median"), (ax_row[1], "p99", "99th pct")):
+        for i, s in enumerate(order):
+            a.plot([q * 100 for q in SWEEP_Q], res[s][stat], marker="o", ms=3,
+                   color=cmap(i / max(len(order) - 1, 1)), label=s)
+        a.set_yscale("log"); a.set_xlabel("cone quantile qX")
+        a.set_ylabel(f"{lab} combinations / track")
+        a.set_title(f"(10) {lab} search space vs cone")
+        a.grid(alpha=.3)
+        a.legend(fontsize=5, ncol=3)
+    a = ax_row[2]
+    xs = np.arange(len(order))
+    for j, mk in ((2, "s"), (3, "^"), (4, "v")):
+        a.plot(xs, [res[s]["frac_tracks_with_hits"][f"ge{j}"] for s in order],
+               marker=mk, ms=4, label=f"$\\geq${j} hits")
+    a.set_xticks(xs); a.set_xticklabels(order, rotation=90, fontsize=6)
+    a.set_ylabel("fraction of tracks"); a.set_ylim(0, 1.02)
+    a.set_title("(10) can this build even refit?")
+    a.grid(alpha=.3); a.legend(fontsize=7)
+    out["combination_sweep"] = res
+
+
 def study_hough_examples(X, K, P, ax_row, out):
     """(8) worked Hough transforms for example TrackingParticles.
 
@@ -1108,10 +1318,18 @@ def study_hough_examples(X, K, P, ax_row, out):
 
     ETA COVERAGE IS A RESULT, NOT A PLOTTING PROBLEM. TBPX is a barrel: measured
     on this file, the fraction of TPs lighting >=3 layers is 0.87 at |eta| 0.2-1.0
-    but 0.21 at 1.4-1.8 and 0.03 above 1.8. The high-eta cells are therefore
-    nearly empty, and that emptiness is the acceptance limit of barrel-only
-    seeding (|eta| <~ 1.4). Those tracks leave TBPX for TFPX, which is out of
-    SmartPixels scope.
+    but 0.21 at 1.4-1.8 and 0.03 above 1.8. That is the acceptance limit of
+    barrel-only seeding (|eta| <~ 1.4); those tracks leave TBPX for TFPX, which is
+    out of SmartPixels scope.
+
+    THE TP PER CELL IS THE TYPICAL ONE, NOT THE BEST ONE -- the median-ranked
+    candidate by (n_layers, n_clusters). An earlier version took the argmax, which
+    cherry-picked the rare 4-layer survivor at high |eta| and made the panels look
+    as though seeding worked there. It also admitted 1-layer TPs to the pool, since
+    requiring >=2 layers pre-selects away the very loss these panels exist to show.
+    Each page states its pool's acceptance (fraction reaching >=3 and 4 layers)
+    independently of which TP was drawn, so the acceptance claim does not rest on
+    the single example.
 
     THE ANGLE SIGMAS ARE THE STORED ONES and sigGlobalClusterCotTheta is known to
     be ~21% optimistic (study 7), so the bands here are correspondingly tight.
@@ -1186,14 +1404,24 @@ def study_hough_examples(X, K, P, ax_row, out):
     for pt_t in HOUGH_PT_POINTS:
         for eta_t in HOUGH_ETA_POINTS:
             cell = f"pt{pt_t:g}_eta{eta_t:g}"
+            # nlay >= 1, NOT >= 2: requiring two layers already pre-selects away
+            # the acceptance loss these panels exist to show.
             cand = (np.abs(np.abs(tp_eta) - eta_t) < 0.15) & \
-                   (np.abs(np.log(np.maximum(tp_pt, 1e-6) / pt_t)) < np.log(1.3)) & (nlay >= 2)
+                   (np.abs(np.log(np.maximum(tp_pt, 1e-6) / pt_t)) < np.log(1.3)) & (nlay >= 1)
             if not cand.any():
                 res["cells"][cell] = {"found": False,
-                                      "reason": "no TP within (dEta<0.15, pT within 30%, >=2 layers)"}
+                                      "reason": "no TP within (dEta<0.15, pT within 30%)"}
                 pages.append((cell, None))
                 continue
-            idx = np.flatnonzero(cand)[np.lexsort((cnt[cand], nlay[cand]))[-1]]
+            # TYPICAL, not best. Taking the argmax over (nlay, cnt) cherry-picks the
+            # rare 4-layer survivor at high |eta| and hides the barrel acceptance
+            # collapse -- the panel then shows an algorithm working on a track that
+            # almost no track in that cell resembles. The median-ranked candidate is
+            # what a track at this (pT, eta) actually looks like.
+            order = np.lexsort((cnt[cand], nlay[cand]))
+            idx = np.flatnonzero(cand)[order[len(order) // 2]]
+            pool_ge3 = float((nlay[cand] >= 3).mean())
+            pool_eq4 = float((nlay[cand] == 4).mean())
             truth = {"phi0": tp_phi0[idx], "kap": tp_kap[idx],
                      "z0": tp_z0[idx], "cot": tp_cot[idx]}
             ev = tp_ev[idx]
@@ -1211,7 +1439,11 @@ def study_hough_examples(X, K, P, ax_row, out):
                 "tp_pt": float(tp_pt[idx]), "tp_eta": float(tp_eta[idx]),
                 "n_layers": int(nlay[idx]), "n_clusters_tp": int(cnt[idx]),
                 "n_cone": int(cone.sum()), "n_sector": int(sect.sum()),
-                "n_candidate_tps": int(cand.sum())}
+                "n_candidate_tps": int(cand.sum()),
+                "selection": "median-ranked by (n_layers, n_clusters) -- TYPICAL, not best",
+                # the acceptance statement for this cell, independent of which TP
+                # happened to be drawn
+                "pool_frac_ge3_layers": pool_ge3, "pool_frac_eq4_layers": pool_eq4}
             pages.append((cell, (idx, truth, cone, sect)))
 
     # ---- render -------------------------------------------------------------
@@ -1230,30 +1462,47 @@ def study_hough_examples(X, K, P, ax_row, out):
                 kmax = max(0.6, 1.6 * abs(truth["kap"]))
                 for row, (sel, nm, rast) in enumerate(
                         ((cone, "cone", False), (sect, "phi sector", True))):
-                    a = axs[row][1]
-                    _draw_hough(a, sel, K, -kmax, kmax, "rphi", truth, rast, shade=False)
-                    a.plot(truth["kap"], 0.0, "k*", ms=11, zorder=5)
-                    a.axvline(truth["kap"], color="k", lw=0.6, ls=":")
-                    a.set_ylim(-0.30, 0.30); a.grid(alpha=.25)
-                    a.set_xlabel(r"$q/p_T$ [GeV$^{-1}$]")
-                    a.set_ylabel(r"$\phi_0 - \phi_0^{\rm true}$ [rad]")
-                    a.set_title(f"{nm}: r-$\\phi$, position-only ({int(sel.sum())} clusters)", fontsize=9)
+                    zpred = K["globalZ"][sel] - K["globalR"][sel] * K["gClCotTheta"][sel]
+                    zsig = K["globalR"][sel] * np.maximum(K["gSigCotTheta"][sel], 1e-9)
+                    sel_sliced = np.zeros_like(sel)
+                    sel_sliced[np.flatnonzero(sel)[
+                        np.abs(zpred - truth["z0"]) < Z0_SLICE_NSIG * zsig]] = True
 
-                    # The r-z plane and the z0 slicing both need a GLOBAL polar
-                    # direction. globalClusterCotTheta is -localCotBeta, so both
-                    # are blocked rather than drawn wrong.
-                    for col, what in ((0, "r-z plane"), (2, r"r-$\phi$ after $z_0$ slicing")):
+                    a = axs[row][0]
+                    _draw_hough(a, sel, K, truth["cot"] - 0.5, truth["cot"] + 0.5, "rz", truth, rast)
+                    a.axhline(truth["z0"], color="k", lw=0.8, ls="--")
+                    a.plot(truth["cot"], truth["z0"], "k*", ms=11, zorder=5)
+                    a.set_ylim(truth["z0"] - 15, truth["z0"] + 15)
+                    a.set_xlabel(r"$\cot\theta$"); a.set_ylabel(r"$z_0$ [cm]")
+                    a.set_title(f"{nm}: r-z plane ({int(sel.sum())} clusters)", fontsize=9)
+
+                    for col, (s, lab) in enumerate(((sel, "all"),
+                                                    (sel_sliced, "in $z_0$ slice")), 1):
                         a = axs[row][col]
-                        a.axis("off")
-                        a.text(0.5, 0.5, f"{nm}: {what}\n\nBLOCKED\n\n"
-                               "globalClusterCotTheta is $-$localCotBeta,\n"
-                               "not dz/dr, so $z_0 = z - r\\cot\\theta$ is invalid.\n"
-                               "See doc SmartPixelsSeedingAndFitting.md §4a.",
-                               ha="center", va="center", fontsize=8.5,
-                               bbox=dict(boxstyle="round", fc="#ffe8e8", ec="#d62728"))
+                        _draw_hough(a, s, K, -kmax, kmax, "rphi", truth, rast)
+                        if nlay[idx] >= 2:
+                            a.plot(truth["kap"], 0.0, "k*", ms=11, zorder=5)
+                            a.axvline(truth["kap"], color="k", lw=0.6, ls=":")
+                        else:
+                            # one layer: the curvature SIGN comes from how the position
+                            # azimuth turns with radius, which a single cluster cannot
+                            # give. Show |kappa| = 1/pT on both sides instead of
+                            # planting a star at an arbitrary sign.
+                            for sgn in (-1.0, 1.0):
+                                a.axvline(sgn * abs(truth["kap"]), color="k", lw=0.6, ls=":")
+                        a.set_ylim(-0.30, 0.30)
+                        a.set_xlabel(r"$q/p_T$ [GeV$^{-1}$]")
+                        a.set_ylabel(r"$\phi_0 - \phi_0^{\rm true}$ [rad]")
+                        a.set_title(f"{nm}: r-$\\phi$, {lab} ({int(s.sum())})", fontsize=9)
+                    for a in axs[row]:
+                        a.grid(alpha=.25)
                 c = res["cells"][cell]
-                fig.suptitle(f"{cell}   |   TP $p_T$={c['tp_pt']:.2f} GeV, $\\eta$={c['tp_eta']:+.2f}, "
-                             f"{c['n_layers']} TBPX layers   |   L1 red, L2 orange, L3 blue, L4 green; "
+                fig.suptitle(f"{cell}   |   TYPICAL TP: $p_T$={c['tp_pt']:.2f} GeV, "
+                             f"$\\eta$={c['tp_eta']:+.2f}, {c['n_layers']} TBPX layers   |   "
+                             f"pool of {c['n_candidate_tps']}: "
+                             f"{c['pool_frac_ge3_layers']*100:.0f}% reach $\\geq$3 layers, "
+                             f"{c['pool_frac_eq4_layers']*100:.0f}% reach 4   |   "
+                             f"L1 red, L2 orange, L3 blue, L4 green; "
                              f"shade = 1/3$\\sigma$ of the cluster's own angle", fontsize=10)
             fig.tight_layout()
             pdf.savefig(fig, dpi=110)
@@ -1270,8 +1519,13 @@ def study_hough_examples(X, K, P, ax_row, out):
     if shown:
         idx, truth, cone, sect = dict(pages)[shown]
         kmax = max(0.6, 1.6 * abs(truth["kap"]))
-        for a, (s, lab, rast) in zip(ax_row, ((cone, "cone", False), (sect, "phi sector", True))):
-            _draw_hough(a, s, K, -kmax, kmax, "rphi", truth, rast, shade=False)
+        zp = K["globalZ"][cone] - K["globalR"][cone] * K["gClCotTheta"][cone]
+        zs = K["globalR"][cone] * np.maximum(K["gSigCotTheta"][cone], 1e-9)
+        sl = np.zeros_like(cone)
+        sl[np.flatnonzero(cone)[np.abs(zp - truth["z0"]) < Z0_SLICE_NSIG * zs]] = True
+        for a, (s, lab, rast) in zip(ax_row, ((cone, "cone, all", False),
+                                              (sl, "cone, in $z_0$ slice", False))):
+            _draw_hough(a, s, K, -kmax, kmax, "rphi", truth, rast)
             a.plot(truth["kap"], 0.0, "k*", ms=10, zorder=5)
             a.set_ylim(-0.30, 0.30); a.grid(alpha=.25)
             a.set_xlabel(r"$q/p_T$ [GeV$^{-1}$]"); a.set_ylabel(r"$\phi_0-\phi_0^{\rm true}$")
@@ -1291,6 +1545,7 @@ STUDIES = [
     ("unbiased containment", study_true_containment, 2),
     ("chi2 weight scan", study_chi2_weight_scan, 2),
     ("z0 resolution (seeding)", study_z0_resolution, 2),
+    ("combination sweep (activeSP)", study_combination_sweep, 3),
     ("hough examples", study_hough_examples, 2),
 ]
 
@@ -1308,7 +1563,9 @@ def main():
            "n_clusters": int(len(K["layer"])),
            # side-artefact directory for studies that write their own files;
            # stripped before the JSON is dumped
-           "_outdir": args.outdir}
+           "_outdir": args.outdir,
+           # studies that need to re-read the file for OTHER activeSP variants
+           "_inputs": [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])]}
 
     ncols = max(n for _, _, n in STUDIES)
     fig, axes = plt.subplots(len(STUDIES), ncols, figsize=(5.2 * ncols, 4.2 * len(STUDIES)))
@@ -1324,6 +1581,7 @@ def main():
     fig.savefig(png, dpi=130, bbox_inches="tight")
     js = os.path.join(args.outdir, "spix_combinatorics_omnibus.json")
     out.pop("_outdir", None)
+    out.pop("_inputs", None)
     with open(js, "w") as fh:
         json.dump(out, fh, indent=2)
     print(f"\nwrote {png}\nwrote {js}")
