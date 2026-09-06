@@ -2,33 +2,40 @@ activeSP refit search cost vs CONE WIDTH
   sample        : 100 events, PU200, 16,446 tracks per config
   cone          : nominal per-axis two-sided Gaussian, k = Phi^-1((1+q)/2)
                   q99 k=2.576 | q99.9 k=3.291 | q99.99 k=3.891
-  TOT <cone>    : summed L1xL2xL3xL4 combinations over all tracks at that cone
-                  = throughput budget. Product spans INSTRUMENTED layers only;
-                  a layer with no candidate contributes 1, not 0.
+                  164 refit-able tracks per event
+  combinations  : PER TRACK, the number of (L1,L2,L3,L4) hit tuples a refit must
+                  test = product of the candidate counts over INSTRUMENTED layers.
+                  A layer with NO candidate contributes 1, not 0 -- the refit skips
+                  it and carries on. Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 -> 6.
+                  (pinned by tests/test_combination_counting.py)
+  cmb/trk <cone>: MEAN combinations per track refit at that cone width.
+                  Multiply by 164 for per-event throughput.
+  p99 <cone>    : 99th-percentile track, i.e. the busy-track cost.
   cont <cone>   : MEASURED fraction of crossings whose true cluster falls in the
                   cone. The nominal quantile is NOT the achieved containment --
                   pull widths are 0.81-1.52, so this is measured, not assumed.
   >=2hit/>=3hit : fraction of tracks the refit gave that many hits. 0% for every
                   two-layer build is structural, not performance.
 
-cfg    nSP       TOT q99   TOT q99.9  TOT q99.99     cont q99 cont q99.9cont q99.99  <hits>  >=2hit  >=3hit
------------------------------------------------------------------------------------------------------------
+              combinations / track   |     p99 (busy track)     |       containment        |    viability    
+cfg    nSP       q99   q99.9  q99.99 |      q99   q99.9  q99.99 |      q99   q99.9  q99.99 |   >=2hit  >=3hit
+-------------------------------------------------------------------------------------------------------------
 --- 1 instrumented layer ---
-AIII     1        46,676      64,366      80,241        88.7%      94.8%      97.0%    1.00      0%      0%
-IAII     1        19,363      23,460      27,491        87.7%      94.4%      96.7%    1.00      0%      0%
-IIAI     1        11,024      11,844      12,644        90.8%      95.9%      97.3%    1.00      0%      0%
-IIIA     1         8,214       8,476       8,737        94.3%      97.6%      98.5%    1.00      0%      0%
+AIII     1      3.22    4.44    5.53 |       15      20      25 |    88.7%   94.8%   97.0% |       0%      0%
+IAII     1      1.48    1.80    2.11 |        5       7       9 |    87.7%   94.4%   96.7% |       0%      0%
+IIAI     1      1.13    1.21    1.29 |        3       3       4 |    90.8%   95.9%   97.3% |       0%      0%
+IIIA     1      1.05    1.08    1.11 |        2       2       3 |    94.3%   97.6%   98.5% |       0%      0%
 --- 2 instrumented layers ---
-AAII     2        37,966      52,242      67,003        74.8%      83.3%      86.8%    1.73     73%      0%
-AIAI     2        36,424      47,466      57,227        82.3%      90.3%      93.2%    1.59     59%      0%
-AIIA     2        39,079      51,710      62,957        86.7%      93.2%      95.7%    1.48     48%      0%
-IAAI     2        17,604      20,204      22,799        82.9%      90.3%      92.9%    1.68     68%      0%
-IAIA     2        17,564      20,218      22,871        87.0%      93.4%      95.7%    1.56     56%      0%
-IIAA     2        10,973      11,527      12,078        88.3%      93.5%      95.4%    1.74     74%      0%
+AAII     2      2.32    3.20    4.10 |       13      18      24 |    74.8%   83.3%   86.8% |      73%      0%
+AIAI     2      2.33    3.04    3.66 |       14      18      23 |    82.3%   90.3%   93.2% |      59%      0%
+AIIA     2      2.55    3.38    4.11 |       15      19      23 |    86.7%   93.2%   95.7% |      48%      0%
+IAAI     2      1.30    1.49    1.68 |        5       6       8 |    82.9%   90.3%   92.9% |      68%      0%
+IAIA     2      1.31    1.51    1.70 |        5       6       8 |    87.0%   93.4%   95.7% |      56%      0%
+IIAA     2      1.08    1.14    1.19 |        2       3       3 |    88.3%   93.5%   95.4% |      74%      0%
 --- 3 instrumented layers ---
-AAAI     3        34,660      46,701      59,696        77.2%      85.7%      89.1%    2.33     79%     54%
-AAIA     3        35,362      47,652      60,358        78.6%      86.9%      90.2%    2.21     77%     44%
-AIAA     3        35,495      45,801      55,087        84.0%      90.8%      93.5%    2.09     63%     46%
-IAAA     3        17,063      19,259      21,491        84.7%      91.3%      93.7%    2.26     73%     53%
+AAAI     3      2.11    2.84    3.63 |       12      17      22 |    77.2%   85.7%   89.1% |      79%     54%
+AAIA     3      2.16    2.91    3.68 |       13      18      23 |    78.6%   86.9%   90.2% |      77%     44%
+AIAA     3      2.26    2.92    3.51 |       14      18      22 |    84.0%   90.8%   93.5% |      63%     46%
+IAAA     3      1.25    1.41    1.58 |        4       6       7 |    84.7%   91.3%   93.7% |      73%     53%
 --- 4 instrumented layers ---
-AAAA     4        34,009      45,497      58,016        79.7%      87.4%      90.5%    2.81     80%     59%
+AAAA     4      2.07    2.77    3.53 |       12      17      21 |    79.7%   87.4%   90.5% |      80%     59%

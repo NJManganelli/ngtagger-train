@@ -1226,25 +1226,39 @@ def _write_sweep_table(res, sfx, out, n_ev):
         return ("q%g" % (q * 100)).rstrip("0").rstrip(".") if q * 100 % 1 else "q%d" % (q * 100)
 
     labs = [qlab(q) for q in cones]
-    hdr = (f"{'cfg':<6}{'nSP':>4}  " + "".join(f"{'TOT ' + l:>12}" for l in labs)
-           + "  " + "".join(f"{'cont ' + l:>11}" for l in labs)
-           + f"{'<hits>':>8}{'>=2hit':>8}{'>=3hit':>8}")
+    trk_per_ev = ntrk_ref / max(n_ev, 1)
+    W = 8
+    blk = W * len(labs)
+    grp = (f"{'':<10}  " + f"{'combinations / track':^{blk}}" + " | "
+           + f"{'p99 (busy track)':^{blk}}" + " | " + f"{'containment':^{blk}}"
+           + " | " + f"{'viability':^16}")
+    sub = (f"{'cfg':<6}{'nSP':>4}  " + "".join(f"{l:>{W}}" for l in labs) + " | "
+           + "".join(f"{l:>{W}}" for l in labs) + " | "
+           + "".join(f"{l:>{W}}" for l in labs) + " | "
+           + f"{'>=2hit':>8}{'>=3hit':>8}")
+    hdr = grp + "\n" + sub
     lines = [
         "activeSP refit search cost vs CONE WIDTH",
         f"  sample        : {n_ev} events, PU200, {ntrk_ref:,} tracks per config",
         "  cone          : nominal per-axis two-sided Gaussian, k = Phi^-1((1+q)/2)",
         "                  " + " | ".join(
             f"{l} k={res['table_k_sigma'][i]:.3f}" for i, l in enumerate(labs)),
-        "  TOT <cone>    : summed L1xL2xL3xL4 combinations over all tracks at that cone",
-        "                  = throughput budget. Product spans INSTRUMENTED layers only;",
-        "                  a layer with no candidate contributes 1, not 0.",
+        f"                  {trk_per_ev:.0f} refit-able tracks per event",
+        "  combinations  : PER TRACK, the number of (L1,L2,L3,L4) hit tuples a refit must",
+        "                  test = product of the candidate counts over INSTRUMENTED layers.",
+        "                  A layer with NO candidate contributes 1, not 0 -- the refit skips",
+        "                  it and carries on. Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 -> 6.",
+        "                  (pinned by tests/test_combination_counting.py)",
+        "  cmb/trk <cone>: MEAN combinations per track refit at that cone width.",
+        f"                  Multiply by {trk_per_ev:.0f} for per-event throughput.",
+        "  p99 <cone>    : 99th-percentile track, i.e. the busy-track cost.",
         "  cont <cone>   : MEASURED fraction of crossings whose true cluster falls in the",
         "                  cone. The nominal quantile is NOT the achieved containment --",
         "                  pull widths are 0.81-1.52, so this is measured, not assumed.",
         "  >=2hit/>=3hit : fraction of tracks the refit gave that many hits. 0% for every",
         "                  two-layer build is structural, not performance.",
         "",
-        hdr, "-" * len(hdr)]
+        hdr, "-" * len(sub)]
     group = {1: "1 instrumented layer", 2: "2 instrumented layers",
              3: "3 instrumented layers", 4: "4 instrumented layers"}
     last_n = None
@@ -1257,9 +1271,10 @@ def _write_sweep_table(res, sfx, out, n_ev):
         bc = r["by_cone"]
         lines.append(
             f"{st:<6}{n:>4}  "
-            + "".join(f"{bc[c]['total_work']:>12,.0f}" for c in ck)
-            + "  " + "".join(f"{100 * bc[c]['true_hit_containment']:>10.1f}%" for c in ck)
-            + f"{r['mean_accepted_hits']:>8.2f}{100 * f['ge2']:>7.0f}%{100 * f['ge3']:>7.0f}%")
+            + "".join(f"{bc[c]['mean']:>{W}.2f}" for c in ck) + " | "
+            + "".join(f"{bc[c]['p99']:>{W}.0f}" for c in ck) + " | "
+            + "".join(f"{100 * bc[c]['true_hit_containment']:>{W - 1}.1f}%" for c in ck)
+            + " | " + f"{100 * f['ge2']:>7.0f}%{100 * f['ge3']:>7.0f}%")
     txt = "\n".join(lines)
     tp = os.path.join(out["_outdir"], "spix_activesp_table.txt")
     with open(tp, "w") as fh:
@@ -1269,14 +1284,17 @@ def _write_sweep_table(res, sfx, out, n_ev):
 
     cp = os.path.join(out["_outdir"], "spix_activesp_table.csv")
     with open(cp, "w") as fh:
-        fh.write("activeSP,n_sp_layers,cone_q,k_sigma,total_work,mean,median,p99,max,"
-                 "true_hit_containment,mean_accepted_hits,frac_ge2hit,frac_ge3hit\n")
+        fh.write("activeSP,n_sp_layers,cone_q,k_sigma,combos_per_track_mean,"
+                 "combos_per_track_median,combos_per_track_p99,combos_per_track_max,"
+                 "combos_per_event,total_work_raw,true_hit_containment,"
+                 "mean_accepted_hits,frac_ge2hit,frac_ge3hit\n")
         for st in order:
             r, f = res[st], res[st]["frac_tracks_with_hits"]
             for c, d in sorted(r["by_cone"].items(), key=lambda kv: float(kv[0])):
                 fh.write(f"{st},{st.count('A')},{float(c):.4f},{d['k_sigma']:.4f},"
-                         f"{d['total_work']:.0f},{d['mean']:.4f},{d['median']:.0f},"
-                         f"{d['p99']:.0f},{d['max']:.0f},{d['true_hit_containment']:.5f},"
+                         f"{d['mean']:.4f},{d['median']:.0f},{d['p99']:.0f},{d['max']:.0f},"
+                         f"{d['combos_per_event']:.2f},{d['total_work']:.0f},"
+                         f"{d['true_hit_containment']:.5f},"
                          f"{r['mean_accepted_hits']:.4f},{f['ge2']:.4f},{f['ge3']:.4f}\n")
     print(f"   (10) wrote {cp}")
     res["_table"] = os.path.basename(tp)
@@ -1346,6 +1364,7 @@ def study_combination_sweep(X, K, P, ax_row, out):
     res, per_cfg = {"quantiles": SWEEP_Q, "k_sigma": [float(k) for k in kvals],
                     "table_cones": tabq,
                     "table_k_sigma": [float(k) for k in ktab]}, {}
+    n_ev_local = max(int(out.get("n_events", 0)), 1)
     for s in sfx:
         Xv = _variant_crossings(files, s)
         combos, ntrk, cont, n_have = _combinations_per_track(Xv, K, allk)
@@ -1364,7 +1383,10 @@ def study_combination_sweep(X, K, P, ax_row, out):
                   # keyed by CONE quantile: each is a different design point
                   "by_cone": {f"{q:.4f}": {
                       "k_sigma": float(k),
+                      # RAW SUM over whatever sample ran -- not interpretable on its
+                      # own, kept only so the normalised numbers can be rederived.
                       "total_work": float(combos[k].sum()),
+                      "combos_per_event": float(combos[k].sum() / max(n_ev_local, 1)),
                       "mean": float(combos[k].mean()),
                       "median": float(np.median(combos[k])),
                       "p99": float(np.percentile(combos[k], 99)),
