@@ -203,15 +203,19 @@ GLOSSARY = [
      "neighbour. Storing the same clusters in offset grids -- edges of one passing "
      "through centres of another -- lets the track pick the grid whose bin centre its "
      "projection lands nearest. Measured at matched containment (~90%, one read): "
-     "1grid needs f=4 and gives 2293 combinations per track; 4grid needs only f=2 and "
-     "gives 55, a 42x improvement for 4x the storage. 2grid_phi buys almost nothing "
+     "1grid_1bin needs f=4 and gives 2293 combinations per track; 4grid_1bin needs f=2 and "
+     "gives 55, a 42x improvement for 4x the storage. 2grid_phi_1bin buys almost nothing "
      "(2367) because the ETA phase is still arbitrary -- offsetting one dimension while "
      "the other stays misaligned does not help. Both offsets are needed."),
-    ("reads",
-     "Bins fetched per track per layer. One grid read with its 3x3 neighbourhood is 9 "
-     "reads; an offset-grid layout reads 1. Fewer combinations can be bought with more "
-     "reads (1grid+nbr) or more storage (4grid), and which is preferable depends on "
-     "whether bandwidth or memory is the binding constraint."),
+    ("reads  /  neighbour radius",
+     "READS is how many bins are fetched per track per layer. The projection lands in "
+     "exactly ONE bin; the NEIGHBOUR RADIUS says how many bins outward are fetched as "
+     "well, so reads = (2*radius + 1)^2 -- radius 0 is a single bin, radius 1 is a 3x3 "
+     "block, i.e. 9 reads. The ring exists because one grid guarantees nothing: a "
+     "projection near a bin edge leaves the desired cluster in the neighbour, and "
+     "reading the ring recovers it at 9x the bandwidth. Offset grids are the "
+     "alternative -- they buy the same protection with 1 read and more storage. Which "
+     "is preferable depends on whether bandwidth or memory binds."),
     ("max  (AVOID)",
      "Largest single-track value in the sample. An extreme-value statistic on a "
      "heavy tail: it DOES NOT CONVERGE and grows with the number of events "
@@ -1446,7 +1450,8 @@ def _write_sweep_table(res, sfx, out, n_ev):
         "                  A layer with NO candidate contributes 1, not 0 -- the refit skips",
         "                  it and carries on. Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 -> 6.",
         "                  (pinned by tests/test_combination_counting.py)",
-        "  cmb/trk <cone>: MEAN combinations per track refit at that cone width.",
+        "  combinations  : MEAN number per track refit at that cone width (see below for",
+        "                  what a combination is).",
         f"                  Multiply by {trk_per_ev:.0f} for per-event throughput.",
         "  p99 <cone>    : 99th-percentile track, i.e. the busy-track cost. Stable: 100 ->",
         "                  500 events moves it by at most one unit.",
@@ -1456,7 +1461,9 @@ def _write_sweep_table(res, sfx, out, n_ev):
         "                  not a design number without an explicit per-N-events framing, and",
         "                  ranking builds by it produces conclusions that reverse when more",
         "                  events are added. Use p99.",
-        "  cont <cone>   : MEASURED fraction of crossings whose true cluster falls in the",
+        "  cfg / nSP     : the activeSP mask, and how many layers it instruments",
+        "  <hits>        : mean number of hits the refit attached to a track",
+        "  containment   : MEASURED fraction of crossings whose true cluster falls in the",
         "                  cone. The nominal quantile is NOT the achieved containment --",
         "                  pull widths are 0.81-1.52, so this is measured, not assumed.",
         "  >=2hit/>=3hit : fraction of tracks the refit gave that many hits. 0% for every",
@@ -1731,13 +1738,16 @@ SECTOR_ANG_NSIG = 3.0         # angle-compatibility cut, in sigma of the ML esti
 # through centres of another) lets the track pick the grid whose bin centre its
 # projection lands nearest, which is what makes a one-bin read viable at all.
 # (label, phi offsets, eta offsets, bins read either side)
+# Named for what they DO rather than by an abbreviation. The last field is the
+# neighbour RADIUS in bins: 0 reads only the bin the projection landed in, 1 also
+# reads every bin touching it, which in two dimensions is a 3x3 block. So
+# reads = (2*radius + 1)^2.
 SECTOR_GRIDS = [
-    ("1grid",        1, 1, 0),   # baseline: one grid, one bin. No guarantee.
-    ("1grid+nbr",    1, 1, 1),   # one grid, 3x3 = 9 bins read
-    ("2grid_phi",    2, 1, 0),   # offset in phi only, 2x storage, one bin read
-    ("4grid",        2, 2, 0),   # offset in phi and eta, 4x storage, one bin read
+    ("1grid_1bin",      1, 1, 0),   # baseline: one grid, one bin. Guarantees nothing.
+    ("1grid_3x3",       1, 1, 1),   # one grid, read the surrounding ring too: 9 reads
+    ("2grid_phi_1bin",  2, 1, 0),   # grids offset in phi, 2x storage, 1 read
+    ("4grid_1bin",      2, 2, 0),   # grids offset in phi AND eta, 4x storage, 1 read
 ]
-SECTOR_NBR = [0, 1]           # bins read either side of the projected bin
 
 
 def _helix_project(rinv, phi0, tanl, z0, r):
@@ -1792,7 +1802,7 @@ def _sector_counts(tr, cl, tev, cev, layer, r_nom, wphi, weta, gspec, want_c,
     the bin is what the refit must test. The only track-dependent step is choosing
     which bin to read.
     """
-    _, ngp, nge, nbr = gspec
+    _, ngp, nge, ring = gspec   # ring = neighbour radius in bins; reads = (2*ring+1)^2
     csel = cl["layer"] == layer
     if not csel.any():
         return None
@@ -1820,8 +1830,8 @@ def _sector_counts(tr, cl, tev, cev, layer, r_nom, wphi, weta, gspec, want_c,
             tsel = np.flatnonzero((gp_t == gp) & (ge_t == ge))
             if not len(tsel):
                 continue
-            for dp in range(-nbr, nbr + 1):
-                for de in range(-nbr, nbr + 1):
+            for dp in range(-ring, ring + 1):
+                for de in range(-ring, ring + 1):
                     tk = ((tev[tsel].astype(np.int64) * 1000003 + ip_t[tsel] + dp)
                           * 1000003 + ie_t[tsel] + de)
                     lo = np.searchsorted(cks, tk, "left")
@@ -1982,8 +1992,8 @@ def study_sector_binning(X, K, P, ax_row, out):
     # Pareto front: the only comparison that matters is at MATCHED containment,
     # because any layout can look cheap by being undersized.
     if ax_row is not None:
-        styles = {"1grid": ("o", "-"), "1grid+nbr": ("s", "-"),
-                  "2grid_phi": ("^", "--"), "4grid": ("D", "--")}
+        styles = {"1grid_1bin": ("o", "-"), "1grid_3x3": ("s", "-"),
+                  "2grid_phi_1bin": ("^", "--"), "4grid_1bin": ("D", "--")}
         for a_, v, lab in ((ax_row[0], "pos", "position bin only"),
                            (ax_row[1], "pos+alpha+beta", "bin + both angles")):
             for gname in [g[0] for g in SECTOR_GRIDS]:
@@ -2046,27 +2056,37 @@ def _write_sector_table(res, out):
         "  in the neighbour. Offset grids (edges of one through centres of another) let",
         "  the track pick the grid whose bin centre it lands nearest, which is what makes",
         "  a one-bin read viable. The cost is storage: clusters are binned n_grids times.",
-        "    1grid      1 grid,  1 bin read   -- baseline, no guarantee",
-        "    1grid+nbr  1 grid,  9 bins read  -- 3x3 around the projection",
-        "    2grid_phi  2 grids, 1 bin read   -- offset in phi only",
-        "    4grid      4 grids, 1 bin read   -- offset in phi and eta",
+        "    reads = how many bins are fetched per track per layer. The projection lands",
+        "    in ONE bin; a 3x3 layout also reads every bin touching it, recovering the",
+        "    case where the projection sat near an edge, at 9x the bandwidth.",
         "",
-        "  f = bin width / q99 offset.  cmb = mean combinations per track refit.",
-        "  cont = MEASURED containment of the desired cluster.",
+        "    1grid_1bin       1 grid,  1 read   -- baseline. Guarantees nothing.",
+        "    1grid_3x3        1 grid,  9 reads  -- the surrounding ring as well",
+        "    2grid_phi_1bin   2 grids, 1 read   -- grids offset in phi only",
+        "    4grid_1bin       4 grids, 1 read   -- grids offset in phi AND eta",
+        "",
+        "  f          = bin width as a multiple of that layer's q99 offset",
+        "  bins/nonant= how many bins the L1 grid divides one nonant (698 mrad) into",
+        "  ngrid      = how many offset copies of the grid are stored",
+        "  reads      = bins fetched per track per layer; see neighbour radius below",
+        "  combinations per track = MEAN number a refit must test at that setting",
+        "  contain    = MEASURED containment of the desired cluster",
+        "  pos        = position bin only.  +a = plus bending-angle (alpha) cut.",
+        "  +a+b       = plus longitudinal-angle (beta) cut as well.",
         f"  Angle cuts at {SECTOR_ANG_NSIG:g} sigma of the ML estimate; they are free once",
         "  the cluster has been read out, and they cut candidates without costing bins.",
         "",
-        f"  {'grid':<10}{'ngrid':>6}{'reads':>6}{'f':>6}{'bins/non':>9} | "
-        + "".join(f"{'cmb ' + v:>16}" for v in ("pos", "+a", "+a+b"))
-        + " | " + "".join(f"{'cont ' + v:>13}" for v in ("pos", "+a", "+a+b")),
+        f"  {'grid':<16}{'ngrid':>6}{'reads':>6}{'f':>6}{'bins/nonant':>12} | "
+        + "".join(f"{'combinations ' + v:>19}" for v in ("pos", "+a", "+a+b"))
+        + " | " + "".join(f"{'contain ' + v:>15}" for v in ("pos", "+a", "+a+b")),
     ]
     vs = ["pos", "pos+alpha", "pos+alpha+beta"]
     for r in res["scan"]:
         lines.append(
-            f"  {r['grid']:<10}{r['n_grids']:>6}{r['bins_read']:>6}{r['f']:>6.2f}"
-            f"{r['bins_per_nonant_L1']:>9.1f} | "
-            + "".join(f"{r.get('combos_' + v, float('nan')):>16.1f}" for v in vs)
-            + " | " + "".join(f"{100 * r.get('cont_' + v, float('nan')):>12.1f}%" for v in vs))
+            f"  {r['grid']:<16}{r['n_grids']:>6}{r['bins_read']:>6}{r['f']:>6.2f}"
+            f"{r['bins_per_nonant_L1']:>12.1f} | "
+            + "".join(f"{r.get('combos_' + v, float('nan')):>19.1f}" for v in vs)
+            + " | " + "".join(f"{100 * r.get('cont_' + v, float('nan')):>14.1f}%" for v in vs))
     txt = "\n".join(lines)
     p = os.path.join(out["_outdir"], "spix_sector_binning.txt")
     with open(p, "w") as fh:

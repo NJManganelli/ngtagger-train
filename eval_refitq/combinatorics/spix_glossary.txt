@@ -150,16 +150,19 @@ offset grids  (1grid / 2grid_phi / 4grid)
     read guarantees NOTHING: a cluster just past the edge sits in the neighbour. Storing the
     same clusters in offset grids -- edges of one passing through centres of another -- lets
     the track pick the grid whose bin centre its projection lands nearest. Measured at matched
-    containment (~90%, one read): 1grid needs f=4 and gives 2293 combinations per track; 4grid
-    needs only f=2 and gives 55, a 42x improvement for 4x the storage. 2grid_phi buys almost
-    nothing (2367) because the ETA phase is still arbitrary -- offsetting one dimension while
-    the other stays misaligned does not help. Both offsets are needed.
+    containment (~90%, one read): 1grid_1bin needs f=4 and gives 2293 combinations per track;
+    4grid_1bin needs f=2 and gives 55, a 42x improvement for 4x the storage. 2grid_phi_1bin
+    buys almost nothing (2367) because the ETA phase is still arbitrary -- offsetting one
+    dimension while the other stays misaligned does not help. Both offsets are needed.
 
-reads
-    Bins fetched per track per layer. One grid read with its 3x3 neighbourhood is 9 reads; an
-    offset-grid layout reads 1. Fewer combinations can be bought with more reads (1grid+nbr)
-    or more storage (4grid), and which is preferable depends on whether bandwidth or memory is
-    the binding constraint.
+reads  /  neighbour radius
+    READS is how many bins are fetched per track per layer. The projection lands in exactly
+    ONE bin; the NEIGHBOUR RADIUS says how many bins outward are fetched as well, so reads =
+    (2*radius + 1)^2 -- radius 0 is a single bin, radius 1 is a 3x3 block, i.e. 9 reads. The
+    ring exists because one grid guarantees nothing: a projection near a bin edge leaves the
+    desired cluster in the neighbour, and reading the ring recovers it at 9x the bandwidth.
+    Offset grids are the alternative -- they buy the same protection with 1 read and more
+    storage. Which is preferable depends on whether bandwidth or memory binds.
 
 max  (AVOID)
     Largest single-track value in the sample. An extreme-value statistic on a heavy tail: it

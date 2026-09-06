@@ -29,34 +29,44 @@ FIXED eta-phi BIN SIZING for a refit-only design  (study 11)
   in the neighbour. Offset grids (edges of one through centres of another) let
   the track pick the grid whose bin centre it lands nearest, which is what makes
   a one-bin read viable. The cost is storage: clusters are binned n_grids times.
-    1grid      1 grid,  1 bin read   -- baseline, no guarantee
-    1grid+nbr  1 grid,  9 bins read  -- 3x3 around the projection
-    2grid_phi  2 grids, 1 bin read   -- offset in phi only
-    4grid      4 grids, 1 bin read   -- offset in phi and eta
+    reads = how many bins are fetched per track per layer. The projection lands
+    in ONE bin; a 3x3 layout also reads every bin touching it, recovering the
+    case where the projection sat near an edge, at 9x the bandwidth.
 
-  f = bin width / q99 offset.  cmb = mean combinations per track refit.
-  cont = MEASURED containment of the desired cluster.
+    1grid_1bin       1 grid,  1 read   -- baseline. Guarantees nothing.
+    1grid_3x3        1 grid,  9 reads  -- the surrounding ring as well
+    2grid_phi_1bin   2 grids, 1 read   -- grids offset in phi only
+    4grid_1bin       4 grids, 1 read   -- grids offset in phi AND eta
+
+  f          = bin width as a multiple of that layer's q99 offset
+  bins/nonant= how many bins the L1 grid divides one nonant (698 mrad) into
+  ngrid      = how many offset copies of the grid are stored
+  reads      = bins fetched per track per layer; see neighbour radius below
+  combinations per track = MEAN number a refit must test at that setting
+  contain    = MEASURED containment of the desired cluster
+  pos        = position bin only.  +a = plus bending-angle (alpha) cut.
+  +a+b       = plus longitudinal-angle (beta) cut as well.
   Angle cuts at 3 sigma of the ML estimate; they are free once
   the cluster has been read out, and they cut candidates without costing bins.
 
-  grid       ngrid reads     f bins/non |          cmb pos          cmb +a        cmb +a+b |      cont pos      cont +a    cont +a+b
-  1grid          1     1  0.25     73.3 |              1.0             1.0             1.0 |         18.7%        18.5%        18.1%
-  1grid          1     1  0.50     36.7 |              1.3             1.1             1.0 |         38.9%        38.7%        37.7%
-  1grid          1     1  1.00     18.3 |              3.8             2.0             1.2 |         60.8%        60.4%        58.7%
-  1grid          1     1  2.00      9.2 |             47.3             9.0             2.0 |         77.9%        77.3%        75.0%
-  1grid          1     1  4.00      4.6 |           2293.1            98.5             5.3 |         88.4%        87.7%        85.1%
-  1grid+nbr      1     9  0.25     73.3 |              2.4             1.6             1.1 |         65.3%        64.9%        63.1%
-  1grid+nbr      1     9  0.50     36.7 |             16.8             5.3             1.9 |         86.5%        85.9%        83.4%
-  1grid+nbr      1     9  1.00     18.3 |            453.5            45.1             5.6 |         96.5%        95.7%        92.8%
-  1grid+nbr      1     9  2.00      9.2 |          38364.1           774.8            18.2 |         99.2%        98.4%        95.3%
-  1grid+nbr      1     9  4.00      4.6 |        6323927.2         23449.5            56.2 |         99.7%        98.8%        95.7%
-  2grid_phi      2     1  0.25     73.3 |              1.0             1.0             1.0 |         20.6%        20.5%        20.0%
-  2grid_phi      2     1  0.50     36.7 |              1.3             1.2             1.0 |         43.6%        43.3%        42.2%
-  2grid_phi      2     1  1.00     18.3 |              4.1             2.1             1.2 |         66.0%        65.5%        63.7%
-  2grid_phi      2     1  2.00      9.2 |             49.7             9.9             2.3 |         81.6%        81.0%        78.6%
-  2grid_phi      2     1  4.00      4.6 |           2366.9           114.3             6.3 |         90.7%        89.9%        87.2%
-  4grid          4     1  0.25     73.3 |              1.0             1.0             1.0 |         21.1%        21.0%        20.5%
-  4grid          4     1  0.50     36.7 |              1.4             1.2             1.1 |         46.9%        46.6%        45.4%
-  4grid          4     1  1.00     18.3 |              4.4             2.2             1.3 |         73.8%        73.3%        71.2%
-  4grid          4     1  2.00      9.2 |             55.2            11.3             2.7 |         90.9%        90.2%        87.5%
-  4grid          4     1  4.00      4.6 |           2530.5           129.7             8.7 |         97.7%        96.9%        94.0%
+  grid             ngrid reads     f bins/nonant |    combinations pos    combinations +a  combinations +a+b |     contain pos     contain +a   contain +a+b
+  1grid_1bin           1     1  0.25        73.3 |                 1.0                1.0                1.0 |           18.7%          18.5%          18.1%
+  1grid_1bin           1     1  0.50        36.7 |                 1.3                1.1                1.0 |           38.9%          38.7%          37.7%
+  1grid_1bin           1     1  1.00        18.3 |                 3.8                2.0                1.2 |           60.8%          60.4%          58.7%
+  1grid_1bin           1     1  2.00         9.2 |                47.3                9.0                2.0 |           77.9%          77.3%          75.0%
+  1grid_1bin           1     1  4.00         4.6 |              2293.1               98.5                5.3 |           88.4%          87.7%          85.1%
+  1grid_3x3            1     9  0.25        73.3 |                 2.4                1.6                1.1 |           65.3%          64.9%          63.1%
+  1grid_3x3            1     9  0.50        36.7 |                16.8                5.3                1.9 |           86.5%          85.9%          83.4%
+  1grid_3x3            1     9  1.00        18.3 |               453.5               45.1                5.6 |           96.5%          95.7%          92.8%
+  1grid_3x3            1     9  2.00         9.2 |             38364.1              774.8               18.2 |           99.2%          98.4%          95.3%
+  1grid_3x3            1     9  4.00         4.6 |           6323927.2            23449.5               56.2 |           99.7%          98.8%          95.7%
+  2grid_phi_1bin       2     1  0.25        73.3 |                 1.0                1.0                1.0 |           20.6%          20.5%          20.0%
+  2grid_phi_1bin       2     1  0.50        36.7 |                 1.3                1.2                1.0 |           43.6%          43.3%          42.2%
+  2grid_phi_1bin       2     1  1.00        18.3 |                 4.1                2.1                1.2 |           66.0%          65.5%          63.7%
+  2grid_phi_1bin       2     1  2.00         9.2 |                49.7                9.9                2.3 |           81.6%          81.0%          78.6%
+  2grid_phi_1bin       2     1  4.00         4.6 |              2366.9              114.3                6.3 |           90.7%          89.9%          87.2%
+  4grid_1bin           4     1  0.25        73.3 |                 1.0                1.0                1.0 |           21.1%          21.0%          20.5%
+  4grid_1bin           4     1  0.50        36.7 |                 1.4                1.2                1.1 |           46.9%          46.6%          45.4%
+  4grid_1bin           4     1  1.00        18.3 |                 4.4                2.2                1.3 |           73.8%          73.3%          71.2%
+  4grid_1bin           4     1  2.00         9.2 |                55.2               11.3                2.7 |           90.9%          90.2%          87.5%
+  4grid_1bin           4     1  4.00         4.6 |              2530.5              129.7                8.7 |           97.7%          96.9%          94.0%

@@ -8,7 +8,8 @@ activeSP refit search cost vs CONE WIDTH
                   A layer with NO candidate contributes 1, not 0 -- the refit skips
                   it and carries on. Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 -> 6.
                   (pinned by tests/test_combination_counting.py)
-  cmb/trk <cone>: MEAN combinations per track refit at that cone width.
+  combinations  : MEAN number per track refit at that cone width (see below for
+                  what a combination is).
                   Multiply by 166 for per-event throughput.
   p99 <cone>    : 99th-percentile track, i.e. the busy-track cost. Stable: 100 ->
                   500 events moves it by at most one unit.
@@ -18,7 +19,9 @@ activeSP refit search cost vs CONE WIDTH
                   not a design number without an explicit per-N-events framing, and
                   ranking builds by it produces conclusions that reverse when more
                   events are added. Use p99.
-  cont <cone>   : MEASURED fraction of crossings whose true cluster falls in the
+  cfg / nSP     : the activeSP mask, and how many layers it instruments
+  <hits>        : mean number of hits the refit attached to a track
+  containment   : MEASURED fraction of crossings whose true cluster falls in the
                   cone. The nominal quantile is NOT the achieved containment --
                   pull widths are 0.81-1.52, so this is measured, not assumed.
   >=2hit/>=3hit : fraction of tracks the refit gave that many hits. 0% for every
