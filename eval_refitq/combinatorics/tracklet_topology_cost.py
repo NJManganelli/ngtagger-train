@@ -82,6 +82,11 @@ D0_CORE_SIGMA_CM = 9.2e-4
 # BSM DISPLACED (cm) cannot ride that path: matching a 1 cm d0 by curvature
 # widening needs kappa to +-10, i.e. no pT floor at all. It requires the triplet,
 # where three azimuths determine (kappa, phi0, d0) exactly.
+# The triplet's d0 acceptance, cut on the SOLVED d0 rather than assumed. B
+# hadrons have c*tau ~ 450-500 um and D hadrons 100-300 um, and a decay
+# product's impact parameter is O(c*tau) largely independent of the parent
+# boost, so 1 mm covers the heavy-flavour target.
+TRIPLET_D0_MAX_CM = 0.1
 HF_D0_SETTINGS = {"prompt_only": 0.0, "100um": 100e-4, "500um": 500e-4, "1mm": 1000e-4}
 BSM_D0_SETTINGS = {"1mm": 0.1, "5mm": 0.5, "10mm": 1.0}
 D0_DISPLACED_CM = 0.5
@@ -371,6 +376,46 @@ def load_ot(path, nev):
 # angles, which supply 6 further constraints on an otherwise exactly-determined
 # system. For prompt seeding the angles are a convenience worth ~3x; for
 # displaced seeding they are the ONLY discrimination there is.
+# ---- the exact three-point d0 solve ---------------------------------------
+# A cluster PAIR has two azimuths for three unknowns, so it can only get
+# curvature by ASSUMING d0 = 0, and a real d0 biases it by
+#     kappa_bias = d0 * (1/rA - 1/rB) / (c * dr)
+# = 10.34 per cm for IT L1L2. Covering d0 = 500 um therefore needs the curvature
+# gate opened by 0.517 against kappa_max = 0.500 at 2 GeV, i.e. a seed labelled
+# 2 GeV really admits 0.98 GeV. That coupling is what this removes.
+#
+# Three azimuths give three unknowns and zero remaining r-phi freedom, so d0 is
+# SOLVED. The model is linear in its unknowns to first order in d0/r and kappa*r:
+#     phi(r) = phi0 + A/r + B*r ,    A = +d0 ,  B = -c*kappa
+# The sign of A is MEASURED (robust slope of A on the TP's own d0 is +1.11), not
+# asserted: writing A = -d0 makes the residual -2*d0, which reads as sigma(d0)
+# degrading with d0 rather than as a sign flip.
+#
+# MEASURED, 100-event PU200 ttbar, correct cluster triples, pT > 2 GeV: sigma(d0)
+# is 39 um (L1L2L3) / 78 um (L2L3L4) and FLAT in d0, and sigma(kappa) is flat at
+# 0.016-0.033 where the pair degrades to 0.52 -- 15.7x/24.9x better at d0 = 1-5 mm.
+#
+# FIRMWARE: the coefficients depend only on the three radii, and quantising each
+# radius to the 48 bins already built for the projection search reproduces the
+# per-cluster result exactly (37 um vs 37 um). Layer-median radii do NOT: 2.9x
+# worse in d0, 3.4x in kappa, because the +-5 mm ladder stagger matters.
+def solve3(r1, p1, r2, p2, r3, p3):
+    """phi0, d0, kappa from three clusters. Closed form, vectorised.
+
+    Azimuths are differenced against the innermost cluster first, so the 2x2 that
+    remains cannot carry a 2*pi wrap.
+    """
+    u2, u3 = 1.0 / r2 - 1.0 / r1, 1.0 / r3 - 1.0 / r1
+    v2, v3 = r2 - r1, r3 - r1
+    d2, d3 = wrap(p2 - p1), wrap(p3 - p1)
+    det = u2 * v3 - u3 * v2
+    ok = np.abs(det) > 1e-9
+    det = np.where(ok, det, 1.0)
+    A = (d2 * v3 - d3 * v2) / det
+    B = (u2 * d3 - u3 * d2) / det
+    return wrap(p1 - A / r1 - B * r1), A, -B / C_BEND, ok
+
+
 def it_prepare(D, bench):
     """Per-cluster kappa_alpha, z0 and their effective sigmas, after quantization."""
     half = wrap(D["globalPhi"] - D["globalClusterPhi"])
@@ -648,7 +693,8 @@ def pairs_joint_z0_phi(evA, phiA, z0A, sA, B, half_phi,
 _JOINT_PAIRING = True
 
 
-def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False, d0_cm=0.0):
+def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
+                 d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM):
     """One seed type over an ENTIRE CHUNK -- all events at once, no event loop.
     ev_idx is the cluster index set to consider (normally the whole chunk); the
     event is folded into the pair-matching sort key, so cross-event pairs are
@@ -796,7 +842,23 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False, d
         szp_i = np.hypot(np.maximum(D["sigY"][gC], 1e-6), rc_i * sct[ja]) + rc_i * ms
         phiC_i = wrap(phi0[ja] - C_BEND * rc_i * kap[ja])
         dphi = np.abs(wrap(D["globalPhi"][gC] - phiC_i))
-        good = (np.abs(D["globalZ"][gC] - zC_i) <= NSIG * szp_i) & (dphi <= NSIG * sph)
+        good = np.abs(D["globalZ"][gC] - zC_i) <= NSIG * szp_i
+        if displaced:
+            # THE EXACT THREE-POINT SOLVE IS THE DISCRIMINANT HERE, not a phi
+            # window. With three azimuths in hand, (phi0, d0, kappa) are
+            # determined, so the pT cut can be the REAL |kappa| <= kappa_max with
+            # no slack, and d0 is CUT ON as a measurement instead of being
+            # absorbed into a widened window. The pair-stage kappa bound above
+            # stays, but it is now only a SEARCH bound that keeps the
+            # combinatorics finite -- it is no longer the physics cut, which is
+            # why the pT threshold survives.
+            _, d0_3, kap_3, ok3 = solve3(
+                D["globalR"][gA[ja]], D["globalPhi"][gA[ja]],
+                D["globalR"][gB[ja]], D["globalPhi"][gB[ja]],
+                rc_i, D["globalPhi"][gC])
+            good &= ok3 & (np.abs(kap_3) <= kmax) & (np.abs(d0_3) <= d0_max)
+        else:
+            good &= dphi <= NSIG * sph
         if not good.any():
             continue
         sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(dphi[good])
@@ -1102,7 +1164,15 @@ def selftest(a):
         for bname, bench in BENCHMARKS.items():
             Q = it_prepare(D, bench)
             for cname, cfg in IT_CONFIGS.items():
-                jobs = [((la, lb), lc, False, a.d0) for (la, lb), lc in cfg["pairs"]]
+                # BEAMLINE-CONSTRAINED PAIR SEEDING. Pair seeds take d0 = 0, so
+                # kappa_slack = 0 and |kappa| <= kappa_max is a REAL pT cut: a 2 GeV
+                # seed admits 2 GeV, not 0.98 GeV. Heavy flavour is not abandoned, it
+                # is DELEGATED to the triplet below, where the three-point solve
+                # MEASURES d0 instead of the pair absorbing it into a widened
+                # curvature gate. This mirrors the OT's own split -- prompt pair seeds,
+                # displaced triplets behind nbitsseedextended_ -- and it is the whole
+                # point of having a triplet at all.
+                jobs = [((la, lb), lc, False, 0.0) for (la, lb), lc in cfg["pairs"]]
                 jobs.append((cfg["triplet"][:2], cfg["triplet"][2], True, 0.0))
                 for (la, lb), lc, disp, d0c in jobs:
                     got = {}
@@ -1206,7 +1276,15 @@ def main():
             Q = it_prepare(D, bench)
             for cname, cfg in IT_CONFIGS.items():
                 for ptmin in PT_MINS:
-                    jobs = [((la, lb), lc, False, a.d0) for (la, lb), lc in cfg["pairs"]]
+                    # BEAMLINE-CONSTRAINED PAIR SEEDING. Pair seeds take d0 = 0, so
+                    # kappa_slack = 0 and |kappa| <= kappa_max is a REAL pT cut: a 2 GeV
+                    # seed admits 2 GeV, not 0.98 GeV. Heavy flavour is not abandoned, it
+                    # is DELEGATED to the triplet below, where the three-point solve
+                    # MEASURES d0 instead of the pair absorbing it into a widened
+                    # curvature gate. This mirrors the OT's own split -- prompt pair seeds,
+                    # displaced triplets behind nbitsseedextended_ -- and it is the whole
+                    # point of having a triplet at all.
+                    jobs = [((la, lb), lc, False, 0.0) for (la, lb), lc in cfg["pairs"]]
                     jobs.append((cfg["triplet"][:2], cfg["triplet"][2], True, 0.0))
                     for (la, lb), lc, disp, d0c in jobs:
                         tag = f"{bname}|{cname}|pt{ptmin:g}|" + (
