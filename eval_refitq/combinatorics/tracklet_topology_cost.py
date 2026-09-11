@@ -393,6 +393,115 @@ def it_prepare(D, bench):
             "ovf_a": ovf_a, "ovf_z": ovf_z}
 
 
+# ---- projecting to the third layer: SEARCH ON z, CONFIRM ON phi -----------
+# MEASURED (projection_residuals.py, PU200 ttbar, pT > 2 GeV, correct cluster
+# triples only): between the prompt core and d0 = 1-5 mm, sigma(dphi) at layer C
+# widens 36.6x (0.676 -> 24.7 mrad) while sigma(dz) is FLAT (77 -> 56 um). A
+# pair-derived curvature assumes d0 = 0, so phi carries the full d0 bias; the z
+# prediction z0 + r*cot(theta) is untouched by a TRANSVERSE impact parameter.
+#
+# Searching phi therefore pays for heavy-flavour coverage twice: the window must
+# open to ~58 mrad to keep d0 ~ 1 mm tracks, and every prompt seed pays it too.
+# Searching z reaches the same tracks in a 464 um window that never widens.
+#
+# THE INTRA-LAYER RADIAL SPREAD IS WHAT MAKES THIS NON-TRIVIAL, and an earlier
+# estimate here ignored it. A layer is not a thin shell: MEASURED ptp is ~1.1 cm
+# (staggered/tilted ladders, and the outer shell alone is ~5.7 mm thick and
+# continuous, so splitting into two shells does not help -- equal-count binning
+# saturates near 4.4 mm even at 16 bins). Searching z at one reference radius
+# needs padding (spread/2)*|cot|, which at |cot| = 1.16 is ~5000 um against a
+# 232 um resolution window: that is WORSE than the phi search it replaces.
+#
+# So bin the layer in radius finely enough that geometry stops dominating:
+# N_RBINS = 48 over ~1.1 cm gives 229 um bins, whose padding (bin/2)*|cot| is
+# ~133 um at the median |cot| -- under the resolution window, so the search is
+# resolution-limited as intended.
+Z_STRIDE = 200.0        # z spans ~40 cm; windows are mm-scale
+N_RBINS = 48
+
+
+def build_layer_z_index(cidx, event, r, z, sig, nrbins=N_RBINS):
+    """Per radial bin of one layer: cluster indices sorted by (event, z).
+
+    Returned per bin: the sorted composite key, the GLOBAL cluster indices in
+    that order, the bin's mid radius and half thickness, and the worst sigma in
+    the bin (so a search window can bound the per-candidate sigma without
+    gathering). The indices must be global: an earlier revision stored positions
+    within the layer-C subset, which the caller then used to index D directly --
+    the selftest caught it as "missed 947 of 947".
+    """
+    if not len(r):
+        return []
+    edges = np.linspace(r.min(), r.max() + 1e-9, nrbins + 1)
+    b = np.clip(np.searchsorted(edges, r, "right") - 1, 0, nrbins - 1)
+    out = []
+    for ib in range(nrbins):
+        sel = np.flatnonzero(b == ib)
+        if not len(sel):
+            continue
+        k = event[sel].astype(np.float64) * Z_STRIDE + z[sel]
+        o = np.argsort(k, kind="stable")
+        out.append((k[o], cidx[sel[o]], 0.5 * (edges[ib] + edges[ib + 1]),
+                    0.5 * (edges[ib + 1] - edges[ib]), float(sig[sel].max())))
+    return out
+
+
+def _slices(cnt, max_slice):
+    """Contiguous A-ranges whose candidate counts sum to at most max_slice."""
+    edges = np.r_[0, np.cumsum(cnt)]
+    a0 = 0
+    while a0 < len(cnt):
+        a1 = int(np.searchsorted(edges, edges[a0] + max_slice, "right")) - 1
+        yield a0, max(a1, a0 + 1)
+        a0 = max(a1, a0 + 1)
+
+
+def candidates_by_z(ev_p, z0p, cot, sct, ms, zidx, ceiling=DEFAULT_TRIPLET_CEILING):
+    """Yield (pair index, layer-C cluster index) for z-consistent candidates.
+
+    One interval search per radial bin. A given cluster pair therefore appears in
+    several yields -- once per bin that has a candidate -- so the caller must
+    arbitrate AFTER collecting every bin, not per yield.
+    """
+    total = 0
+    for kz, cidx, rmid, rhalf, sgmax in zidx:
+        zpred = z0p + rmid * cot
+        half = (NSIG * (np.hypot(sgmax, rmid * sct) + rmid * ms)
+                + rhalf * np.abs(cot))
+        ka = ev_p.astype(np.float64) * Z_STRIDE + zpred
+        lo = np.searchsorted(kz, ka - half, "left")
+        hi = np.searchsorted(kz, ka + half, "right")
+        cnt = (hi - lo).astype(np.int64)
+        total += int(cnt.sum())
+        if total > ceiling:
+            raise TooWide(total, ceiling)
+        if not cnt.sum():
+            continue
+        for a0, a1 in _slices(cnt, _MAX_SLICE):
+            ja, jb = _expand(cidx, lo[a0:a1], cnt[a0:a1], a0)
+            yield ja, jb
+
+
+_EXHAUSTIVE = False
+
+
+def candidates_exhaustive(ev_p, ev_c, cidx, ceiling=DEFAULT_TRIPLET_CEILING):
+    """EVERY layer-C cluster in the pair's own event. The --selftest oracle.
+
+    Deliberately does no geometric reasoning, so comparing against it isolates
+    exactly one thing: whether the z-binned search drops a candidate the exact
+    test would have kept. Only tractable on a couple of events.
+    """
+    o = np.argsort(ev_c, kind="stable")
+    evs, cs = ev_c[o], cidx[o]
+    lo = np.searchsorted(evs, ev_p, "left")
+    cnt = (np.searchsorted(evs, ev_p, "right") - lo).astype(np.int64)
+    if int(cnt.sum()) > ceiling:
+        raise TooWide(int(cnt.sum()), ceiling)
+    for a0, a1 in _slices(cnt, _MAX_SLICE):
+        yield _expand(cs, lo[a0:a1], cnt[a0:a1], a0)
+
+
 def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False, d0_cm=0.0):
     """One seed type over an ENTIRE CHUNK -- all events at once, no event loop.
     ev_idx is the cluster index set to consider (normally the whole chunk); the
@@ -510,50 +619,46 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False, d
     # measurement showed the window contains 93.4% of correct triples -- i.e. the
     # entire "core efficiency loss" was this bug, not physics.
     rCmed = float(np.median(rC))
-    rCspread = float(np.ptp(rC)) if len(rC) > 1 else 0.0
     skap = np.sqrt(2.0) * 1e-3 / (C_BEND * max(dr, 0.1))
     sph = np.hypot(5e-4, C_BEND * rCmed * skap) + ms + d0_allow
     # sigma(cot theta) from the pair's two z measurements, using the MEASURED
     # per-cluster CPE sigma (sigY ~ 12.5 um) rather than an assumed 30 um.
     sct = np.hypot(np.maximum(D["sigY"][gA], 1e-6),
                    np.maximum(D["sigY"][gB], 1e-6)) / max(dr, 0.1)
-    # search on the median radius, padded for the intra-layer spread so the
-    # searchsorted stage cannot drop a candidate the exact test would keep
-    phiC_med = wrap(phi0 - C_BEND * rCmed * kap)
-    out["projections"] = int(len(phiC_med))
+    out["projections"] = int(len(gA))
 
-    # ---- stage 2: CANDIDATE TRIPLETS, streamed in slices -------------------
-    n_cand = n_candz = 0
-    pick_p, pick_c = [], []
-    for ja, jb in pairs_in_window_slices(
-            D["event"][gA], phiC_med, D["event"][cC], phC,
-            np.full(len(phiC_med), NSIG * sph + C_BEND * rCspread * kmax)):
+    # ---- stage 2: CANDIDATE TRIPLETS, found by z, confirmed by phi ---------
+    zidx = build_layer_z_index(cC, D["event"][cC], rC, zC, sgC)
+    n_cand = 0
+    sv_p, sv_c, sv_res = [], [], []
+    gen = (candidates_exhaustive(D["event"][gA], D["event"][cC], cC) if _EXHAUSTIVE
+           else candidates_by_z(D["event"][gA], z0p, cot, sct, ms, zidx))
+    for ja, gC in gen:
         rss_check()
         n_cand += len(ja)
-        rc_i = rC[jb]
-        phiC_i = wrap(phi0[ja] - C_BEND * rc_i * kap[ja])
+        rc_i = D["globalR"][gC]
         zC_i = z0p[ja] + rc_i * cot[ja]
-        szp_i = np.hypot(sgC[jb], rc_i * sct[ja]) + rc_i * ms
-        good = (np.abs(wrap(phC[jb] - phiC_i)) <= NSIG * sph) & \
-               (np.abs(zC[jb] - zC_i) <= NSIG * szp_i)
-        ng = int(good.sum())
-        n_candz += ng
-        if not ng:
+        szp_i = np.hypot(np.maximum(D["sigY"][gC], 1e-6), rc_i * sct[ja]) + rc_i * ms
+        phiC_i = wrap(phi0[ja] - C_BEND * rc_i * kap[ja])
+        dphi = np.abs(wrap(D["globalPhi"][gC] - phiC_i))
+        good = (np.abs(D["globalZ"][gC] - zC_i) <= NSIG * szp_i) & (dphi <= NSIG * sph)
+        if not good.any():
             continue
-        ja2, jb2 = ja[good], jb[good]
-        res = np.abs(wrap(phC[jb2] - phiC_i[good]))
-        o = np.lexsort((res, ja2))
-        first = np.r_[True, ja2[o][1:] != ja2[o][:-1]]
-        pk = o[first]
-        pick_p.append(ja2[pk]); pick_c.append(cC[jb2[pk]])
+        sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(dphi[good])
     out["match_cand"] = n_cand
-    out["match_cand_z"] = n_candz
-    if pick_p:
-        pp, pc = np.concatenate(pick_p), np.concatenate(pick_c)
-        out["tracks_to_fit"] = int(len(pp))
-        out["_trip"] = (gA[pp], gB[pp], pc)
-    else:
+    if not sv_p:
+        out["match_cand_z"] = 0
         out["tracks_to_fit"] = 0
+        return out
+    pa, pc, pr = np.concatenate(sv_p), np.concatenate(sv_c), np.concatenate(sv_res)
+    out["match_cand_z"] = int(len(pa))
+    # ARBITRATE ONCE, over every radial bin together: a cluster pair's candidates
+    # are spread across bins, so a per-yield argmin would pick a different winner.
+    o = np.lexsort((pr, pa))
+    first = np.r_[True, pa[o][1:] != pa[o][:-1]]
+    pk = o[first]
+    out["tracks_to_fit"] = int(len(pk))
+    out["_trip"] = (gA[pa[pk]], gB[pa[pk]], pc[pk])
     return out
 
 
@@ -831,6 +936,48 @@ def acc_add(acc, o):
         acc[k] = acc.get(k, 0) + v
 
 
+def selftest(a):
+    """Does the z-binned search accept exactly what an exhaustive search does?"""
+    global _EXHAUSTIVE
+    set_limits(triplets_for_budget(a.pair_budget_gb),
+               min(a.rss_ceiling_gb, SAFE_RSS_FRAC * PHYS_RAM_GB))
+    nbad = ncmp = 0
+    for D in it_chunks(a.input, a.nev or 2, a.batch_events):
+        allidx = np.arange(len(D["layer"]))
+        for bname, bench in BENCHMARKS.items():
+            Q = it_prepare(D, bench)
+            for cname, cfg in IT_CONFIGS.items():
+                jobs = [((la, lb), lc, False, a.d0) for (la, lb), lc in cfg["pairs"]]
+                jobs.append((cfg["triplet"][:2], cfg["triplet"][2], True, 0.0))
+                for (la, lb), lc, disp, d0c in jobs:
+                    got = {}
+                    for mode in (False, True):
+                        _EXHAUSTIVE = mode
+                        try:
+                            o = it_pair_seed(D, Q, allidx, la, lb, lc, 2.0,
+                                             True, disp, d0c)
+                        except TooWide:
+                            got = None
+                            break
+                        t = o.get("_trip")
+                        got[mode] = (set() if t is None else
+                                     set(zip(t[0].tolist(), t[1].tolist(), t[2].tolist())))
+                    _EXHAUSTIVE = False
+                    if got is None:
+                        continue
+                    ncmp += 1
+                    tag = (f"{bname}|{cname}|L{la}L{lb}->L{lc}"
+                           + ("|displaced" if disp else ""))
+                    if got[False] != got[True]:
+                        nbad += 1
+                        miss, extra = got[True] - got[False], got[False] - got[True]
+                        print(f"  MISMATCH {tag}: z-search missed {len(miss)}, "
+                              f"invented {len(extra)}, of {len(got[True])} exhaustive")
+        break
+    print(f"selftest: {ncmp} seed configurations compared, {nbad} mismatched")
+    raise SystemExit(1 if nbad else 0)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-i", "--input", required=True)
@@ -855,9 +1002,15 @@ def main():
                     help="prompt d0 allowance [cm] for the benchmark pass")
     ap.add_argument("--skip-hf-scan", action="store_true")
     ap.add_argument("--skip-ot", action="store_true")
+    ap.add_argument("--selftest", action="store_true",
+                    help="compare the z-binned projection search against an "
+                         "exhaustive one on a few events; exits nonzero on any "
+                         "difference in the accepted cluster triples")
     ap.add_argument("-o", "--out", default="tracklet_topology_cost.json")
     a = ap.parse_args()
     benches = ({a.benchmark: BENCHMARKS[a.benchmark]} if a.benchmark else dict(BENCHMARKS))
+    if a.selftest:
+        return selftest(a)
 
     acc, purity, reck, findk = {}, {}, {}, {}
     tp_k, tp_d0 = [], []
