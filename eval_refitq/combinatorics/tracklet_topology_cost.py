@@ -394,9 +394,12 @@ def it_prepare(D, bench):
 
 
 # ---- projecting to the third layer: SEARCH ON z, CONFIRM ON phi -----------
-# MEASURED (projection_residuals.py, PU200 ttbar, pT > 2 GeV, correct cluster
-# triples only): between the prompt core and d0 = 1-5 mm, sigma(dphi) at layer C
-# widens 36.6x (0.676 -> 24.7 mrad) while sigma(dz) is FLAT (77 -> 56 um). A
+# MEASURED (projection_residuals.py, PU200 ttbar, 100 events, pT > 2 GeV, correct
+# cluster triples only): between the prompt core and d0 = 1-5 mm, sigma(dphi) at
+# layer C widens 40.4x (0.671 -> 27.1 mrad) while sigma(dz) is FLAT within 10%
+# (77.8 -> 68.8 um). L2L3->L4 gives 24.2x on phi and flat on z.
+# An earlier 40-event pass read sigma(dz) as slightly NARROWING at large d0
+# (0.7x); that was 17 entries of noise. It is flat. A
 # pair-derived curvature assumes d0 = 0, so phi carries the full d0 bias; the z
 # prediction z0 + r*cot(theta) is untouched by a TRANSVERSE impact parameter.
 #
