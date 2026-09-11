@@ -324,6 +324,57 @@ def pairs_in_window(evA, phiA, evB, phiB, half, ceiling=DEFAULT_TRIPLET_CEILING)
     return _expand(src3, lo, cnt, 0)
 
 
+def expand_inputs(spec):
+    """One or many files: comma-separated paths and/or globs, in given order.
+
+    The studies were single-file, which made the 1000-event ttbar set unusable
+    without concatenating by hand. Event numbering stays globally unique because
+    the chunk loader carries a running offset across every yield, files included.
+    """
+    import glob as _glob
+    out = []
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        hits = sorted(_glob.glob(part)) if any(c in part for c in "*?[") else [part]
+        if not hits:
+            raise SystemExit(f"no input matched: {part}")
+        out.extend(hits)
+    if not out:
+        raise SystemExit("no inputs given")
+    return out
+
+
+def load_flat(spec, table, cols, nev=None):
+    """Flatten `cols` of `table` across every input file into one dict.
+
+    Stops once nev events have been read. Streams rather than concatenating
+    whole files, so the footprint stays bounded on the full ttbar set.
+    """
+    paths = expand_inputs(spec)
+    keys = [f"{table}_{c}" for c in cols]
+    parts, counts, seen = [], [], 0
+    for A in uproot.iterate([f"{p}:Events" for p in paths], keys, step_size=200):
+        n = ak.to_numpy(ak.num(A[keys[0]]))
+        if nev is not None and seen + len(n) > nev:
+            keep = nev - seen
+            if keep <= 0:
+                break
+            A, n = A[:keep], n[:keep]
+        parts.append({c: ak.to_numpy(ak.flatten(A[f"{table}_{c}"])) for c in cols})
+        counts.append(n)
+        seen += len(n)
+        if nev is not None and seen >= nev:
+            break
+    if not parts:
+        raise SystemExit("inputs contained no events")
+    D = {c: np.concatenate([p[c] for p in parts]) for c in cols}
+    nall = np.concatenate(counts)
+    D["event"] = np.repeat(np.arange(len(nall)), nall)
+    return D, len(nall), nall
+
+
 IT_COLS = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
            "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
            "sigY", "tpIdx", "tpPt", "tpVx", "tpVy", "tpVz", "tpPhi", "tpEta"]
@@ -341,9 +392,19 @@ def it_chunks(path, nev, step=16):
     I/O calls against the per-cluster arrays, which are small.
     """
     seen = 0
-    for A in uproot.iterate(f"{path}:Events", [f"{IT_TABLE}_{c}" for c in IT_COLS],
-                            step_size=step, entry_stop=nev):
+    srcs = [f"{p}:Events" for p in expand_inputs(path)]
+    for A in uproot.iterate(srcs, [f"{IT_TABLE}_{c}" for c in IT_COLS],
+                            step_size=step):
         n = ak.to_numpy(ak.num(A[f"{IT_TABLE}_layer"]))
+        # ENFORCE THE EVENT LIMIT HERE. uproot.iterate ignores entry_stop when it
+        # is handed a LIST of files, so -n 8 across ten ttbar files silently
+        # processed all 1000 -- the kind of miss that turns a quick check into a
+        # long run and makes two results incomparable.
+        if nev is not None:
+            if seen >= nev:
+                return
+            if seen + len(n) > nev:
+                A, n = A[:nev - seen], n[:nev - seen]
         D = {c: ak.to_numpy(ak.flatten(A[f"{IT_TABLE}_{c}"])) for c in IT_COLS}
         D["event"] = np.repeat(np.arange(seen, seen + len(n)), n)
         D["_events"] = np.arange(seen, seen + len(n))
@@ -353,15 +414,13 @@ def it_chunks(path, nev, step=16):
 
 
 def load_ot(path, nev):
-    t = uproot.open(f"{path}:Events")
+    paths = expand_inputs(path)
+    t = uproot.open(f"{paths[0]}:Events")
     cols = ["layer", "isBarrel", "r", "phi", "z", "bend", "tpIdx", "tpPt"]
     have = [c for c in cols if f"{OT_TABLE}_{c}" in t.keys()]
-    A = t.arrays([f"{OT_TABLE}_{c}" for c in have], entry_stop=nev)
-    n = ak.to_numpy(ak.num(A[f"{OT_TABLE}_layer"]))
-    D = {c: ak.to_numpy(ak.flatten(A[f"{OT_TABLE}_{c}"])) for c in have}
-    D["event"] = np.repeat(np.arange(len(n)), n)
+    D, nev_read, n = load_flat(path, OT_TABLE, have, nev)
     D["eta"] = np.abs(np.arcsinh(D["z"] / np.maximum(D["r"], 1e-6)))
-    return D, len(n), have
+    return D, nev_read, have
 
 
 # ==========================================================================
@@ -1121,9 +1180,12 @@ def render(R):
 def calibrate_ot_bend(path, nev):
     """bend -> kappa per OT layer, MEASURED from on-track stubs vs track rInv,
     so no strip pitch or sensor spacing has to be assumed."""
-    t = uproot.open(f"{path}:Events")
-    S = t.arrays(["L1TTrackStub_bend", "L1TTrackStub_layer", "L1TTrackStub_trackIdx"], entry_stop=nev)
-    K = t.arrays(["L1TTrack_rInv"], entry_stop=nev)
+    srcs = [f"{p}:Events" for p in expand_inputs(path)]
+    S = uproot.concatenate(srcs, ["L1TTrackStub_bend", "L1TTrackStub_layer",
+                                  "L1TTrackStub_trackIdx"])
+    K = uproot.concatenate(srcs, ["L1TTrack_rInv"])
+    if nev is not None:
+        S, K = S[:nev], K[:nev]
     ns = ak.to_numpy(ak.num(S["L1TTrackStub_bend"]))
     nt = ak.to_numpy(ak.num(K["L1TTrack_rInv"]))
     evs = np.repeat(np.arange(len(ns)), ns)

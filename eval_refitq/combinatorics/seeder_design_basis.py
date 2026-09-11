@@ -35,12 +35,8 @@ LAYERS = (1, 2, 3, 4)
 
 
 def _flat(path, cols, nev):
-    A = uproot.open(f"{path}:Events").arrays([f"{IT}_{c}" for c in cols],
-                                             entry_stop=nev)
-    n = ak.to_numpy(ak.num(A[f"{IT}_{cols[0]}"]))
-    D = {c: ak.to_numpy(ak.flatten(A[f"{IT}_{c}"])) for c in cols}
-    D["event"] = np.repeat(np.arange(len(n)), n)
-    return D, len(n), n
+    """One or many input files; see tracklet_topology_cost.expand_inputs."""
+    return M.load_flat(path, IT, cols, nev)
 
 
 # ---------------------------------------------------------------- geometry ---

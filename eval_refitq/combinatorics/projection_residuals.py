@@ -22,10 +22,14 @@ alone, project to C's own radius, and histogram the residual against the TP's
 own d0. No combinatorics: this is a resolution measurement, not a cost model.
 """
 from __future__ import annotations
-import argparse
+import argparse, sys
+from pathlib import Path
 import awkward as ak
 import numpy as np
 import uproot
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tracklet_topology_cost as M  # noqa: E402
 
 IT_TABLE = "L1TSmartPixelsCluster"
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
@@ -47,12 +51,8 @@ def robust_sigma(x):
 
 
 def load(path, nev):
-    A = uproot.open(f"{path}:Events").arrays(
-        [f"{IT_TABLE}_{c}" for c in COLS], entry_stop=nev)
-    n = ak.to_numpy(ak.num(A[f"{IT_TABLE}_layer"]))
-    D = {c: ak.to_numpy(ak.flatten(A[f"{IT_TABLE}_{c}"])) for c in COLS}
-    D["event"] = np.repeat(np.arange(len(n)), n)
-    return D, len(n)
+    """One or many input files; see tracklet_topology_cost.expand_inputs."""
+    return M.load_flat(path, IT_TABLE, COLS, nev)[:2]
 
 
 def first_cluster_per_tp(D, layer, sel):

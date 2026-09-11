@@ -1,0 +1,38 @@
+{
+  "n_paired_events": 40,
+  "arms": {
+    "outsideIn": {
+      "tracks_with_hits": 6394,
+      "clean_refits": 4811,
+      "clean_fraction": 0.752424147638411,
+      "accepted_hits": 18208,
+      "wrong_hits": 2272,
+      "wrong_hit_fraction": 0.12478031634446397,
+      "per_layer_wrong_fraction": {
+        "L1": 0.20724782899131597,
+        "L2": 0.11642371234207968,
+        "L3": 0.06755034412439459,
+        "L4": 0.05298223350253807
+      }
+    },
+    "insideOut": {
+      "tracks_with_hits": 6394,
+      "clean_refits": 3415,
+      "clean_fraction": 0.5340944635595871,
+      "accepted_hits": 17495,
+      "wrong_hits": 4405,
+      "wrong_hit_fraction": 0.2517862246356102,
+      "per_layer_wrong_fraction": {
+        "L1": 0.4698046181172291,
+        "L2": 0.18615565115369573,
+        "L3": 0.1347122779103686,
+        "L4": 0.10067114093959731
+      }
+    }
+  },
+  "reference_v2p6": {
+    "clean_outsideIn": 0.753,
+    "clean_insideOut": 0.539,
+    "note": "mem:smartpixels-v2p6-state, pre-Q and pre-sense-fix"
+  }
+}
