@@ -502,6 +502,135 @@ def candidates_exhaustive(ev_p, ev_c, cidx, ceiling=DEFAULT_TRIPLET_CEILING):
         yield _expand(cs, lo[a0:a1], cnt[a0:a1], a0)
 
 
+# ---- stage 1: pair on (z0, phi) JOINTLY, not phi-then-gate -----------------
+# Measured selectivities against the 61.6M possible L1xL2 cluster pairs in one
+# PU200 event: phi window alone 0.886%, z0 consistency alone 3.97%, the two
+# together 0.035%. The old order formed 116,829 cluster pairs on phi and then
+# discarded 89% at the z0 gate, so pairing on both at once forms far fewer
+# cluster pairs for an identical accepted set. Same mistake the projection stage
+# had, one stage earlier.
+#
+# THE sigma(z0) TAIL IS WHAT MAKES THIS NON-TRIVIAL. Per-cluster sigma(z0)
+# measured: median 0.140 cm, q99 0.580, q99.9 2.56, MAX 21.77 cm. Sizing buckets
+# on the median (0.596 cm) but the offset loop on the maximum needs K = 156, i.e.
+# 313 buckets scanned per cluster -- slower than the phi search it replaces. So
+# clusters with sigma above Z0_SPLIT_Q are WILDCARDS searched on phi alone, on
+# BOTH sides of the pair: they carry no usable z0, and pretending otherwise is
+# what blows up the loop. Capping sigma instead would be cheaper and would
+# silently drop real clusters, so it is not done.
+PHI_STRIDE = 24.0       # > 6*pi, the span the +-2pi duplication occupies
+Z0_SPLIT_Q = 99.0       # percentile of sigma(z0) above which a cluster is wild
+
+
+def build_phi_z0_index(z0, phi, s_z0, event):
+    """Sharp clusters keyed by (event, z0 bucket, phi); wild ones by phi alone.
+
+    Every key duplicates phi at +-2pi so a wrap-around window is a plain
+    interval search. PHI_STRIDE exceeds the 6*pi span those copies occupy, so one
+    bucket's band can never reach its neighbour's.
+    """
+    if not len(z0):
+        return None
+    s_split = float(np.percentile(s_z0, Z0_SPLIT_Q))
+    wild = s_z0 > s_split
+    sharp = ~wild
+    med = float(np.median(s_z0[sharp])) if sharp.any() else 1.0
+    w = max(2.0 * NSIG * np.sqrt(2.0) * med, 0.05)
+    z_lo, z_hi = float(z0.min()), float(z0.max())
+    nb = max(int(np.ceil((z_hi - z_lo) / w)) + 1, 1)
+    kmax_off = int(np.ceil(NSIG * np.sqrt(2.0) * s_split / w)) + 1
+
+    def _key(pos, bucket):
+        if not len(pos):
+            return np.empty(0), np.empty(0, np.int64)
+        base = (event[pos].astype(np.float64) * nb + bucket) * PHI_STRIDE
+        p = phi[pos] + np.pi
+        k = np.concatenate([base + p - 2 * np.pi, base + p, base + p + 2 * np.pi])
+        s = np.tile(pos, 3)
+        o = np.argsort(k, kind="stable")
+        return k[o], s[o]
+
+    ps = np.flatnonzero(sharp)
+    bs = np.clip(((z0[ps] - z_lo) / w).astype(np.int64), 0, nb - 1)
+    ksharp, ssharp = _key(ps, bs)
+    bmax = np.zeros(nb)
+    if len(ps):
+        np.maximum.at(bmax, bs, s_z0[ps])
+    zeros = lambda n: np.zeros(n, np.int64)
+    pw = np.flatnonzero(wild)
+    kwild, swild = _key(pw, zeros(len(pw)))
+    # A-side wildcards need every B cluster, sharp or not, on phi alone
+    pall = np.arange(len(z0))
+    kall, sall = _key(pall, zeros(len(pall)))
+    return dict(ksharp=ksharp, ssharp=ssharp, kwild=kwild, swild=swild,
+                kall=kall, sall=sall, w=w, z_lo=z_lo, nb=nb, bmax=bmax,
+                kmax_off=kmax_off, s_split=s_split)
+
+
+def pairs_joint_z0_phi(evA, phiA, z0A, sA, B, half_phi,
+                       ceiling=DEFAULT_TRIPLET_CEILING):
+    """Yield (ia, ib) for cluster pairs consistent in BOTH z0 and phi.
+
+    ib indexes the array handed to build_phi_z0_index, matching
+    pairs_in_window_slices so the caller is unchanged.
+    """
+    nb, w, z_lo = B["nb"], B["w"], B["z_lo"]
+    total = 0
+    bA = np.clip(((z0A - z_lo) / w).astype(np.int64), 0, nb - 1)
+    pa = phiA + np.pi
+    # A-SIDE WILDCARDS. A cluster whose own sigma(z0) exceeds the split has a z0
+    # reach wider than the offset loop spans, so the bucketed search would
+    # under-reach and silently DROP real cluster pairs. Measured on a first
+    # revision that only split the B side: 0.2-1.4 lost cluster pairs/event, and
+    # only on seeds with layer 1 as the inner layer, where the small radius
+    # amplifies z0. They get phi alone, which is what their z0 is worth.
+    wildA = sA > B["s_split"]
+    sharpA = ~wildA
+    for off in range(-B["kmax_off"], B["kmax_off"] + 1):
+        bt = bA + off
+        ok = sharpA & (bt >= 0) & (bt < nb)
+        if not ok.any():
+            continue
+        bt_c = np.clip(bt, 0, nb - 1)
+        # does the pair's z0 window actually reach this bucket's z0 span?
+        reach = NSIG * np.hypot(sA, B["bmax"][bt_c])
+        blo = z_lo + bt_c * w
+        ok &= (z0A + reach >= blo) & (z0A - reach <= blo + w)
+        if not ok.any():
+            continue
+        key = (evA.astype(np.float64) * nb + bt_c) * PHI_STRIDE + pa
+        lo = np.searchsorted(B["ksharp"], key - half_phi, "left")
+        hi = np.searchsorted(B["ksharp"], key + half_phi, "right")
+        cnt = np.where(ok, hi - lo, 0).astype(np.int64)
+        total += int(cnt.sum())
+        if total > ceiling:
+            raise TooWide(total, ceiling)
+        if not cnt.sum():
+            continue
+        for a0, a1 in _slices(cnt, _MAX_SLICE):
+            yield _expand(B["ssharp"], lo[a0:a1], cnt[a0:a1], a0)
+    # two remaining families, disjoint from the above and from each other, so no
+    # cluster pair is counted twice: sharp A x wild B, and wild A x every B.
+    key = evA.astype(np.float64) * nb * PHI_STRIDE + pa
+    for kk, ss, rows in ((B["kwild"], B["swild"], sharpA),
+                         (B["kall"], B["sall"], wildA)):
+        if not len(kk) or not rows.any():
+            continue
+        lo = np.searchsorted(kk, key - half_phi, "left")
+        hi = np.searchsorted(kk, key + half_phi, "right")
+        cnt = np.where(rows, hi - lo, 0).astype(np.int64)
+        total += int(cnt.sum())
+        if total > ceiling:
+            raise TooWide(total, ceiling)
+        if not cnt.sum():
+            continue
+        for a0, a1 in _slices(cnt, _MAX_SLICE):
+            yield _expand(ss, lo[a0:a1], cnt[a0:a1], a0)
+
+
+_JOINT_PAIRING = True
+
+
 def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False, d0_cm=0.0):
     """One seed type over an ENTIRE CHUNK -- all events at once, no event loop.
     ev_idx is the cluster index set to consider (normally the whole chunk); the
@@ -544,10 +673,19 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False, d
     # layer-A x layer-B never exists at once.
     keepA, keepB, keepK, keepC, keepZ = [], [], [], [], []
     n_phi = n_kap = n_z0l = n_aok = n_zok = 0
-    for ia, ib in pairs_in_window_slices(
+    Bx = (build_phi_z0_index(Q["z0"][idx[lb]], D["globalPhi"][idx[lb]],
+                             Q["s_z0"][idx[lb]], D["event"][idx[lb]])
+          if _JOINT_PAIRING else None)
+    if Bx is not None:
+        pair_gen = pairs_joint_z0_phi(
+            D["event"][idx[la]], D["globalPhi"][idx[la]], Q["z0"][idx[la]],
+            Q["s_z0"][idx[la]], Bx, half_w)
+    else:
+        pair_gen = pairs_in_window_slices(
             D["event"][idx[la]], D["globalPhi"][idx[la]],
             D["event"][idx[lb]], D["globalPhi"][idx[lb]],
-            np.full(len(idx[la]), half_w)):
+            np.full(len(idx[la]), half_w))
+    for ia, ib in pair_gen:
         rss_check()
         n_phi += len(ia)
         gA, gB = idx[la][ia], idx[lb][ib]
@@ -953,6 +1091,7 @@ def selftest(a):
                     got = {}
                     for mode in (False, True):
                         _EXHAUSTIVE = mode
+                        globals()["_JOINT_PAIRING"] = not mode
                         try:
                             o = it_pair_seed(D, Q, allidx, la, lb, lc, 2.0,
                                              True, disp, d0c)
@@ -960,8 +1099,15 @@ def selftest(a):
                             got = None
                             break
                         t = o.get("_trip")
-                        got[mode] = (set() if t is None else
-                                     set(zip(t[0].tolist(), t[1].tolist(), t[2].tolist())))
+                        # NOT just the triples. A first revision compared only those, and a
+                        # joint-pairing bug that dropped 0.2-1.4 cluster pairs/event passed
+                        # clean, because the lost pairs never reached a triple. pairs_phi and
+                        # match_cand are WORK counters and MUST differ, so they stay out.
+                        got[mode] = (
+                            (set() if t is None else
+                             set(zip(t[0].tolist(), t[1].tolist(), t[2].tolist()))),
+                            tuple(round(o.get(c, -1), 6) for c in
+                                  ("tracklets", "match_cand_z", "tracks_to_fit")))
                     _EXHAUSTIVE = False
                     if got is None:
                         continue
@@ -970,9 +1116,10 @@ def selftest(a):
                            + ("|displaced" if disp else ""))
                     if got[False] != got[True]:
                         nbad += 1
-                        miss, extra = got[True] - got[False], got[False] - got[True]
-                        print(f"  MISMATCH {tag}: z-search missed {len(miss)}, "
-                              f"invented {len(extra)}, of {len(got[True])} exhaustive")
+                        (sF, cF), (sT, cT) = got[False], got[True]
+                        print(f"  MISMATCH {tag}: missed {len(sT - sF)}, invented "
+                              f"{len(sF - sT)}, of {len(sT)} reference triples; "
+                              f"counters {cF} vs {cT}")
         break
     print(f"selftest: {ncmp} seed configurations compared, {nbad} mismatched")
     raise SystemExit(1 if nbad else 0)
