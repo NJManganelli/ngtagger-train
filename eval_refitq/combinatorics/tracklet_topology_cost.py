@@ -534,6 +534,14 @@ def build_phi_z0_index(z0, phi, s_z0, event):
     """
     if not len(z0):
         return None
+    # PER LAYER, because this function is handed one layer's clusters. sigma(z0)
+    # is r * sigma(cot theta) * inflate and sigma(cot theta) is FLAT across
+    # layers (measured median 0.0199/0.0197/0.0216/0.0218 for L1..L4), so the
+    # whole per-layer difference in sigma(z0) is LEVER ARM: L4's median is 5.2x
+    # L1's purely because z0 extrapolates to r = 0 and L4 sits 5.1x further out.
+    # A single global percentile would therefore be a disguised cut on radius --
+    # measured 65.8% of its wildcards at L4 against 2.3% at L1 -- and would gut
+    # the L2L3L4 configuration's z0 search power for a purely geometric reason.
     s_split = float(np.percentile(s_z0, Z0_SPLIT_Q))
     wild = s_z0 > s_split
     sharp = ~wild
@@ -587,7 +595,13 @@ def pairs_joint_z0_phi(evA, phiA, z0A, sA, B, half_phi,
     # revision that only split the B side: 0.2-1.4 lost cluster pairs/event, and
     # only on seeds with layer 1 as the inner layer, where the small radius
     # amplifies z0. They get phi alone, which is what their z0 is worth.
-    wildA = sA > B["s_split"]
+    # EXACT CONDITION, not a percentile. An A cluster is safe only if its own z0
+    # reach fits inside the span the bucket loop covers; otherwise the loop
+    # under-reaches and silently drops real cluster pairs. An earlier revision
+    # tested sA against layer B's q99 sigma, which is a cross-layer comparison
+    # between two different lever arms and answers a question nobody asked.
+    reach_max = NSIG * np.hypot(sA, B["bmax"].max() if B["nb"] else 0.0)
+    wildA = reach_max > B["kmax_off"] * B["w"]
     sharpA = ~wildA
     for off in range(-B["kmax_off"], B["kmax_off"] + 1):
         bt = bA + off
