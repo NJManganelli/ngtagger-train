@@ -314,6 +314,9 @@ def load(paths):
                 # estimate of the track DIRECTION there (gClPhi/gClCotTheta), with
                 # rotated uncertainties. Study (7); absent in older files.
                 "globalR": "globalR", "globalZ": "globalZ", "globalPhi": "globalPhi",
+                # TP production vertex and azimuth: the ONLY way to get a
+                # per-TrackingParticle d0, which study (12) facets on.
+                "tpVx": "tpVx", "tpVy": "tpVy", "tpPhi": "tpPhi",
                 "globalClusterPhi": "gClPhi",
                 "globalClusterCotTheta": "gClCotTheta",
                 "sigGlobalClusterPhi": "gSigPhi",
@@ -2341,6 +2344,205 @@ def study_hough_examples(X, K, P, ax_row, out):
     out["hough_examples"] = res
 
 
+def study_seed_mode_confusion(X, K, P, ax_row, out):
+    """(12) What does each seeding mode LOSE relative to the others, IT and OT?
+
+    A per-seed efficiency cannot answer this. Two seeds that recover the SAME
+    TrackingParticles and two that are perfectly complementary give identical
+    per-seed numbers; only the overlap of the recovered SETS separates them. That
+    is exactly how the union of the two IT pair seeds (0.907) beats the IT
+    triplet alone (0.882) even though the triplet beats EITHER pair in EVERY d0
+    band -- the pairs fail on different tracks.
+
+    Reported as   M[i][j] = |found_i AND found_j| / |found_j|,
+    the fraction of what column j finds that row i also finds. Diagonal is 1 by
+    construction; a low off-diagonal says row i misses much of what column j
+    carries. Absolute lost counts go to the side table, because a fraction
+    without a count hides whether 5 or 5000 tracks are at stake.
+
+    Each column is normalised by ITS OWN mode's finds, so IT and OT sit in one
+    matrix despite different notions of findable (IT: a cluster on all three
+    layers; OT: a stub on both seed layers and one projection layer).
+    """
+    import importlib.util as _ilu
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "tracklet_topology_cost.py")
+    _sp = _ilu.spec_from_file_location("_ttc", _p)
+    M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
+
+    need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
+            "gSigPhi", "gSigCotTheta", "sigY", "tpIdx", "tpPt", "tpVx", "tpVy", "tpPhi")
+    if any(c not in K for c in need):
+        for a in ax_row:
+            a.axis("off")
+        ax_row[0].text(0.5, 0.5, "seed-mode confusion: input lacks\n"
+                       + ", ".join(c for c in need if c not in K),
+                       ha="center", va="center", fontsize=9)
+        out["seed_mode_confusion"] = {"skipped": [c for c in need if c not in K]}
+        return
+
+    D = {"layer": K["layer"], "globalR": K["globalR"], "globalZ": K["globalZ"],
+         "globalPhi": K["globalPhi"], "globalClusterPhi": K["gClPhi"],
+         "globalClusterCotTheta": K["gClCotTheta"],
+         "sigGlobalClusterPhi": K["gSigPhi"],
+         "sigGlobalClusterCotTheta": K["gSigCotTheta"], "sigY": K["sigY"],
+         "tpIdx": K["tpIdx"], "tpPt": K["tpPt"], "tpVx": K["tpVx"],
+         "tpVy": K["tpVy"], "tpPhi": K["tpPhi"], "event": K["event"]}
+    M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
+                 min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
+    PTMIN = 2.0
+    ti = M.build_tp_index(D)
+    Q = M.it_prepare(D, None)
+    allidx = np.arange(len(D["layer"]))
+    found = {}
+    for cname, cfg in M.IT_CONFIGS.items():
+        jobs = [((la, lb), lc, False) for (la, lb), lc in cfg["pairs"]]
+        jobs.append((cfg["triplet"][:2], cfg["triplet"][2], True))
+        for (la, lb), lc, disp in jobs:
+            lbl = f"IT {cname} " + ("triplet" if disp else f"L{la}L{lb}>L{lc}")
+            try:
+                o = M.it_pair_seed(D, Q, allidx, la, lb, lc, PTMIN, True, disp, 0.0)
+            except M.TooWide:
+                continue
+            if "_trip" in o:
+                ga, gb, gc = o["_trip"]
+                found[lbl] = M.recovered_keys(D, ga, gb, gc)
+    # OT, from the same files
+    try:
+        srcs = out.get("_inputs") or []
+        if srcs:
+            O, onev, have = M.load_ot(",".join(srcs), None)
+            if "tpIdx" in have:
+                cal = M.calibrate_ot_bend(",".join(srcs), None)
+                base = np.arange(len(O["layer"]))
+                base = base[O["eta"][base] <= M.ETA_MATCHED]
+                for sname, S in M.OT_SEEDS.items():
+                    if S["disc"]:
+                        continue
+                    oo = M.ot_seed_cost(O, base, sname, PTMIN, False, cal, M.ETA_MATCHED)
+                    fk = oo.get("_found_keys")
+                    if fk is not None and len(fk):
+                        found[f"OT {sname}"] = fk
+    except Exception as exc:                      # OT is a bonus, not a blocker
+        print(f"    seed-mode confusion: OT skipped ({type(exc).__name__}: {exc})")
+
+    labels = sorted(found, key=lambda t: (not t.startswith("IT"), t))
+    if len(labels) < 2:
+        for a in ax_row:
+            a.axis("off")
+        return
+    # Build the per-TP d0/pT table from build_tp_index, which selects tpIdx >= 0.
+    # An earlier revision keyed on np.maximum(tpIdx, 0), which folds EVERY noise
+    # cluster onto real TP index 0 and corrupts that TP's d0 and pT in every
+    # event -- it inflated the |d0| > 500 um count for one seed from ~96 to 455.
+    uk, tpd0, tppt = ti["key"], ti["d0"], ti["pt"]
+    # RESTRICT EVERY MODE TO pT >= PTMIN. A seed recovers sub-threshold
+    # TrackingParticles too -- the gates are not sharp -- and measured, 8,037 of
+    # one seed's 81,870 recovered TPs are outside its own findable set, 3,438 of
+    # them sitting above d0 = 500 um. Left in, they inflate the inclusive and d0
+    # facets while falling outside every pT facet, so the two sets of facets stop
+    # describing the same population and neither reconciles with the cost model's
+    # efficiency, which counts findable TPs above threshold only.
+    inband = uk[tppt >= PTMIN]
+    found = {k: np.intersect1d(v, inband, assume_unique=True)
+             for k, v in found.items()}
+
+    def restrict(lo, hi, arr):
+        sel = uk[(arr >= lo) & (arr < hi)]
+        return {k: np.intersect1d(v, sel, assume_unique=True) for k, v in found.items()}
+
+    facets = {"inclusive": found}
+    for nm, lo, hi in (("|d0|<100um", 0.0, 100e-4), ("|d0| 100-500um", 100e-4, 500e-4),
+                       ("|d0|>500um", 500e-4, 1e9)):
+        facets[nm] = restrict(lo, hi, tpd0)
+    for nm, lo, hi in (("pT 2-5", 2.0, 5.0), ("pT 5-10", 5.0, 10.0),
+                       ("pT 10-20", 10.0, 20.0), ("pT 20+", 20.0, 1e9)):
+        facets[nm] = restrict(lo, hi, tppt)
+
+    res, mats = {}, {}
+    for fn, fd in facets.items():
+        n = len(labels)
+        frac = np.full((n, n), np.nan); lost = np.zeros((n, n), np.int64)
+        for j, lj in enumerate(labels):
+            fj = fd[lj]
+            for i, li in enumerate(labels):
+                both = len(np.intersect1d(fd[li], fj, assume_unique=True))
+                frac[i, j] = both / len(fj) if len(fj) else np.nan
+                lost[i, j] = len(fj) - both
+        mats[fn] = (frac, lost)
+        res[fn] = {"n_found": {l: int(len(fd[l])) for l in labels},
+                   "frac": frac.tolist(), "lost": lost.tolist()}
+    out["seed_mode_confusion"] = {"labels": labels, "pt_min": PTMIN, "facets": res}
+
+    short = [l.replace("IT ", "").replace("OT ", "OT:") for l in labels]
+    for ax, fn in zip(ax_row, ("inclusive", "|d0|>500um", "pT 20+")):
+        _draw_confusion(ax, mats[fn][0], short, fn,
+                        max(res[fn]["n_found"].values()) if res[fn]["n_found"] else 0)
+    _confusion_side_artifacts(out, labels, mats, res)
+
+
+def _draw_confusion(ax, frac, short, title, nmax):
+    """Sequential single hue, light->dark: this encodes magnitude, not identity."""
+    from matplotlib.colors import LinearSegmentedColormap
+    BLUE = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7",
+            "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b"]
+    cmap = LinearSegmentedColormap.from_list("seq_blue", BLUE)
+    n = len(short)
+    ax.imshow(frac, cmap=cmap, vmin=0.0, vmax=1.0, aspect="equal")
+    ax.set_title(f"{title}   (largest mode: {nmax:,} TPs)", fontsize=9, pad=6)
+    ax.set_xticks(range(n)); ax.set_yticks(range(n))
+    ax.set_xticklabels(short, rotation=90, fontsize=6)
+    ax.set_yticklabels(short, fontsize=6)
+    for sp in ax.spines.values():
+        sp.set_visible(False)
+    ax.tick_params(length=0)
+    for i in range(n):
+        for j in range(n):
+            if np.isnan(frac[i, j]):
+                continue
+            ax.text(j, i, f"{frac[i,j]:.2f}".lstrip("0"), ha="center", va="center",
+                    fontsize=5.4, color=("#fcfcfb" if frac[i, j] > 0.62 else "#0b0b0b"))
+    ax.set_xlabel("found by column mode", fontsize=7)
+    ax.set_ylabel("also found by row mode", fontsize=7)
+
+
+def _confusion_side_artifacts(out, labels, mats, res):
+    """All eight facets as their own figure, plus the absolute lost counts."""
+    import matplotlib.pyplot as _plt
+    od = out.get("_outdir", ".")
+    short = [l.replace("IT ", "").replace("OT ", "OT:") for l in labels]
+    names = list(mats)
+    ncol = 4; nrow = int(np.ceil(len(names) / ncol))
+    f2, axs = _plt.subplots(nrow, ncol, figsize=(4.3 * ncol, 4.1 * nrow),
+                            facecolor="#fcfcfb", squeeze=False)
+    for ax, fn in zip(axs.ravel(), names):
+        _draw_confusion(ax, mats[fn][0], short, fn,
+                        max(res[fn]["n_found"].values()) if res[fn]["n_found"] else 0)
+    for ax in axs.ravel()[len(names):]:
+        ax.axis("off")
+    f2.suptitle("Seed-mode complementarity: fraction of each column mode's "
+                "TrackingParticles also recovered by the row mode", fontsize=11)
+    f2.tight_layout()
+    p = os.path.join(od, "spix_seed_mode_confusion.png")
+    f2.savefig(p, dpi=150, facecolor="#fcfcfb", bbox_inches="tight")
+    _plt.close(f2)
+    t = os.path.join(od, "spix_seed_mode_confusion.txt")
+    with open(t, "w") as fh:
+        for fn in names:
+            frac, lost = mats[fn]
+            fh.write(f"=== {fn}\n")
+            fh.write(f"{'mode':<28}{'TPs found':>11}\n")
+            for l in labels:
+                fh.write(f"{l:<28}{res[fn]['n_found'][l]:>11,d}\n")
+            fh.write(f"\nABSOLUTE TPs found by COLUMN but missed by ROW\n")
+            fh.write(f"{'':<28}" + "".join(f"{s[:10]:>11}" for s in short) + "\n")
+            for i, l in enumerate(labels):
+                fh.write(f"{l:<28}" + "".join(f"{lost[i,k]:>11,d}"
+                                              for k in range(len(labels))) + "\n")
+            fh.write("\n")
+    print(f"    wrote {p}\n    wrote {t}")
+
+
 STUDIES = [
     ("cone occupancy", study_cone_occupancy, 3),
     ("refit-order cone", study_refit_cone_occupancy, 3),
@@ -2353,6 +2555,7 @@ STUDIES = [
     ("combination sweep (activeSP)", study_combination_sweep, 3),
     ("sector bin sizing", study_sector_binning, 2),
     ("hough examples", study_hough_examples, 2),
+    ("seed-mode confusion", study_seed_mode_confusion, 3),
 ]
 
 

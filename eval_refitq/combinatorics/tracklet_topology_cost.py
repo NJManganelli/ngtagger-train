@@ -1011,6 +1011,26 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
             tot_cz += int(good.sum())
             mm = np.zeros(len(phiC), bool); mm[ja[good]] = True
             tot_fit += int(mm.sum())
+            # COLLECT THE TRIPLES. `trips` was initialised and then never
+            # appended to, so the truth block below could not run and the OT
+            # reported cost only while the IT reported efficiency and fake rate.
+            # The comment there warns that exactly this asymmetry biases any
+            # conclusion drawn from the comparison, and it did: the OT side has
+            # been quoted on combinatorics alone.
+            if good.any():
+                trips.append((gA[ok][ja[good]], gB[ok][ja[good]], tgt[jb[good]]))
+    # FINDABLE, the OT analogue of the IT's "cluster on all three layers": a
+    # TrackingParticle above ptmin with a stub on BOTH seed layers and on at
+    # least one projection layer, inside the same eta restriction as the seed.
+    # Without a denominator, unique_true_found below is a bare count and cannot
+    # be compared with the IT efficiency at all.
+    if "tpIdx" in D and "tpPt" in D:
+        b0 = base[(D["tpIdx"][base] >= 0) & (D["tpPt"][base] >= ptmin)]
+        kk = tp_key(D["event"][b0], D["tpIdx"][b0])
+        ll = D["layer"][b0]
+        ka = np.unique(kk[ll == la]); kb = np.unique(kk[ll == lb])
+        kp = np.unique(kk[np.isin(ll, list(S["proj_l"]))]) if S["proj_l"] else kk
+        out["n_findable"] = int(len(np.intersect1d(np.intersect1d(ka, kb), kp)))
     out["projections"] = int(len(phi0)) * max(len(S["proj_l"]), 1)
     out["match_cand"] = tot_c
     out["match_cand_z"] = tot_cz
@@ -1020,14 +1040,30 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
     # had efficiency and fake rate, and that asymmetry silently biases any
     # conclusion drawn from the pair.
     if "tpIdx" in D and trips:
-        na = nt_ = nu = 0
+        na = nt_ = 0
+        found_keys = []
         for ga_, gb_, gc_ in trips:
             ta, tb, tc = D["tpIdx"][ga_], D["tpIdx"][gb_], D["tpIdx"][gc_]
             real = (ta >= 0) & (ta == tb) & (tb == tc)
-            na += len(ta); nt_ += int(real.sum()); nu += len(np.unique(ta[real]))
+            na += len(ta); nt_ += int(real.sum())
+            found_keys.append(tp_key(D["event"][ga_][real], ta[real]))
+        # UNIQUE ACROSS ALL PROJECTION LAYERS AT ONCE. Taking the unique count
+        # per layer and summing double counts any TP the seed finds on more than
+        # one projection layer, which made unique_true_found exceed n_findable.
+        uk = np.unique(np.concatenate(found_keys)) if found_keys else np.empty(0, np.int64)
+        nu = int(len(uk))
+        # EXPORT the recovered keys, not just their count. Which TrackingParticles
+        # a seed finds is the only way to ask what one seed loses RELATIVE to
+        # another; a per-seed efficiency cannot distinguish two seeds that find
+        # the same TPs from two that are complementary. Underscore-prefixed, so
+        # acc_add skips it rather than trying to sum arrays.
+        out["_found_keys"] = uk
         out["cand_truth_matched"] = nt_
         out["unique_true_found"] = nu
         out["cand_total"] = na
+        out["fake_fraction"] = 1.0 - nt_ / max(na, 1)
+        if out.get("n_findable"):
+            out["efficiency"] = nu / out["n_findable"]
     return out
 
 
@@ -1409,6 +1445,40 @@ def main():
         for bk, bv in per["by_d0"].items():
             print(f"      {bk:20s} eff={bv['efficiency']:.3f} (n={bv['n_findable']})")
 
+    # ---- UNION over seeds, which is the only system-level efficiency --------
+    # A per-seed efficiency cannot answer "is one seed type enough", because two
+    # seeds may find the same TrackingParticles or complementary ones and the
+    # per-seed numbers look identical either way. This unions the recovered keys
+    # so the triplet alone can be compared against the pairs alone and against
+    # everything together, on the same findable denominator.
+    R["it_union"] = {}
+    for (bname, cname, ptmin) in sorted({(t.split("|")[0], t.split("|")[1],
+                                          float(t.split("|")[2][2:])) for t in acc}):
+        fk = find[(cname, ptmin)]
+        if not len(fk):
+            continue
+        groups = {"pairs_only": [], "triplet_only": [], "all_seeds": []}
+        for t in acc:
+            b2, c2, p2, seed = t.split("|")
+            if (b2, c2, float(p2[2:])) != (bname, cname, ptmin):
+                continue
+            rk = reck.get(t)
+            if rk is None:
+                continue
+            groups["all_seeds"].append(rk)
+            groups["triplet_only" if seed == "displaced" else "pairs_only"].append(rk)
+        ent = {"n_findable": int(len(fk))}
+        for g, arrs in groups.items():
+            u = np.unique(np.concatenate(arrs)) if arrs else np.empty(0, np.int64)
+            hit = np.isin(fk, u, assume_unique=True)
+            ent[g] = {"efficiency": float(hit.mean()),
+                      "by_d0": eff_by_d0(u, fk, tpi)}
+        R["it_union"][f"{bname}|{cname}|pt{ptmin:g}"] = ent
+        if ptmin == 2.0:
+            print(f"  UNION {bname}|{cname}|pt2  findable={len(fk):,}  "
+                  + "  ".join(f"{g}={ent[g]['efficiency']:.3f}" for g in
+                              ("pairs_only", "triplet_only", "all_seeds")))
+
     if not a.skip_ot:
         try:
             O, onev, have = load_ot(a.input, a.nev or 10 ** 9)
@@ -1443,7 +1513,13 @@ def main():
                                              scheme == "bend", cal, emax)
                             if r:
                                 acc_add(A, r)
-                            tot[sname] = {k: v / onev for k, v in A.items()}
+                            # RATIOS MUST NOT BE DIVIDED BY THE EVENT COUNT.
+                            # efficiency and fake_fraction are already fractions;
+                            # dividing them by onev turned an efficiency of ~0.9
+                            # into 0.034 at 40 events.
+                            _rat = ("efficiency", "fake_fraction")
+                            tot[sname] = {k: (v if k in _rat else v / onev)
+                                          for k, v in A.items()}
                         tot["_sum_tracklets"] = sum(v.get("tracklets", 0)
                                                     for v in tot.values() if isinstance(v, dict))
                         R["ot"][f"{ename}_pt{ptmin:g}_{scheme}"] = tot

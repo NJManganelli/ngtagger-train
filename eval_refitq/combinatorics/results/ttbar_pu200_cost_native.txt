@@ -71,6 +71,8 @@ IT: 1000 events, 27454 clusters/event
       d0_0to100um          eff=0.889 (n=79172)
       d0_100to500um        eff=0.923 (n=2641)
       d0_gt500um           eff=0.426 (n=1760)
+  UNION native|L1L2L3|pt2  findable=102,258  pairs_only=0.907  triplet_only=0.882  all_seeds=0.923
+  UNION native|L2L3L4|pt2  findable=83,573  pairs_only=0.913  triplet_only=0.880  all_seeds=0.923
 OT: 15532 stubs/event full, 8027 matched
   OT barrel_alleta  pT>2    position trk=     8900
   OT barrel_alleta  pT>2    bend     trk=     2473
@@ -84,5 +86,5 @@ OT: 15532 stubs/event full, 8027 matched
   OT barrel_matched pT>1.5  bend     trk=     2859
   OT barrel_matched pT>1    position trk=    16301
   OT barrel_matched pT>1    bend     trk=     3247
-peak RSS 4.74 GB at 8 events/batch
+peak RSS 6.00 GB at 8 events/batch
 wrote eval_refitq/combinatorics/results/ttbar_pu200_cost_native.json

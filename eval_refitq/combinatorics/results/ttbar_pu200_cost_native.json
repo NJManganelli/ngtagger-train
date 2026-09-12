@@ -635,6 +635,332 @@
       "hits_per_projection": 3.934961160539005
     }
   },
+  "it_union": {
+    "native|L1L2L3|pt1": {
+      "n_findable": 460241,
+      "pairs_only": {
+        "efficiency": 0.9060361853898283,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 445892,
+            "efficiency": 0.9162375642532272
+          },
+          "d0_100to500um": {
+            "n_findable": 7105,
+            "efficiency": 0.9028852920478536
+          },
+          "d0_gt500um": {
+            "n_findable": 7244,
+            "efficiency": 0.2811982330204307
+          }
+        }
+      },
+      "triplet_only": {
+        "efficiency": 0.8819727056042378,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 445892,
+            "efficiency": 0.8913144887102706
+          },
+          "d0_100to500um": {
+            "n_findable": 7105,
+            "efficiency": 0.8881069669247009
+          },
+          "d0_gt500um": {
+            "n_findable": 7244,
+            "efficiency": 0.3009387078961899
+          }
+        }
+      },
+      "all_seeds": {
+        "efficiency": 0.9161395877377287,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 445892,
+            "efficiency": 0.9249863195572022
+          },
+          "d0_100to500um": {
+            "n_findable": 7105,
+            "efficiency": 0.931597466572836
+          },
+          "d0_gt500um": {
+            "n_findable": 7244,
+            "efficiency": 0.3564329099944782
+          }
+        }
+      }
+    },
+    "native|L1L2L3|pt1.5": {
+      "n_findable": 203147,
+      "pairs_only": {
+        "efficiency": 0.9075644730170763,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 196498,
+            "efficiency": 0.9157141548514489
+          },
+          "d0_100to500um": {
+            "n_findable": 4190,
+            "efficiency": 0.8933174224343675
+          },
+          "d0_gt500um": {
+            "n_findable": 2459,
+            "efficiency": 0.2806018706791379
+          }
+        }
+      },
+      "triplet_only": {
+        "efficiency": 0.8838082767651011,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 196498,
+            "efficiency": 0.8889047216765565
+          },
+          "d0_100to500um": {
+            "n_findable": 4190,
+            "efficiency": 0.9062052505966587
+          },
+          "d0_gt500um": {
+            "n_findable": 2459,
+            "efficiency": 0.4383895892639284
+          }
+        }
+      },
+      "all_seeds": {
+        "efficiency": 0.920215410515538,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 196498,
+            "efficiency": 0.9254445337866034
+          },
+          "d0_100to500um": {
+            "n_findable": 4190,
+            "efficiency": 0.9381861575178998
+          },
+          "d0_gt500um": {
+            "n_findable": 2459,
+            "efficiency": 0.47173647824318826
+          }
+        }
+      }
+    },
+    "native|L1L2L3|pt2": {
+      "n_findable": 102258,
+      "pairs_only": {
+        "efficiency": 0.9071661874865536,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 98112,
+            "efficiency": 0.9166462818003914
+          },
+          "d0_100to500um": {
+            "n_findable": 2911,
+            "efficiency": 0.8732394366197183
+          },
+          "d0_gt500um": {
+            "n_findable": 1235,
+            "efficiency": 0.2340080971659919
+          }
+        }
+      },
+      "triplet_only": {
+        "efficiency": 0.8822683799800505,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 98112,
+            "efficiency": 0.8858345564253098
+          },
+          "d0_100to500um": {
+            "n_findable": 2911,
+            "efficiency": 0.9110271384403985
+          },
+          "d0_gt500um": {
+            "n_findable": 1235,
+            "efficiency": 0.5311740890688259
+          }
+        }
+      },
+      "all_seeds": {
+        "efficiency": 0.9230573647049619,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 98112,
+            "efficiency": 0.9273585290280496
+          },
+          "d0_100to500um": {
+            "n_findable": 2911,
+            "efficiency": 0.9385091034008932
+          },
+          "d0_gt500um": {
+            "n_findable": 1235,
+            "efficiency": 0.5449392712550607
+          }
+        }
+      }
+    },
+    "native|L2L3L4|pt1": {
+      "n_findable": 377410,
+      "pairs_only": {
+        "efficiency": 0.9034789751198962,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 359571,
+            "efficiency": 0.9138807078435135
+          },
+          "d0_100to500um": {
+            "n_findable": 6430,
+            "efficiency": 0.9253499222395023
+          },
+          "d0_gt500um": {
+            "n_findable": 11409,
+            "efficiency": 0.5633271978262775
+          }
+        }
+      },
+      "triplet_only": {
+        "efficiency": 0.8678545878487587,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 359571,
+            "efficiency": 0.8877885035222529
+          },
+          "d0_100to500um": {
+            "n_findable": 6430,
+            "efficiency": 0.8821150855365474
+          },
+          "d0_gt500um": {
+            "n_findable": 11409,
+            "efficiency": 0.23157156630730125
+          }
+        }
+      },
+      "all_seeds": {
+        "efficiency": 0.9113881455181367,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 359571,
+            "efficiency": 0.9215620837053043
+          },
+          "d0_100to500um": {
+            "n_findable": 6430,
+            "efficiency": 0.9346811819595645
+          },
+          "d0_gt500um": {
+            "n_findable": 11409,
+            "efficiency": 0.5776141642562889
+          }
+        }
+      }
+    },
+    "native|L2L3L4|pt1.5": {
+      "n_findable": 166043,
+      "pairs_only": {
+        "efficiency": 0.9094993465548081,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 158433,
+            "efficiency": 0.9158887353013577
+          },
+          "d0_100to500um": {
+            "n_findable": 3796,
+            "efficiency": 0.928345626975764
+          },
+          "d0_gt500um": {
+            "n_findable": 3814,
+            "efficiency": 0.6253277399056109
+          }
+        }
+      },
+      "triplet_only": {
+        "efficiency": 0.8772968447932162,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 158433,
+            "efficiency": 0.8898209337701111
+          },
+          "d0_100to500um": {
+            "n_findable": 3796,
+            "efficiency": 0.9030558482613277
+          },
+          "d0_gt500um": {
+            "n_findable": 3814,
+            "efficiency": 0.33141059255374933
+          }
+        }
+      },
+      "all_seeds": {
+        "efficiency": 0.9183524749613052,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 158433,
+            "efficiency": 0.9241004083745179
+          },
+          "d0_100to500um": {
+            "n_findable": 3796,
+            "efficiency": 0.9417808219178082
+          },
+          "d0_gt500um": {
+            "n_findable": 3814,
+            "efficiency": 0.6562663869952805
+          }
+        }
+      }
+    },
+    "native|L2L3L4|pt2": {
+      "n_findable": 83573,
+      "pairs_only": {
+        "efficiency": 0.9132135976930348,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 79172,
+            "efficiency": 0.9184686505330167
+          },
+          "d0_100to500um": {
+            "n_findable": 2641,
+            "efficiency": 0.9303294206739872
+          },
+          "d0_gt500um": {
+            "n_findable": 1760,
+            "efficiency": 0.6511363636363636
+          }
+        }
+      },
+      "triplet_only": {
+        "efficiency": 0.8803800270422265,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 79172,
+            "efficiency": 0.8890769463951902
+          },
+          "d0_100to500um": {
+            "n_findable": 2641,
+            "efficiency": 0.9227565316168118
+          },
+          "d0_gt500um": {
+            "n_findable": 1760,
+            "efficiency": 0.42556818181818185
+          }
+        }
+      },
+      "all_seeds": {
+        "efficiency": 0.9225587211180645,
+        "by_d0": {
+          "d0_0to100um": {
+            "n_findable": 79172,
+            "efficiency": 0.9265523164755216
+          },
+          "d0_100to500um": {
+            "n_findable": 2641,
+            "efficiency": 0.9481257099583491
+          },
+          "d0_gt500um": {
+            "n_findable": 1760,
+            "efficiency": 0.7045454545454546
+          }
+        }
+      }
+    }
+  },
   "ot_input": {
     "stubs_per_event_full": 15531.989,
     "stubs_per_event_matched": 8026.516,
@@ -663,10 +989,16 @@
         "pairs_phi": 56797.588,
         "pairs_kappa_z0": 3357.125,
         "tracklets": 3357.125,
+        "n_findable": 107.326,
         "projections": 13428.5,
         "match_cand": 17982.005,
         "match_cand_z": 587.083,
-        "tracks_to_fit": 501.125
+        "tracks_to_fit": 501.125,
+        "cand_truth_matched": 220.987,
+        "unique_true_found": 71.302,
+        "cand_total": 587.083,
+        "fake_fraction": 0.6235847401474749,
+        "efficiency": 0.6643497381808695
       },
       "L2L3": {
         "in_A": 2008.356,
@@ -676,10 +1008,16 @@
         "pairs_phi": 43702.975,
         "pairs_kappa_z0": 2260.262,
         "tracklets": 2260.262,
+        "n_findable": 112.643,
         "projections": 9041.048,
         "match_cand": 14438.632,
         "match_cand_z": 459.677,
-        "tracks_to_fit": 397.348
+        "tracks_to_fit": 397.348,
+        "cand_truth_matched": 175.495,
+        "unique_true_found": 75.364,
+        "cand_total": 459.677,
+        "fake_fraction": 0.6182210552192082,
+        "efficiency": 0.6690517830668572
       },
       "L3L4": {
         "in_A": 1502.753,
@@ -689,10 +1027,16 @@
         "pairs_phi": 29265.576,
         "pairs_kappa_z0": 1122.047,
         "tracklets": 1122.047,
+        "n_findable": 86.57,
         "projections": 4488.188,
         "match_cand": 4764.294,
         "match_cand_z": 484.037,
-        "tracks_to_fit": 397.071
+        "tracks_to_fit": 397.071,
+        "cand_truth_matched": 148.531,
+        "unique_true_found": 59.969,
+        "cand_total": 484.037,
+        "fake_fraction": 0.6931412268070416,
+        "efficiency": 0.69272265218898
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -702,10 +1046,16 @@
         "pairs_phi": 17825.88,
         "pairs_kappa_z0": 519.309,
         "tracklets": 519.309,
+        "n_findable": 61.506,
         "projections": 2077.236,
         "match_cand": 2694.096,
         "match_cand_z": 556.424,
-        "tracks_to_fit": 406.815
+        "tracks_to_fit": 406.815,
+        "cand_truth_matched": 88.416,
+        "unique_true_found": 33.403,
+        "cand_total": 556.424,
+        "fake_fraction": 0.841099593116041,
+        "efficiency": 0.5430852274574838
       },
       "L2L3L4": {
         "in_A": 1502.753,
@@ -715,10 +1065,16 @@
         "pairs_phi": 29265.576,
         "pairs_kappa_z0": 1122.047,
         "tracklets": 1122.047,
+        "n_findable": 85.528,
         "projections": 3366.141,
         "match_cand": 3903.205,
         "match_cand_z": 130.473,
-        "tracks_to_fit": 116.0
+        "tracks_to_fit": 116.0,
+        "cand_truth_matched": 49.123,
+        "unique_true_found": 30.799,
+        "cand_total": 130.473,
+        "fake_fraction": 0.6235006476435738,
+        "efficiency": 0.36010429333083904
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -728,10 +1084,16 @@
         "pairs_phi": 17825.88,
         "pairs_kappa_z0": 519.309,
         "tracklets": 519.309,
+        "n_findable": 60.608,
         "projections": 1557.927,
         "match_cand": 3839.014,
         "match_cand_z": 460.97,
-        "tracks_to_fit": 321.122
+        "tracks_to_fit": 321.122,
+        "cand_truth_matched": 74.701,
+        "unique_true_found": 30.345,
+        "cand_total": 460.97,
+        "fake_fraction": 0.8379482395817515,
+        "efficiency": 0.5006764783526927
       },
       "_sum_tracklets": 8900.099
     },
@@ -746,10 +1108,16 @@
         "pairs_kappa_z0": 3357.125,
         "pairs_bend_ok": 1256.866,
         "tracklets": 1256.866,
+        "n_findable": 107.326,
         "projections": 5027.464,
         "match_cand": 6914.616,
         "match_cand_z": 365.985,
-        "tracks_to_fit": 322.605
+        "tracks_to_fit": 322.605,
+        "cand_truth_matched": 218.55,
+        "unique_true_found": 71.0,
+        "cand_total": 365.985,
+        "fake_fraction": 0.4028443788679864,
+        "efficiency": 0.6615358813335073
       },
       "L2L3": {
         "in_A": 2008.356,
@@ -761,10 +1129,16 @@
         "pairs_kappa_z0": 2260.262,
         "pairs_bend_ok": 634.142,
         "tracklets": 634.142,
+        "n_findable": 112.643,
         "projections": 2536.568,
         "match_cand": 4267.494,
         "match_cand_z": 267.117,
-        "tracks_to_fit": 234.711
+        "tracks_to_fit": 234.711,
+        "cand_truth_matched": 172.316,
+        "unique_true_found": 75.03,
+        "cand_total": 267.117,
+        "fake_fraction": 0.3549044051857426,
+        "efficiency": 0.6660866631748089
       },
       "L3L4": {
         "in_A": 1502.753,
@@ -776,10 +1150,16 @@
         "pairs_kappa_z0": 1122.047,
         "pairs_bend_ok": 222.298,
         "tracklets": 222.298,
+        "n_findable": 86.57,
         "projections": 889.192,
         "match_cand": 1076.809,
         "match_cand_z": 226.058,
-        "tracks_to_fit": 185.388
+        "tracks_to_fit": 185.388,
+        "cand_truth_matched": 145.346,
+        "unique_true_found": 59.27,
+        "cand_total": 226.058,
+        "fake_fraction": 0.3570411133425935,
+        "efficiency": 0.6846482615224674
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -791,10 +1171,16 @@
         "pairs_kappa_z0": 519.309,
         "pairs_bend_ok": 68.539,
         "tracklets": 68.539,
+        "n_findable": 61.506,
         "projections": 274.156,
         "match_cand": 439.139,
         "match_cand_z": 158.993,
-        "tracks_to_fit": 112.315
+        "tracks_to_fit": 112.315,
+        "cand_truth_matched": 85.811,
+        "unique_true_found": 32.821,
+        "cand_total": 158.993,
+        "fake_fraction": 0.46028441503714,
+        "efficiency": 0.5336227359932364
       },
       "L2L3L4": {
         "in_A": 1502.753,
@@ -806,10 +1192,16 @@
         "pairs_kappa_z0": 1122.047,
         "pairs_bend_ok": 222.298,
         "tracklets": 222.298,
+        "n_findable": 85.528,
         "projections": 666.894,
         "match_cand": 870.542,
         "match_cand_z": 68.28,
-        "tracks_to_fit": 61.971
+        "tracks_to_fit": 61.971,
+        "cand_truth_matched": 48.13,
+        "unique_true_found": 30.456,
+        "cand_total": 68.28,
+        "fake_fraction": 0.29510837727006445,
+        "efficiency": 0.3560939107660649
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -821,10 +1213,16 @@
         "pairs_kappa_z0": 519.309,
         "pairs_bend_ok": 68.539,
         "tracklets": 68.539,
+        "n_findable": 60.608,
         "projections": 205.617,
         "match_cand": 593.956,
         "match_cand_z": 134.996,
-        "tracks_to_fit": 87.638
+        "tracks_to_fit": 87.638,
+        "cand_truth_matched": 72.34,
+        "unique_true_found": 29.826,
+        "cand_total": 134.996,
+        "fake_fraction": 0.4641322705857951,
+        "efficiency": 0.49211325237592396
       },
       "_sum_tracklets": 2472.6820000000002
     },
@@ -837,10 +1235,16 @@
         "pairs_phi": 75702.081,
         "pairs_kappa_z0": 4584.742,
         "tracklets": 4584.742,
+        "n_findable": 186.799,
         "projections": 18338.968,
         "match_cand": 24562.281,
         "match_cand_z": 791.313,
-        "tracks_to_fit": 675.981
+        "tracks_to_fit": 675.981,
+        "cand_truth_matched": 294.558,
+        "unique_true_found": 105.91,
+        "cand_total": 791.313,
+        "fake_fraction": 0.6277604437182253,
+        "efficiency": 0.5669730566009454
       },
       "L2L3": {
         "in_A": 2008.356,
@@ -850,10 +1254,16 @@
         "pairs_phi": 58157.043,
         "pairs_kappa_z0": 3094.524,
         "tracklets": 3094.524,
+        "n_findable": 198.428,
         "projections": 12378.096,
         "match_cand": 19850.589,
         "match_cand_z": 643.774,
-        "tracks_to_fit": 558.047
+        "tracks_to_fit": 558.047,
+        "cand_truth_matched": 251.769,
+        "unique_true_found": 117.233,
+        "cand_total": 643.774,
+        "fake_fraction": 0.6089171044496982,
+        "efficiency": 0.5908087568286734
       },
       "L3L4": {
         "in_A": 1502.753,
@@ -863,10 +1273,16 @@
         "pairs_phi": 38872.131,
         "pairs_kappa_z0": 1502.545,
         "tracklets": 1502.545,
+        "n_findable": 109.408,
         "projections": 6010.18,
         "match_cand": 6388.391,
         "match_cand_z": 640.681,
-        "tracks_to_fit": 527.409
+        "tracks_to_fit": 527.409,
+        "cand_truth_matched": 189.881,
+        "unique_true_found": 81.584,
+        "cand_total": 640.681,
+        "fake_fraction": 0.7036262976426646,
+        "efficiency": 0.7456858730622989
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -876,10 +1292,16 @@
         "pairs_phi": 23731.526,
         "pairs_kappa_z0": 698.303,
         "tracklets": 698.303,
+        "n_findable": 68.454,
         "projections": 2793.212,
         "match_cand": 3611.21,
         "match_cand_z": 737.673,
-        "tracks_to_fit": 541.659
+        "tracks_to_fit": 541.659,
+        "cand_truth_matched": 111.132,
+        "unique_true_found": 45.931,
+        "cand_total": 737.673,
+        "fake_fraction": 0.8493478817850186,
+        "efficiency": 0.6709761299558827
       },
       "L2L3L4": {
         "in_A": 1502.753,
@@ -889,10 +1311,16 @@
         "pairs_phi": 38872.131,
         "pairs_kappa_z0": 1502.545,
         "tracklets": 1502.545,
+        "n_findable": 106.212,
         "projections": 4507.635,
         "match_cand": 5239.521,
         "match_cand_z": 170.414,
-        "tracks_to_fit": 151.483
+        "tracks_to_fit": 151.483,
+        "cand_truth_matched": 61.689,
+        "unique_true_found": 39.285,
+        "cand_total": 170.414,
+        "fake_fraction": 0.6380050934782353,
+        "efficiency": 0.36987346062591797
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -902,10 +1330,16 @@
         "pairs_phi": 23731.526,
         "pairs_kappa_z0": 698.303,
         "tracklets": 698.303,
+        "n_findable": 67.006,
         "projections": 2094.909,
         "match_cand": 5153.704,
         "match_cand_z": 613.06,
-        "tracks_to_fit": 428.761
+        "tracks_to_fit": 428.761,
+        "cand_truth_matched": 96.463,
+        "unique_true_found": 42.473,
+        "cand_total": 613.06,
+        "fake_fraction": 0.8426532476429713,
+        "efficiency": 0.6338686087813031
       },
       "_sum_tracklets": 12080.962
     },
@@ -920,10 +1354,16 @@
         "pairs_kappa_z0": 4584.742,
         "pairs_bend_ok": 1628.353,
         "tracklets": 1628.353,
+        "n_findable": 186.799,
         "projections": 6513.412,
         "match_cand": 8962.984,
         "match_cand_z": 479.898,
-        "tracks_to_fit": 424.183
+        "tracks_to_fit": 424.183,
+        "cand_truth_matched": 290.997,
+        "unique_true_found": 105.34,
+        "cand_total": 479.898,
+        "fake_fraction": 0.3936273958216121,
+        "efficiency": 0.5639216484028287
       },
       "L2L3": {
         "in_A": 2008.356,
@@ -935,10 +1375,16 @@
         "pairs_kappa_z0": 3094.524,
         "pairs_bend_ok": 865.276,
         "tracklets": 865.276,
+        "n_findable": 198.428,
         "projections": 3461.104,
         "match_cand": 5842.397,
         "match_cand_z": 376.249,
-        "tracks_to_fit": 331.743
+        "tracks_to_fit": 331.743,
+        "cand_truth_matched": 246.708,
+        "unique_true_found": 116.414,
+        "cand_total": 376.249,
+        "fake_fraction": 0.34429593168353934,
+        "efficiency": 0.5866813151369766
       },
       "L3L4": {
         "in_A": 1502.753,
@@ -950,10 +1396,16 @@
         "pairs_kappa_z0": 1502.545,
         "pairs_bend_ok": 280.632,
         "tracklets": 280.632,
+        "n_findable": 109.408,
         "projections": 1122.528,
         "match_cand": 1361.558,
         "match_cand_z": 286.428,
-        "tracks_to_fit": 236.351
+        "tracks_to_fit": 236.351,
+        "cand_truth_matched": 185.247,
+        "unique_true_found": 80.285,
+        "cand_total": 286.428,
+        "fake_fraction": 0.3532510788051447,
+        "efficiency": 0.7338128838841766
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -965,10 +1417,16 @@
         "pairs_kappa_z0": 698.303,
         "pairs_bend_ok": 91.428,
         "tracklets": 91.428,
+        "n_findable": 68.454,
         "projections": 365.712,
         "match_cand": 575.744,
         "match_cand_z": 202.708,
-        "tracks_to_fit": 144.81
+        "tracks_to_fit": 144.81,
+        "cand_truth_matched": 107.392,
+        "unique_true_found": 44.898,
+        "cand_total": 202.708,
+        "fake_fraction": 0.470213311758786,
+        "efficiency": 0.6558857042685599
       },
       "L2L3L4": {
         "in_A": 1502.753,
@@ -980,10 +1438,16 @@
         "pairs_kappa_z0": 1502.545,
         "pairs_bend_ok": 280.632,
         "tracklets": 280.632,
+        "n_findable": 106.212,
         "projections": 841.896,
         "match_cand": 1100.248,
         "match_cand_z": 85.499,
-        "tracks_to_fit": 77.753
+        "tracks_to_fit": 77.753,
+        "cand_truth_matched": 60.352,
+        "unique_true_found": 38.763,
+        "cand_total": 85.499,
+        "fake_fraction": 0.294120399068995,
+        "efficiency": 0.36495876172183933
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -995,10 +1459,16 @@
         "pairs_kappa_z0": 698.303,
         "pairs_bend_ok": 91.428,
         "tracklets": 91.428,
+        "n_findable": 67.006,
         "projections": 274.284,
         "match_cand": 784.652,
         "match_cand_z": 174.612,
-        "tracks_to_fit": 114.156
+        "tracks_to_fit": 114.156,
+        "cand_truth_matched": 92.949,
+        "unique_true_found": 41.499,
+        "cand_total": 174.612,
+        "fake_fraction": 0.4676826334959796,
+        "efficiency": 0.6193325970808584
       },
       "_sum_tracklets": 3237.749
     },
@@ -1011,10 +1481,16 @@
         "pairs_phi": 112822.62,
         "pairs_kappa_z0": 6824.42,
         "tracklets": 6824.42,
+        "n_findable": 221.17,
         "projections": 27297.68,
         "match_cand": 36334.005,
         "match_cand_z": 1022.048,
-        "tracks_to_fit": 862.73
+        "tracks_to_fit": 862.73,
+        "cand_truth_matched": 311.211,
+        "unique_true_found": 115.686,
+        "cand_total": 1022.048,
+        "fake_fraction": 0.695502559566674,
+        "efficiency": 0.5230637066509924
       },
       "L2L3": {
         "in_A": 2008.356,
@@ -1024,10 +1500,16 @@
         "pairs_phi": 86823.571,
         "pairs_kappa_z0": 4579.19,
         "tracklets": 4579.19,
+        "n_findable": 233.904,
         "projections": 18316.76,
         "match_cand": 29222.635,
         "match_cand_z": 826.286,
-        "tracks_to_fit": 712.117
+        "tracks_to_fit": 712.117,
+        "cand_truth_matched": 270.425,
+        "unique_true_found": 129.894,
+        "cand_total": 826.286,
+        "fake_fraction": 0.6727222777585484,
+        "efficiency": 0.5553303919556741
       },
       "L3L4": {
         "in_A": 1502.753,
@@ -1037,10 +1519,16 @@
         "pairs_phi": 58164.733,
         "pairs_kappa_z0": 2182.995,
         "tracklets": 2182.995,
+        "n_findable": 112.663,
         "projections": 8731.98,
         "match_cand": 9177.43,
         "match_cand_z": 831.261,
-        "tracks_to_fit": 683.797
+        "tracks_to_fit": 683.797,
+        "cand_truth_matched": 192.982,
+        "unique_true_found": 83.365,
+        "cand_total": 831.261,
+        "fake_fraction": 0.7678442751434267,
+        "efficiency": 0.739950116719775
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1050,10 +1538,16 @@
         "pairs_phi": 35406.155,
         "pairs_kappa_z0": 1007.411,
         "tracklets": 1007.411,
+        "n_findable": 69.372,
         "projections": 4029.644,
         "match_cand": 5149.918,
         "match_cand_z": 1004.837,
-        "tracks_to_fit": 739.478
+        "tracks_to_fit": 739.478,
+        "cand_truth_matched": 112.187,
+        "unique_true_found": 46.557,
+        "cand_total": 1004.837,
+        "fake_fraction": 0.8883530363631116,
+        "efficiency": 0.6711209133367929
       },
       "L2L3L4": {
         "in_A": 1502.753,
@@ -1063,10 +1557,16 @@
         "pairs_phi": 58164.733,
         "pairs_kappa_z0": 2182.995,
         "tracklets": 2182.995,
+        "n_findable": 108.341,
         "projections": 6548.985,
         "match_cand": 7531.001,
         "match_cand_z": 214.178,
-        "tracks_to_fit": 189.167
+        "tracks_to_fit": 189.167,
+        "cand_truth_matched": 62.383,
+        "unique_true_found": 39.752,
+        "cand_total": 214.178,
+        "fake_fraction": 0.7087329230826696,
+        "efficiency": 0.36691557212874165
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1076,10 +1576,16 @@
         "pairs_phi": 35406.155,
         "pairs_kappa_z0": 1007.411,
         "tracklets": 1007.411,
+        "n_findable": 67.303,
         "projections": 3022.233,
         "match_cand": 7370.401,
         "match_cand_z": 831.965,
-        "tracks_to_fit": 585.629
+        "tracks_to_fit": 585.629,
+        "cand_truth_matched": 97.59,
+        "unique_true_found": 43.153,
+        "cand_total": 831.965,
+        "fake_fraction": 0.8826993924023246,
+        "efficiency": 0.6411749847703668
       },
       "_sum_tracklets": 17784.422
     },
@@ -1094,10 +1600,16 @@
         "pairs_kappa_z0": 6824.42,
         "pairs_bend_ok": 1944.087,
         "tracklets": 1944.087,
+        "n_findable": 221.17,
         "projections": 7776.348,
         "match_cand": 10635.052,
         "match_cand_z": 523.846,
-        "tracks_to_fit": 461.942
+        "tracks_to_fit": 461.942,
+        "cand_truth_matched": 307.126,
+        "unique_true_found": 114.906,
+        "cand_total": 523.846,
+        "fake_fraction": 0.4137093726018716,
+        "efficiency": 0.5195370077316092
       },
       "L2L3": {
         "in_A": 2008.356,
@@ -1109,10 +1621,16 @@
         "pairs_kappa_z0": 4579.19,
         "pairs_bend_ok": 1019.069,
         "tracklets": 1019.069,
+        "n_findable": 233.904,
         "projections": 4076.276,
         "match_cand": 6853.186,
         "match_cand_z": 413.976,
-        "tracks_to_fit": 363.889
+        "tracks_to_fit": 363.889,
+        "cand_truth_matched": 263.291,
+        "unique_true_found": 127.661,
+        "cand_total": 413.976,
+        "fake_fraction": 0.36399453108392754,
+        "efficiency": 0.5457837403379164
       },
       "L3L4": {
         "in_A": 1502.753,
@@ -1124,10 +1642,16 @@
         "pairs_kappa_z0": 2182.995,
         "pairs_bend_ok": 288.318,
         "tracklets": 288.318,
+        "n_findable": 112.663,
         "projections": 1153.272,
         "match_cand": 1396.355,
         "match_cand_z": 291.555,
-        "tracks_to_fit": 240.648
+        "tracks_to_fit": 240.648,
+        "cand_truth_matched": 187.638,
+        "unique_true_found": 81.604,
+        "cand_total": 291.555,
+        "fake_fraction": 0.3564233163554047,
+        "efficiency": 0.7243194305140108
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1139,10 +1663,16 @@
         "pairs_kappa_z0": 1007.411,
         "pairs_bend_ok": 92.761,
         "tracklets": 92.761,
+        "n_findable": 69.372,
         "projections": 371.044,
         "match_cand": 583.456,
         "match_cand_z": 204.887,
-        "tracks_to_fit": 146.359
+        "tracks_to_fit": 146.359,
+        "cand_truth_matched": 108.274,
+        "unique_true_found": 45.427,
+        "cand_total": 204.887,
+        "fake_fraction": 0.471542850449272,
+        "efficiency": 0.6548319206596321
       },
       "L2L3L4": {
         "in_A": 1502.753,
@@ -1154,10 +1684,16 @@
         "pairs_kappa_z0": 2182.995,
         "pairs_bend_ok": 288.318,
         "tracklets": 288.318,
+        "n_findable": 108.341,
         "projections": 864.954,
         "match_cand": 1128.706,
         "match_cand_z": 86.72,
-        "tracks_to_fit": 78.843
+        "tracks_to_fit": 78.843,
+        "cand_truth_matched": 60.941,
+        "unique_true_found": 39.15,
+        "cand_total": 86.72,
+        "fake_fraction": 0.29726706642066425,
+        "efficiency": 0.3613590422831615
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1169,10 +1705,16 @@
         "pairs_kappa_z0": 1007.411,
         "pairs_bend_ok": 92.761,
         "tracklets": 92.761,
+        "n_findable": 67.303,
         "projections": 278.283,
         "match_cand": 795.61,
         "match_cand_z": 176.679,
-        "tracks_to_fit": 115.54
+        "tracks_to_fit": 115.54,
+        "cand_truth_matched": 93.892,
+        "unique_true_found": 42.076,
+        "cand_total": 176.679,
+        "fake_fraction": 0.4685729486809411,
+        "efficiency": 0.6251727263272068
       },
       "_sum_tracklets": 3725.314
     },
@@ -1198,10 +1740,16 @@
         "pairs_phi": 23339.97,
         "pairs_kappa_z0": 2797.787,
         "tracklets": 2797.787,
+        "n_findable": 94.078,
         "projections": 11191.148,
         "match_cand": 14780.111,
         "match_cand_z": 585.141,
-        "tracks_to_fit": 499.133
+        "tracks_to_fit": 499.133,
+        "cand_truth_matched": 219.045,
+        "unique_true_found": 69.51,
+        "cand_total": 585.141,
+        "fake_fraction": 0.6256543294693073,
+        "efficiency": 0.7388549926656605
       },
       "L2L3": {
         "in_A": 1461.364,
@@ -1211,10 +1759,16 @@
         "pairs_phi": 28604.499,
         "pairs_kappa_z0": 2127.323,
         "tracklets": 2127.323,
+        "n_findable": 99.491,
         "projections": 8509.292,
         "match_cand": 10684.604,
         "match_cand_z": 452.929,
-        "tracks_to_fit": 391.496
+        "tracks_to_fit": 391.496,
+        "cand_truth_matched": 172.177,
+        "unique_true_found": 72.893,
+        "cand_total": 452.929,
+        "fake_fraction": 0.6198587416570809,
+        "efficiency": 0.7326592355087395
       },
       "L3L4": {
         "in_A": 1348.48,
@@ -1224,10 +1778,16 @@
         "pairs_phi": 26275.139,
         "pairs_kappa_z0": 1122.047,
         "tracklets": 1122.047,
+        "n_findable": 86.548,
         "projections": 4488.188,
         "match_cand": 3357.695,
         "match_cand_z": 483.275,
-        "tracks_to_fit": 396.389
+        "tracks_to_fit": 396.389,
+        "cand_truth_matched": 147.929,
+        "unique_true_found": 59.811,
+        "cand_total": 483.275,
+        "fake_fraction": 0.693903057265532,
+        "efficiency": 0.6910731617137311
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1237,10 +1797,16 @@
         "pairs_phi": 17825.88,
         "pairs_kappa_z0": 519.309,
         "tracklets": 519.309,
+        "n_findable": 61.506,
         "projections": 2077.236,
         "match_cand": 1884.181,
         "match_cand_z": 557.659,
-        "tracks_to_fit": 407.327
+        "tracks_to_fit": 407.327,
+        "cand_truth_matched": 88.626,
+        "unique_true_found": 33.421,
+        "cand_total": 557.659,
+        "fake_fraction": 0.841074922129832,
+        "efficiency": 0.5433778818326668
       },
       "L2L3L4": {
         "in_A": 1348.48,
@@ -1250,10 +1816,16 @@
         "pairs_phi": 26275.139,
         "pairs_kappa_z0": 1122.047,
         "tracklets": 1122.047,
+        "n_findable": 85.44,
         "projections": 3366.141,
         "match_cand": 2665.501,
         "match_cand_z": 130.257,
-        "tracks_to_fit": 115.754
+        "tracks_to_fit": 115.754,
+        "cand_truth_matched": 48.983,
+        "unique_true_found": 30.687,
+        "cand_total": 130.257,
+        "fake_fraction": 0.6239511120323669,
+        "efficiency": 0.35916432584269664
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1263,10 +1835,16 @@
         "pairs_phi": 17825.88,
         "pairs_kappa_z0": 519.309,
         "tracklets": 519.309,
+        "n_findable": 60.608,
         "projections": 1557.927,
         "match_cand": 2480.255,
         "match_cand_z": 461.961,
-        "tracks_to_fit": 321.658
+        "tracks_to_fit": 321.658,
+        "cand_truth_matched": 74.498,
+        "unique_true_found": 30.273,
+        "cand_total": 461.961,
+        "fake_fraction": 0.8387353044954011,
+        "efficiency": 0.49948851636747627
       },
       "_sum_tracklets": 8207.822
     },
@@ -1281,10 +1859,16 @@
         "pairs_kappa_z0": 2797.787,
         "pairs_bend_ok": 1029.017,
         "tracklets": 1029.017,
+        "n_findable": 94.078,
         "projections": 4116.068,
         "match_cand": 5617.523,
         "match_cand_z": 363.797,
-        "tracks_to_fit": 320.538
+        "tracks_to_fit": 320.538,
+        "cand_truth_matched": 216.64,
+        "unique_true_found": 69.223,
+        "cand_total": 363.797,
+        "fake_fraction": 0.40450306077290354,
+        "efficiency": 0.7358043325750973
       },
       "L2L3": {
         "in_A": 1461.364,
@@ -1296,10 +1880,16 @@
         "pairs_kappa_z0": 2127.323,
         "pairs_bend_ok": 589.094,
         "tracklets": 589.094,
+        "n_findable": 99.491,
         "projections": 2356.376,
         "match_cand": 3162.991,
         "match_cand_z": 262.424,
-        "tracks_to_fit": 230.664
+        "tracks_to_fit": 230.664,
+        "cand_truth_matched": 169.077,
+        "unique_true_found": 72.584,
+        "cand_total": 262.424,
+        "fake_fraction": 0.3557106057372801,
+        "efficiency": 0.7295534269431406
       },
       "L3L4": {
         "in_A": 1348.48,
@@ -1311,10 +1901,16 @@
         "pairs_kappa_z0": 1122.047,
         "pairs_bend_ok": 222.298,
         "tracklets": 222.298,
+        "n_findable": 86.548,
         "projections": 889.192,
         "match_cand": 799.833,
         "match_cand_z": 225.341,
-        "tracks_to_fit": 184.837
+        "tracks_to_fit": 184.837,
+        "cand_truth_matched": 144.752,
+        "unique_true_found": 59.114,
+        "cand_total": 225.341,
+        "fake_fraction": 0.357631323194625,
+        "efficiency": 0.6830198271479411
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1326,10 +1922,16 @@
         "pairs_kappa_z0": 519.309,
         "pairs_bend_ok": 68.539,
         "tracklets": 68.539,
+        "n_findable": 61.506,
         "projections": 274.156,
         "match_cand": 333.237,
         "match_cand_z": 159.367,
-        "tracks_to_fit": 112.444
+        "tracks_to_fit": 112.444,
+        "cand_truth_matched": 86.014,
+        "unique_true_found": 32.839,
+        "cand_total": 159.367,
+        "fake_fraction": 0.46027722175858243,
+        "efficiency": 0.5339153903684194
       },
       "L2L3L4": {
         "in_A": 1348.48,
@@ -1341,10 +1943,16 @@
         "pairs_kappa_z0": 1122.047,
         "pairs_bend_ok": 222.298,
         "tracklets": 222.298,
+        "n_findable": 85.44,
         "projections": 666.894,
         "match_cand": 627.512,
         "match_cand_z": 68.11,
-        "tracks_to_fit": 61.772
+        "tracks_to_fit": 61.772,
+        "cand_truth_matched": 47.993,
+        "unique_true_found": 30.344,
+        "cand_total": 68.11,
+        "fake_fraction": 0.29536044633680814,
+        "efficiency": 0.3551498127340824
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1356,10 +1964,16 @@
         "pairs_kappa_z0": 519.309,
         "pairs_bend_ok": 68.539,
         "tracklets": 68.539,
+        "n_findable": 60.608,
         "projections": 205.617,
         "match_cand": 415.335,
         "match_cand_z": 134.971,
-        "tracks_to_fit": 87.576
+        "tracks_to_fit": 87.576,
+        "cand_truth_matched": 72.147,
+        "unique_true_found": 29.757,
+        "cand_total": 134.971,
+        "fake_fraction": 0.46546295130064974,
+        "efficiency": 0.4909747888067582
       },
       "_sum_tracklets": 2199.7850000000003
     },
@@ -1372,10 +1986,16 @@
         "pairs_phi": 31041.458,
         "pairs_kappa_z0": 3797.286,
         "tracklets": 3797.286,
+        "n_findable": 161.197,
         "projections": 15189.144,
         "match_cand": 20058.016,
         "match_cand_z": 784.32,
-        "tracks_to_fit": 669.265
+        "tracks_to_fit": 669.265,
+        "cand_truth_matched": 288.763,
+        "unique_true_found": 102.029,
+        "cand_total": 784.32,
+        "fake_fraction": 0.6318301203590371,
+        "efficiency": 0.6329460225686582
       },
       "L2L3": {
         "in_A": 1461.364,
@@ -1385,10 +2005,16 @@
         "pairs_phi": 38074.183,
         "pairs_kappa_z0": 2905.602,
         "tracklets": 2905.602,
+        "n_findable": 172.971,
         "projections": 11622.408,
         "match_cand": 14640.032,
         "match_cand_z": 631.124,
-        "tracks_to_fit": 547.159
+        "tracks_to_fit": 547.159,
+        "cand_truth_matched": 244.676,
+        "unique_true_found": 112.05,
+        "cand_total": 631.124,
+        "fake_fraction": 0.6123170723978173,
+        "efficiency": 0.6477964514282741
       },
       "L3L4": {
         "in_A": 1348.48,
@@ -1398,10 +2024,16 @@
         "pairs_phi": 34899.796,
         "pairs_kappa_z0": 1502.544,
         "tracklets": 1502.544,
+        "n_findable": 109.343,
         "projections": 6010.176,
         "match_cand": 4497.589,
         "match_cand_z": 639.264,
-        "tracks_to_fit": 526.28
+        "tracks_to_fit": 526.28,
+        "cand_truth_matched": 188.89,
+        "unique_true_found": 81.27,
+        "cand_total": 639.264,
+        "fake_fraction": 0.7045195725083846,
+        "efficiency": 0.7432574558956677
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1411,10 +2043,16 @@
         "pairs_phi": 23731.526,
         "pairs_kappa_z0": 698.303,
         "tracklets": 698.303,
+        "n_findable": 68.454,
         "projections": 2793.212,
         "match_cand": 2522.135,
         "match_cand_z": 739.349,
-        "tracks_to_fit": 542.364
+        "tracks_to_fit": 542.364,
+        "cand_truth_matched": 111.298,
+        "unique_true_found": 45.973,
+        "cand_total": 739.349,
+        "fake_fraction": 0.849464867065486,
+        "efficiency": 0.6715896806614661
       },
       "L2L3L4": {
         "in_A": 1348.48,
@@ -1424,10 +2062,16 @@
         "pairs_phi": 34899.796,
         "pairs_kappa_z0": 1502.544,
         "tracklets": 1502.544,
+        "n_findable": 106.056,
         "projections": 4507.632,
         "match_cand": 3572.848,
         "match_cand_z": 170.078,
-        "tracks_to_fit": 151.108
+        "tracks_to_fit": 151.108,
+        "cand_truth_matched": 61.5,
+        "unique_true_found": 39.133,
+        "cand_total": 170.078,
+        "fake_fraction": 0.6384012041533884,
+        "efficiency": 0.3689843101757562
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1437,10 +2081,16 @@
         "pairs_phi": 23731.526,
         "pairs_kappa_z0": 698.303,
         "tracklets": 698.303,
+        "n_findable": 67.006,
         "projections": 2094.909,
         "match_cand": 3326.073,
         "match_cand_z": 614.116,
-        "tracks_to_fit": 429.318
+        "tracks_to_fit": 429.318,
+        "cand_truth_matched": 96.041,
+        "unique_true_found": 42.32,
+        "cand_total": 614.116,
+        "fake_fraction": 0.8436109790332771,
+        "efficiency": 0.6315852311733278
       },
       "_sum_tracklets": 11104.582
     },
@@ -1455,10 +2105,16 @@
         "pairs_kappa_z0": 3797.286,
         "pairs_bend_ok": 1315.501,
         "tracklets": 1315.501,
+        "n_findable": 161.197,
         "projections": 5262.004,
         "match_cand": 7186.717,
         "match_cand_z": 473.213,
-        "tracks_to_fit": 417.96
+        "tracks_to_fit": 417.96,
+        "cand_truth_matched": 285.287,
+        "unique_true_found": 101.494,
+        "cand_total": 473.213,
+        "fake_fraction": 0.3971277204979575,
+        "efficiency": 0.6296271022413569
       },
       "L2L3": {
         "in_A": 1461.364,
@@ -1470,10 +2126,16 @@
         "pairs_kappa_z0": 2905.602,
         "pairs_bend_ok": 799.573,
         "tracklets": 799.573,
+        "n_findable": 172.971,
         "projections": 3198.292,
         "match_cand": 4302.735,
         "match_cand_z": 367.234,
-        "tracks_to_fit": 324.009
+        "tracks_to_fit": 324.009,
+        "cand_truth_matched": 240.048,
+        "unique_true_found": 111.479,
+        "cand_total": 367.234,
+        "fake_fraction": 0.34633503433777924,
+        "efficiency": 0.6444953200247441
       },
       "L3L4": {
         "in_A": 1348.48,
@@ -1485,10 +2147,16 @@
         "pairs_kappa_z0": 1502.544,
         "pairs_bend_ok": 280.632,
         "tracklets": 280.632,
+        "n_findable": 109.343,
         "projections": 1122.528,
         "match_cand": 1010.53,
         "match_cand_z": 285.227,
-        "tracks_to_fit": 235.468
+        "tracks_to_fit": 235.468,
+        "cand_truth_matched": 184.277,
+        "unique_true_found": 79.973,
+        "cand_total": 285.227,
+        "fake_fraction": 0.3539286252703987,
+        "efficiency": 0.7313956997704472
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1500,10 +2168,16 @@
         "pairs_kappa_z0": 698.303,
         "pairs_bend_ok": 91.428,
         "tracklets": 91.428,
+        "n_findable": 68.454,
         "projections": 365.712,
         "match_cand": 434.295,
         "match_cand_z": 203.085,
-        "tracks_to_fit": 144.95
+        "tracks_to_fit": 144.95,
+        "cand_truth_matched": 107.561,
+        "unique_true_found": 44.946,
+        "cand_total": 203.085,
+        "fake_fraction": 0.47036462564935866,
+        "efficiency": 0.6565869050749409
       },
       "L2L3L4": {
         "in_A": 1348.48,
@@ -1515,10 +2189,16 @@
         "pairs_kappa_z0": 1502.544,
         "pairs_bend_ok": 280.632,
         "tracklets": 280.632,
+        "n_findable": 106.056,
         "projections": 841.896,
         "match_cand": 791.846,
         "match_cand_z": 85.244,
-        "tracks_to_fit": 77.452
+        "tracks_to_fit": 77.452,
+        "cand_truth_matched": 60.175,
+        "unique_true_found": 38.617,
+        "cand_total": 85.244,
+        "fake_fraction": 0.29408521420862466,
+        "efficiency": 0.364118956023233
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1530,10 +2210,16 @@
         "pairs_kappa_z0": 698.303,
         "pairs_bend_ok": 91.428,
         "tracklets": 91.428,
+        "n_findable": 67.006,
         "projections": 274.284,
         "match_cand": 546.209,
         "match_cand_z": 174.375,
-        "tracks_to_fit": 113.976
+        "tracks_to_fit": 113.976,
+        "cand_truth_matched": 92.535,
+        "unique_true_found": 41.353,
+        "cand_total": 174.375,
+        "fake_fraction": 0.4693333333333334,
+        "efficiency": 0.6171536877294571
       },
       "_sum_tracklets": 2859.194
     },
@@ -1546,10 +2232,16 @@
         "pairs_phi": 46257.559,
         "pairs_kappa_z0": 5625.558,
         "tracklets": 5625.558,
+        "n_findable": 185.142,
         "projections": 22502.232,
         "match_cand": 29498.404,
         "match_cand_z": 1011.612,
-        "tracks_to_fit": 852.716
+        "tracks_to_fit": 852.716,
+        "cand_truth_matched": 302.607,
+        "unique_true_found": 110.046,
+        "cand_total": 1011.612,
+        "fake_fraction": 0.7008665377634904,
+        "efficiency": 0.5943870110509771
       },
       "L2L3": {
         "in_A": 1461.364,
@@ -1559,10 +2251,16 @@
         "pairs_phi": 56801.863,
         "pairs_kappa_z0": 4294.925,
         "tracklets": 4294.925,
+        "n_findable": 198.064,
         "projections": 17179.7,
         "match_cand": 21474.084,
         "match_cand_z": 807.781,
-        "tracks_to_fit": 696.266
+        "tracks_to_fit": 696.266,
+        "cand_truth_matched": 260.393,
+        "unique_true_found": 122.334,
+        "cand_total": 807.781,
+        "fake_fraction": 0.67764406441845,
+        "efficiency": 0.6176488407787382
       },
       "L3L4": {
         "in_A": 1348.48,
@@ -1572,10 +2270,16 @@
         "pairs_phi": 52214.341,
         "pairs_kappa_z0": 2182.99,
         "tracklets": 2182.99,
+        "n_findable": 112.563,
         "projections": 8731.96,
         "match_cand": 6429.783,
         "match_cand_z": 829.406,
-        "tracks_to_fit": 682.311
+        "tracks_to_fit": 682.311,
+        "cand_truth_matched": 191.984,
+        "unique_true_found": 83.053,
+        "cand_total": 829.406,
+        "fake_fraction": 0.7685283202677579,
+        "efficiency": 0.737835700896387
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1585,10 +2289,16 @@
         "pairs_phi": 35406.155,
         "pairs_kappa_z0": 1007.411,
         "tracklets": 1007.411,
+        "n_findable": 69.372,
         "projections": 4029.644,
         "match_cand": 3578.566,
         "match_cand_z": 1006.931,
-        "tracks_to_fit": 740.365
+        "tracks_to_fit": 740.365,
+        "cand_truth_matched": 112.353,
+        "unique_true_found": 46.603,
+        "cand_total": 1006.931,
+        "fake_fraction": 0.8884203584952692,
+        "efficiency": 0.6717840050740933
       },
       "L2L3L4": {
         "in_A": 1348.48,
@@ -1598,10 +2308,16 @@
         "pairs_phi": 52214.341,
         "pairs_kappa_z0": 2182.99,
         "tracklets": 2182.99,
+        "n_findable": 108.16,
         "projections": 6548.97,
         "match_cand": 5108.518,
         "match_cand_z": 213.762,
-        "tracks_to_fit": 188.717
+        "tracks_to_fit": 188.717,
+        "cand_truth_matched": 62.186,
+        "unique_true_found": 39.593,
+        "cand_total": 213.762,
+        "fake_fraction": 0.7090876769491303,
+        "efficiency": 0.3660595414201183
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1611,10 +2327,16 @@
         "pairs_phi": 35406.155,
         "pairs_kappa_z0": 1007.411,
         "tracklets": 1007.411,
+        "n_findable": 67.302,
         "projections": 3022.233,
         "match_cand": 4732.587,
         "match_cand_z": 833.574,
-        "tracks_to_fit": 586.461
+        "tracks_to_fit": 586.461,
+        "cand_truth_matched": 97.151,
+        "unique_true_found": 42.991,
+        "cand_total": 833.574,
+        "fake_fraction": 0.883452458929861,
+        "efficiency": 0.6387774508929898
       },
       "_sum_tracklets": 16301.285
     },
@@ -1629,10 +2351,16 @@
         "pairs_kappa_z0": 5625.558,
         "pairs_bend_ok": 1544.462,
         "tracklets": 1544.462,
+        "n_findable": 185.142,
         "projections": 6177.848,
         "match_cand": 8380.237,
         "match_cand_z": 513.641,
-        "tracks_to_fit": 452.457
+        "tracks_to_fit": 452.457,
+        "cand_truth_matched": 298.697,
+        "unique_true_found": 109.345,
+        "cand_total": 513.641,
+        "fake_fraction": 0.4184712668965289,
+        "efficiency": 0.5906007280897906
       },
       "L2L3": {
         "in_A": 1461.364,
@@ -1644,10 +2372,16 @@
         "pairs_kappa_z0": 4294.925,
         "pairs_bend_ok": 940.687,
         "tracklets": 940.687,
+        "n_findable": 198.064,
         "projections": 3762.748,
         "match_cand": 5028.774,
         "match_cand_z": 402.573,
-        "tracks_to_fit": 354.201
+        "tracks_to_fit": 354.201,
+        "cand_truth_matched": 254.871,
+        "unique_true_found": 121.319,
+        "cand_total": 402.573,
+        "fake_fraction": 0.36689494824541136,
+        "efficiency": 0.6125242345908394
       },
       "L3L4": {
         "in_A": 1348.48,
@@ -1659,10 +2393,16 @@
         "pairs_kappa_z0": 2182.99,
         "pairs_bend_ok": 288.318,
         "tracklets": 288.318,
+        "n_findable": 112.563,
         "projections": 1153.272,
         "match_cand": 1035.359,
         "match_cand_z": 290.357,
-        "tracks_to_fit": 239.757
+        "tracks_to_fit": 239.757,
+        "cand_truth_matched": 186.672,
+        "unique_true_found": 81.299,
+        "cand_total": 290.357,
+        "fake_fraction": 0.3570948866395506,
+        "efficiency": 0.7222533159208621
       },
       "L5L6": {
         "in_A": 1249.8,
@@ -1674,10 +2414,16 @@
         "pairs_kappa_z0": 1007.411,
         "pairs_bend_ok": 92.761,
         "tracklets": 92.761,
+        "n_findable": 69.372,
         "projections": 371.044,
         "match_cand": 439.908,
         "match_cand_z": 205.274,
-        "tracks_to_fit": 146.502
+        "tracks_to_fit": 146.502,
+        "cand_truth_matched": 108.445,
+        "unique_true_found": 45.477,
+        "cand_total": 205.274,
+        "fake_fraction": 0.47170610988240114,
+        "efficiency": 0.6555526725480021
       },
       "L2L3L4": {
         "in_A": 1348.48,
@@ -1689,10 +2435,16 @@
         "pairs_kappa_z0": 2182.99,
         "pairs_bend_ok": 288.318,
         "tracklets": 288.318,
+        "n_findable": 108.16,
         "projections": 864.954,
         "match_cand": 811.285,
         "match_cand_z": 86.455,
-        "tracks_to_fit": 78.537
+        "tracks_to_fit": 78.537,
+        "cand_truth_matched": 60.755,
+        "unique_true_found": 38.998,
+        "cand_total": 86.455,
+        "fake_fraction": 0.29726447284714597,
+        "efficiency": 0.36055843195266274
       },
       "L4L5L6": {
         "in_A": 1249.8,
@@ -1704,14 +2456,20 @@
         "pairs_kappa_z0": 1007.411,
         "pairs_bend_ok": 92.761,
         "tracklets": 92.761,
+        "n_findable": 67.302,
         "projections": 278.283,
         "match_cand": 553.647,
         "match_cand_z": 176.431,
-        "tracks_to_fit": 115.349
+        "tracks_to_fit": 115.349,
+        "cand_truth_matched": 93.461,
+        "unique_true_found": 41.921,
+        "cand_total": 176.431,
+        "fake_fraction": 0.47026883030759903,
+        "efficiency": 0.6228789634780542
       },
       "_sum_tracklets": 3247.307
     }
   },
-  "peak_rss_gb": 4.74,
+  "peak_rss_gb": 6.0,
   "batch_events": 8
 }
