@@ -24,14 +24,23 @@ declare -a INPUTS=(
 for i in 0 1 2; do
   n=${NAMES[$i]}; in=${INPUTS[$i]}
   echo "############ $n"
-  $PY $S/validate_samples.py      -i "$in"                        > "$OUT/${n}_samples.txt"      2>&1
-  $PY $S/seeder_design_basis.py   -i "$in" --payload "$PAYLOAD" \
+  $PY -u $S/validate_samples.py      -i "$in"                        > "$OUT/${n}_samples.txt"      2>&1
+  $PY -u $S/seeder_design_basis.py   -i "$in" --payload "$PAYLOAD" \
                                   -o "$OUT/${n}_design_basis.json" > "$OUT/${n}_design_basis.txt" 2>&1
-  $PY $S/projection_residuals.py  -i "$in"                        > "$OUT/${n}_projection_residuals.txt" 2>&1
-  $PY $S/triplet_d0_solve.py      -i "$in"                        > "$OUT/${n}_triplet_d0_solve.txt"     2>&1
-  $PY $S/tracklet_topology_cost.py -i "$in" --batch-events 8 \
-                                  -o "$OUT/${n}_cost.json"        > "$OUT/${n}_cost.txt"          2>&1
-  for f in samples design_basis projection_residuals triplet_d0_solve cost; do
+  $PY -u $S/projection_residuals.py  -i "$in"                        > "$OUT/${n}_projection_residuals.txt" 2>&1
+  $PY -u $S/triplet_d0_solve.py      -i "$in"                        > "$OUT/${n}_triplet_d0_solve.txt"     2>&1
+  # SPLIT BY BENCHMARK. All four at once costs a MEASURED 32.5 s/event, i.e. ~9
+  # hours for the 1000-event ttbar set. The three quantized benchmarks are
+  # RELATIVE comparisons against native and settle in a couple hundred events;
+  # only native plausibly needs full statistics, and then only for the >500 um d0
+  # band. So native runs on everything and the quantized ones are capped.
+  $PY -u $S/tracklet_topology_cost.py -i "$in" --batch-events 8 --benchmark native \
+                                  -o "$OUT/${n}_cost_native.json" > "$OUT/${n}_cost_native.txt" 2>&1
+  for b in A_a3b5 B_a4b6 C_a3b7; do
+    $PY -u $S/tracklet_topology_cost.py -i "$in" --batch-events 8 -n "${QNEV:-200}" \
+        --benchmark "$b" --skip-ot -o "$OUT/${n}_cost_${b}.json" > "$OUT/${n}_cost_${b}.txt" 2>&1
+  done
+  for f in samples design_basis projection_residuals triplet_d0_solve cost_native; do
     printf "  %-22s %s\n" "$f" "$(tail -1 "$OUT/${n}_${f}.txt" | cut -c1-70)"
   done
 done

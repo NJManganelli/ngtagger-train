@@ -1,0 +1,88 @@
+IT: 1000 events, 27454 clusters/event
+  native|L1L2L3|pt1.5|L1L2->L3                 trk=     2020 hits/proj=   6.4 eff=0.866 fake=0.204
+      d0_0to100um          eff=0.876 (n=196498)
+      d0_100to500um        eff=0.772 (n=4190)
+      d0_gt500um           eff=0.238 (n=2459)
+  native|L1L2L3|pt1.5|L2L3->L1                 trk=      898 hits/proj=  18.3 eff=0.862 fake=0.063
+      d0_0to100um          eff=0.872 (n=196498)
+      d0_100to500um        eff=0.840 (n=4190)
+      d0_gt500um           eff=0.109 (n=2459)
+  native|L1L2L3|pt1.5|displaced                trk=    12251 hits/proj=   5.5 eff=0.884 fake=0.247
+      d0_0to100um          eff=0.889 (n=196498)
+      d0_100to500um        eff=0.906 (n=4190)
+      d0_gt500um           eff=0.438 (n=2459)
+  native|L1L2L3|pt1|L1L2->L3                   trk=     3207 hits/proj=   9.4 eff=0.867 fake=0.223
+      d0_0to100um          eff=0.879 (n=445892)
+      d0_100to500um        eff=0.798 (n=7105)
+      d0_gt500um           eff=0.217 (n=7244)
+  native|L1L2L3|pt1|L2L3->L1                   trk=     1517 hits/proj=  21.7 eff=0.861 fake=0.073
+      d0_0to100um          eff=0.872 (n=445892)
+      d0_100to500um        eff=0.862 (n=7105)
+      d0_gt500um           eff=0.172 (n=7244)
+  native|L1L2L3|pt1|displaced                  trk=    13706 hits/proj=   8.0 eff=0.882 fake=0.250
+      d0_0to100um          eff=0.891 (n=445892)
+      d0_100to500um        eff=0.888 (n=7105)
+      d0_gt500um           eff=0.301 (n=7244)
+  native|L1L2L3|pt2|L1L2->L3                   trk=     1455 hits/proj=   5.0 eff=0.861 fake=0.216
+      d0_0to100um          eff=0.873 (n=98112)
+      d0_100to500um        eff=0.739 (n=2911)
+      d0_gt500um           eff=0.198 (n=1235)
+  native|L1L2L3|pt2|L2L3->L1                   trk=      620 hits/proj=  16.6 eff=0.860 fake=0.067
+      d0_0to100um          eff=0.871 (n=98112)
+      d0_100to500um        eff=0.807 (n=2911)
+      d0_gt500um           eff=0.079 (n=1235)
+  native|L1L2L3|pt2|displaced                  trk=    11453 hits/proj=   4.4 eff=0.882 fake=0.271
+      d0_0to100um          eff=0.886 (n=98112)
+      d0_100to500um        eff=0.911 (n=2911)
+      d0_gt500um           eff=0.531 (n=1235)
+  native|L2L3L4|pt1.5|L2L3->L4                 trk=      898 hits/proj=   6.0 eff=0.883 fake=0.133
+      d0_0to100um          eff=0.892 (n=158433)
+      d0_100to500um        eff=0.897 (n=3796)
+      d0_gt500um           eff=0.521 (n=3814)
+  native|L2L3L4|pt1.5|L3L4->L2                 trk=      394 hits/proj=  11.5 eff=0.883 fake=0.039
+      d0_0to100um          eff=0.891 (n=158433)
+      d0_100to500um        eff=0.905 (n=3796)
+      d0_gt500um           eff=0.542 (n=3814)
+  native|L2L3L4|pt1.5|displaced                trk=     4506 hits/proj=   5.2 eff=0.877 fake=0.051
+      d0_0to100um          eff=0.890 (n=158433)
+      d0_100to500um        eff=0.903 (n=3796)
+      d0_gt500um           eff=0.331 (n=3814)
+  native|L2L3L4|pt1|L2L3->L4                   trk=     1517 hits/proj=   9.5 eff=0.879 fake=0.154
+      d0_0to100um          eff=0.891 (n=359571)
+      d0_100to500um        eff=0.898 (n=6430)
+      d0_gt500um           eff=0.478 (n=11409)
+  native|L2L3L4|pt1|L3L4->L2                   trk=      725 hits/proj=  15.4 eff=0.875 fake=0.046
+      d0_0to100um          eff=0.887 (n=359571)
+      d0_100to500um        eff=0.900 (n=6430)
+      d0_gt500um           eff=0.481 (n=11409)
+  native|L2L3L4|pt1|displaced                  trk=     5695 hits/proj=   8.2 eff=0.868 fake=0.057
+      d0_0to100um          eff=0.888 (n=359571)
+      d0_100to500um        eff=0.882 (n=6430)
+      d0_gt500um           eff=0.232 (n=11409)
+  native|L2L3L4|pt2|L2L3->L4                   trk=      620 hits/proj=   4.5 eff=0.883 fake=0.137
+      d0_0to100um          eff=0.891 (n=79172)
+      d0_100to500um        eff=0.889 (n=2641)
+      d0_gt500um           eff=0.543 (n=1760)
+  native|L2L3L4|pt2|L3L4->L2                   trk=      253 hits/proj=   9.6 eff=0.887 fake=0.041
+      d0_0to100um          eff=0.893 (n=79172)
+      d0_100to500um        eff=0.913 (n=2641)
+      d0_gt500um           eff=0.597 (n=1760)
+  native|L2L3L4|pt2|displaced                  trk=     3897 hits/proj=   3.9 eff=0.880 fake=0.055
+      d0_0to100um          eff=0.889 (n=79172)
+      d0_100to500um        eff=0.923 (n=2641)
+      d0_gt500um           eff=0.426 (n=1760)
+OT: 15532 stubs/event full, 8027 matched
+  OT barrel_alleta  pT>2    position trk=     8900
+  OT barrel_alleta  pT>2    bend     trk=     2473
+  OT barrel_alleta  pT>1.5  position trk=    12081
+  OT barrel_alleta  pT>1.5  bend     trk=     3238
+  OT barrel_alleta  pT>1    position trk=    17784
+  OT barrel_alleta  pT>1    bend     trk=     3725
+  OT barrel_matched pT>2    position trk=     8208
+  OT barrel_matched pT>2    bend     trk=     2200
+  OT barrel_matched pT>1.5  position trk=    11105
+  OT barrel_matched pT>1.5  bend     trk=     2859
+  OT barrel_matched pT>1    position trk=    16301
+  OT barrel_matched pT>1    bend     trk=     3247
+peak RSS 4.74 GB at 8 events/batch
+wrote eval_refitq/combinatorics/results/ttbar_pu200_cost_native.json
