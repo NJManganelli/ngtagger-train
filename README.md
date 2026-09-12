@@ -137,7 +137,117 @@ trk.bendChi2FromHw, trk.chi2RPhiFromHw, trk.chi2RZFromHw   # bin-value lookups
 trk.mvaQualityFromHw    # track-quality MVA bin value
 ```
 
-## 4. Training
+## 4. Studies using nano variants
+
+Seeding and combinatorics studies that consume the SmartPixels cluster nano
+(`L1TSmartPixelsCluster`) and the all-stub table (`L1TOTStub`). They live in
+`eval_refitq/combinatorics/` and are independent of training.
+
+**Every tool takes one or many inputs**: `-i` accepts comma-separated paths
+and/or globs, order preserved. `-n` limits events and is enforced across files
+(uproot's own `entry_stop` is silently ignored when it is handed a file list, so
+relying on it would read every event).
+
+### Samples
+
+Produced into `cmssw/work/otstub_arm/`, all with OT stub truth links and the
+reco-angle sigma lookup:
+
+| set | events | note |
+|---|---|---|
+| `itot_truth_100ev.root` + `itot_ttbar_f02..f10_100ev.root` | 1000 | ttbar PU200, 1000 **distinct** events |
+| `itot_htt_100ev.root` | 100 | VBF H->tautau PU200 |
+| `itot_nopu_100ev.root` | 100 | ttbar noPU, ~45x fewer clusters |
+
+`itot_truth_40ev.root` and `itot_pu200_60ev.root` are **superseded**: they
+predate the sigma fix and are nested (40 is a subset of 60 is a subset of the
+100-event file1), so summing them double counts.
+
+Keep the three processes separate. PU200 ttbar and PU200 H->tautau have nearly
+identical occupancy because pileup dominates the cluster count, but different
+heavy-flavour content; noPU is the only independent lever on how cost scales
+with occupancy.
+
+### `validate_samples.py` — are these files what they claim?
+
+```bash
+python eval_refitq/combinatorics/validate_samples.py \
+  -i "../cmssw/work/otstub_arm/itot_truth_100ev.root,../cmssw/work/otstub_arm/itot_ttbar_f*_100ev.root"
+```
+
+Checks column completeness (a study that silently loses a column reads as a
+physics result), event distinctness by `(run, lumi, event)`, and occupancy
+consistency. Run it first on any new production. It reports summed versus
+distinct events and names any subset relationship outright.
+
+### `seeder_design_basis.py` — the measurements the design constants rest on
+
+```bash
+python eval_refitq/combinatorics/seeder_design_basis.py -i "<inputs>" \
+  --payload ../cmssw/work/spxsmoke/spix_angle_response_Conv1D_Full-2bit_v4fixed.json \
+  [--study geometry --study firmware-rom] -o design_basis.json
+```
+
+Six studies, each naming the constant it justifies. `geometry` (sets
+`N_RBINS=48`), `sigma-z0` (why the wildcard split is per layer), `selectivity`
+(why cluster pairs are formed on z0 and phi jointly), `pt-threshold` (how a d0
+allowance destroys the pT floor), `firmware-rom` (whether the three-point solve
+can use layer-constant coefficients), `sigma-provenance` (whether the published
+angle sigma is an affordable lookup and whether it is keyed on reco or true
+angles). Default runs all.
+
+### `projection_residuals.py` — why the third layer is searched on z, not phi
+
+```bash
+python eval_refitq/combinatorics/projection_residuals.py -i "<inputs>" [--ptmin 2.0]
+```
+
+Takes the one correct cluster triple per TrackingParticle and measures the
+residual of the pair's projection against the true third cluster, binned in the
+TP's own d0. A resolution measurement, no combinatorics.
+
+### `triplet_d0_solve.py` — can three clusters determine (phi0, d0, kappa)?
+
+```bash
+python eval_refitq/combinatorics/triplet_d0_solve.py -i "<inputs>" [--ptmin 2.0]
+```
+
+Validates the exact three-point solve against truth and compares its curvature
+resolution with the pair's. Prints **median bias per d0 band**, which is the
+statistic that decides whether a calibration is needed -- the regression slope
+of fit against true is not, because 95% of TrackingParticles sit below
+d0 = 100 um where there is no lever on the scale.
+
+### `tracklet_topology_cost.py` — the seeding cost model
+
+```bash
+python eval_refitq/combinatorics/tracklet_topology_cost.py -i "<inputs>" \
+  --batch-events 8 -o cost.json
+python eval_refitq/combinatorics/tracklet_topology_cost.py -i "<one file>" \
+  -n 2 --selftest        # must print "0 mismatched" before trusting any output
+```
+
+IT seeding (cluster pairs, projection, arbitration) against the real OT tracklet
+topology and match windows. `--selftest` compares the z-binned projection search
+and the joint (z0, phi) pairing against an exhaustive reference; run it after any
+change to the search.
+
+**Memory**: `--pair-budget-gb` (default 1.5) is the knob, not `--batch-events`.
+Peak memory is set by candidate triplets held at once, and a d0-inflated window
+can explode inside a *single* event -- which no batch size can bound.
+`--rss-ceiling-gb` is hard-clamped to 40% of physical RAM.
+
+### `run_all_studies.sh` — everything, per process
+
+```bash
+bash eval_refitq/combinatorics/run_all_studies.sh        # -> eval_refitq/combinatorics/results/
+OUT=/tmp/myrun bash eval_refitq/combinatorics/run_all_studies.sh
+```
+
+Runs all five tools over ttbar PU200, H->tautau PU200 and ttbar noPU separately,
+writing one text and json output per tool per process.
+
+## 5. Training
 
 ### NG jet tagger
 
@@ -172,7 +282,7 @@ Every pipeline computes **stock-vs-retrained comparisons** against the
 scores already in the file (`compare_vertex_scores`,
 `compare_dispvtx_scores`, AUCs vs truth) and logs them to mlflow.
 
-## 5. Firmware / CMSSW deployment
+## 6. Firmware / CMSSW deployment
 
 ```bash
 pixi run export -m output/ms/best -o firmware/            # hls4ml Vitis + da4ml
@@ -191,7 +301,7 @@ two's complement; the base shifts are LSB drops), the DV tagger is the
 inputs (frozen-graph export is stubbed pending that mode). Working points
 downstream (e.g. `tqMVABins`) need revalidation after any retrain.
 
-## 6. Tests
+## 7. Tests
 
 ```bash
 pixi run test                                        # full synthetic suite
