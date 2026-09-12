@@ -26,6 +26,21 @@ it, because there d0 ~ 0 and the residual is just sigma(A) either way.
 so it is one 3x3 solve per cluster triple, done in closed form here rather than
 by np.linalg.solve so it vectorises over every triple at once.
 
+IS A SCALE CALIBRATION NEEDED? NO -- measured, 1000 PU200 ttbar events. The
+MEDIAN BIAS of (d0_fit - d0_true) is +0.0 um (L1L2L3) and +0.8 um (L2L3L4) for
+d0 in 100-500 um, and -2.3 / -2.9 um for 500 um - 5 mm. The solve is already
+unbiased to ~3 um everywhere it is cut on, and fitting a scale+offset and
+applying it makes things WORSE: it injects a -25 um bias into L2L3L4 and widens
+sigma from 76 to 81 um.
+
+An earlier pass reported an "11% scale bias needing calibration" from the
+regression slope of d0_fit on d0_true. That slope is the WRONG STATISTIC here:
+95% of TrackingParticles sit at d0 < 100 um, so the fit is dominated by a range
+with no lever on the scale, and the slope it returns (1.132 in the core band
+against 0.972 above 500 um) describes the sampling, not the solve. The median
+bias WITHIN the band that is cut on is the statistic that matters, and it is
+printed below on every run so the question does not have to be re-argued.
+
 THIS SCRIPT DOES NOT SEED ANYTHING. It takes the ONE correct cluster triple per
 TrackingParticle and asks how well the solve recovers the TP's own d0 and
 curvature -- i.e. whether the mechanism is worth building on. The signs of A and
@@ -89,21 +104,15 @@ def correct_triples(D, la, lb, lc, sel):
 
 
 def solve_triplet(r1, p1, r2, p2, r3, p3):
-    """Closed-form solve of phi_i = phi0 + A/r_i + B*r_i for every triple.
+    """(phi0, A, B, ok) for every cluster triple, A = d0 and B = -c*kappa.
 
-    Azimuths are differenced against the innermost cluster before solving, so the
-    2x2 that remains is immune to the 2*pi wrap that a raw phi0 would carry.
+    Thin wrapper over tracklet_topology_cost.solve3 so there is ONE
+    implementation of the solve. Keeping a second copy here would let the seeder
+    and its own validation drift apart, which is the one divergence that would
+    invalidate both.
     """
-    u2, u3 = 1.0 / r2 - 1.0 / r1, 1.0 / r3 - 1.0 / r1
-    v2, v3 = r2 - r1, r3 - r1
-    d2, d3 = wrap(p2 - p1), wrap(p3 - p1)
-    det = u2 * v3 - u3 * v2
-    bad = np.abs(det) < 1e-12
-    det = np.where(bad, 1.0, det)
-    A = (d2 * v3 - d3 * v2) / det
-    B = (u2 * d3 - u3 * d2) / det
-    phi0 = wrap(p1 - A / r1 - B * r1)
-    return phi0, A, B, ~bad
+    phi0, A, kap, ok = M.solve3(r1, p1, r2, p2, r3, p3)
+    return phi0, A, -kap * C_BEND, ok
 
 
 def main():
@@ -146,18 +155,19 @@ def main():
         print(f"  sign/scale (bulk {bulk.sum()} of {ok.sum()}): "
               f"slope d0_fit/d0_true = {sd:+.3f}, "
               f"slope |kappa_fit|/(1/pT) = {sk:+.3f}")
-        print(f"  {'TP |d0|':>14}{'n':>7}{'sigma(d0) fit':>15}"
+        print(f"  {'TP |d0|':>14}{'n':>7}{'bias(d0)':>11}{'sigma(d0)':>11}"
               f"{'sig(kappa) 3pt':>16}{'sig(kappa) pair':>17}")
         for lo, hi in zip(D0_EDGES_CM[:-1], D0_EDGES_CM[1:]):
             m = ok & (np.abs(d0_tp) >= lo) & (np.abs(d0_tp) < hi)
             if m.sum() < 8:
                 continue
+            b_d0 = float(np.median(d0_fit[m] - d0_tp[m])) * 1e4
             s_d0 = robust_sigma(d0_fit[m] - d0_tp[m]) * 1e4
             s_k3 = robust_sigma(np.abs(kap_fit[m]) - kap_tp[m])
             s_kp = robust_sigma(np.abs(kap_pair[m]) - kap_tp[m])
             hs = "inf" if hi > 1e8 else f"{hi*1e4:.0f}"
-            print(f"  {lo*1e4:>7.0f}-{hs:<6}{m.sum():>7}{s_d0:>13.0f}um"
-                  f"{s_k3:>16.4f}{s_kp:>17.4f}")
+            print(f"  {lo*1e4:>7.0f}-{hs:<6}{m.sum():>7}{b_d0:>9.1f}um"
+                  f"{s_d0:>9.0f}um{s_k3:>16.4f}{s_kp:>17.4f}")
         print()
 
 
