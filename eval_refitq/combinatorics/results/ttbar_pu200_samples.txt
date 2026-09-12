@@ -1,0 +1,17 @@
+file                               events  clusters/ev  stubs/ev OT truth   missing IT cols
+itot_truth_100ev.root                 100    27367+-2822     15536        Y              none
+itot_ttbar_f02_100ev.root             100    26885+-3011     15149        Y              none
+itot_ttbar_f03_100ev.root             100    27142+-2785     15250        Y              none
+itot_ttbar_f04_100ev.root             100    27808+-3077     15753        Y              none
+itot_ttbar_f05_100ev.root             100    27309+-3025     15518        Y              none
+itot_ttbar_f06_100ev.root             100    27554+-2491     15588        Y              none
+itot_ttbar_f07_100ev.root             100    27354+-2936     15469        Y              none
+itot_ttbar_f08_100ev.root             100    27348+-2723     15455        Y              none
+itot_ttbar_f09_100ev.root             100    28056+-3020     15868        Y              none
+itot_ttbar_f10_100ev.root             100    27719+-2698     15734        Y              none
+
+events summed over files : 1000
+DISTINCT (run,lumi,event): 1000
+
+clusters/event across files: 26885 .. 28056  (spread 1171, mean event-to-event RMS 2859)
+  consistent with one dataset

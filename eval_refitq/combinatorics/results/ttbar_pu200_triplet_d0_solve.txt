@@ -1,0 +1,22 @@
+27454 clusters/event over 1000 events, pT > 2.0 GeV
+
+=== L1L2L3   (102258 correct triples) ===
+  sign/scale (bulk 98727 of 102258): slope d0_fit/d0_true = +0.969, slope |kappa_fit|/(1/pT) = +1.024
+         TP |d0|      n   bias(d0)  sigma(d0)  sig(kappa) 3pt  sig(kappa) pair
+        0-50      96815      0.3um       39um          0.0219           0.0281
+       50-100      1297      0.4um       30um          0.0154           0.0826
+      100-500      2911      0.2um       38um          0.0164           0.2326
+      500-1000      779      0.1um       72um          0.0189           0.4045
+     1000-5000      433     -9.0um      152um          0.0263           0.7986
+     5000-inf        23   -169.7um    35472um          9.8377          23.7944
+
+=== L2L3L4   (83573 correct triples) ===
+  sign/scale (bulk 78917 of 83573): slope d0_fit/d0_true = +0.832, slope |kappa_fit|/(1/pT) = +1.069
+         TP |d0|      n   bias(d0)  sigma(d0)  sig(kappa) 3pt  sig(kappa) pair
+        0-50      78073      0.1um       89um          0.0167           0.0162
+       50-100      1099     -3.7um       69um          0.0123           0.0259
+      100-500      2641      0.7um       84um          0.0133           0.0829
+      500-1000      846      5.9um      184um          0.0145           0.2135
+     1000-5000      829    -31.4um      489um          0.0166           0.4885
+     5000-inf        85   -214.0um     3431um          1.5200           2.0337
+

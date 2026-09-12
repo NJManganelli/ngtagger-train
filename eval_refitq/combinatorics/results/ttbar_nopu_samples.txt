@@ -1,0 +1,5 @@
+file                               events  clusters/ev  stubs/ev OT truth   missing IT cols
+itot_nopu_100ev.root                  100      606+-229       487        Y              none
+
+events summed over files : 100
+DISTINCT (run,lumi,event): 100

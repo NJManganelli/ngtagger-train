@@ -1,0 +1,95 @@
+=== firmware-rom   pT > 2.0 GeV
+
+config   radii used               sigma(d0) core  sigma(kappa)
+L1L2L3  per-cluster actual                 36um        0.0206
+L1L2L3  layer medians                     109um        0.0687
+L1L2L3  medians, 48 r-bins                 37um        0.0207
+L2L3L4  per-cluster actual                 81um        0.0147
+L2L3L4  layer medians                     386um        0.0851
+L2L3L4  medians, 48 r-bins                 83um        0.0149
+
+Layer-median coefficients are NOT sufficient; radial binning recovers the exact per-cluster result, and it is the binning the projection search already builds.
+
+=== geometry   itot_htt_100ev.root  100 events
+
+layer   clusters/ev   r med   r ptp  z span cl per cm z r bin @48  pad@|cot|1.16
+L1             9191    2.85   1.071    39.9       230.5      223u           129u
+L2             7389    5.95   1.036    40.1       184.1      216u           125u
+L3             5943   10.33   1.120    40.1       148.1      233u           135u
+L4             5186   14.50   1.087    40.1       129.2      226u           131u
+
+clusters/event total = 27710 +- 3090 (event-to-event RMS)
+3-sigma z window from projection_residuals ~232 um: the pad above must sit under it, which is why N_RBINS = 48
+
+=== pt-threshold   layer median radii L1=2.852, L2=5.954, L3=10.330, L4=14.495 cm
+
+pair     d0 [um]  kap_bias/cm  kap_slack  kap_max  kap cut  pT label  pT EFFECTIVE
+L1L2          0        10.34      0.000    0.500    0.500      2.00          2.00
+L1L2        500        10.34      0.517    0.500    1.017      2.00          0.98
+L1L2          0        10.34      0.000    0.667    0.667      1.50          1.50
+L1L2        500        10.34      0.517    0.667    1.184      1.50          0.84
+L1L2          0        10.34      0.000    1.000    1.000      1.00          1.00
+L1L2        500        10.34      0.517    1.000    1.517      1.00          0.66
+L1L2          0        10.34      0.000    2.000    2.000      0.50          0.50
+L1L2        500        10.34      0.517    2.000    2.517      0.50          0.40
+L2L3          0         2.85      0.000    0.500    0.500      2.00          2.00
+L2L3        500         2.85      0.143    0.500    0.643      2.00          1.56
+L2L3          0         2.85      0.000    0.667    0.667      1.50          1.50
+L2L3        500         2.85      0.143    0.667    0.809      1.50          1.24
+L2L3          0         2.85      0.000    1.000    1.000      1.00          1.00
+L2L3        500         2.85      0.143    1.000    1.143      1.00          0.88
+L2L3          0         2.85      0.000    2.000    2.000      0.50          0.50
+L2L3        500         2.85      0.143    2.000    2.143      0.50          0.47
+L3L4          0         1.17      0.000    0.500    0.500      2.00          2.00
+L3L4        500         1.17      0.059    0.500    0.559      2.00          1.79
+L3L4          0         1.17      0.000    0.667    0.667      1.50          1.50
+L3L4        500         1.17      0.059    0.667    0.725      1.50          1.38
+L3L4          0         1.17      0.000    1.000    1.000      1.00          1.00
+L3L4        500         1.17      0.059    1.000    1.059      1.00          0.94
+L3L4          0         1.17      0.000    2.000    2.000      0.50          0.50
+L3L4        500         1.17      0.059    2.000    2.059      0.50          0.49
+
+At d0 = 500 um the slack EXCEEDS kappa_max at 2 GeV, so the threshold is destroyed outright. d0 = 0 is what makes it real.
+
+=== selectivity   100 events
+
+L1L2: 9191 x 7389 = 67.9M possible cluster pairs/event
+    phi only     selectivity   0.3277% ->      222,603 cluster pairs/event
+    z0 only      selectivity   2.0743% ->    1,408,876 cluster pairs/event
+    z0 AND phi   selectivity   0.0068% ->        4,618 cluster pairs/event
+L2L3: 7389 x 5943 = 43.9M possible cluster pairs/event
+    phi only     selectivity   0.4432% ->      194,664 cluster pairs/event
+    z0 only      selectivity   3.7661% ->    1,653,989 cluster pairs/event
+    z0 AND phi   selectivity   0.0167% ->        7,331 cluster pairs/event
+L3L4: 5943 x 5186 = 30.8M possible cluster pairs/event
+    phi only     selectivity   0.4242% ->      130,743 cluster pairs/event
+    z0 only      selectivity   5.3258% ->    1,641,596 cluster pairs/event
+    z0 AND phi   selectivity   0.0226% ->        6,963 cluster pairs/event
+
+=== sigma-provenance   payload spix_angle_response_Conv1D_Full-2bit_v4fixed.json
+
+  spix_angle_alpha_sigma: axes ['cotAlpha', 'cotBeta', 'bLocalY'], 4 layers x 60 = 240 values TOTAL  (a lookup, not a model head)
+      cotAlpha  10 bins  [   -0.6 ..     0.6]
+      cotBeta    6 bins  [     -6 ..       6]
+      bLocalY    1 bins  [     -4 ..       4]
+      stored sigma matches lookup at RECO angles 100.0%, at TRUE angles 80.7%
+  spix_angle_beta_sigma: axes ['cotAlpha', 'cotBeta', 'bLocalY'], 4 layers x 60 = 240 values TOTAL  (a lookup, not a model head)
+      cotAlpha  10 bins  [   -0.6 ..     0.6]
+      cotBeta    6 bins  [     -6 ..       6]
+      bLocalY    1 bins  [     -4 ..       4]
+      stored sigma matches lookup at RECO angles 100.0%, at TRUE angles 80.7%
+
+Hardware only has the reco angle, so matching at RECO is the affordable case. Any bLocalY axis with a single bin carries no y dependence.
+
+=== sigma-z0   s_z0 = globalR * sigGlobalClusterCotTheta * 1.21
+
+layer     r med  sig(cot) med   s_z0 med  s_z0 q99  share of global-q99 wildcards
+L1         2.85       0.01998     0.0743     0.187                           2.3%
+L2         5.95       0.01974     0.1518     0.288                           9.4%
+L3        10.33       0.02164     0.2757     0.610                          22.8%
+L4        14.50       0.02186     0.3898     0.923                          65.5%
+
+sigma(cot theta) is FLAT across layers, so s_z0 tracks r: L4/L1 median ratio = 5.2x against r ratio 5.1x.
+A GLOBAL percentile would put most wildcards in the outer layers for a purely geometric reason, which is why the split is per layer.
+
+wrote eval_refitq/combinatorics/results/htt_pu200_design_basis.json

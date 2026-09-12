@@ -1,0 +1,20 @@
+27710 clusters/event over 100 events, pT > 2.0 GeV
+
+=== L1L2 -> L3   (9523 correct triples) ===
+         TP |d0|       n   sigma(dphi)   sigma(dz)  phi vs core  z vs core
+                                [mrad]        [um]                        
+        0-50        9243         0.667        78.6         1.0x       1.0x
+       50-100         95         1.414        67.8         2.1x       0.9x
+      100-500        131         5.084        67.8         7.6x       0.9x
+      500-1000        23        12.716        62.5        19.1x       0.8x
+     1000-5000        27        46.299       103.8        69.4x       1.3x
+
+=== L2L3 -> L4   (7689 correct triples) ===
+         TP |d0|       n   sigma(dphi)   sigma(dz)  phi vs core  z vs core
+                                [mrad]        [um]                        
+        0-50        7380         0.347        62.5         1.0x       1.0x
+       50-100         87         0.428        56.9         1.2x       0.9x
+      100-500        122         1.317        68.1         3.8x       1.1x
+      500-1000        33         3.780        55.2        10.9x       0.9x
+     1000-5000        64        10.461        92.1        30.1x       1.5x
+
