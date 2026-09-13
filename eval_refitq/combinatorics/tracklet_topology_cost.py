@@ -498,6 +498,27 @@ def it_prepare(D, bench):
 
 
 # ---- projecting to the third layer: SEARCH ON z, CONFIRM ON phi -----------
+# THE SEARCH ORDER IS CONDITIONAL, and the condition changed under it. z-first
+# was adopted because the phi window had to carry the d0 allowance: at d0 =
+# 500 um the phi half-window is 68.9 mrad against a z road of 391 um, so z-first
+# won by 11x on IT L1L2 -> L3. That remains true for any d0-TOLERANT seed, which
+# is every displaced and triplet seed here.
+#
+# But beamline-constrained pair seeding then set d0 = 0 for the pair seeds, which
+# collapses their phi window 9x to 16.3 mrad and takes most of z-first's margin
+# with it -- the advantage drops from 11x to 2.6x. That 2.6x is INSIDE this
+# file's own systematic tilt: sigma(cot) is taken from cluster positions alone
+# (5.7e-4) where the MEASURED value including scattering is 1.7e-3, optimistic in
+# z by 2.0x; and sigma(kappa) assumes 1 mrad per cluster (0.080) where the
+# MEASURED value is 0.031, pessimistic in phi by 2.2x. Both biases favour
+# z-first, for a combined 4.3x tilt.
+#
+# So for the d0 = 0 pair seeds the order is UNDETERMINED until both windows are
+# built from measured resolutions. With measured values phi-first wins 1.6x on
+# this stage. The z-first implementation is not wrong -- --selftest shows it
+# accepts an identical set -- it may simply no longer be the cheaper order for
+# those seeds. Do not read the 28x headline as unconditional.
+
 # MEASURED (projection_residuals.py, PU200 ttbar, 100 events, pT > 2 GeV, correct
 # cluster triples only): between the prompt core and d0 = 1-5 mm, sigma(dphi) at
 # layer C widens 40.4x (0.671 -> 27.1 mrad) while sigma(dz) is FLAT within 10%
