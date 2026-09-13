@@ -753,7 +753,7 @@ _JOINT_PAIRING = True
 
 
 def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
-                 d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM):
+                 d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM, kap_min=0.0):
     """One seed type over an ENTIRE CHUNK -- all events at once, no event loop.
     ev_idx is the cluster index set to consider (normally the whole chunk); the
     event is folded into the pair-matching sort key, so cross-event pairs are
@@ -817,6 +817,18 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
         cot = (D["globalZ"][gB] - D["globalZ"][gA]) / np.where(ok, drp, 1e9)
         z0p = D["globalZ"][gA] - D["globalR"][gA] * cot
         ok &= np.abs(kap) <= kmax + kap_slack
+        if kap_min > 0.0:
+            # LOWER curvature gate, for a doublet aimed at the band where the
+            # TRIPLET fails. Measured: the triplet's misses concentrate at
+            # |kappa| in 0.40-0.50, i.e. pT just above threshold, where its own
+            # sigma(kappa) ~ 0.022 scatters tracks across its |kappa| <= kappa_max
+            # cut. The doublets recover 74.8% of the misses there against
+            # 0.34-0.43 elsewhere, so 76% of their entire non-redundant value
+            # sits in that one band. This gate is evaluated from the doublet's
+            # OWN pair, so it runs in parallel with the triplet and adds no
+            # latency -- unlike removing the clusters the triplet consumed,
+            # which would serialise the two.
+            ok &= np.abs(kap) >= kap_min
         n_kap += int(ok.sum())
         if not displaced:                      # beamspot / luminous-region gate
             ok &= np.abs(z0p) <= Z_LUMI
@@ -1030,7 +1042,11 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
         ll = D["layer"][b0]
         ka = np.unique(kk[ll == la]); kb = np.unique(kk[ll == lb])
         kp = np.unique(kk[np.isin(ll, list(S["proj_l"]))]) if S["proj_l"] else kk
-        out["n_findable"] = int(len(np.intersect1d(np.intersect1d(ka, kb), kp)))
+        fkeys = np.intersect1d(np.intersect1d(ka, kb), kp)
+        out["n_findable"] = int(len(fkeys))
+        # Export the SET, not just the count: an efficiency has to be banded by
+        # d0 and pT alongside the found set, and a bare count cannot be.
+        out["_findable_keys"] = fkeys
     out["projections"] = int(len(phi0)) * max(len(S["proj_l"]), 1)
     out["match_cand"] = tot_c
     out["match_cand_z"] = tot_cz

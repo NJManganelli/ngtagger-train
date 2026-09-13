@@ -1,0 +1,161 @@
+{
+ "pt_min": 2.0,
+ "configs": {
+  "L1L2L3": {
+   "n_findable": 102258,
+   "n_events": 1000,
+   "eff_triplet": 0.8822683799800505,
+   "triplet_cost": {
+    "tracklets": 11452.908,
+    "match_cand": 50628.748,
+    "tracks_to_fit": 142.897
+   },
+   "scan": [
+    {
+     "kap_min": 0.0,
+     "pt_max": null,
+     "eff_union": 0.9230867022629037,
+     "beyond_triplet": 13360,
+     "cost": {
+      "tracklets": 2075.382,
+      "match_cand": 17682.925,
+      "tracks_to_fit": 238.759
+     }
+    },
+    {
+     "kap_min": 0.25,
+     "pt_max": 4.0,
+     "eff_union": 0.9208766062312973,
+     "beyond_triplet": 12059,
+     "cost": {
+      "tracklets": 1117.92,
+      "match_cand": 9722.586,
+      "tracks_to_fit": 184.849
+     }
+    },
+    {
+     "kap_min": 0.3,
+     "pt_max": 3.3333333333333335,
+     "eff_union": 0.9198693500752997,
+     "beyond_triplet": 11639,
+     "cost": {
+      "tracklets": 910.797,
+      "match_cand": 7963.074,
+      "tracks_to_fit": 162.152
+     }
+    },
+    {
+     "kap_min": 0.35,
+     "pt_max": 2.857142857142857,
+     "eff_union": 0.9184904848520409,
+     "beyond_triplet": 11059,
+     "cost": {
+      "tracklets": 695.345,
+      "match_cand": 6112.854,
+      "tracks_to_fit": 132.213
+     }
+    },
+    {
+     "kap_min": 0.4,
+     "pt_max": 2.5,
+     "eff_union": 0.9166715562596569,
+     "beyond_triplet": 10286,
+     "cost": {
+      "tracklets": 470.782,
+      "match_cand": 4161.831,
+      "tracks_to_fit": 95.086
+     }
+    },
+    {
+     "kap_min": 0.45,
+     "pt_max": 2.2222222222222223,
+     "eff_union": 0.9125251814038999,
+     "beyond_triplet": 8732,
+     "cost": {
+      "tracklets": 237.48,
+      "match_cand": 2112.458,
+      "tracks_to_fit": 50.389
+     }
+    }
+   ]
+  },
+  "L2L3L4": {
+   "n_findable": 83573,
+   "n_events": 1000,
+   "eff_triplet": 0.8803800270422265,
+   "triplet_cost": {
+    "tracklets": 3896.798,
+    "match_cand": 15441.647,
+    "tracks_to_fit": 85.987
+   },
+   "scan": [
+    {
+     "kap_min": 0.0,
+     "pt_max": null,
+     "eff_union": 0.9225587211180645,
+     "beyond_triplet": 10982,
+     "cost": {
+      "tracklets": 872.892,
+      "match_cand": 5267.391,
+      "tracks_to_fit": 184.923
+     }
+    },
+    {
+     "kap_min": 0.25,
+     "pt_max": 4.0,
+     "eff_union": 0.9179280389599512,
+     "beyond_triplet": 9218,
+     "cost": {
+      "tracklets": 501.827,
+      "match_cand": 3093.608,
+      "tracks_to_fit": 144.813
+     }
+    },
+    {
+     "kap_min": 0.3,
+     "pt_max": 3.3333333333333335,
+     "eff_union": 0.9159537171095928,
+     "beyond_triplet": 8596,
+     "cost": {
+      "tracklets": 415.754,
+      "match_cand": 2577.007,
+      "tracks_to_fit": 127.586
+     }
+    },
+    {
+     "kap_min": 0.35,
+     "pt_max": 2.857142857142857,
+     "eff_union": 0.9137759802807127,
+     "beyond_triplet": 7891,
+     "cost": {
+      "tracklets": 322.757,
+      "match_cand": 2008.362,
+      "tracks_to_fit": 104.344
+     }
+    },
+    {
+     "kap_min": 0.4,
+     "pt_max": 2.5,
+     "eff_union": 0.9116700369736638,
+     "beyond_triplet": 7020,
+     "cost": {
+      "tracklets": 222.129,
+      "match_cand": 1387.487,
+      "tracks_to_fit": 75.132
+     }
+    },
+    {
+     "kap_min": 0.45,
+     "pt_max": 2.2222222222222223,
+     "eff_union": 0.9084871908391466,
+     "beyond_triplet": 5800,
+     "cost": {
+      "tracklets": 113.882,
+      "match_cand": 712.147,
+      "tracks_to_fit": 40.059
+     }
+    }
+   ]
+  }
+ }
+}

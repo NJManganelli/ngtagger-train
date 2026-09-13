@@ -2394,7 +2394,7 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
     ti = M.build_tp_index(D)
     Q = M.it_prepare(D, None)
     allidx = np.arange(len(D["layer"]))
-    found = {}
+    found, findable = {}, {}
     for cname, cfg in M.IT_CONFIGS.items():
         jobs = [((la, lb), lc, False) for (la, lb), lc in cfg["pairs"]]
         jobs.append((cfg["triplet"][:2], cfg["triplet"][2], True))
@@ -2407,6 +2407,9 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
             if "_trip" in o:
                 ga, gb, gc = o["_trip"]
                 found[lbl] = M.recovered_keys(D, ga, gb, gc)
+                # IT findable: a TP above ptmin with a cluster on all three
+                # layers of this configuration. Same for all seeds of a config.
+                findable[lbl] = M.findable_keys(D, la, lb, lc, PTMIN)
     # OT, from the same files
     try:
         srcs = out.get("_inputs") or []
@@ -2423,6 +2426,8 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
                     fk = oo.get("_found_keys")
                     if fk is not None and len(fk):
                         found[f"OT {sname}"] = fk
+                        findable[f"OT {sname}"] = oo.get(
+                            "_findable_keys", np.empty(0, np.int64))
     except Exception as exc:                      # OT is a bonus, not a blocker
         print(f"    seed-mode confusion: OT skipped ({type(exc).__name__}: {exc})")
 
@@ -2446,12 +2451,15 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
     inband = uk[tppt >= PTMIN]
     found = {k: np.intersect1d(v, inband, assume_unique=True)
              for k, v in found.items()}
+    findable = {k: np.intersect1d(np.unique(v), inband, assume_unique=True)
+                for k, v in findable.items()}
 
     def restrict(lo, hi, arr):
         sel = uk[(arr >= lo) & (arr < hi)]
-        return {k: np.intersect1d(v, sel, assume_unique=True) for k, v in found.items()}
+        return ({k: np.intersect1d(v, sel, assume_unique=True) for k, v in found.items()},
+                {k: np.intersect1d(v, sel, assume_unique=True) for k, v in findable.items()})
 
-    facets = {"inclusive": found}
+    facets = {"inclusive": (found, findable)}
     for nm, lo, hi in (("|d0|<100um", 0.0, 100e-4), ("|d0| 100-500um", 100e-4, 500e-4),
                        ("|d0|>500um", 500e-4, 1e9)):
         facets[nm] = restrict(lo, hi, tpd0)
@@ -2460,7 +2468,7 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
         facets[nm] = restrict(lo, hi, tppt)
 
     res, mats = {}, {}
-    for fn, fd in facets.items():
+    for fn, (fd, fa) in facets.items():
         n = len(labels)
         frac = np.full((n, n), np.nan); lost = np.zeros((n, n), np.int64)
         for j, lj in enumerate(labels):
@@ -2471,6 +2479,14 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
                 lost[i, j] = len(fj) - both
         mats[fn] = (frac, lost)
         res[fn] = {"n_found": {l: int(len(fd[l])) for l in labels},
+                   # DENOMINATOR, per mode and per facet. A recovered count
+                   # without the findable count it came from cannot be compared
+                   # between modes, because IT and OT do not share a definition
+                   # of findable and the bands hold different populations.
+                   "n_findable": {l: int(len(fa.get(l, ()))) for l in labels},
+                   "efficiency": {l: (len(fd[l]) / len(fa[l])
+                                      if len(fa.get(l, ())) else None)
+                                  for l in labels},
                    "frac": frac.tolist(), "lost": lost.tolist()}
     out["seed_mode_confusion"] = {"labels": labels, "pt_min": PTMIN, "facets": res}
 
@@ -2531,9 +2547,12 @@ def _confusion_side_artifacts(out, labels, mats, res):
         for fn in names:
             frac, lost = mats[fn]
             fh.write(f"=== {fn}\n")
-            fh.write(f"{'mode':<28}{'TPs found':>11}\n")
+            fh.write(f"{'mode':<28}{'found':>11}{'findable':>11}{'eff':>8}\n")
             for l in labels:
-                fh.write(f"{l:<28}{res[fn]['n_found'][l]:>11,d}\n")
+                nfo = res[fn]["n_found"][l]; nfa = res[fn]["n_findable"][l]
+                e = res[fn]["efficiency"][l]
+                fh.write(f"{l:<28}{nfo:>11,d}{nfa:>11,d}"
+                         + (f"{e:>8.3f}\n" if e is not None else f"{'-':>8}\n"))
             fh.write(f"\nABSOLUTE TPs found by COLUMN but missed by ROW\n")
             fh.write(f"{'':<28}" + "".join(f"{s[:10]:>11}" for s in short) + "\n")
             for i, l in enumerate(labels):
@@ -2543,20 +2562,206 @@ def _confusion_side_artifacts(out, labels, mats, res):
     print(f"    wrote {p}\n    wrote {t}")
 
 
-STUDIES = [
-    ("cone occupancy", study_cone_occupancy, 3),
-    ("refit-order cone", study_refit_cone_occupancy, 3),
-    ("cone containment + size", study_cone_containment, 2),
-    ("angle discrimination", study_angle_discrimination, 2),
-    ("charge readout gate", study_charge_gate, 2),
-    ("unbiased containment", study_true_containment, 2),
-    ("chi2 weight scan", study_chi2_weight_scan, 2),
-    ("z0 resolution (seeding)", study_z0_resolution, 2),
-    ("combination sweep (activeSP)", study_combination_sweep, 3),
-    ("sector bin sizing", study_sector_binning, 2),
-    ("hough examples", study_hough_examples, 2),
-    ("seed-mode confusion", study_seed_mode_confusion, 3),
+def study_seed_composition(X, K, P, ax_row, out):
+    """(13) Can the doublets be aimed at what the TRIPLET misses, in parallel?
+
+    In L1L2L3 the triplet alone reaches 0.882 and the doublets 0.861 / 0.860,
+    but all three together reach 0.923 -- so the doublets are largely REDUNDANT
+    with the triplet while paying full combinatorial cost. The obvious fix,
+    running the triplet first and letting the doublets see only the clusters it
+    did not consume, SERIALISES the two and spends latency a trigger does not
+    have. So the restriction must be evaluable from the doublet's OWN pair.
+
+    MEASURED, where the triplet actually fails. Its misses concentrate at
+    |kappa| in 0.40-0.50, i.e. pT just above threshold, where the three-point
+    solve's own sigma(kappa) ~ 0.022 scatters tracks across its |kappa| <=
+    kappa_max cut. The doublets recover 74.8% of the misses there against
+    0.34-0.43 in every other kappa band, so 76% of their entire non-redundant
+    value sits in one band holding 34% of the findable population.
+
+    The regions where the triplet fails for OTHER reasons are not targetable:
+    at |cot theta| > 3 or |z0| > 15 cm the doublets fail alongside it, recovering
+    0.05 and 0.008 of its misses.
+
+    So the variant scanned here is a LOWER gate on the doublet's own |kappa| --
+    equivalently an UPPER pT bound -- which turns the doublets into pure
+    threshold-recovery seeds that run concurrently with the triplet.
+    """
+    import importlib.util as _ilu
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "tracklet_topology_cost.py")
+    _sp = _ilu.spec_from_file_location("_ttc2", _p)
+    M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
+    need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
+            "gSigPhi", "gSigCotTheta", "sigY", "tpIdx", "tpPt")
+    if any(c not in K for c in need):
+        for a in ax_row:
+            a.axis("off")
+        out["seed_composition"] = {"skipped": [c for c in need if c not in K]}
+        return
+    D = {"layer": K["layer"], "globalR": K["globalR"], "globalZ": K["globalZ"],
+         "globalPhi": K["globalPhi"], "globalClusterPhi": K["gClPhi"],
+         "globalClusterCotTheta": K["gClCotTheta"],
+         "sigGlobalClusterPhi": K["gSigPhi"],
+         "sigGlobalClusterCotTheta": K["gSigCotTheta"], "sigY": K["sigY"],
+         "tpIdx": K["tpIdx"], "tpPt": K["tpPt"], "event": K["event"]}
+    M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
+                 min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
+    PTMIN = 2.0
+    KMINS = (0.0, 0.25, 0.30, 0.35, 0.40, 0.45)
+    Q = M.it_prepare(D, None)
+    allidx = np.arange(len(D["layer"]))
+    nev = int(D["event"].max()) + 1 if len(D["event"]) else 1
+    COST = ("tracklets", "match_cand", "tracks_to_fit")
+    res = {}
+    for cname, cfg in M.IT_CONFIGS.items():
+        (pa, la_), (pb, lb_) = cfg["pairs"]
+        tri = cfg["triplet"]
+        fk = M.findable_keys(D, tri[0], tri[1], tri[2], PTMIN)
+        ot = M.it_pair_seed(D, Q, allidx, tri[0], tri[1], tri[2], PTMIN, True, True, 0.0)
+        kt = (M.recovered_keys(D, *ot["_trip"]) if "_trip" in ot
+              else np.empty(0, np.int64))
+        ct = {c: float(ot.get(c, 0)) / nev for c in COST}
+        scan = []
+        for kmin in KMINS:
+            oa = M.it_pair_seed(D, Q, allidx, pa[0], pa[1], la_, PTMIN, True,
+                                False, 0.0, kap_min=kmin)
+            ob = M.it_pair_seed(D, Q, allidx, pb[0], pb[1], lb_, PTMIN, True,
+                                False, 0.0, kap_min=kmin)
+            ka = M.recovered_keys(D, *oa["_trip"]) if "_trip" in oa else np.empty(0, np.int64)
+            kb = M.recovered_keys(D, *ob["_trip"]) if "_trip" in ob else np.empty(0, np.int64)
+            uni = np.unique(np.concatenate([kt, ka, kb]))
+            scan.append({"kap_min": kmin,
+                         "pt_max": (None if kmin == 0 else 1.0 / kmin),
+                         "eff_union": float(np.isin(fk, uni).mean()),
+                         "beyond_triplet": int(len(np.setdiff1d(np.union1d(ka, kb), kt))),
+                         "cost": {c: (float(oa.get(c, 0)) + float(ob.get(c, 0))) / nev
+                                  for c in COST}})
+        res[cname] = {"n_findable": int(len(fk)), "n_events": nev,
+                      "eff_triplet": float(np.isin(fk, kt).mean()),
+                      "triplet_cost": ct, "scan": scan}
+    out["seed_composition"] = {"pt_min": PTMIN, "configs": res}
+    _draw_composition(ax_row, res)
+    _composition_side_table(out, res)
+
+
+def _draw_composition(ax_row, res):
+    C = ["#2a78d6", "#e8833a"]
+    INK2 = "#52514e"
+    names = list(res)
+    ax = ax_row[0]
+    for ci, cn in enumerate(names):
+        e = res[cn]
+        x = [r["cost"]["match_cand"] / 1e3 for r in e["scan"]]
+        y = [r["eff_union"] for r in e["scan"]]
+        ax.plot(x, y, "-o", color=C[ci], ms=5, lw=2, label=cn, zorder=3)
+        for r, xx, yy in zip(e["scan"], x, y):
+            if r["kap_min"] in (0.0, 0.35, 0.45):
+                ax.annotate(f"{r['kap_min']:.2f}", (xx, yy), fontsize=6,
+                            xytext=(3, -9), textcoords="offset points", color=INK2)
+        ax.axhline(e["eff_triplet"], color=C[ci], lw=0.9, ls=":")
+    ax.set_xlabel("doublet candidate triplets per event  [thousands]", fontsize=8)
+    ax.set_ylabel("union efficiency (triplet + doublets)", fontsize=8)
+    ax.set_title("cost bought back by the |kappa| gate\n(dotted = triplet alone; "
+                 "labels = |kappa| min)", fontsize=9)
+    ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=7)
+    ax.tick_params(labelsize=7, colors=INK2)
+
+    ax = ax_row[1]
+    for ci, cn in enumerate(names):
+        e = res[cn]
+        base = e["scan"][0]
+        ax.plot([r["cost"]["match_cand"] / base["cost"]["match_cand"] for r in e["scan"]],
+                [r["eff_union"] / base["eff_union"] for r in e["scan"]],
+                "-o", color=C[ci], ms=5, lw=2, label=cn, zorder=3)
+    ax.axhline(1.0, color=INK2, lw=0.8, ls="--")
+    ax.set_xlabel("doublet cost, relative to no gate", fontsize=8)
+    ax.set_ylabel("union efficiency, relative to no gate", fontsize=8)
+    ax.set_title("what the gate keeps per unit saved", fontsize=9)
+    ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=7)
+    ax.tick_params(labelsize=7, colors=INK2)
+
+    ax = ax_row[2]
+    w = 0.38
+    xs = np.arange(len(res[names[0]]["scan"]))
+    for ci, cn in enumerate(names):
+        ax.bar(xs + ci * w, [r["beyond_triplet"] for r in res[cn]["scan"]], w,
+               color=C[ci], label=cn)
+    ax.set_xticks(xs + w / 2)
+    ax.set_xticklabels([("none" if r["kap_min"] == 0 else f"{r['kap_min']:.2f}")
+                        for r in res[names[0]]["scan"]], fontsize=7)
+    ax.set_xlabel("doublet |kappa| lower gate", fontsize=8)
+    ax.set_ylabel("TPs recovered BEYOND the triplet", fontsize=8)
+    ax.set_title("non-redundant recovery retained", fontsize=9)
+    ax.grid(alpha=0.25, axis="y", lw=0.6); ax.legend(fontsize=7)
+    ax.tick_params(labelsize=7, colors=INK2)
+
+
+def _composition_side_table(out, res):
+    p = os.path.join(out.get("_outdir", "."), "spix_seed_composition.txt")
+    with open(p, "w") as fh:
+        fh.write("Doublets aimed at the triplet's failure band, running in PARALLEL.\n"
+                 "The gate is a lower bound on the doublet's own |kappa|, i.e. an\n"
+                 "UPPER pT bound, so it needs nothing from the triplet.\n\n")
+        for cn, e in res.items():
+            fh.write(f"=== {cn}  findable {e['n_findable']:,} over {e['n_events']} events\n")
+            fh.write(f"  triplet alone: eff {e['eff_triplet']:.4f}, "
+                     f"to-fit/ev {e['triplet_cost']['tracks_to_fit']:,.0f}\n")
+            fh.write(f"  {'|kap|min':>9}{'pT<=':>8}{'union eff':>11}{'beyond':>9}"
+                     f"{'pairs/ev':>11}{'cand/ev':>11}{'fit/ev':>9}{'cost rel':>10}\n")
+            b = e["scan"][0]["cost"]["match_cand"]
+            for r in e["scan"]:
+                pt = "none" if r["pt_max"] is None else f"{r['pt_max']:.1f}"
+                fh.write(f"  {r['kap_min']:>9.2f}{pt:>8}{r['eff_union']:>11.4f}"
+                         f"{r['beyond_triplet']:>9,d}{r['cost']['tracklets']:>11,.0f}"
+                         f"{r['cost']['match_cand']:>11,.0f}"
+                         f"{r['cost']['tracks_to_fit']:>9,.0f}"
+                         f"{r['cost']['match_cand']/b:>9.2f}x\n")
+            fh.write("\n")
+    print(f"    wrote {p}")
+
+
+# ---------------------------------------------------------------------------
+# SECTIONS. The studies fall into four questions, and the figure is now grouped
+# and banner-labelled by them rather than being one undifferentiated stack. Each
+# entry is (title, function, n_panels); a section is a title plus a one-line
+# statement of what the section is for, printed on the figure and in the log.
+# ---------------------------------------------------------------------------
+SECTIONS = [
+    ("A. Cluster cones: how much is in reach of a track?",
+     "Occupancy and containment around a projected track -- the raw material every"
+     " later stage draws on, and the cost floor nothing can go below.",
+     [("cone occupancy", study_cone_occupancy, 3),
+      ("refit-order cone", study_refit_cone_occupancy, 3),
+      ("cone containment + size", study_cone_containment, 2)]),
+
+    ("B. What the SmartPixels angles buy",
+     "Whether the per-cluster alpha/beta angles and the charge readout actually"
+     " discriminate, and what the longitudinal angle delivers as a z0 estimate.",
+     [("angle discrimination", study_angle_discrimination, 2),
+      ("charge readout gate", study_charge_gate, 2),
+      ("unbiased containment", study_true_containment, 2),
+      ("z0 resolution (seeding)", study_z0_resolution, 2)]),
+
+    ("C. Fitting and cluster-combination choices",
+     "How hits should be weighted in the refit, and which activeSP combinations"
+     " are worth reading out.",
+     [("chi2 weight scan", study_chi2_weight_scan, 2),
+      ("combination sweep (activeSP)", study_combination_sweep, 3)]),
+
+    ("D. Seeding: binning, transforms, and which seeds to build",
+     "The seeding design itself -- sector sizing, the Hough picture, what each"
+     " seed mode recovers that the others do not, and whether the doublets can be"
+     " aimed at the triplet's failures instead of duplicating its successes.",
+     [("sector bin sizing", study_sector_binning, 2),
+      ("hough examples", study_hough_examples, 2),
+      ("seed-mode confusion", study_seed_mode_confusion, 3),
+      ("seed composition", study_seed_composition, 3)]),
 ]
+
+# Flat view, kept because the figure is still one grid and several studies index
+# their row directly.
+STUDIES = [t for _, _, group in SECTIONS for t in group]
 
 
 def main():
@@ -2581,13 +2786,28 @@ def main():
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
 
     ncols = max(n for _, _, n in STUDIES)
-    fig, axes = plt.subplots(len(STUDIES), ncols, figsize=(5.2 * ncols, 4.2 * len(STUDIES)))
+    # one extra row per section for its banner
+    nrows = len(STUDIES) + len(SECTIONS)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.2 * nrows))
     axes = np.atleast_2d(axes)
-    for row, (name, fn, n) in enumerate(STUDIES):
-        print(f"  study: {name}")
-        fn(X, K, P, axes[row], out)
-        for c in range(n, ncols):
+    row = 0
+    for stitle, sdesc, group in SECTIONS:
+        print(f"\n{stitle}\n    {sdesc}")
+        for c in range(ncols):
             axes[row][c].axis("off")
+        axes[row][0].text(0.0, 0.45, stitle, fontsize=15, fontweight="bold",
+                          va="center", ha="left", transform=axes[row][0].transAxes)
+        axes[row][0].text(0.0, 0.12, sdesc, fontsize=9, color="#52514e", va="center",
+                          ha="left", wrap=True, transform=axes[row][0].transAxes)
+        axes[row][0].axhline(0.78, color="#0b0b0b", lw=1.4,
+                             xmin=0.0, xmax=ncols * 0.98)
+        row += 1
+        for (name, fn, n) in group:
+            print(f"  study: {name}")
+            fn(X, K, P, axes[row], out)
+            for c in range(n, ncols):
+                axes[row][c].axis("off")
+            row += 1
     fig.suptitle(f"SmartPixels combinatorics omnibus — {cfg}, {n_ev} events", y=1.005)
     # qX vs pXX is the confusion most likely to survive into a slide, so it is
     # stamped on the figure itself rather than only in the glossary file.

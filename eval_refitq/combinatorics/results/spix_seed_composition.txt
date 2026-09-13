@@ -1,0 +1,24 @@
+Doublets aimed at the triplet's failure band, running in PARALLEL.
+The gate is a lower bound on the doublet's own |kappa|, i.e. an
+UPPER pT bound, so it needs nothing from the triplet.
+
+=== L1L2L3  findable 102,258 over 1000 events
+  triplet alone: eff 0.8823, to-fit/ev 143
+   |kap|min    pT<=  union eff   beyond   pairs/ev    cand/ev   fit/ev  cost rel
+       0.00    none     0.9231   13,360      2,075     17,683      239     1.00x
+       0.25     4.0     0.9209   12,059      1,118      9,723      185     0.55x
+       0.30     3.3     0.9199   11,639        911      7,963      162     0.45x
+       0.35     2.9     0.9185   11,059        695      6,113      132     0.35x
+       0.40     2.5     0.9167   10,286        471      4,162       95     0.24x
+       0.45     2.2     0.9125    8,732        237      2,112       50     0.12x
+
+=== L2L3L4  findable 83,573 over 1000 events
+  triplet alone: eff 0.8804, to-fit/ev 86
+   |kap|min    pT<=  union eff   beyond   pairs/ev    cand/ev   fit/ev  cost rel
+       0.00    none     0.9226   10,982        873      5,267      185     1.00x
+       0.25     4.0     0.9179    9,218        502      3,094      145     0.59x
+       0.30     3.3     0.9160    8,596        416      2,577      128     0.49x
+       0.35     2.9     0.9138    7,891        323      2,008      104     0.38x
+       0.40     2.5     0.9117    7,020        222      1,387       75     0.26x
+       0.45     2.2     0.9085    5,800        114        712       40     0.14x
+

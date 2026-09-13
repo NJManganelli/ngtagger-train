@@ -1,17 +1,17 @@
 === inclusive
-mode                          TPs found
-IT L1L2L3 L1L2>L3                88,078
-IT L1L2L3 L2L3>L1                87,915
-IT L1L2L3 triplet                90,219
-IT L2L3L4 L2L3>L4                73,833
-IT L2L3L4 L3L4>L2                74,142
-IT L2L3L4 triplet                73,576
-OT L1L2                          68,461
-OT L2L3                          70,794
-OT L2L3L4                        29,992
-OT L3L4                          58,276
-OT L4L5L6                        29,822
-OT L5L6                          32,782
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                88,078    102,258   0.861
+IT L1L2L3 L2L3>L1                87,915    102,258   0.860
+IT L1L2L3 triplet                90,219    102,258   0.882
+IT L2L3L4 L2L3>L4                73,833     83,573   0.883
+IT L2L3L4 L3L4>L2                74,142     83,573   0.887
+IT L2L3L4 triplet                73,576     83,573   0.880
+OT L1L2                          68,461     91,386   0.749
+OT L2L3                          70,794     94,834   0.747
+OT L2L3L4                        29,992     80,478   0.373
+OT L3L4                          58,276     81,284   0.717
+OT L4L5L6                        29,822     56,947   0.524
+OT L5L6                          32,782     56,959   0.576
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
@@ -29,19 +29,19 @@ OT L4L5L6                        62,725     62,662     64,492     47,876     48,
 OT L5L6                          60,264     60,191     61,975     45,369     45,704     45,207     39,883     42,173     13,529     31,738      1,638          0
 
 === |d0|<100um
-mode                          TPs found
-IT L1L2L3 L1L2>L3                85,681
-IT L1L2L3 L2L3>L1                85,470
-IT L1L2L3 triplet                86,911
-IT L2L3L4 L2L3>L4                70,530
-IT L2L3L4 L3L4>L2                70,680
-IT L2L3L4 triplet                70,390
-OT L1L2                          64,458
-OT L2L3                          65,876
-OT L2L3L4                        27,819
-OT L3L4                          54,197
-OT L4L5L6                        27,598
-OT L5L6                          30,257
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                85,681     98,112   0.873
+IT L1L2L3 L2L3>L1                85,470     98,112   0.871
+IT L1L2L3 triplet                86,911     98,112   0.886
+IT L2L3L4 L2L3>L4                70,530     79,172   0.891
+IT L2L3L4 L3L4>L2                70,680     79,172   0.893
+IT L2L3L4 triplet                70,390     79,172   0.889
+OT L1L2                          64,458     85,040   0.758
+OT L2L3                          65,876     88,256   0.746
+OT L2L3L4                        27,819     74,798   0.372
+OT L3L4                          54,197     75,564   0.717
+OT L4L5L6                        27,598     52,722   0.523
+OT L5L6                          30,257     52,731   0.574
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
@@ -59,19 +59,19 @@ OT L4L5L6                        61,258     61,168     62,416     46,008     46,
 OT L5L6                          58,908     58,813     60,046     43,684     43,921     43,576     37,831     39,474     12,631     29,711      1,546          0
 
 === |d0| 100-500um
-mode                          TPs found
-IT L1L2L3 L1L2>L3                 2,152
-IT L1L2L3 L2L3>L1                 2,348
-IT L1L2L3 triplet                 2,652
-IT L2L3L4 L2L3>L4                 2,347
-IT L2L3L4 L3L4>L2                 2,411
-IT L2L3L4 triplet                 2,437
-OT L1L2                           2,416
-OT L2L3                           2,537
-OT L2L3L4                         1,264
-OT L3L4                           2,267
-OT L4L5L6                         1,266
-OT L5L6                           1,413
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                 2,152      2,911   0.739
+IT L1L2L3 L2L3>L1                 2,348      2,911   0.807
+IT L1L2L3 triplet                 2,652      2,911   0.911
+IT L2L3L4 L2L3>L4                 2,347      2,641   0.889
+IT L2L3L4 L3L4>L2                 2,411      2,641   0.913
+IT L2L3L4 triplet                 2,437      2,641   0.923
+OT L1L2                           2,416      3,022   0.799
+OT L2L3                           2,537      3,103   0.818
+OT L2L3L4                         1,264      2,739   0.461
+OT L3L4                           2,267      2,761   0.821
+OT L4L5L6                         1,266      2,036   0.622
+OT L5L6                           1,413      2,037   0.694
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
@@ -89,19 +89,19 @@ OT L4L5L6                         1,298      1,432      1,656      1,291      1,
 OT L5L6                           1,193      1,320      1,534      1,158      1,217      1,234      1,167      1,261        497      1,060         50          0
 
 === |d0|>500um
-mode                          TPs found
-IT L1L2L3 L1L2>L3                   245
-IT L1L2L3 L2L3>L1                    97
-IT L1L2L3 triplet                   656
-IT L2L3L4 L2L3>L4                   956
-IT L2L3L4 L3L4>L2                 1,051
-IT L2L3L4 triplet                   749
-OT L1L2                           1,587
-OT L2L3                           2,381
-OT L2L3L4                           909
-OT L3L4                           1,812
-OT L4L5L6                           958
-OT L5L6                           1,112
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                   245      1,235   0.198
+IT L1L2L3 L2L3>L1                    97      1,235   0.079
+IT L1L2L3 triplet                   656      1,235   0.531
+IT L2L3L4 L2L3>L4                   956      1,760   0.543
+IT L2L3L4 L3L4>L2                 1,051      1,760   0.597
+IT L2L3L4 triplet                   749      1,760   0.426
+OT L1L2                           1,587      3,324   0.477
+OT L2L3                           2,381      3,475   0.685
+OT L2L3L4                           909      2,941   0.309
+OT L3L4                           1,812      2,959   0.612
+OT L4L5L6                           958      2,189   0.438
+OT L5L6                           1,112      2,191   0.508
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
@@ -119,19 +119,19 @@ OT L4L5L6                           169         62        420        577        
 OT L5L6                             163         58        395        527        566        397        885      1,438        401        967         42          0
 
 === pT 2-5
-mode                          TPs found
-IT L1L2L3 L1L2>L3                77,964
-IT L1L2L3 L2L3>L1                77,921
-IT L1L2L3 triplet                79,894
-IT L2L3L4 L2L3>L4                65,037
-IT L2L3L4 L3L4>L2                65,367
-IT L2L3L4 triplet                64,846
-OT L1L2                          59,218
-OT L2L3                          61,182
-OT L2L3L4                        24,175
-OT L3L4                          48,761
-OT L4L5L6                        24,244
-OT L5L6                          26,520
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                77,964     91,327   0.854
+IT L1L2L3 L2L3>L1                77,921     91,327   0.853
+IT L1L2L3 triplet                79,894     91,327   0.875
+IT L2L3L4 L2L3>L4                65,037     74,332   0.875
+IT L2L3L4 L3L4>L2                65,367     74,332   0.879
+IT L2L3L4 triplet                64,846     74,332   0.872
+OT L1L2                          59,218     80,979   0.731
+OT L2L3                          61,182     84,222   0.726
+OT L2L3L4                        24,175     70,753   0.342
+OT L3L4                          48,761     71,471   0.682
+OT L4L5L6                        24,244     49,641   0.488
+OT L5L6                          26,520     49,653   0.534
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
@@ -149,19 +149,19 @@ OT L4L5L6                        57,264     57,285     58,918     43,955     44,
 OT L5L6                          55,367     55,376     56,982     42,047     42,407     41,913     36,271     38,300     11,571     27,887      1,610          0
 
 === pT 5-10
-mode                          TPs found
-IT L1L2L3 L1L2>L3                 6,702
-IT L1L2L3 L2L3>L1                 6,608
-IT L1L2L3 triplet                 6,843
-IT L2L3L4 L2L3>L4                 5,751
-IT L2L3L4 L3L4>L2                 5,749
-IT L2L3L4 triplet                 5,706
-OT L1L2                           6,048
-OT L2L3                           6,299
-OT L2L3L4                         3,596
-OT L3L4                           6,225
-OT L4L5L6                         3,609
-OT L5L6                           4,053
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                 6,702      7,270   0.922
+IT L1L2L3 L2L3>L1                 6,608      7,270   0.909
+IT L1L2L3 triplet                 6,843      7,270   0.941
+IT L2L3L4 L2L3>L4                 5,751      6,075   0.947
+IT L2L3L4 L3L4>L2                 5,749      6,075   0.946
+IT L2L3L4 triplet                 5,706      6,075   0.939
+OT L1L2                           6,048      6,886   0.878
+OT L2L3                           6,299      6,988   0.901
+OT L2L3L4                         3,596      6,391   0.563
+OT L3L4                           6,225      6,448   0.965
+OT L4L5L6                         3,609      4,735   0.762
+OT L5L6                           4,053      4,735   0.856
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
@@ -179,19 +179,19 @@ OT L4L5L6                         3,682      3,612      3,759      2,587      2,
 OT L5L6                           3,306      3,236      3,370      2,191      2,176      2,172      2,398      2,585      1,244      2,568         23          0
 
 === pT 10-20
-mode                          TPs found
-IT L1L2L3 L1L2>L3                 2,201
-IT L1L2L3 L2L3>L1                 2,178
-IT L1L2L3 triplet                 2,259
-IT L2L3L4 L2L3>L4                 1,965
-IT L2L3L4 L3L4>L2                 1,956
-IT L2L3L4 triplet                 1,947
-OT L1L2                           2,082
-OT L2L3                           2,175
-OT L2L3L4                         1,417
-OT L3L4                           2,158
-OT L4L5L6                         1,286
-OT L5L6                           1,442
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                 2,201      2,386   0.922
+IT L1L2L3 L2L3>L1                 2,178      2,386   0.913
+IT L1L2L3 triplet                 2,259      2,386   0.947
+IT L2L3L4 L2L3>L4                 1,965      2,054   0.957
+IT L2L3L4 L3L4>L2                 1,956      2,054   0.952
+IT L2L3L4 triplet                 1,947      2,054   0.948
+OT L1L2                           2,082      2,302   0.904
+OT L2L3                           2,175      2,372   0.917
+OT L2L3L4                         1,417      2,184   0.649
+OT L3L4                           2,158      2,202   0.980
+OT L4L5L6                         1,286      1,678   0.766
+OT L5L6                           1,442      1,678   0.859
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
@@ -209,19 +209,19 @@ OT L4L5L6                         1,147      1,132      1,174        853        
 OT L5L6                           1,029      1,014      1,052        721        716        714        789        844        459        836          4          0
 
 === pT 20+
-mode                          TPs found
-IT L1L2L3 L1L2>L3                 1,211
-IT L1L2L3 L2L3>L1                 1,208
-IT L1L2L3 triplet                 1,223
-IT L2L3L4 L2L3>L4                 1,080
-IT L2L3L4 L3L4>L2                 1,070
-IT L2L3L4 triplet                 1,077
-OT L1L2                           1,113
-OT L2L3                           1,138
-OT L2L3L4                           804
-OT L3L4                           1,132
-OT L4L5L6                           683
-OT L5L6                             767
+mode                              found   findable     eff
+IT L1L2L3 L1L2>L3                 1,211      1,275   0.950
+IT L1L2L3 L2L3>L1                 1,208      1,275   0.947
+IT L1L2L3 triplet                 1,223      1,275   0.959
+IT L2L3L4 L2L3>L4                 1,080      1,112   0.971
+IT L2L3L4 L3L4>L2                 1,070      1,112   0.962
+IT L2L3L4 triplet                 1,077      1,112   0.969
+OT L1L2                           1,113      1,219   0.913
+OT L2L3                           1,138      1,252   0.909
+OT L2L3L4                           804      1,150   0.699
+OT L3L4                           1,132      1,163   0.973
+OT L4L5L6                           683        893   0.765
+OT L5L6                             767        893   0.859
 
 ABSOLUTE TPs found by COLUMN but missed by ROW
                              L1L2L3 L1L L1L2L3 L2L L1L2L3 tri L2L3L4 L2L L2L3L4 L3L L2L3L4 tri    OT:L1L2    OT:L2L3  OT:L2L3L4    OT:L3L4  OT:L4L5L6    OT:L5L6
