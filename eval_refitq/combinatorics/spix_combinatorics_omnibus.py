@@ -2845,33 +2845,66 @@ def study_combined_it_ot(X, K, P, ax_row, out):
                     "sig_z0_cm": rs(z0[g] - VZ[p][g]),
                     "sig_cot": rs(cot[g] - np.sinh(ET[p][g])),
                     "n": int(g.sum())}
+    # TARGET-LAYER z RESOLUTION, measured against each TP's own helix
+    # z = vz + r*sinh(eta). This MUST enter the z road: an earlier revision used
+    # only the seed's z uncertainty and understated IT-seed projection work by
+    # 2.9x, because OT 2S modules resolve z to ~1.8 cm and completely dominate
+    # the window there.
+    def zres(rr, zz, ev, tpi):
+        k = M.tp_key(ev, tpi)
+        p = np.clip(np.searchsorted(KV, k), 0, len(KV) - 1)
+        g = KV[p] == k
+        if g.sum() < 200:
+            return 0.0
+        return rs(zz[g] - (VZ[p[g]] + rr[g] * np.sinh(ET[p[g]])))
     layers = {}
     for L in (1, 2, 3, 4):
-        m = I["layer"] == L
+        m = (I["layer"] == L)
+        mt = m & (I["tpIdx"] >= 0) & (I["tpPt"] >= PT)
         layers[NAME[L]] = (float(np.median(I["globalR"][m])), m.sum() / nev,
-                           float(np.ptp(I["globalZ"][m])))
+                           float(np.ptp(I["globalZ"][m])),
+                           zres(I["globalR"][mt], I["globalZ"][mt],
+                                I["event"][mt], I["tpIdx"][mt]))
     for L in range(1, 7):
         m = bar & (O["layer"] == L)
         if m.sum() < 100:
             continue
+        mt = m & (O["tpIdx"] >= 0) & (O["tpPt"] >= PT)
         layers[NAME[L + 10]] = (float(np.median(O["r"][m])), m.sum() / onev,
-                                float(np.ptp(O["z"][m])))
+                                float(np.ptp(O["z"][m])),
+                                zres(O["r"][mt], O["z"][mt], O["event"][mt],
+                                     O["tpIdx"][mt]))
     ms = M.THETA_MS_MRAD * 1e-3 / PT
+    # WHICH COORDINATE TO SEARCH ON, per target layer. The IT-only study found
+    # z-first beat phi-first by 28x -- but that phi window carried the d0
+    # allowance (17.5 mrad) that beamline-constrained pairs no longer need, and
+    # it projected only into finely-z-segmented IT layers. With the d0 term gone
+    # and the target's own z resolution in, the answer REVERSES on nearly every
+    # layer, and the seed ranking reverses with it: phi cost scales with
+    # sigma(kappa), which is exactly where the long-lever-arm mixed seeds win.
     cost = {}
     for nm, qq in qual.items():
         per = {}
-        for tn, (r, occ, zs) in layers.items():
-            wz = 2 * NSIG * np.hypot(qq["sig_z0_cm"], r * qq["sig_cot"])
+        for tn, (r, occ, zs, stz) in layers.items():
+            wz = 2 * NSIG * np.sqrt(qq["sig_z0_cm"] ** 2 + (r * qq["sig_cot"]) ** 2
+                                    + stz ** 2)
             wphi = 2 * NSIG * (M.C_BEND * r * qq["sig_kappa"] + ms)
             zc = occ * min(wz / zs, 1.0)
-            per[tn] = {"z_search": float(zc),
+            pc = occ * min(wphi / (2 * np.pi), 1.0)
+            per[tn] = {"z_search": float(zc), "phi_search": float(pc),
+                       "best": float(min(zc, pc)),
+                       "use": ("z" if zc <= pc else "phi"),
                        "background": float(zc * min(wphi / (2 * np.pi), 1.0))}
-        per["ALL"] = {"z_search": float(sum(v["z_search"] for v in per.values())),
-                      "background": float(sum(v["background"] for v in per.values()))}
+        sub = [v for k, v in per.items() if k != "ALL"]
+        per["ALL"] = {"z_search": float(sum(v["z_search"] for v in sub)),
+                      "phi_search": float(sum(v["phi_search"] for v in sub)),
+                      "best": float(sum(v["best"] for v in sub)),
+                      "background": float(sum(v["background"] for v in sub))}
         cost[nm] = per
     out["combined_it_ot"] = {"pt_min": PT, "n_events": nev, "seed_quality": qual,
                              "layers": {k: {"r": v[0], "obj_per_event": v[1],
-                                            "z_span": v[2]} for k, v in layers.items()},
+                                            "z_span": v[2], "sigma_z_cm": v[3]}
+                                        for k, v in layers.items()},
                              "projection_cost": cost,
                              "it_designs": IT_DESIGNS}
     _draw_combined(ax_row, qual, layers, cost)
@@ -2907,10 +2940,12 @@ def _draw_combined(ax_row, qual, layers, cost):
 
     ax = ax_row[2]
     xs = np.arange(len(names))
-    ax.bar(xs - 0.2, [cost[n]["ALL"]["z_search"] for n in names], 0.4,
-           color="#2a78d6", label="z-road work")
-    ax.bar(xs + 0.2, [cost[n]["ALL"]["background"] * 100 for n in names], 0.4,
-           color="#e8833a", label="background x100")
+    ax.bar(xs - 0.25, [cost[n]["ALL"]["z_search"] for n in names], 0.25,
+           color="#9ec5f4", label="always z-first")
+    ax.bar(xs, [cost[n]["ALL"]["phi_search"] for n in names], 0.25,
+           color="#2a78d6", label="always phi-first")
+    ax.bar(xs + 0.25, [cost[n]["ALL"]["best"] for n in names], 0.25,
+           color="#e8833a", label="best per layer")
     ax.set_xticks(xs); ax.set_xticklabels(names, rotation=20, fontsize=6.5)
     ax.set_yscale("log")
     ax.set_ylabel("summed over all ten IT+OT layers", fontsize=8)
