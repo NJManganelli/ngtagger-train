@@ -2727,6 +2727,199 @@ def _composition_side_table(out, res):
 # entry is (title, function, n_panels); a section is a title plus a one-line
 # statement of what the section is for, printed on the figure and in the log.
 # ---------------------------------------------------------------------------
+# ---- the two IT-only L1L2L3 designs, named so they cannot be conflated -------
+# BASELINE DOUBLETS   triplet + L1L2->L3 + L2L3->L1, both doublets ungated.
+#                     Union 0.9231, doublet cost 17,683 candidate triplets/event.
+# RECOVERY DOUBLETS   the same three seeds, but each doublet carries a lower gate
+#                     on its OWN |kappa| (>= 0.35, i.e. pT <= 2.9 GeV), aiming it
+#                     at the band where the triplet fails. Union 0.9185 for 0.35x
+#                     the doublet cost. Runs in PARALLEL with the triplet.
+# L2L3L4 is retained in the JSON for the record but the design focus is L1L2L3.
+IT_DESIGNS = {"baseline doublets": 0.0, "recovery doublets": 0.35}
+
+
+def study_combined_it_ot(X, K, P, ax_row, out):
+    """(14) A combined IT+OT tracker: which seeds, and what does projection cost?
+
+    Everything so far treated IT and OT as separate systems joined only at the
+    fit. If instead one system seeds, projects and fits across both, the seed
+    choice changes, because the two subsystems are complementary in a very
+    specific way. MEASURED on truth-matched pairs, 1000 PU200 ttbar events:
+
+      seed pair        dr [cm]   sigma(kappa)   sigma(z0)
+      IT L1 + IT L2       3.1       0.0306         73 um     <- best z0
+      IT L2 + IT L3       4.3       0.0170        109 um
+      IT L3 + OT L1      14.4       0.0093        550 um
+      IT L4 + OT L2      22.7       0.0074        550 um
+      OT L1 + OT L2      12.5       0.0085      2,483 um     <- best kappa, worst z0
+
+    The IT buys LONGITUDINAL precision -- z0 extrapolates from a short radius and
+    its clusters are finely segmented in z -- while a long lever arm buys
+    CURVATURE precision. A mixed IT+OT pair also nearly eliminates the d0
+    problem: kappa_bias falls from 10.34 per cm (IT L1L2) to 0.49 (IT L4+OT L1),
+    so at d0 = 500 um the curvature slack is 5% of kappa_max instead of 103%.
+
+    The projection cost then separates into the WORK (objects inside the
+    3-sigma z road, which is what the search actually scans) and the BACKGROUND
+    that survives the joint phi-and-z window. The real hit is present by
+    construction, so the second number is fakes per projection, not track length.
+    """
+    import importlib.util as _ilu
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "tracklet_topology_cost.py")
+    _sp = _ilu.spec_from_file_location("_ttc3", _p)
+    M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
+    srcs = out.get("_inputs") or []
+    need = ("globalR", "globalZ", "globalPhi", "tpIdx", "tpPt")
+    if not srcs or any(c not in K for c in need):
+        for a in ax_row:
+            a.axis("off")
+        out["combined_it_ot"] = {"skipped": "needs _inputs and IT truth columns"}
+        return
+    PT, NSIG = 2.0, 3.0
+    src = ",".join(srcs)
+    try:
+        I, nev, _ = M.load_flat(src, M.IT_TABLE,
+                                ["layer", "globalR", "globalZ", "globalPhi",
+                                 "tpIdx", "tpPt", "tpVz", "tpEta"], None)
+        O, onev, _ = M.load_ot(src, None)
+    except Exception as exc:
+        for a in ax_row:
+            a.axis("off")
+        out["combined_it_ot"] = {"skipped": f"{type(exc).__name__}: {exc}"}
+        return
+    bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
+    U = {"layer": np.r_[I["layer"], O["layer"][bar] + 10],
+         "r": np.r_[I["globalR"], O["r"][bar]], "z": np.r_[I["globalZ"], O["z"][bar]],
+         "phi": np.r_[I["globalPhi"], O["phi"][bar]],
+         "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
+         "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
+         "event": np.r_[I["event"], O["event"][bar]]}
+    mi = I["tpIdx"] >= 0
+    kv = M.tp_key(I["event"][mi], I["tpIdx"][mi])
+    o = np.argsort(kv, kind="stable")
+    kv, vz, et = kv[o], I["tpVz"][mi][o], I["tpEta"][mi][o]
+    f = np.r_[True, kv[1:] != kv[:-1]]
+    KV, VZ, ET = kv[f], vz[f], et[f]
+
+    def firstpertp(L):
+        m = (U["layer"] == L) & (U["tpIdx"] >= 0) & (U["tpPt"] >= PT)
+        idx = np.flatnonzero(m)
+        k = M.tp_key(U["event"][idx], U["tpIdx"][idx])
+        oo = np.argsort(k, kind="stable")
+        k, idx = k[oo], idx[oo]
+        ff = np.r_[True, k[1:] != k[:-1]]
+        return k[ff], idx[ff]
+
+    def rs(x):
+        qq = np.percentile(x, [15.865, 84.135])
+        return float(0.5 * (qq[1] - qq[0]))
+
+    NAME = {1: "IT L1", 2: "IT L2", 3: "IT L3", 4: "IT L4",
+            11: "OT L1", 12: "OT L2", 13: "OT L3", 14: "OT L4",
+            15: "OT L5", 16: "OT L6"}
+    SEEDS = [("IT L1+L2", 1, 2), ("IT L2+L3", 2, 3), ("IT L3+OT L1", 3, 11),
+             ("IT L4+OT L2", 4, 12), ("OT L1+L2", 11, 12)]
+    FP = {}
+    qual = {}
+    for nm, la, lb in SEEDS:
+        for L in (la, lb):
+            if L not in FP:
+                FP[L] = firstpertp(L)
+        ka, ia = FP[la]; kb, ib = FP[lb]
+        com = np.intersect1d(np.intersect1d(ka, kb), KV)
+        if len(com) < 500:
+            continue
+        ga = ia[np.searchsorted(ka, com)]; gb = ib[np.searchsorted(kb, com)]
+        p = np.searchsorted(KV, com)
+        dr = U["r"][gb] - U["r"][ga]
+        ok = np.abs(dr) > 0.5
+        kap = M.wrap(U["phi"][ga] - U["phi"][gb]) / (M.C_BEND * np.where(ok, dr, 1e9))
+        cot = (U["z"][gb] - U["z"][ga]) / np.where(ok, dr, 1e9)
+        z0 = U["z"][ga] - U["r"][ga] * cot
+        g = ok & (np.abs(kap) < 2) & (np.abs(z0 - VZ[p]) < 30)
+        if g.sum() < 500:
+            continue
+        qual[nm] = {"dr_cm": float(np.median(dr)),
+                    "sig_kappa": rs(np.abs(kap[g]) - 1.0 / U["tpPt"][ga][g]),
+                    "sig_z0_cm": rs(z0[g] - VZ[p][g]),
+                    "sig_cot": rs(cot[g] - np.sinh(ET[p][g])),
+                    "n": int(g.sum())}
+    layers = {}
+    for L in (1, 2, 3, 4):
+        m = I["layer"] == L
+        layers[NAME[L]] = (float(np.median(I["globalR"][m])), m.sum() / nev,
+                           float(np.ptp(I["globalZ"][m])))
+    for L in range(1, 7):
+        m = bar & (O["layer"] == L)
+        if m.sum() < 100:
+            continue
+        layers[NAME[L + 10]] = (float(np.median(O["r"][m])), m.sum() / onev,
+                                float(np.ptp(O["z"][m])))
+    ms = M.THETA_MS_MRAD * 1e-3 / PT
+    cost = {}
+    for nm, qq in qual.items():
+        per = {}
+        for tn, (r, occ, zs) in layers.items():
+            wz = 2 * NSIG * np.hypot(qq["sig_z0_cm"], r * qq["sig_cot"])
+            wphi = 2 * NSIG * (M.C_BEND * r * qq["sig_kappa"] + ms)
+            zc = occ * min(wz / zs, 1.0)
+            per[tn] = {"z_search": float(zc),
+                       "background": float(zc * min(wphi / (2 * np.pi), 1.0))}
+        per["ALL"] = {"z_search": float(sum(v["z_search"] for v in per.values())),
+                      "background": float(sum(v["background"] for v in per.values()))}
+        cost[nm] = per
+    out["combined_it_ot"] = {"pt_min": PT, "n_events": nev, "seed_quality": qual,
+                             "layers": {k: {"r": v[0], "obj_per_event": v[1],
+                                            "z_span": v[2]} for k, v in layers.items()},
+                             "projection_cost": cost,
+                             "it_designs": IT_DESIGNS}
+    _draw_combined(ax_row, qual, layers, cost)
+
+
+def _draw_combined(ax_row, qual, layers, cost):
+    C = ["#2a78d6", "#e8833a", "#4b9f6e", "#b1524f", "#7a6ff0"]
+    INK2 = "#52514e"
+    names = list(qual)
+    ax = ax_row[0]
+    for i, nm in enumerate(names):
+        ax.scatter(qual[nm]["sig_kappa"], qual[nm]["sig_z0_cm"] * 1e4, s=90,
+                   color=C[i % len(C)], edgecolor="#fcfcfb", lw=1.2, zorder=3)
+        ax.annotate(nm, (qual[nm]["sig_kappa"], qual[nm]["sig_z0_cm"] * 1e4),
+                    fontsize=6.5, xytext=(5, 4), textcoords="offset points", color=INK2)
+    ax.set_yscale("log")
+    ax.set_xlabel("sigma(kappa)  [GeV^-1]", fontsize=8)
+    ax.set_ylabel("sigma(z0)  [um]", fontsize=8)
+    ax.set_title("the IT/OT trade: longitudinal vs curvature\n(lower-left is better, "
+                 "nothing is there)", fontsize=9)
+    ax.grid(alpha=0.25, lw=0.6); ax.tick_params(labelsize=7, colors=INK2)
+
+    ax = ax_row[1]
+    tn = [t for t in layers]
+    for i, nm in enumerate(names):
+        ax.plot(range(len(tn)), [cost[nm][t]["z_search"] for t in tn], "-o",
+                color=C[i % len(C)], ms=4, lw=1.8, label=nm)
+    ax.set_yscale("log")
+    ax.set_xticks(range(len(tn))); ax.set_xticklabels(tn, rotation=90, fontsize=6.5)
+    ax.set_ylabel("objects scanned in the z road, per projection", fontsize=8)
+    ax.set_title("projection WORK, per seed per target layer", fontsize=9)
+    ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=6); ax.tick_params(labelsize=7, colors=INK2)
+
+    ax = ax_row[2]
+    xs = np.arange(len(names))
+    ax.bar(xs - 0.2, [cost[n]["ALL"]["z_search"] for n in names], 0.4,
+           color="#2a78d6", label="z-road work")
+    ax.bar(xs + 0.2, [cost[n]["ALL"]["background"] * 100 for n in names], 0.4,
+           color="#e8833a", label="background x100")
+    ax.set_xticks(xs); ax.set_xticklabels(names, rotation=20, fontsize=6.5)
+    ax.set_yscale("log")
+    ax.set_ylabel("summed over all ten IT+OT layers", fontsize=8)
+    ax.set_title("total projection cost of one seed\n(real hit excluded: it is there "
+                 "by construction)", fontsize=9)
+    ax.grid(alpha=0.25, axis="y", lw=0.6); ax.legend(fontsize=6.5)
+    ax.tick_params(labelsize=7, colors=INK2)
+
+
 SECTIONS = [
     ("A. Cluster cones: how much is in reach of a track?",
      "Occupancy and containment around a projected track -- the raw material every"
@@ -2756,7 +2949,8 @@ SECTIONS = [
      [("sector bin sizing", study_sector_binning, 2),
       ("hough examples", study_hough_examples, 2),
       ("seed-mode confusion", study_seed_mode_confusion, 3),
-      ("seed composition", study_seed_composition, 3)]),
+      ("seed composition", study_seed_composition, 3),
+      ("combined IT+OT seeding", study_combined_it_ot, 3)]),
 ]
 
 # Flat view, kept because the figure is still one grid and several studies index
