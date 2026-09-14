@@ -73,7 +73,7 @@ def build(src, nev, ptmin):
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
-    for c in ("tpVx", "tpVy", "tpPhi", "tpEta"):
+    for c in ("tpVx", "tpVy", "tpPhi", "tpEta", "tpVz"):
         U[c] = np.r_[I[c], np.full(nO, -999.0)]
     QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, None)
     # an OT stub carries no alpha/beta: huge sigmas make every angle gate pass,

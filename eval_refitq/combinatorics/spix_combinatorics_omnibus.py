@@ -2722,6 +2722,7 @@ def _composition_side_table(out, res):
 
 
 # ---- (15) seed menus per SmartPixels build ---------------------------------
+N_ADJACENT = 2           # adjacent target layers per doublet
 SEED_MENU_MASKS = ["AAAA", "AAAI", "AAIA", "AIAA", "IAAA", "AAII", "AIAI",
                    "AIIA", "IAAI", "IAIA", "IIAA", "AIII", "IAII", "IIAI", "IIIA"]
 IL_OF = {0: 1, 1: 2, 2: 3, 3: 4}
@@ -2770,10 +2771,12 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
                  min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     allidx = np.arange(len(U["layer"]))
-    acc = {}
+    acc, rmed = {}, {}
     for L in (1, 2, 3, 4) + OT_BARREL:
-        m = (U["layer"] == L) & (U["tpIdx"] >= 0) & (U["tpPt"] >= PTMIN)
+        sel = U["layer"] == L
+        m = sel & (U["tpIdx"] >= 0) & (U["tpPt"] >= PTMIN)
         acc[L] = np.unique(M.tp_key(U["event"][m], U["tpIdx"][m]))
+        rmed[L] = float(np.median(U["globalR"][sel])) if sel.any() else 0.0
 
     cache = {}
 
@@ -2792,10 +2795,32 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
             cache[key] = None
             return None
         nc, nt = M.cand_purity(U, *o["_trip"])
+        # SEED QUALITY, from the recovered triples themselves: the parameter
+        # resolutions this seed delivers to whatever fits it. A menu chosen on
+        # efficiency and cost alone says nothing about whether the tracks are
+        # worth having, and these are the hooks a proper track-resolution metric
+        # will hang from.
+        ga, gb, gc = o["_trip"]
+        dr = U["globalR"][gb] - U["globalR"][ga]
+        okp = np.abs(dr) > 0.5
+        kap = M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb]) / (
+            M.C_BEND * np.where(okp, dr, 1e9))
+        cot = (U["globalZ"][gb] - U["globalZ"][ga]) / np.where(okp, dr, 1e9)
+        z0 = U["globalZ"][ga] - U["globalR"][ga] * cot
+        tpa = U["tpIdx"][ga]
+        real = okp & (tpa >= 0) & (tpa == U["tpIdx"][gb]) & (tpa == U["tpIdx"][gc])
+        def _rs(x):
+            if x.size < 50:
+                return float("nan")
+            q = np.percentile(x, [15.865, 84.135])
+            return float(0.5 * (q[1] - q[0]))
+        qual = {"sig_kappa": _rs(np.abs(kap[real]) - 1.0 / U["tpPt"][ga][real]),
+                "sig_cot": _rs(cot[real] - np.sinh(U["tpEta"][ga][real])),
+                "sig_z0_cm": _rs(z0[real] - U["tpVz"][ga][real])}
         cache[key] = (M.recovered_keys(U, *o["_trip"]),
                       {"cand": o.get("match_cand", 0) / nev,
                        "fit": o.get("tracks_to_fit", 0) / nev,
-                       "fake": 1.0 - nt / max(nc, 1)})
+                       "fake": 1.0 - nt / max(nc, 1), **qual})
         return cache[key]
 
     # TWO PASSES. The first runs every seed any build can form, so the second can
@@ -2817,8 +2842,20 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
                 rest = [L for L in layers if L not in (la, lb)]
                 if not rest:
                     continue
-                lc = max(rest, key=lambda L: len(np.intersect1d(pair_acc, acc[L])))
-                cands.append((la, lb, lc))
+                # EVERY DOUBLET GETS BOTH ADJACENT LAYERS AS TARGETS. No
+                # heuristic picks one. An earlier revision selected the target
+                # with the largest acceptance overlap, and for IL1+IL2 that chose
+                # OL2 over OL1 on a 1.3% margin (9,016 against 8,898 TPs) while
+                # OL1 is better on every axis that matters -- efficiency 0.867 vs
+                # 0.852, 11,877 candidates vs 12,584, fake 0.523 vs 0.603 --
+                # because a shorter extrapolation predicts better. It also buried
+                # IL4, the CHEAPEST target of all at 4,616 candidates, because a
+                # TP reaching IL2 often stops before IL4 so its overlap is lowest.
+                # So both adjacent layers are enumerated and the composition
+                # decides. In AAIA that means IL1+IL2 -> IL4 AND IL1+IL2 -> OL1.
+                rmid = 0.5 * (rmed[la] + rmed[lb])
+                for lc in sorted(rest, key=lambda L: abs(rmed[L] - rmid))[:N_ADJACENT]:
+                    cands.append((la, lb, lc))
         per_build_cands[mask] = cands
         for la, lb, lc in cands:
             run(la, lb, lc)
@@ -2844,18 +2881,35 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
             builds[mask] = {"n_seeds": 0}
             continue
         denom = DENOM
-        menu, have, pool = [], np.empty(0, np.int64), dict(found)
-        while pool and len(menu) < 8:
-            best = max(pool, key=lambda t: len(np.setdiff1d(pool[t], have)))
-            gain = len(np.setdiff1d(pool[best], have))
-            if gain <= 0:
-                break
-            have = np.union1d(have, pool.pop(best))
-            menu.append({"seed": best, "marginal_tps": int(gain),
-                         "cum_eff": float(len(have) / len(denom)), **cost[best]})
+
+        def compose(weighted):
+            """Greedy menu. weighted=False maximises marginal TPs; True maximises
+            marginal TPs PER CANDIDATE, which is what a cost-limited system wants
+            and which demotes seeds that buy a few hundred tracks for 1e6
+            candidates."""
+            m, hv, pl = [], np.empty(0, np.int64), dict(found)
+            while pl and len(m) < 8:
+                def score(t):
+                    g = len(np.setdiff1d(pl[t], hv))
+                    return g / max(cost[t]["cand"], 1.0) if weighted else g
+                best = max(pl, key=score)
+                gain = len(np.setdiff1d(pl[best], hv))
+                if gain <= 0:
+                    break
+                hv = np.union1d(hv, pl.pop(best))
+                m.append({"seed": best, "marginal_tps": int(gain),
+                          "cum_eff": float(len(hv) / len(denom)),
+                          "marg_per_kcand": 1e3 * gain / max(cost[best]["cand"], 1.0),
+                          **cost[best]})
+            return m
+        menu = compose(False)
+        menu_cost = compose(True)
         builds[mask] = {"n_seeds": len(found), "denominator": int(len(denom)),
                         "n_it_layers": len(il), "it_layers": [SMC.NAME[L] for L in il],
-                        "menu": menu,
+                        "menu": menu, "menu_cost_weighted": menu_cost,
+                        "eff_3_cost_weighted": (menu_cost[2]["cum_eff"]
+                                                if len(menu_cost) > 2 else 0.0),
+                        "cand_3_cost_weighted": sum(m["cand"] for m in menu_cost[:3]),
                         "eff_3": menu[2]["cum_eff"] if len(menu) > 2 else
                                  (menu[-1]["cum_eff"] if menu else 0.0),
                         "cand_3": sum(m["cand"] for m in menu[:3])}
@@ -2919,13 +2973,26 @@ def _menu_by_build_table(out, builds):
                 continue
             fh.write(f"=== {mask}   IT layers {','.join(b['it_layers']) or 'none'}"
                      f"   {b['n_seeds']} viable seeds   denominator {b['denominator']:,}\n")
-            fh.write(f"  {'#':>2} {'seed':<18}{'marginal':>10}{'cum eff':>9}"
-                     f"{'cand/ev':>11}{'fit/ev':>8}{'fake':>7}\n")
-            for i, m in enumerate(b["menu"], 1):
-                fh.write(f"  {i:>2} {m['seed']:<18}{m['marginal_tps']:>10,d}"
-                         f"{m['cum_eff']:>9.3f}{m['cand']:>11,.0f}{m['fit']:>8,.0f}"
-                         f"{m['fake']:>7.3f}\n")
-            fh.write("\n")
+            for lbl, key in (("greedy by MARGINAL GAIN", "menu"),
+                             ("greedy by MARGINAL GAIN PER CANDIDATE", "menu_cost_weighted")):
+                fh.write(f"  -- {lbl}\n")
+                fh.write(f"  {'#':>2} {'seed':<18}{'marginal':>10}{'cum eff':>9}"
+                         f"{'marg/kcand':>12}{'cand/ev':>11}{'fit/ev':>8}{'fake':>7}"
+                         f"{'sig(kap)':>10}{'sig(z0)um':>11}{'sig(cot)':>10}\n")
+                for i, m in enumerate(b.get(key, []), 1):
+                    sz = m.get("sig_z0_cm", float("nan"))
+                    fh.write(f"  {i:>2} {m['seed']:<18}{m['marginal_tps']:>10,d}"
+                             f"{m['cum_eff']:>9.3f}"
+                             f"{m.get('marg_per_kcand', float('nan')):>12.1f}"
+                             f"{m['cand']:>11,.0f}{m['fit']:>8,.0f}{m['fake']:>7.3f}"
+                             f"{m.get('sig_kappa', float('nan')):>10.4f}"
+                             f"{sz*1e4 if sz == sz else float('nan'):>11,.0f}"
+                             f"{m.get('sig_cot', float('nan')):>10.4f}\n")
+                fh.write("\n")
+            fh.write("  marg/kcand = marginal TPs per 1000 candidate triplets per event.\n"
+                     "  sig(kappa)/sig(z0)/sig(cot) are the seed's OWN parameter\n"
+                     "  resolutions on the triples it recovers -- the hook a proper\n"
+                     "  track-resolution metric will replace.\n\n")
     print(f"    wrote {p}")
 
 
