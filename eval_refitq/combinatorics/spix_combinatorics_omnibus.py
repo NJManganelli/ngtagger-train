@@ -2759,8 +2759,12 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     SMC = _mod("seed_menu_composition")
     TF = _mod("tp_findability")
     M = SMC.M
-    srcs = out.get("_inputs") or []
-    if not srcs:
+    # THIS STUDY STREAMS; the rest of the omnibus does not. load() concatenates
+    # every input up front with no event cap, which is fine for one 100-event
+    # file and tens of GB across ten, so the census gets its own input spec and
+    # the full ttbar set is passed here rather than to -i.
+    spec = out.get("_menu_inputs") or ",".join(out.get("_inputs") or [])
+    if not spec:
         for a in ax_row:
             a.axis("off")
         out["seed_menu_by_build"] = {"skipped": "needs _inputs"}
@@ -2773,7 +2777,7 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     # seed's recovered key set in memory at once. The shards are keyed on the
     # inputs, so a rerun of this study is a load, not a recomputation.
     try:
-        C = TF.build(",".join(srcs), NEV, PTMIN, list(TF.ALL_LAYERS), N_ADJACENT,
+        C = TF.build(spec, NEV, PTMIN, list(TF.ALL_LAYERS), N_ADJACENT,
                      int(out.get("_menu_chunk", 16)),
                      out.get("_menu_cache", os.path.join(_here, "cache")),
                      out.get("_menu_cache_mode", "auto"),
@@ -2878,6 +2882,7 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
                                  (menu[-1]["cum_eff"] if menu else 0.0),
                         "cand_3": sum(m["cand"] for m in menu[:3])}
     out["seed_menu_by_build"] = {"n_events": nev, "pt_min": PTMIN,
+                                 "inputs": spec,
                                  "n_tp_census": int(len(C["key"])),
                                  "n_seeds_run": len(C["seed_tags"]),
                                  "cache_dir": C["cache_dir"], "builds": builds}
@@ -3242,6 +3247,10 @@ def main():
     ap.add_argument("-o", "--outdir", default="eval_refitq/combinatorics")
     ap.add_argument("--only", default=None,
                     help="run only studies whose name contains this substring")
+    ap.add_argument("--menu-inputs", default=None,
+                    help="comma-separated files/globs for study 15's streamed "
+                         "census; defaults to -i. The other studies load their "
+                         "inputs whole, so the full ttbar set belongs here.")
     ap.add_argument("--menu-nev", type=int, default=100,
                     help="events for the per-build seed menu study (15)")
     ap.add_argument("--menu-chunk", type=int, default=16,
@@ -3266,7 +3275,7 @@ def main():
            # studies that need to re-read the file for OTHER activeSP variants
            "_inputs": [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])],
            "_hit_table": hit,
-           "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
+           "_menu_inputs": args.menu_inputs, "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
            "_menu_budget_gb": args.menu_budget_gb,
            "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
            "_menu_cache_mode": args.menu_cache_mode}
