@@ -2748,10 +2748,16 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     is composed from that cache. Without it this would be fifteen full passes.
     """
     import importlib.util as _ilu
-    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                      "seed_menu_composition.py")
-    _sp = _ilu.spec_from_file_location("_smc", _p)
-    SMC = _ilu.module_from_spec(_sp); _sp.loader.exec_module(SMC)
+    _here = os.path.dirname(os.path.abspath(__file__))
+
+    def _mod(name):
+        sp = _ilu.spec_from_file_location("_" + name,
+                                          os.path.join(_here, name + ".py"))
+        m = _ilu.module_from_spec(sp)
+        sp.loader.exec_module(m)
+        return m
+    SMC = _mod("seed_menu_composition")
+    TF = _mod("tp_findability")
     M = SMC.M
     srcs = out.get("_inputs") or []
     if not srcs:
@@ -2761,178 +2767,108 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         return
     PTMIN = float(out.get("_menu_ptmin", 2.0))
     NEV = int(out.get("_menu_nev", 100))
+    # CHUNKED AND CACHED. Every seed is run once per chunk of events and reduced
+    # immediately to a per-TrackingParticle bitmap, so the thousand-event set
+    # never needs the whole unified IT+OT table (5.2 GB) or a cache of every
+    # seed's recovered key set in memory at once. The shards are keyed on the
+    # inputs, so a rerun of this study is a load, not a recomputation.
     try:
-        U, Q, nev = SMC.build(",".join(srcs), NEV, PTMIN)
+        C = TF.build(",".join(srcs), NEV, PTMIN, list(TF.ALL_LAYERS), N_ADJACENT,
+                     int(out.get("_menu_chunk", 16)),
+                     out.get("_menu_cache", os.path.join(_here, "cache")),
+                     out.get("_menu_cache_mode", "auto"),
+                     masks=SEED_MENU_MASKS,
+                     budget_gb=float(out.get("_menu_budget_gb", 0.4)),
+                     rss_gb=float(out.get("_menu_rss_gb", 8.0)))
     except Exception as exc:
         for a in ax_row:
             a.axis("off")
         out["seed_menu_by_build"] = {"skipped": f"{type(exc).__name__}: {exc}"}
         return
-    # MEMORY. This study is the heaviest thing in the omnibus: it holds the
-    # unified IT+OT table AND a cache of every seed's recovered key set, while
-    # the OT-heavy seeds each expand ~1e6 candidate triplets per event. Doubling
-    # the targets doubled the cache and the job was killed by the OS. The slice
-    # budget is therefore explicit and small here rather than inherited.
-    # The slice budget is the bytes of ONE expansion block, but a block
-    # materialises ~16 arrays plus their intermediates, so peak RSS runs ~2-3x
-    # the nominal budget. Measured: a 0.75 GB budget on 300 events peaked at
-    # 4.2 GB against a predicted 2.5. Budget and ceiling are therefore both
-    # explicit and the ceiling is not silently the binding constraint.
-    M.set_limits(M.triplets_for_budget(float(out.get("_menu_budget_gb", 0.4))),
-                 min(float(out.get("_menu_rss_gb", 8.0)),
-                     M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
-    allidx = np.arange(len(U["layer"]))
-    itrow = (U["layer"] <= 4) & (U["tpIdx"] >= 0)
-    _k = M.tp_key(U["event"][itrow], U["tpIdx"][itrow])
-    _o = np.argsort(_k, kind="stable")
-    _k, _vz, _et = _k[_o], U["tpVz"][itrow][_o], U["tpEta"][itrow][_o]
-    _f = np.r_[True, _k[1:] != _k[:-1]] if len(_k) else np.zeros(0, bool)
-    TPK, TPVZ, TPET = _k[_f], _vz[_f], _et[_f]
-    acc, rmed = {}, {}
-    for L in (1, 2, 3, 4) + OT_BARREL:
-        sel = U["layer"] == L
-        m = sel & (U["tpIdx"] >= 0) & (U["tpPt"] >= PTMIN)
-        acc[L] = np.unique(M.tp_key(U["event"][m], U["tpIdx"][m]))
-        rmed[L] = float(np.median(U["globalR"][sel])) if sel.any() else 0.0
+    nev = max(C["n_events"], 1)
+    rmed = {int(k): float(v) for k, v in C["calibration"]["r_median"].items()}
+    idx_of = {t: i for i, t in enumerate(C["seed_tags"])}
+    above = C["pt"] >= PTMIN
 
-    cache = {}
-
-    def run(la, lb, lc):
-        """Recovered TP set and cost for one seed. Cached: a seed's result does
-        not depend on which OTHER layers a build instruments."""
-        key = (la, lb, lc)
-        if key in cache:
-            return cache[key]
-        try:
-            o = M.it_pair_seed(U, Q, allidx, la, lb, lc, PTMIN, True, False, 0.0)
-        except M.TooWide as e:
-            cache[key] = None
-            return None
-        if "_trip" not in o:
-            cache[key] = None
-            return None
-        nc, nt = M.cand_purity(U, *o["_trip"])
-        # SEED QUALITY, from the recovered triples themselves: the parameter
-        # resolutions this seed delivers to whatever fits it. A menu chosen on
-        # efficiency and cost alone says nothing about whether the tracks are
-        # worth having, and these are the hooks a proper track-resolution metric
-        # will hang from.
-        ga, gb, gc = o["_trip"]
-        dr = U["globalR"][gb] - U["globalR"][ga]
-        okp = np.abs(dr) > 0.5
-        kap = M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb]) / (
-            M.C_BEND * np.where(okp, dr, 1e9))
-        cot = (U["globalZ"][gb] - U["globalZ"][ga]) / np.where(okp, dr, 1e9)
-        z0 = U["globalZ"][ga] - U["globalR"][ga] * cot
-        tpa = U["tpIdx"][ga]
-        real = okp & (tpa >= 0) & (tpa == U["tpIdx"][gb]) & (tpa == U["tpIdx"][gc])
-        # TP TRUTH BY KEY, NOT BY HIT ROW. OT stub rows carry tpVz = tpEta = -999
-        # because only IT clusters store them, so reading truth off the inner hit
-        # gives nonsense whenever that hit is a stub -- every OT-only seed. It
-        # read sigma(z0) as 42,000-64,000 um and sigma(cot) as nan, since
-        # sinh(-999) overflows. Look the TP up instead.
-        kk = M.tp_key(U["event"][ga], np.maximum(tpa, 0))
-        pos = np.clip(np.searchsorted(TPK, kk), 0, max(len(TPK) - 1, 0))
-        real = real & (len(TPK) > 0) & (TPK[pos] == kk)
-        vz_t, et_t = TPVZ[pos], TPET[pos]
-        def _rs(x):
-            if x.size < 50:
-                return float("nan")
-            q = np.percentile(x, [15.865, 84.135])
-            return float(0.5 * (q[1] - q[0]))
-        qual = {"sig_kappa": _rs(np.abs(kap[real]) - 1.0 / U["tpPt"][ga][real]),
-                "sig_cot": _rs(cot[real] - np.sinh(et_t[real])),
-                "sig_z0_cm": _rs(z0[real] - vz_t[real])}
-        rkeys = M.recovered_keys(U, *o["_trip"])
-        del o["_trip"]                    # the triples are large and finished with
-        cache[key] = (rkeys,
-                      {"cand": o.get("match_cand", 0) / nev,
-                       "fit": o.get("tracks_to_fit", 0) / nev,
-                       "fake": 1.0 - nt / max(nc, 1), **qual})
-        return cache[key]
-
-    # TWO PASSES. The first runs every seed any build can form, so the second can
-    # compose against a COMMON denominator. A per-build denominator -- "TPs some
-    # seed of this build found" -- is self-referential and makes builds
-    # incomparable: it scored a one-layer build (AIII, 0.915) above the fully
-    # instrumented one (AAAA, 0.909), which is an artefact of the crippled build
-    # being graded on its own reduced reach.
-    per_build_cands = {}
-    for mask in SEED_MENU_MASKS:
-        il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
-        layers = il + list(OT_BARREL)
-        cands = []
-        for i, la in enumerate(layers):
-            for lb in layers[i + 1:]:
-                pair_acc = np.intersect1d(acc[la], acc[lb])
-                if len(pair_acc) / nev < 20.0:
-                    continue
-                rest = [L for L in layers if L not in (la, lb)]
-                if not rest:
-                    continue
-                # EVERY DOUBLET GETS BOTH ADJACENT LAYERS AS TARGETS. No
-                # heuristic picks one. An earlier revision selected the target
-                # with the largest acceptance overlap, and for IL1+IL2 that chose
-                # OL2 over OL1 on a 1.3% margin (9,016 against 8,898 TPs) while
-                # OL1 is better on every axis that matters -- efficiency 0.867 vs
-                # 0.852, 11,877 candidates vs 12,584, fake 0.523 vs 0.603 --
-                # because a shorter extrapolation predicts better. It also buried
-                # IL4, the CHEAPEST target of all at 4,616 candidates, because a
-                # TP reaching IL2 often stops before IL4 so its overlap is lowest.
-                # So both adjacent layers are enumerated and the composition
-                # decides. In AAIA that means IL1+IL2 -> IL4 AND IL1+IL2 -> OL1.
-                rmid = 0.5 * (rmed[la] + rmed[lb])
-                for lc in sorted(rest, key=lambda L: abs(rmed[L] - rmid))[:N_ADJACENT]:
-                    cands.append((la, lb, lc))
-        per_build_cands[mask] = cands
-        for la, lb, lc in cands:
-            run(la, lb, lc)
-    every = [v[0] for v in cache.values() if v is not None]
-    if not every:
+    def on_layer(L):
+        return (C["hit_it"] if L <= 4 else C["hit_ot"]) & np.uint8(
+            1 << ((L - 1) if L <= 4 else (L - 11))) != 0
+    ON = {L: on_layer(L) for L in (1, 2, 3, 4) + OT_BARREL}
+    # Per-seed recovered sets, as boolean masks over the census rather than key
+    # arrays: the greedy composition is then a popcount of (mask & ~have) instead
+    # of an np.setdiff1d over 1e5-element int64 arrays, which is what let the
+    # composition stay cheap once the census grew to millions of TPs.
+    FOUND, COST = {}, {}
+    for tag, i in idx_of.items():
+        c = C["counters"].get(i, {})
+        if c.get("infeasible"):
+            continue
+        m = TF.seed_mask(C, i)
+        if not m.any():
+            continue
+        q = C["qual"].get(i, np.zeros((0, 3), np.float32))
+        FOUND[tag] = m
+        COST[tag] = {"cand": c.get("cand", 0.0) / nev,
+                     "fit": c.get("fit", 0.0) / nev,
+                     "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
+                     "sig_kappa": TF.robust_sigma(q[:, 0]),
+                     "sig_cot": TF.robust_sigma(q[:, 1]),
+                     "sig_z0_cm": TF.robust_sigma(q[:, 2])}
+    if not FOUND:
         for a in ax_row:
             a.axis("off")
         out["seed_menu_by_build"] = {"skipped": "no viable seeds"}
         return
-    DENOM = np.unique(np.concatenate(every))
+    # TWO PASSES. The common denominator is every TP that ANY seed of ANY build
+    # recovers. A per-build denominator -- "TPs some seed of this build found" --
+    # is self-referential and makes builds incomparable: it scored a one-layer
+    # build (AIII, 0.915) above the fully instrumented one (AAAA, 0.909), an
+    # artefact of the crippled build being graded on its own reduced reach.
+    DEN = np.zeros(len(C["key"]), bool)
+    for m in FOUND.values():
+        DEN |= m
+    n_den = int(DEN.sum())
 
     builds = {}
     for mask in SEED_MENU_MASKS:
         il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
+        layers = il + list(OT_BARREL)
         found, cost = {}, {}
-        for la, lb, lc in per_build_cands[mask]:
-            r = run(la, lb, lc)
-            if r is None:
+        for la, lb, lc in TF.seed_universe(rmed, layers, N_ADJACENT):
+            if float((above & ON[la] & ON[lb]).sum()) / nev < 20.0:
                 continue
-            tag = f"{SMC.NAME[la]}+{SMC.NAME[lb]}>{SMC.NAME[lc]}"
-            found[tag], cost[tag] = r
+            tag = TF.seed_tag((la, lb, lc))
+            if tag in FOUND:
+                found[tag], cost[tag] = FOUND[tag], COST[tag]
         if not found:
             builds[mask] = {"n_seeds": 0}
             continue
-        denom = DENOM
 
         def compose(weighted):
             """Greedy menu. weighted=False maximises marginal TPs; True maximises
             marginal TPs PER CANDIDATE, which is what a cost-limited system wants
             and which demotes seeds that buy a few hundred tracks for 1e6
             candidates."""
-            m, hv, pl = [], np.empty(0, np.int64), dict(found)
+            m, hv, pl = [], np.zeros(len(C["key"]), bool), dict(found)
             while pl and len(m) < 8:
+                gains = {t: int((pl[t] & ~hv).sum()) for t in pl}
+
                 def score(t):
-                    g = len(np.setdiff1d(pl[t], hv))
-                    return g / max(cost[t]["cand"], 1.0) if weighted else g
+                    return (gains[t] / max(cost[t]["cand"], 1.0) if weighted
+                            else gains[t])
                 best = max(pl, key=score)
-                gain = len(np.setdiff1d(pl[best], hv))
-                if gain <= 0:
+                if gains[best] <= 0:
                     break
-                hv = np.union1d(hv, pl.pop(best))
-                m.append({"seed": best, "marginal_tps": int(gain),
-                          "cum_eff": float(len(hv) / len(denom)),
-                          "marg_per_kcand": 1e3 * gain / max(cost[best]["cand"], 1.0),
+                hv |= pl.pop(best)
+                m.append({"seed": best, "marginal_tps": gains[best],
+                          "cum_eff": float(hv.sum() / max(n_den, 1)),
+                          "marg_per_kcand": 1e3 * gains[best]
+                                            / max(cost[best]["cand"], 1.0),
                           **cost[best]})
             return m
         menu = compose(False)
         menu_cost = compose(True)
-        builds[mask] = {"n_seeds": len(found), "denominator": int(len(denom)),
+        builds[mask] = {"n_seeds": len(found), "denominator": n_den,
                         "n_it_layers": len(il), "it_layers": [SMC.NAME[L] for L in il],
                         "menu": menu, "menu_cost_weighted": menu_cost,
                         "eff_3_cost_weighted": (menu_cost[2]["cum_eff"]
@@ -2941,7 +2877,10 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
                         "eff_3": menu[2]["cum_eff"] if len(menu) > 2 else
                                  (menu[-1]["cum_eff"] if menu else 0.0),
                         "cand_3": sum(m["cand"] for m in menu[:3])}
-    out["seed_menu_by_build"] = {"n_events": nev, "pt_min": PTMIN, "builds": builds}
+    out["seed_menu_by_build"] = {"n_events": nev, "pt_min": PTMIN,
+                                 "n_tp_census": int(len(C["key"])),
+                                 "n_seeds_run": len(C["seed_tags"]),
+                                 "cache_dir": C["cache_dir"], "builds": builds}
     _draw_menu_by_build(ax_row, builds)
     _menu_by_build_table(out, builds)
 
@@ -3301,6 +3240,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-i", "--inputs", nargs="+", required=True)
     ap.add_argument("-o", "--outdir", default="eval_refitq/combinatorics")
+    ap.add_argument("--only", default=None,
+                    help="run only studies whose name contains this substring")
+    ap.add_argument("--menu-nev", type=int, default=100,
+                    help="events for the per-build seed menu study (15)")
+    ap.add_argument("--menu-chunk", type=int, default=16,
+                    help="events per chunk for study 15's cached census")
+    ap.add_argument("--menu-budget-gb", type=float, default=0.4)
+    ap.add_argument("--menu-rss-gb", type=float, default=8.0)
+    ap.add_argument("--menu-cache",
+                    default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                         "cache"))
+    ap.add_argument("--menu-cache-mode", default="auto",
+                    choices=["auto", "rebuild", "off", "require"])
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -3313,18 +3265,27 @@ def main():
            "_outdir": args.outdir,
            # studies that need to re-read the file for OTHER activeSP variants
            "_inputs": [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])],
-           "_hit_table": hit}
+           "_hit_table": hit,
+           "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
+           "_menu_budget_gb": args.menu_budget_gb,
+           "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
+           "_menu_cache_mode": args.menu_cache_mode}
 
     gp = write_glossary(args.outdir)
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
 
-    ncols = max(n for _, _, n in STUDIES)
+    SEL = [(t, d, [g for g in grp if not args.only or args.only in g[0]])
+           for t, d, grp in SECTIONS]
+    SEL = [(t, d, g) for t, d, g in SEL if g]
+    if not SEL:
+        raise SystemExit(f"--only {args.only!r} matched no study")
+    ncols = max(n for _, _, grp in SEL for _, _, n in grp)
     # one extra row per section for its banner
-    nrows = len(STUDIES) + len(SECTIONS)
+    nrows = sum(len(g) for _, _, g in SEL) + len(SEL)
     fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.2 * nrows))
     axes = np.atleast_2d(axes)
     row = 0
-    for stitle, sdesc, group in SECTIONS:
+    for stitle, sdesc, group in SEL:
         print(f"\n{stitle}\n    {sdesc}")
         for c in range(ncols):
             axes[row][c].axis("off")

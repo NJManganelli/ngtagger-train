@@ -26,3 +26,6 @@ eval_refitq/refitviz/*.html
 eval_mva_explorer/
 # Stage-4 per-jet prediction dumps (regenerable via the stage4 matrix re-run)
 eval_refitq/stage4/pred_dumps/
+
+# tp_findability shard cache: hundreds of MB, rebuildable from the nano
+eval_refitq/combinatorics/cache/
