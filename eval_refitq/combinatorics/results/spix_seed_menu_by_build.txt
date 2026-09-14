@@ -1,0 +1,170 @@
+Seed menu per SmartPixels build. activeSP mask: A = instrumented,
+I = not. An uninstrumented IT layer emits nothing at L1 and cannot
+appear in a seed. The OT is always the standard full barrel.
+Menus are composed greedily by MARGINAL gain, not by cost.
+
+=== AAAA   IT layers IL1,IL2,IL3,IL4   36 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 IL1+IL2>IL3            9,695    0.673      7,237     132  0.215
+   2 OL1+OL2>OL3            2,452    0.843     97,634     668  0.796
+   3 IL2+IL4>IL3              620    0.886      6,687      99  0.148
+   4 OL2+OL4>OL3              381    0.912    924,335   2,225  0.959
+   5 IL1+OL2>IL2              174    0.924  2,592,132   3,333  0.968
+   6 IL2+IL3>IL1              150    0.935     10,227     103  0.065
+   7 IL4+OL1>IL3              121    0.943     46,532     217  0.574
+   8 OL4+OL5>OL3               94    0.950    261,637     557  0.899
+
+=== AAAI   IT layers IL1,IL2,IL3   27 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 IL1+IL2>IL3            9,695    0.673      7,237     132  0.215
+   2 OL1+OL2>OL3            2,452    0.843     97,634     668  0.796
+   3 OL2+OL4>OL3              443    0.874    924,335   2,225  0.959
+   4 IL2+IL3>IL1              341    0.897     10,227     103  0.065
+   5 IL1+OL2>IL2              170    0.909  2,592,132   3,333  0.968
+   6 OL4+OL5>OL3              124    0.918    261,637     557  0.899
+   7 IL3+OL1>IL2              101    0.925    161,190     364  0.702
+   8 OL1+OL3>OL2               56    0.929    231,783     783  0.835
+
+=== AAIA   IT layers IL1,IL2,IL4   29 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL1+IL4>IL2            2,072    0.743     33,525     109  0.281
+   3 IL1+IL2>OL2              854    0.802     12,584     225  0.603
+   4 OL2+OL4>OL3              403    0.830    924,335   2,225  0.959
+   5 IL2+OL1>IL1              243    0.847    648,780     811  0.865
+   6 OL4+OL5>OL3              122    0.856    261,637     557  0.899
+   7 IL2+OL3>OL2               76    0.861  1,510,128   3,088  0.968
+   8 IL4+OL1>IL2               63    0.865     54,301     183  0.522
+
+=== AIAA   IT layers IL1,IL3,IL4   30 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL1+IL4>IL3            2,129    0.747     21,751     122  0.346
+   3 OL2+OL4>OL3              502    0.782    924,335   2,225  0.959
+   4 IL1+IL3>OL2              369    0.808     30,941     274  0.689
+   5 IL4+OL1>IL3              204    0.822     46,532     217  0.574
+   6 IL1+OL1>IL3              174    0.834  1,186,970   2,023  0.946
+   7 IL1+OL2>OL3              119    0.842  2,521,534   7,170  0.985
+   8 OL4+OL5>OL3               98    0.849    261,637     557  0.899
+
+=== IAAA   IT layers IL2,IL3,IL4   31 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL2+IL4>IL3            2,363    0.763      6,687      99  0.148
+   3 IL2+IL3>OL2              510    0.799      7,008     150  0.412
+   4 OL2+OL4>OL3              391    0.826    924,335   2,225  0.959
+   5 IL3+OL1>IL2              223    0.841    161,190     364  0.702
+   6 IL2+OL2>OL3              130    0.850    947,426   2,922  0.963
+   7 OL4+OL5>OL3              108    0.858    261,637     557  0.899
+   8 IL4+OL1>IL3               90    0.864     46,532     217  0.574
+
+=== AAII   IT layers IL1,IL2   21 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL1+IL2>OL2            2,013    0.739     12,584     225  0.603
+   3 IL2+OL1>IL1              731    0.790    648,780     811  0.865
+   4 OL2+OL4>OL3              416    0.819    924,335   2,225  0.959
+   5 OL4+OL5>OL3              141    0.828    261,637     557  0.899
+   6 IL2+OL3>OL2               89    0.835  1,510,128   3,088  0.968
+   7 OL1+OL3>OL2               59    0.839    231,783     783  0.835
+   8 IL1+OL1>IL2               40    0.842  1,566,947   2,186  0.949
+
+=== AIAI   IT layers IL1,IL3   22 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL1+IL3>OL2            1,722    0.719     30,941     274  0.689
+   3 IL1+OL1>IL3              655    0.764  1,186,970   2,023  0.946
+   4 OL2+OL4>OL3              412    0.793    924,335   2,225  0.959
+   5 IL1+OL2>OL3              144    0.803  2,521,534   7,170  0.985
+   6 OL4+OL5>OL3              128    0.812    261,637     557  0.899
+   7 IL3+OL2>OL3               75    0.817    327,440   1,183  0.912
+   8 OL1+OL3>OL2               64    0.821    231,783     783  0.835
+
+=== AIIA   IT layers IL1,IL4   24 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL1+IL4>OL2            1,349    0.693     45,284     277  0.744
+   3 OL4+OL5>OL3              537    0.730    261,637     557  0.899
+   4 IL1+OL2>OL3              283    0.750  2,521,534   7,170  0.985
+   5 IL4+OL1>OL2              258    0.768     48,491     336  0.732
+   6 OL2+OL4>OL3              198    0.782    924,335   2,225  0.959
+   7 IL1+OL1>OL2              184    0.794  1,402,520   4,323  0.975
+   8 OL1+OL4>OL3               88    0.800  1,686,636   3,603  0.974
+
+=== IAAI   IT layers IL2,IL3   23 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL2+IL3>OL2            1,792    0.724      7,008     150  0.412
+   3 IL2+OL1>IL3              679    0.771    434,100     875  0.871
+   4 OL2+OL4>OL3              395    0.798    924,335   2,225  0.959
+   5 IL2+OL2>OL3              153    0.809    947,426   2,922  0.963
+   6 OL4+OL5>OL3              124    0.818    261,637     557  0.899
+   7 OL1+OL3>OL2               66    0.822    231,783     783  0.835
+   8 IL3+OL1>IL2               44    0.825    161,190     364  0.702
+
+=== IAIA   IT layers IL2,IL4   25 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL2+IL4>OL2            1,402    0.697     13,470     148  0.505
+   3 OL4+OL5>OL3              524    0.733    261,637     557  0.899
+   4 IL4+OL1>IL2              346    0.757     54,301     183  0.522
+   5 OL2+OL4>OL3              268    0.776    924,335   2,225  0.959
+   6 IL2+OL1>OL2              243    0.793    484,665   1,717  0.936
+   7 IL2+OL2>OL3              148    0.803    947,426   2,922  0.963
+   8 OL1+OL3>OL2               67    0.807    231,783     783  0.835
+
+=== IIAA   IT layers IL3,IL4   26 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL3+IL4>OL2            1,493    0.703      3,246     102  0.266
+   3 IL4+OL1>IL3              570    0.743     46,532     217  0.574
+   4 OL2+OL4>OL3              466    0.775    924,335   2,225  0.959
+   5 IL3+OL1>OL2              224    0.790    141,795     679  0.842
+   6 OL4+OL5>OL3              140    0.800    261,637     557  0.899
+   7 IL3+OL3>OL2               76    0.805    575,498   1,295  0.925
+   8 OL1+OL3>OL2               65    0.810    231,783     783  0.835
+
+=== AIII   IT layers IL1   17 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL1+OL2>OL3            1,095    0.675  2,521,534   7,170  0.985
+   3 IL1+OL1>OL2              629    0.719  1,402,520   4,323  0.975
+   4 OL4+OL5>OL3              473    0.752    261,637     557  0.899
+   5 OL2+OL4>OL3              202    0.766    924,335   2,225  0.959
+   6 OL1+OL4>OL3               91    0.772  1,686,636   3,603  0.974
+   7 OL1+OL3>OL2               71    0.777    231,783     783  0.835
+   8 OL1+OL5>OL3               33    0.779  1,949,282   3,508  0.976
+
+=== IAII   IT layers IL2   18 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL2+OL3>OL2            1,135    0.678  1,510,128   3,088  0.968
+   3 IL2+OL1>OL2              632    0.722    484,665   1,717  0.936
+   4 OL4+OL5>OL3              468    0.755    261,637     557  0.899
+   5 OL2+OL4>OL3              190    0.768    924,335   2,225  0.959
+   6 OL1+OL4>OL3               91    0.774  1,686,636   3,603  0.974
+   7 OL1+OL3>OL2               62    0.778    231,783     783  0.835
+   8 IL2+OL2>OL3               35    0.781    947,426   2,922  0.963
+
+=== IIAI   IT layers IL3   19 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL3+OL1>OL2            1,098    0.676    141,795     679  0.842
+   3 OL4+OL5>OL3              749    0.728    261,637     557  0.899
+   4 OL2+OL4>OL3              330    0.750    924,335   2,225  0.959
+   5 IL3+OL2>OL3              187    0.763    327,440   1,183  0.912
+   6 OL1+OL4>OL3               89    0.770  1,686,636   3,603  0.974
+   7 OL1+OL3>OL2               72    0.775    231,783     783  0.835
+   8 OL2+OL5>OL3               34    0.777  1,184,445   2,416  0.965
+
+=== IIIA   IT layers IL4   21 viable seeds   denominator 14,412
+   # seed                marginal  cum eff    cand/ev  fit/ev   fake
+   1 OL1+OL2>OL3            8,639    0.599     97,634     668  0.796
+   2 IL4+OL1>OL2              971    0.667     48,491     336  0.732
+   3 OL2+OL4>OL3              766    0.720    924,335   2,225  0.959
+   4 IL4+OL5>OL3              351    0.744  1,967,099   3,287  0.980
+   5 OL4+OL5>OL3              125    0.753    261,637     557  0.899
+   6 OL1+OL3>OL2               85    0.759    231,783     783  0.835
+   7 IL4+OL2>OL3               69    0.764    141,245     609  0.856
+   8 OL1+OL4>OL3               59    0.768  1,686,636   3,603  0.974
+
