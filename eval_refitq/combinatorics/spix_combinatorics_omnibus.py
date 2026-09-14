@@ -3253,8 +3253,9 @@ def main():
                          "inputs whole, so the full ttbar set belongs here.")
     ap.add_argument("--menu-nev", type=int, default=100,
                     help="events for the per-build seed menu study (15)")
-    ap.add_argument("--menu-chunk", type=int, default=16,
-                    help="events per chunk for study 15's cached census")
+    ap.add_argument("--menu-chunk", type=int, default=4,
+                    help="events per chunk for study 15's cached census; smaller "
+                         "is FASTER (measured 27.8 vs 62.9 s/event at 4 vs 16)")
     ap.add_argument("--menu-budget-gb", type=float, default=0.4)
     ap.add_argument("--menu-rss-gb", type=float, default=8.0)
     ap.add_argument("--menu-cache",

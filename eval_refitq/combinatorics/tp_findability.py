@@ -555,7 +555,14 @@ def main():
     ap.add_argument("--masks", default=",".join(BUILD_MASKS),
                     help="activeSP builds to enumerate seeds for; 'none' for a "
                          "flat enumeration over --layers")
-    ap.add_argument("--chunk", type=int, default=16, help="events per chunk")
+    # SMALLER CHUNKS ARE FASTER HERE, which is backwards from the usual
+    # amortisation argument and so is worth stating. MEASURED on the same 16
+    # events, same 131 seeds, identical input (127,282 TPs both times, so this is
+    # not process variance): chunk = 4 took 444 s, chunk = 16 took 1006 s -- 27.8
+    # against 62.9 s/event, a 2.27x penalty for the larger chunk. Chunk size is
+    # not the memory control either (see --menu-budget-gb): the blow-up is the
+    # candidate triplets of a SINGLE event and no chunk size reaches below one.
+    ap.add_argument("--chunk", type=int, default=4, help="events per chunk")
     ap.add_argument("--calib-events", type=int, default=100)
     ap.add_argument("--cache-dir", default="eval_refitq/combinatorics/cache")
     ap.add_argument("--cache", default="auto",
