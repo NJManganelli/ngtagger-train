@@ -2768,9 +2768,26 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
             a.axis("off")
         out["seed_menu_by_build"] = {"skipped": f"{type(exc).__name__}: {exc}"}
         return
-    M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
-                 min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
+    # MEMORY. This study is the heaviest thing in the omnibus: it holds the
+    # unified IT+OT table AND a cache of every seed's recovered key set, while
+    # the OT-heavy seeds each expand ~1e6 candidate triplets per event. Doubling
+    # the targets doubled the cache and the job was killed by the OS. The slice
+    # budget is therefore explicit and small here rather than inherited.
+    # The slice budget is the bytes of ONE expansion block, but a block
+    # materialises ~16 arrays plus their intermediates, so peak RSS runs ~2-3x
+    # the nominal budget. Measured: a 0.75 GB budget on 300 events peaked at
+    # 4.2 GB against a predicted 2.5. Budget and ceiling are therefore both
+    # explicit and the ceiling is not silently the binding constraint.
+    M.set_limits(M.triplets_for_budget(float(out.get("_menu_budget_gb", 0.4))),
+                 min(float(out.get("_menu_rss_gb", 8.0)),
+                     M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     allidx = np.arange(len(U["layer"]))
+    itrow = (U["layer"] <= 4) & (U["tpIdx"] >= 0)
+    _k = M.tp_key(U["event"][itrow], U["tpIdx"][itrow])
+    _o = np.argsort(_k, kind="stable")
+    _k, _vz, _et = _k[_o], U["tpVz"][itrow][_o], U["tpEta"][itrow][_o]
+    _f = np.r_[True, _k[1:] != _k[:-1]] if len(_k) else np.zeros(0, bool)
+    TPK, TPVZ, TPET = _k[_f], _vz[_f], _et[_f]
     acc, rmed = {}, {}
     for L in (1, 2, 3, 4) + OT_BARREL:
         sel = U["layer"] == L
@@ -2809,15 +2826,26 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         z0 = U["globalZ"][ga] - U["globalR"][ga] * cot
         tpa = U["tpIdx"][ga]
         real = okp & (tpa >= 0) & (tpa == U["tpIdx"][gb]) & (tpa == U["tpIdx"][gc])
+        # TP TRUTH BY KEY, NOT BY HIT ROW. OT stub rows carry tpVz = tpEta = -999
+        # because only IT clusters store them, so reading truth off the inner hit
+        # gives nonsense whenever that hit is a stub -- every OT-only seed. It
+        # read sigma(z0) as 42,000-64,000 um and sigma(cot) as nan, since
+        # sinh(-999) overflows. Look the TP up instead.
+        kk = M.tp_key(U["event"][ga], np.maximum(tpa, 0))
+        pos = np.clip(np.searchsorted(TPK, kk), 0, max(len(TPK) - 1, 0))
+        real = real & (len(TPK) > 0) & (TPK[pos] == kk)
+        vz_t, et_t = TPVZ[pos], TPET[pos]
         def _rs(x):
             if x.size < 50:
                 return float("nan")
             q = np.percentile(x, [15.865, 84.135])
             return float(0.5 * (q[1] - q[0]))
         qual = {"sig_kappa": _rs(np.abs(kap[real]) - 1.0 / U["tpPt"][ga][real]),
-                "sig_cot": _rs(cot[real] - np.sinh(U["tpEta"][ga][real])),
-                "sig_z0_cm": _rs(z0[real] - U["tpVz"][ga][real])}
-        cache[key] = (M.recovered_keys(U, *o["_trip"]),
+                "sig_cot": _rs(cot[real] - np.sinh(et_t[real])),
+                "sig_z0_cm": _rs(z0[real] - vz_t[real])}
+        rkeys = M.recovered_keys(U, *o["_trip"])
+        del o["_trip"]                    # the triples are large and finished with
+        cache[key] = (rkeys,
                       {"cand": o.get("match_cand", 0) / nev,
                        "fit": o.get("tracks_to_fit", 0) / nev,
                        "fake": 1.0 - nt / max(nc, 1), **qual})
