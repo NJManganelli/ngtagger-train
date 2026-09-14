@@ -2721,6 +2721,214 @@ def _composition_side_table(out, res):
     print(f"    wrote {p}")
 
 
+# ---- (15) seed menus per SmartPixels build ---------------------------------
+SEED_MENU_MASKS = ["AAAA", "AAAI", "AAIA", "AIAA", "IAAA", "AAII", "AIAI",
+                   "AIIA", "IAAI", "IAIA", "IIAA", "AIII", "IAII", "IIAI", "IIIA"]
+IL_OF = {0: 1, 1: 2, 2: 3, 3: 4}
+OT_BARREL = (11, 12, 13, 14, 15, 16)
+
+
+def study_seed_menu_by_build(X, K, P, ax_row, out):
+    """(15) Which seed menu does each SmartPixels build support, and how good is it?
+
+    activeSP says which IT layers are INSTRUMENTED. An uninstrumented layer emits
+    nothing at L1 -- not position without angle, nothing -- so it cannot appear in
+    a seed at all. A 1010 build (AIAI) therefore has exactly one IT-only doublet,
+    IL1+IL3, and it can only project to OT layers, because IL2 and IL4 do not
+    exist for it. The OT is always the standard full barrel.
+
+    Ranking seeds by cost answers the wrong question: the cheapest eight may all
+    recover the same TrackingParticles. So each build's menu is composed GREEDILY
+    BY MARGINAL GAIN -- best single seed, then whichever raises the union most --
+    and the table reports what each entry uniquely adds, not merely what it finds.
+
+    A seed's recovered set depends only on its own three layers, never on what
+    else is instrumented, so every distinct seed is run ONCE and each build's menu
+    is composed from that cache. Without it this would be fifteen full passes.
+    """
+    import importlib.util as _ilu
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "seed_menu_composition.py")
+    _sp = _ilu.spec_from_file_location("_smc", _p)
+    SMC = _ilu.module_from_spec(_sp); _sp.loader.exec_module(SMC)
+    M = SMC.M
+    srcs = out.get("_inputs") or []
+    if not srcs:
+        for a in ax_row:
+            a.axis("off")
+        out["seed_menu_by_build"] = {"skipped": "needs _inputs"}
+        return
+    PTMIN = float(out.get("_menu_ptmin", 2.0))
+    NEV = int(out.get("_menu_nev", 100))
+    try:
+        U, Q, nev = SMC.build(",".join(srcs), NEV, PTMIN)
+    except Exception as exc:
+        for a in ax_row:
+            a.axis("off")
+        out["seed_menu_by_build"] = {"skipped": f"{type(exc).__name__}: {exc}"}
+        return
+    M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
+                 min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
+    allidx = np.arange(len(U["layer"]))
+    acc = {}
+    for L in (1, 2, 3, 4) + OT_BARREL:
+        m = (U["layer"] == L) & (U["tpIdx"] >= 0) & (U["tpPt"] >= PTMIN)
+        acc[L] = np.unique(M.tp_key(U["event"][m], U["tpIdx"][m]))
+
+    cache = {}
+
+    def run(la, lb, lc):
+        """Recovered TP set and cost for one seed. Cached: a seed's result does
+        not depend on which OTHER layers a build instruments."""
+        key = (la, lb, lc)
+        if key in cache:
+            return cache[key]
+        try:
+            o = M.it_pair_seed(U, Q, allidx, la, lb, lc, PTMIN, True, False, 0.0)
+        except M.TooWide as e:
+            cache[key] = None
+            return None
+        if "_trip" not in o:
+            cache[key] = None
+            return None
+        nc, nt = M.cand_purity(U, *o["_trip"])
+        cache[key] = (M.recovered_keys(U, *o["_trip"]),
+                      {"cand": o.get("match_cand", 0) / nev,
+                       "fit": o.get("tracks_to_fit", 0) / nev,
+                       "fake": 1.0 - nt / max(nc, 1)})
+        return cache[key]
+
+    # TWO PASSES. The first runs every seed any build can form, so the second can
+    # compose against a COMMON denominator. A per-build denominator -- "TPs some
+    # seed of this build found" -- is self-referential and makes builds
+    # incomparable: it scored a one-layer build (AIII, 0.915) above the fully
+    # instrumented one (AAAA, 0.909), which is an artefact of the crippled build
+    # being graded on its own reduced reach.
+    per_build_cands = {}
+    for mask in SEED_MENU_MASKS:
+        il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
+        layers = il + list(OT_BARREL)
+        cands = []
+        for i, la in enumerate(layers):
+            for lb in layers[i + 1:]:
+                pair_acc = np.intersect1d(acc[la], acc[lb])
+                if len(pair_acc) / nev < 20.0:
+                    continue
+                rest = [L for L in layers if L not in (la, lb)]
+                if not rest:
+                    continue
+                lc = max(rest, key=lambda L: len(np.intersect1d(pair_acc, acc[L])))
+                cands.append((la, lb, lc))
+        per_build_cands[mask] = cands
+        for la, lb, lc in cands:
+            run(la, lb, lc)
+    every = [v[0] for v in cache.values() if v is not None]
+    if not every:
+        for a in ax_row:
+            a.axis("off")
+        out["seed_menu_by_build"] = {"skipped": "no viable seeds"}
+        return
+    DENOM = np.unique(np.concatenate(every))
+
+    builds = {}
+    for mask in SEED_MENU_MASKS:
+        il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
+        found, cost = {}, {}
+        for la, lb, lc in per_build_cands[mask]:
+            r = run(la, lb, lc)
+            if r is None:
+                continue
+            tag = f"{SMC.NAME[la]}+{SMC.NAME[lb]}>{SMC.NAME[lc]}"
+            found[tag], cost[tag] = r
+        if not found:
+            builds[mask] = {"n_seeds": 0}
+            continue
+        denom = DENOM
+        menu, have, pool = [], np.empty(0, np.int64), dict(found)
+        while pool and len(menu) < 8:
+            best = max(pool, key=lambda t: len(np.setdiff1d(pool[t], have)))
+            gain = len(np.setdiff1d(pool[best], have))
+            if gain <= 0:
+                break
+            have = np.union1d(have, pool.pop(best))
+            menu.append({"seed": best, "marginal_tps": int(gain),
+                         "cum_eff": float(len(have) / len(denom)), **cost[best]})
+        builds[mask] = {"n_seeds": len(found), "denominator": int(len(denom)),
+                        "n_it_layers": len(il), "it_layers": [SMC.NAME[L] for L in il],
+                        "menu": menu,
+                        "eff_3": menu[2]["cum_eff"] if len(menu) > 2 else
+                                 (menu[-1]["cum_eff"] if menu else 0.0),
+                        "cand_3": sum(m["cand"] for m in menu[:3])}
+    out["seed_menu_by_build"] = {"n_events": nev, "pt_min": PTMIN, "builds": builds}
+    _draw_menu_by_build(ax_row, builds)
+    _menu_by_build_table(out, builds)
+
+
+def _draw_menu_by_build(ax_row, builds):
+    ok = {k: v for k, v in builds.items() if v.get("menu")}
+    if not ok:
+        for a in ax_row:
+            a.axis("off")
+        return
+    order = sorted(ok, key=lambda k: (-ok[k]["n_it_layers"], k))
+    C = {4: "#2a78d6", 3: "#4b9f6e", 2: "#e8833a", 1: "#b1524f"}
+    ax = ax_row[0]
+    for k in order:
+        b = ok[k]
+        y = [m["cum_eff"] for m in b["menu"]]
+        ax.plot(range(1, len(y) + 1), y, "-o", ms=3.5, lw=1.6,
+                color=C[b["n_it_layers"]], alpha=0.85,
+                label=k if b["n_it_layers"] in (1, 4) else None)
+    ax.set_xlabel("seeds in the menu", fontsize=8)
+    ax.set_ylabel("cumulative efficiency", fontsize=8)
+    ax.set_title("what each build's menu reaches\n(colour = instrumented IT layers)",
+                 fontsize=9)
+    ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=6); ax.tick_params(labelsize=7)
+    ax = ax_row[1]
+    xs = np.arange(len(order))
+    ax.bar(xs, [ok[k]["eff_3"] for k in order],
+           color=[C[ok[k]["n_it_layers"]] for k in order])
+    ax.set_xticks(xs); ax.set_xticklabels(order, rotation=90, fontsize=6.5)
+    ax.set_ylabel("efficiency of the best THREE seeds", fontsize=8)
+    ax.set_title("three-seed menu, per build", fontsize=9)
+    ax.grid(alpha=0.25, axis="y", lw=0.6); ax.tick_params(labelsize=7)
+    ax = ax_row[2]
+    for k in order:
+        b = ok[k]
+        ax.scatter(b["cand_3"], b["eff_3"], s=55, color=C[b["n_it_layers"]],
+                   edgecolor="#fcfcfb", lw=1.0, zorder=3)
+        ax.annotate(k, (b["cand_3"], b["eff_3"]), fontsize=5.5,
+                    xytext=(4, 3), textcoords="offset points", color="#52514e")
+    ax.set_xscale("log")
+    ax.set_xlabel("candidate triplets/event, best three seeds", fontsize=8)
+    ax.set_ylabel("efficiency of those three", fontsize=8)
+    ax.set_title("what each build costs for what it reaches", fontsize=9)
+    ax.grid(alpha=0.25, lw=0.6); ax.tick_params(labelsize=7)
+
+
+def _menu_by_build_table(out, builds):
+    p = os.path.join(out.get("_outdir", "."), "spix_seed_menu_by_build.txt")
+    with open(p, "w") as fh:
+        fh.write("Seed menu per SmartPixels build. activeSP mask: A = instrumented,\n"
+                 "I = not. An uninstrumented IT layer emits nothing at L1 and cannot\n"
+                 "appear in a seed. The OT is always the standard full barrel.\n"
+                 "Menus are composed greedily by MARGINAL gain, not by cost.\n\n")
+        for mask, b in builds.items():
+            if not b.get("menu"):
+                fh.write(f"=== {mask}: no viable seeds\n\n")
+                continue
+            fh.write(f"=== {mask}   IT layers {','.join(b['it_layers']) or 'none'}"
+                     f"   {b['n_seeds']} viable seeds   denominator {b['denominator']:,}\n")
+            fh.write(f"  {'#':>2} {'seed':<18}{'marginal':>10}{'cum eff':>9}"
+                     f"{'cand/ev':>11}{'fit/ev':>8}{'fake':>7}\n")
+            for i, m in enumerate(b["menu"], 1):
+                fh.write(f"  {i:>2} {m['seed']:<18}{m['marginal_tps']:>10,d}"
+                         f"{m['cum_eff']:>9.3f}{m['cand']:>11,.0f}{m['fit']:>8,.0f}"
+                         f"{m['fake']:>7.3f}\n")
+            fh.write("\n")
+    print(f"    wrote {p}")
+
+
 # ---------------------------------------------------------------------------
 # SECTIONS. The studies fall into four questions, and the figure is now grouped
 # and banner-labelled by them rather than being one undifferentiated stack. Each
@@ -2985,7 +3193,8 @@ SECTIONS = [
       ("hough examples", study_hough_examples, 2),
       ("seed-mode confusion", study_seed_mode_confusion, 3),
       ("seed composition", study_seed_composition, 3),
-      ("combined IT+OT seeding", study_combined_it_ot, 3)]),
+      ("combined IT+OT seeding", study_combined_it_ot, 3),
+      ("seed menu per build", study_seed_menu_by_build, 3)]),
 ]
 
 # Flat view, kept because the figure is still one grid and several studies index
