@@ -249,7 +249,7 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     kappa = -x0 / M.C_BEND
     return (kappa, x1, x4, x2, x3,
             C00 / (M.C_BEND ** 2), C44, C22, C33, nseen, ok,
-            chi2_rphi, chi2_rz, chi2_ang, nang)
+            chi2_rphi, chi2_rz, chi2_ang, nang, C11)
 
 
 # ==========================================================================
@@ -283,7 +283,7 @@ def _selftest():
     valid = np.ones(r.shape, bool)
     out = kf_run(r, phi, z, v0, v1, valid, d0_prior_cm=5.0)
     kf_kap, kf_phi0, kf_d0, kf_cot, kf_z0 = out[:5]
-    assert len(out) == 15
+    assert len(out) == 16
     bad = [f"{nm}: max |err| {np.abs(a - b).max():.3e}"
            for nm, a, b in (("kappa", kf_kap, kap), ("phi0", kf_phi0, phi0),
                             ("d0", kf_d0, d0), ("cot", kf_cot, cot),
@@ -485,7 +485,8 @@ def hits_from_seed(U, out, layers=None):
 
 
 def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
-               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, gidx=None):
+               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, gidx=None,
+               pt_hint=None):
     """Assemble each seed's track and fit it. Returns fitted parameters + hits.
 
     gidx, when given, is the hit table the seeding already built; otherwise the
@@ -498,13 +499,18 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     # A pT estimate is needed before the fit because the scattering term scales
     # as 1/pT. KFParamsComb takes it "from input track candidate as more
     # stable" (matrixV, first line); the seed pair's two-point curvature is the
-    # equivalent here.
-    ga, gb = trip[0], trip[1]
-    dr = U["globalR"][gb] - U["globalR"][ga]
-    safe = np.where(np.abs(dr) > 0.5, dr, 1e9)
-    kap0 = np.abs(M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb])
-                  / (M.C_BEND * safe))[:, None]
-    pt0 = np.broadcast_to(1.0 / np.maximum(kap0, 1e-3), T["R"].shape)
+    # equivalent here. pt_hint overrides it, which the matched IT+OT refit needs:
+    # its IT pair spans at most 13 cm and gives a curvature far worse than the
+    # OT track it is being merged with.
+    if pt_hint is not None:
+        pt0 = np.broadcast_to(np.asarray(pt_hint, float)[:, None], T["R"].shape)
+    else:
+        ga, gb = trip[0], trip[1]
+        dr = U["globalR"][gb] - U["globalR"][ga]
+        safe = np.where(np.abs(dr) > 0.5, dr, 1e9)
+        kap0 = np.abs(M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb])
+                      / (M.C_BEND * safe))[:, None]
+        pt0 = np.broadcast_to(1.0 / np.maximum(kap0, 1e-3), T["R"].shape)
     o0, o1 = ot_variances(np.where(is_ot, lay - 10, 1), T["R"], pt0)
     i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
     v0 = np.where(is_ot, o0, i0)
@@ -526,10 +532,11 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb, ang,
                  d0_prior_cm)
     (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
-     c2p, c2z, c2a, nang) = out
+     c2p, c2z, c2a, nang, vphi) = out
     fit = {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,
            "cot": cot, "z0": z0, "var_kappa": vk, "var_d0": vd,
-           "var_cot": vc, "var_z0": vz, "nhit": nhit, "ok": ok, "hits": T,
+           "var_cot": vc, "var_z0": vz, "var_phi0": vphi,
+           "nhit": nhit, "ok": ok, "hits": T,
            "chi2_rphi": c2p, "chi2_rz": c2z}
     if use_angles:
         # angles were consumed by the fit, so their residuals are no longer an
