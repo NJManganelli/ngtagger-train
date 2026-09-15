@@ -1,0 +1,170 @@
+SmartPixels combinatorics omnibus -- GLOSSARY
+Definitions for every term this script prints or plots.
+==========================================================================
+
+crossing
+    One track's PREDICTED intersection with one instrumented module. The unit most per-layer
+    quantities are counted in -- not a track, not a cluster. One track normally has one
+    crossing per instrumented layer, occasionally two where it clips overlapping modules.
+
+cluster
+    A reconstructed group of adjacent fired pixels: one measurement. NOT a single pixel -- an
+    inclined track fires several pixels and they form one cluster.
+
+cone / search window
+    The region around the predicted position on a module inside which clusters are accepted as
+    CANDIDATES for the refit. Half-width is k times the projected track uncertainty, applied
+    per axis (local x and local y independently).
+
+qX  (cone quantile)
+    HOW WIDE THE CONE IS -- an INPUT, a design choice. Expressed as the central Gaussian
+    probability per axis: k = Phi^-1((1+X/100)/2), so q68->k=1.00, q95->k=1.96, q99->k=2.58,
+    q99.9->k=3.29, q99.99->k=3.89. NOMINAL ONLY: it assumes unit-width pulls. Ours are
+    0.81-1.52, so qX is NOT the achieved efficiency. Use the measured containment for that.
+
+pXX  (percentile)
+    WHERE A TRACK SITS in a distribution over tracks -- an OUTPUT. p99 = the 99th-percentile
+    track, i.e. 1 track in 100 is busier. NOT a cone width. qX and pXX look alike and are
+    unrelated: qX is the window you choose, pXX describes the spread of what that window
+    returns.
+
+k  /  k_sigma
+    Cone half-width in units of the projected track uncertainty. The quantity actually used in
+    the cut |residual| < k*sigma.
+
+containment
+    MEASURED hit-finding efficiency, per crossing, CONDITIONAL ON THE HIT EXISTING.
+    Denominator: crossings where the correct cluster exists on that module. Numerator: those
+    where it also falls inside the cone. So it does not penalise a hit that was never
+    produced, and it is NOT the probability the refit then PICKS that cluster (that is
+    selection, measured separately). Averaged over crossings, so builds instrumenting
+    different layers average different layer mixes -- L1 crossings are intrinsically harder,
+    which is why an L1-instrumented build scores lower without the algorithm being worse.
+
+local frame  /  local x, local y
+    The module's own coordinate system. LOCAL X is the FINE-pitch axis (25 um) and points
+    along r-phi, i.e. the BENDING plane; LOCAL Y is the coarse axis (100 um) and points along
+    z. Verified from the CPE resolutions: median sigX = 3.0 um against sigY = 12.5 um. Local z
+    is the module NORMAL.
+
+cotAlpha  (ALPHA = BENDING)
+    p_x_local / p_z_local, PixelAV convention -- the track's angle in the local x direction,
+    hence the BENDING-PLANE (r-phi) angle. NOTE it carries almost no pT information by itself:
+    median |cotAlpha| is flat against pT at every layer (L1: 0.147 / 0.148 / 0.148 / 0.146
+    over pT 2-3, 3-5, 5-10, 10+ GeV), because its value at a barrel module is set by geometry
+    and module tilt rather than by curvature. Its use is COMPATIBILITY -- does this cluster's
+    angle match what the track predicts here -- not measuring pT.
+
+cotBeta  (BETA = LONGITUDINAL)
+    p_y_local / p_z_local -- the angle in the local y (z) direction, hence the LONGITUDINAL
+    (r-z) angle, essentially cot(theta) at the module. Verified: corr(|cotBeta|, |global
+    cot(theta)|) = +0.956 with median difference 0.0089. The correlation WITHOUT absolute
+    values is only +0.19, because the sign of local y relative to global z flips module to
+    module -- the same orientation ambiguity that produced the global-direction sense bug.
+
+cone is 2D, not phi-only
+    The candidate cut is a BOX in both local coordinates: |dx| < k*sigma_x AND |dy| <
+    k*sigma_y, applied independently per axis. So it constrains r-phi and z together. It uses
+    POSITION ONLY -- no angle information enters the candidate count, so every combination
+    number here is the no-angle case, and applying alpha/beta compatibility on top would
+    reduce it further.
+
+module boundary  (KNOWN BIAS)
+    Candidates are joined to a crossing by EXACT detId, so a cluster just across a module edge
+    is invisible even when it lies geometrically inside the cone. Modules are 3.38 x 4.33 cm.
+    Measured fraction of crossings whose cone reaches past an edge: 5.0% / 6.7% / 8.2% at q99
+    / q99.9 / q99.99 for the refit-order cone, and 8.6% / 11.6% / 14.2% for the seed cone;
+    worst at L4 (14.9%), which is first-visited and so has the widest cone, mildest at L1
+    (2.4%). Combination counts are therefore biased LOW by roughly that much. Separately, the
+    real system does not project to one module at all -- it sees the aggregate clusters of an
+    eta x phi sector board -- so these are a FLOOR that assumes perfect module targeting.
+
+correct / true cluster
+    The cluster whose DOMINANT TrackingParticle is the TP the track was matched to. Dominance
+    is by charge, winner-takes-pixel.
+
+combinations / track
+    The number of (L1,L2,L3,L4) hit tuples one refit must test = PRODUCT of the candidate
+    counts over INSTRUMENTED layers. A layer with no candidate contributes a factor of 1, not
+    0, because the refit skips it and carries on. Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 ->
+    6. Pinned by tests/test_combination_counting.py.
+
+activeSP  /  A  /  I
+    Four-character mask, one character per TBPX layer L1,L2,L3,L4. A = that layer IS
+    instrumented with smart pixels; I = it is not. An uninstrumented layer delivers NO data at
+    L1 latency at all -- conventional pixels are read out only after an L1 accept -- so it
+    contributes nothing to L1 track building, not even a position. Each mask is therefore a
+    candidate DETECTOR BUILD, not an algorithm setting. Example: AAII = L1 and L2
+    instrumented, L3 and L4 not.
+
+nSP
+    Number of instrumented layers = count of 'A' in the mask.
+
+>=2hit / >=3hit  (viability)
+    Fraction of tracks to which the refit actually attached that many hits. 0% for every two-
+    layer build is STRUCTURAL (only two layers exist to be hit), not a performance statement.
+
+projSeedSig{X,Y}
+    Projected track uncertainty from the OT SEED covariance alone -- single shot, no refit
+    updates. The naive cone.
+
+projSig{X,Y}
+    RUNNING projected track uncertainty: after multiple-scattering Q has been added and before
+    this layer's own update. The refit-order cone. Tightens as the refit walks inward, so the
+    same layer has different widths in different builds depending on how deep it is visited.
+
+outsideIn
+    The refit's layer visit order: outermost instrumented layer first, working inward. The
+    FIRST-visited layer gets no update and so carries the raw seed cone.
+
+pull
+    (measured - predicted) / claimed uncertainty. Width 1.0 means the claimed uncertainty is
+    honest; 4.1 means it claims 4x better precision than it has.
+
+Q  (process noise)
+    Multiple-scattering term added to the covariance before projecting, so the cone grows to
+    reflect material the track passed through. Without it the covariance only ever shrank.
+
+nonant
+    One ninth of the azimuth, 2*pi/9 = 698 mrad. The L1 track finder's phi sector, carried in
+    the nano as phiSector 0-8. Sectors OVERLAP: each spans about 1031 mrad, so roughly 167
+    mrad of shared region per side, which is how tracks near a boundary are still found. Note
+    etaSector exists in the nano but is an unfilled sentinel (constant 99), so there is no eta
+    sectoring to inherit.
+
+fixed eta-phi grid  /  bin
+    In a refit-only design the pre-processing has NO TRACK KNOWLEDGE -- it runs in parallel
+    with OT track finding and must finish before any track exists. So clusters are binned onto
+    an ABSOLUTE eta-phi grid, and the only track-dependent step is a projection choosing which
+    bin to read. THE BIN IS THE SELECTION: no cone cut is applied, and whatever landed in the
+    bin is what a refit tests.
+
+f  (bin width multiple)
+    Bin width expressed as a multiple of that layer's q99 offset between the desired cluster
+    and the NAIVE projection. f=1 means the bin is as wide as the 99th percentile offset.
+    NAIVE because binning precedes the refit, so only the OT seed projection exists (308 um at
+    L1, not the refit-order 37 um) -- sizing against the refit cone would be circular.
+
+offset grids  (1grid / 2grid_phi / 4grid)
+    A single grid leaves the projection at an arbitrary PHASE inside its bin, so a one-bin
+    read guarantees NOTHING: a cluster just past the edge sits in the neighbour. Storing the
+    same clusters in offset grids -- edges of one passing through centres of another -- lets
+    the track pick the grid whose bin centre its projection lands nearest. Measured at matched
+    containment (~90%, one read): 1grid_1bin needs f=4 and gives 2293 combinations per track;
+    4grid_1bin needs f=2 and gives 55, a 42x improvement for 4x the storage. 2grid_phi_1bin
+    buys almost nothing (2367) because the ETA phase is still arbitrary -- offsetting one
+    dimension while the other stays misaligned does not help. Both offsets are needed.
+
+reads  /  neighbour radius
+    READS is how many bins are fetched per track per layer. The projection lands in exactly
+    ONE bin; the NEIGHBOUR RADIUS says how many bins outward are fetched as well, so reads =
+    (2*radius + 1)^2 -- radius 0 is a single bin, radius 1 is a 3x3 block, i.e. 9 reads. The
+    ring exists because one grid guarantees nothing: a projection near a bin edge leaves the
+    desired cluster in the neighbour, and reading the ring recovers it at 9x the bandwidth.
+    Offset grids are the alternative -- they buy the same protection with 1 read and more
+    storage. Which is preferable depends on whether bandwidth or memory binds.
+
+max  (AVOID)
+    Largest single-track value in the sample. An extreme-value statistic on a heavy tail: it
+    DOES NOT CONVERGE and grows with the number of events processed (AIAI: 54 at 100 events,
+    550 at 500). Rankings built on it reverse when events are added. Use p99.

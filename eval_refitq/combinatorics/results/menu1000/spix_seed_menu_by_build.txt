@@ -1,0 +1,455 @@
+Seed menu per SmartPixels build. activeSP mask: A = instrumented,
+I = not. An uninstrumented IT layer emits nothing at L1 and cannot
+appear in a seed. The OT is always the standard full barrel.
+Menus are composed greedily by MARGINAL gain, not by cost.
+
+=== AAAA   IT layers IL1,IL2,IL3,IL4   19 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL2              110,485    0.552       379.8    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   2 IL3+IL4               33,930    0.721       545.6     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   3 OL2+OL3               15,478    0.799        17.1    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   4 IL2+IL3               13,436    0.866        92.2    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   5 OL3+OL4                7,371    0.903         2.6  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   6 OL1+OL2                6,531    0.935         6.3  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   7 IL4+OL1                3,758    0.954         6.1    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   8 OL5+OL6                3,732    0.973         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL2+IL3+IL4           72,146    0.360      3588.0     20,107      82  0.065   3   9.2    0.0076         74         61    0.0012
+   2 IL1+IL2+IL3           19,301    0.457       800.4     24,114     102  0.127   3   8.6    0.0098         78         61    0.0013
+   3 IL3+IL4               28,623    0.600       460.3     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   4 IL2+IL3               16,633    0.683       114.1    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   5 IL1+IL2+IL4            1,934    0.693        89.8     21,542      91  0.193   3   8.8    0.0079         73         57    0.0011
+   6 IL1+IL2               20,768    0.796        71.4    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   7 OL2+OL3+OL4            5,381    0.823        23.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   8 OL2+OL3                8,707    0.867         9.6    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== AAAI   IT layers IL1,IL2,IL3   13 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL2              110,485    0.552       379.8    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   2 OL2+OL3               24,691    0.675        27.3    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   3 IL2+IL3               16,899    0.760       116.0    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   4 OL3+OL4                7,599    0.798         2.7  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 OL1+OL2                7,202    0.834         6.9  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   6 OL5+OL6                3,769    0.853         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   7 IL3+OL1                2,725    0.866         1.3  2,043,535   1,967  0.938   2   4.6    0.0069         63         82    0.0014
+   8 IL1+IL3                1,983    0.876         3.1    630,471   1,130  0.906   2   4.8    0.0124         75         71    0.0014
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL2+IL3           83,277    0.416      3453.4     24,114     102  0.127   3   8.6    0.0098         78         61    0.0013
+   2 IL2+IL3+OL1            8,871    0.460       316.8     27,999     117  0.281   3   8.1    0.0070         64         66    0.0013
+   3 IL2+IL3               18,145    0.551       124.5    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   4 IL1+IL2               23,864    0.670        82.0    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   5 OL2+OL3+OL4            8,430    0.712        36.3    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   6 IL3+OL1+OL2            1,901    0.722        11.4    166,421     449  0.765   3   5.8    0.0060         74         88    0.0014
+   7 OL2+OL3                8,624    0.765         9.5    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   8 OL1+OL2                6,680    0.798         6.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== AAIA   IT layers IL1,IL2,IL4   13 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL2              110,485    0.552       379.8    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   2 OL2+OL3               24,691    0.675        27.3    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   3 OL1+OL2                8,705    0.719         8.3  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                7,594    0.757         2.7  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 IL2+IL4                6,375    0.789        24.7    258,037     479  0.809   2   5.3    0.0106         79         74    0.0013
+   6 IL4+OL1                4,799    0.813         7.8    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   7 OL5+OL6                3,742    0.831         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   8 IL1+IL4                  979    0.836         1.2    846,912   1,137  0.924   2   4.7    0.0078         63         64    0.0012
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL2+IL4           68,774    0.344      3192.5     21,542      91  0.193   3   8.8    0.0079         73         57    0.0011
+   2 IL2+IL4+OL1            7,651    0.382       267.6     28,588     113  0.364   3   8.0    0.0062         60         62    0.0012
+   3 IL1+IL2               40,656    0.585       139.7    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   4 IL4+OL1+OL2            4,922    0.610        54.9     89,711     248  0.645   3   6.5    0.0062        125        110    0.0015
+   5 OL2+OL3+OL4            6,086    0.640        26.2    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   6 IL2+IL4                6,275    0.671        24.3    258,037     479  0.809   2   5.3    0.0106         79         74    0.0013
+   7 OL2+OL3                9,261    0.718        10.2    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   8 IL4+OL1                5,516    0.745         9.0    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== AIAA   IT layers IL1,IL3,IL4   13 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL3+IL4              101,386    0.507      1630.3     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   2 OL2+OL3               33,287    0.673        36.8    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   3 IL1+IL3               12,780    0.737        20.3    630,471   1,130  0.906   2   4.8    0.0124         75         71    0.0014
+   4 OL3+OL4                7,677    0.775         2.8  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 OL1+OL2                7,426    0.812         7.1  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   6 IL4+OL1                4,006    0.832         6.5    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   7 OL5+OL6                3,738    0.851         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   8 IL1+IL4                  873    0.855         1.0    846,912   1,137  0.924   2   4.7    0.0078         63         64    0.0012
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL3+IL4+OL1           67,746    0.338      3340.4     20,281      84  0.144   3   8.9    0.0070         83         72    0.0012
+   2 IL3+IL4               33,654    0.507       541.2     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   3 OL2+OL3+OL4           18,441    0.599        79.3    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   4 IL1+IL3               17,358    0.685        27.5    630,471   1,130  0.906   2   4.8    0.0124         75         71    0.0014
+   5 IL4+OL1+OL2            1,104    0.691        12.3     89,711     248  0.645   3   6.5    0.0062        125        110    0.0015
+   6 OL2+OL3                9,835    0.740        10.9    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   7 IL4+OL1                4,487    0.763         7.3    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   8 OL1+OL2                6,739    0.796         6.5  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== IAAA   IT layers IL2,IL3,IL4   13 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL2+IL3              109,213    0.546       749.4    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   2 IL3+IL4               26,538    0.678       426.7     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   3 OL2+OL3               19,117    0.774        21.1    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   4 OL3+OL4                7,673    0.812         2.8  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 OL1+OL2                7,383    0.849         7.1  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   6 IL4+OL1                4,003    0.869         6.5    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   7 OL5+OL6                3,738    0.888         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   8 IL2+IL4                1,562    0.895         6.1    258,037     479  0.809   2   5.3    0.0106         79         74    0.0013
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL2+IL3+IL4           72,146    0.360      3588.0     20,107      82  0.065   3   9.2    0.0076         74         61    0.0012
+   2 IL3+IL4               29,952    0.510       481.6     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   3 IL2+IL3               33,656    0.678       230.9    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   4 IL4+OL1+OL2            3,513    0.696        39.2     89,711     248  0.645   3   6.5    0.0062        125        110    0.0015
+   5 OL2+OL3+OL4            6,556    0.729        28.2    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   6 OL2+OL3                9,735    0.777        10.8    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   7 IL4+OL1                4,490    0.800         7.3    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   8 OL1+OL2                6,691    0.833         6.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== AAII   IT layers IL1,IL2   10 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL2              110,485    0.552       379.8    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   2 OL2+OL3               24,691    0.675        27.3    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   3 OL1+OL2                8,705    0.719         8.3  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                7,594    0.757         2.7  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 OL5+OL6                3,798    0.776         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 IL2+OL1                2,395    0.788         0.3  7,795,305   5,210  0.976   2   4.4    0.0064         54         73    0.0014
+   7 OL4+OL5+OL6               97    0.788         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   8 OL2+OL3+OL4               14    0.788         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL2+OL1           77,510    0.387      2150.9     36,036     156  0.468   3   7.5    0.0074         63         62    0.0013
+   2 IL1+IL2               32,979    0.552       113.4    290,937     712  0.832   2   5.5    0.0540        191         83    0.0016
+   3 OL2+OL3+OL4           13,348    0.619        57.4    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   4 OL1+OL2               13,359    0.685        12.8  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   5 OL2+OL3                6,818    0.719         7.5    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   6 OL5+OL6                5,046    0.745         3.5  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   7 OL3+OL4                6,227    0.776         2.2  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   8 IL2+OL1+OL2              222    0.777         0.6    402,999     983  0.888   3   5.2    0.0057         51         71    0.0013
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== AIAI   IT layers IL1,IL3   10 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL3               98,744    0.493       156.6    630,471   1,130  0.906   2   4.8    0.0124         75         71    0.0014
+   2 OL2+OL3               25,222    0.619        27.9    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   3 OL1+OL2                8,823    0.663         8.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                7,654    0.702         2.7  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 OL5+OL6                3,792    0.721         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 IL3+OL1                3,461    0.738         1.7  2,043,535   1,967  0.938   2   4.6    0.0069         63         82    0.0014
+   7 OL4+OL5+OL6              101    0.738         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   8 IL3+OL1+OL2               17    0.738         0.1    166,421     449  0.765   3   5.8    0.0060         74         88    0.0014
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL3+OL1           77,413    0.387      1675.8     46,193     183  0.549   3   6.9    0.0064         54         61    0.0013
+   2 OL2+OL3+OL4           19,044    0.482        81.9    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   3 IL1+IL3               15,759    0.561        25.0    630,471   1,130  0.906   2   4.8    0.0124         75         71    0.0014
+   4 IL3+OL1+OL2            2,867    0.575        17.2    166,421     449  0.765   3   5.8    0.0060         74         88    0.0014
+   5 OL2+OL3               10,299    0.626        11.4    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   6 OL1+OL2                7,705    0.665         7.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   7 OL5+OL6                5,019    0.690         3.5  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   8 OL3+OL4                6,296    0.721         2.3  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== AIIA   IT layers IL1,IL4   10 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3               97,066    0.485       107.4    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   2 IL1+IL4               18,570    0.578        21.9    846,912   1,137  0.924   2   4.7    0.0078         63         64    0.0012
+   3 OL1+OL2               10,029    0.628         9.6  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                7,949    0.668         2.9  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 IL4+OL1                5,361    0.694         8.8    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   6 OL5+OL6                3,765    0.713         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   7 OL4+OL5+OL6              110    0.714         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   8 OL2+OL3+OL4               14    0.714         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL1+IL4+OL1           65,669    0.328      1341.8     48,941     180  0.608   3   6.9    0.0059         52         58    0.0012
+   2 OL2+OL3+OL4           24,880    0.452       107.0    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   3 IL4+OL1+OL2            2,405    0.464        26.8     89,711     248  0.645   3   6.5    0.0062        125        110    0.0015
+   4 OL2+OL3               15,495    0.542        17.1    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   5 IL4+OL1                6,631    0.575        10.8    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   6 IL1+IL4                7,813    0.614         9.2    846,912   1,137  0.924   2   4.7    0.0078         63         64    0.0012
+   7 OL1+OL2                8,478    0.656         8.1  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   8 OL5+OL6                4,907    0.681         3.4  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== IAAI   IT layers IL2,IL3   10 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL2+IL3              109,213    0.546       749.4    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   2 OL2+OL3               23,730    0.664        26.3    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   3 OL1+OL2                8,584    0.707         8.2  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                7,574    0.745         2.7  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 OL5+OL6                3,785    0.764         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 IL3+OL1                3,064    0.779         1.5  2,043,535   1,967  0.938   2   4.6    0.0069         63         82    0.0014
+   7 OL4+OL5+OL6              103    0.780         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   8 IL3+OL1+OL2               17    0.780         0.1    166,421     449  0.765   3   5.8    0.0060         74         88    0.0014
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL2+IL3+OL1           79,056    0.395      2823.5     27,999     117  0.281   3   8.1    0.0070         64         66    0.0013
+   2 IL2+IL3               30,172    0.546       207.0    145,736     400  0.706   2   5.8    0.0519        145         96    0.0016
+   3 OL2+OL3+OL4           12,355    0.607        53.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   4 IL3+OL1+OL2            2,406    0.619        14.5    166,421     449  0.765   3   5.8    0.0060         74         88    0.0014
+   5 OL2+OL3               10,226    0.671        11.3    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   6 OL1+OL2                7,607    0.709         7.3  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   7 OL5+OL6                4,984    0.733         3.5  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   8 OL3+OL4                6,246    0.765         2.2  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== IAIA   IT layers IL2,IL4   10 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3               97,066    0.485       107.4    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   2 IL2+IL4               21,525    0.592        83.4    258,037     479  0.809   2   5.3    0.0106         79         74    0.0013
+   3 OL1+OL2                9,859    0.642         9.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                7,886    0.681         2.8  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 IL4+OL1                5,061    0.706         8.3    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   6 OL5+OL6                3,766    0.725         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   7 OL4+OL5+OL6              110    0.726         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   8 OL2+OL3+OL4               14    0.726         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL2+IL4+OL1           66,903    0.334      2340.3     28,588     113  0.364   3   8.0    0.0062         60         62    0.0012
+   2 OL2+OL3+OL4           23,919    0.454       102.9    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   3 IL2+IL4               12,576    0.517        48.7    258,037     479  0.809   2   5.3    0.0106         79         74    0.0013
+   4 IL4+OL1+OL2            1,676    0.525        18.7     89,711     248  0.645   3   6.5    0.0062        125        110    0.0015
+   5 OL2+OL3               14,463    0.597        16.0    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   6 IL4+OL1                5,794    0.626         9.5    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   7 OL1+OL2                8,470    0.668         8.1  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   8 OL5+OL6                4,908    0.693         3.4  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== IIAA   IT layers IL3,IL4   10 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL3+IL4              101,386    0.507      1630.3     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   2 OL2+OL3               33,287    0.673        36.8    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   3 OL1+OL2                9,535    0.720         9.1  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                7,832    0.760         2.8  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 IL4+OL1                4,267    0.781         7.0    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   6 OL5+OL6                3,759    0.800         2.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   7 OL4+OL5+OL6              110    0.800         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   8 OL2+OL3+OL4               14    0.800         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL3+IL4+OL1           67,746    0.338      3340.4     20,281      84  0.144   3   8.9    0.0070         83         72    0.0012
+   2 IL3+IL4               33,654    0.507       541.2     62,189     206  0.462   2   6.6    0.3955        425        279    0.0019
+   3 OL2+OL3+OL4           18,441    0.599        79.3    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   4 OL2+OL3               14,991    0.674        16.6    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   5 OL1+OL2                9,517    0.721         9.1  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   6 IL4+OL1                4,369    0.743         7.1    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   7 OL5+OL6                4,895    0.767         3.4  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   8 OL3+OL4                6,471    0.800         2.3  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== AIII   IT layers IL1   8 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3               97,066    0.485       107.4    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   2 IL1+OL1               17,168    0.571         0.7 23,433,816  13,074  0.991   2   4.3    0.0062         50         68    0.0014
+   3 OL3+OL4                8,140    0.611         2.9  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   4 OL1+OL2                7,740    0.650         7.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   5 OL5+OL6                3,892    0.669         2.7  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 OL4+OL5+OL6              143    0.670         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   7 OL2+OL3+OL4               14    0.670         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   8 IL1+OL1+OL2               14    0.670         0.0    980,177   2,257  0.952   3   4.9    0.0056         47         65    0.0013
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3+OL4           72,332    0.361       311.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   2 OL1+OL2               31,685    0.520        30.3  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   3 OL2+OL3                9,207    0.566        10.2    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   4 OL5+OL6                6,462    0.598         4.5  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   5 OL3+OL4                7,476    0.635         2.7  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   6 IL1+OL1+OL2              825    0.639         0.8    980,177   2,257  0.952   3   4.9    0.0056         47         65    0.0013
+   7 IL1+OL1                6,047    0.670         0.3 23,433,816  13,074  0.991   2   4.3    0.0062         50         68    0.0014
+   8 OL4+OL5+OL6              143    0.670         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== IAII   IT layers IL2   8 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3               97,066    0.485       107.4    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   2 IL2+OL1               17,785    0.574         2.3  7,795,305   5,210  0.976   2   4.4    0.0064         54         73    0.0014
+   3 OL3+OL4                8,040    0.614         2.9  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   4 OL1+OL2                7,564    0.652         7.2  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   5 OL5+OL6                3,885    0.671         2.7  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 OL4+OL5+OL6              139    0.672         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   7 IL2+OL1+OL2               15    0.672         0.0    402,999     983  0.888   3   5.2    0.0057         51         71    0.0013
+   8 OL2+OL3+OL4               14    0.672         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3+OL4           72,332    0.361       311.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   2 IL2+OL1+OL2           21,392    0.468        53.1    402,999     983  0.888   3   5.2    0.0057         51         71    0.0013
+   3 OL2+OL3               12,000    0.528        13.3    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   4 OL1+OL2                8,367    0.570         8.0  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   5 OL5+OL6                6,438    0.602         4.5  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 OL3+OL4                7,452    0.639         2.7  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   7 IL2+OL1                6,388    0.671         0.8  7,795,305   5,210  0.976   2   4.4    0.0064         54         73    0.0014
+   8 OL4+OL5+OL6              139    0.672         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== IIAI   IT layers IL3   8 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3               97,066    0.485       107.4    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   2 IL3+OL1               18,144    0.576         8.9  2,043,535   1,967  0.938   2   4.6    0.0069         63         82    0.0014
+   3 OL3+OL4                8,082    0.616         2.9  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   4 OL1+OL2                7,690    0.654         7.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   5 OL5+OL6                3,879    0.674         2.7  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 OL4+OL5+OL6              143    0.674         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   7 IL3+OL1+OL2               17    0.675         0.1    166,421     449  0.765   3   5.8    0.0060         74         88    0.0014
+   8 OL2+OL3+OL4               14    0.675         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL3+OL1+OL2           77,882    0.389       468.0    166,421     449  0.765   3   5.8    0.0060         74         88    0.0014
+   2 OL2+OL3+OL4           14,504    0.462        62.4    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   3 OL2+OL3               12,622    0.525        14.0    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   4 OL1+OL2                8,817    0.569         8.4  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   5 IL3+OL1                9,569    0.616         4.7  2,043,535   1,967  0.938   2   4.6    0.0069         63         82    0.0014
+   6 OL5+OL6                5,118    0.642         3.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   7 OL3+OL4                6,380    0.674         2.3  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   8 OL4+OL5+OL6              143    0.675         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
+=== IIIA   IT layers IL4   8 viable seeds   denominator 200,160
+  -- greedy by MARGINAL GAIN
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 OL2+OL3               97,066    0.485       107.4    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   2 IL4+OL1               17,202    0.571        28.1    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   3 OL1+OL2                9,188    0.617         8.8  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   4 OL3+OL4                8,021    0.657         2.9  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   5 OL5+OL6                3,884    0.676         2.7  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   6 OL4+OL5+OL6              146    0.677         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+   7 OL2+OL3+OL4               14    0.677         0.1    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   8 IL4+OL1+OL2                3    0.677         0.0     89,711     248  0.645   3   6.5    0.0062        125        110    0.0015
+
+  -- greedy by MARGINAL GAIN PER CANDIDATE
+   # seed                marginal  cum eff  marg/kcand    cand/ev  fit/ev   fake  ar  nlay  sig(kap)  sig(d0)um  sig(z0)um  sig(cot)
+   1 IL4+OL1+OL2           65,079    0.325       725.4     89,711     248  0.645   3   6.5    0.0062        125        110    0.0015
+   2 OL2+OL3+OL4           21,588    0.433        92.9    232,499     487  0.798   3   5.2    0.0074        500      1,169    0.0047
+   3 IL4+OL1               12,239    0.494        20.0    612,461     864  0.876   2   5.1    0.0084         95        100    0.0015
+   4 OL2+OL3               15,526    0.572        17.2    903,950     896  0.853   2   5.0    0.0062        122        226    0.0023
+   5 OL1+OL2                9,165    0.617         8.8  1,044,737   1,216  0.876   2   5.0    0.0066        129        202    0.0022
+   6 OL5+OL6                5,122    0.643         3.6  1,435,274     522  0.902   2   6.4    0.0068        266     84,172    0.3138
+   7 OL3+OL4                6,659    0.676         2.4  2,788,256   1,074  0.914   2   6.5    0.0076        217     57,526    0.3063
+   8 OL4+OL5+OL6              146    0.677         0.1    974,918     391  0.890   3   6.7    0.0153      4,351     85,393    0.3197
+
+  marg/kcand = marginal TPs per 1000 candidate triplets per event.
+  nhit and the sigmas are POST-FIT, from the 5-parameter KF
+  emulation of the OT track finder run on the seed's clusters
+  plus one projected hit per remaining layer -- not the seed's
+  own three points. Following the projections is worth ~2x on
+  sigma(kappa), so the seed-level number was pessimistic.
+
