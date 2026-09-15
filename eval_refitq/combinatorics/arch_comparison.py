@@ -41,6 +41,96 @@ def rs(x):
     return float(0.5 * (q[1] - q[0]))
 
 
+def scatter_rows(U, IT, OT, ia, ib, TP):
+    """Rows for measuring the INTER-SYSTEM scattering angle directly.
+
+    The IT mini-track and the OT track are fitted INDEPENDENTLY on the same
+    particle -- neither saw the other's hits -- so any disagreement between them
+    is either the two fits' own resolution or a real deflection in between.
+    Nothing else can produce it.
+
+    From the kink decomposition, a scatter of angle delta at radius r_s makes the
+    DOWNSTREAM description read phi0 + delta (and d0 - delta*r_s) while the
+    upstream one reads the truth. So phi0_IT - phi0_OT measures -delta directly,
+    and cot_IT - cot_OT measures the longitudinal kink the same way.
+
+    Both tracks are required TRUTH-CLEAN, every hit from the matched TP: a single
+    wrong hit would masquerade as a large deflection and bias the width.
+    """
+    ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
+    ok = (ta >= 0) & (ta == tb)
+    for S, idx in ((IT, ia), (OT, ib)):
+        G = S["gidx"][idx]
+        on = G >= 0
+        tp = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -2)
+        ok &= (on & (tp == ta[:, None])).sum(1) == on.sum(1)
+    if not ok.any():
+        return None
+    a_, b_ = ia[ok], ib[ok]
+    kk = M.tp_key(IT["event"][a_], IT["tpIdx"][a_])
+    p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
+    good = TP["key"][p] == kk
+    a_, b_, p = a_[good], b_[good], p[good]
+    return {"inv_pt": TP["kappa"][p],
+            "dphi": M.wrap(IT["phi0"][a_] - OT["phi0"][b_]),
+            "dcot": IT["cot"][a_] - OT["cot"][b_],
+            "vphi": IT["var_phi0"][a_] + OT["var_phi0"][b_],
+            "vcot": IT["var_cot"][a_] + OT["var_cot"][b_]}
+
+
+def report_scattering(S):
+    """Width of the inter-system disagreement vs 1/pT, with the fits' own
+    resolution subtracted in quadrature. The residual slope IS the scattering
+    constant, in the same rad*GeV units as the OT's KalmanMultiScattTerm."""
+    print(f"\nINTER-SYSTEM SCATTERING, measured from independently fitted "
+          f"IT and OT tracks on the same particle ({len(S['inv_pt']):,} pairs)")
+    print(f"{'pT band':<12}{'n':>7}{'sig(dphi0)':>12}{'expected':>10}{'excess':>10}"
+          f"{'sig(dcot)':>12}{'expected':>10}{'excess':>10}")
+    bands = [(2, 3), (3, 5), (5, 10), (10, 1e9)]
+    kk_, wps, eps, wcs, ecs = [], [], [], [], []
+    for lo, hi in bands:
+        pt = 1.0 / np.maximum(S["inv_pt"], 1e-6)
+        m = (pt >= lo) & (pt < hi)
+        if m.sum() < 30:
+            continue
+        wp, wc = rs(S["dphi"][m]), rs(S["dcot"][m])
+        ep = float(np.sqrt(np.median(S["vphi"][m])))
+        ec = float(np.sqrt(np.median(S["vcot"][m])))
+        xp = np.sqrt(max(wp * wp - ep * ep, 0.0))
+        xc = np.sqrt(max(wc * wc - ec * ec, 0.0))
+        lab = f"{lo}-{'MAX' if hi > 1e8 else hi}"
+        print(f"{lab:<12}{int(m.sum()):>7,}{wp:>12.5f}{ep:>10.5f}{xp:>10.5f}"
+              f"{wc:>12.5f}{ec:>10.5f}{xc:>10.5f}")
+        kk_.append(float(np.median(S["inv_pt"][m])))
+        wps.append(wp); eps.append(ep); wcs.append(wc); ecs.append(ec)
+    # TWO COMPONENTS, and they must be separated or the constant is wrong.
+    # Subtracting the covariance in quadrature assumes the covariance is right.
+    # It is not: the pull does not go to 1 at high pT, where scattering has
+    # vanished, so the fits are reporting sigmas that are too small by a
+    # pT-INDEPENDENT factor. Fitting
+    #       width^2 = c^2 * expected^2 + (b / pT)^2
+    # separates a covariance scale c from the scattering constant b, where
+    # subtracting in quadrature would have folded all of c into b.
+    out = {}
+    for nm, W, E in (("phi0", wps, eps), ("cot", wcs, ecs)):
+        if len(kk_) < 2:
+            continue
+        A = np.stack([np.array(E) ** 2, np.array(kk_) ** 2], axis=1)
+        y = np.array(W) ** 2
+        coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+        c = float(np.sqrt(max(coef[0], 0.0)))
+        b = float(np.sqrt(max(coef[1], 0.0)))
+        out[nm] = {"scatter_radGeV": b, "cov_scale": c}
+        print(f"  d{nm}: scattering {b:.5f} rad*GeV, covariance scale {c:.2f}"
+              f"   (OT KalmanMultiScattTerm = 0.00075)")
+        naive = float(np.sum(np.array(kk_) * np.array(
+            [np.sqrt(max(w * w - e * e, 0.0)) for w, e in zip(W, E)]))
+            / max(np.sum(np.array(kk_) ** 2), 1e-30))
+        print(f"        quadrature-subtraction would have said {naive:.5f}, "
+              f"inflated {naive / max(b, 1e-9):.1f}x by the covariance error")
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-i", "--input", required=True)
@@ -56,6 +146,9 @@ def main():
     ap.add_argument("--it-ot-scale", type=float, default=3.0,
                     help="extra factor on the IT->OT crossing step, where the "
                          "support and services sit")
+    ap.add_argument("--scattering", action="store_true",
+                    help="measure the inter-system scattering angle from "
+                         "independently fitted IT and OT tracks")
     ap.add_argument("-o", "--out", default=None)
     a = ap.parse_args()
 
@@ -75,6 +168,7 @@ def main():
     acc = {"n_it": 0, "n_ot": 0, "n_it_real": 0, "n_ot_real": 0, "nev": 0}
     mtot = {}
     res = {}
+    scat = {}
     for (U, Q), ev in TF.unified_chunks(a.input, a.nev, a.chunk, sigz):
         TP = KF.tp_truth_table(U)
         IT = AP.pool_and_dr(U, AP.find_system(U, Q, seeds, a.ptmin, "IT",
@@ -99,6 +193,11 @@ def main():
                     d["both_real"] += int(((ta >= 0) & (tb >= 0)).sum())
         # resolutions for the three architectures, at the default cut
         ia, ib, _ = AP.match_systems(IT, OT, ("phi0", "z0", "cot"), 25.0)
+        if a.scattering and len(ia):
+            sr = scatter_rows(U, IT, OT, ia, ib, TP)
+            if sr:
+                for k, v in sr.items():
+                    scat.setdefault(k, []).append(v)
         if len(ia):
             ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
             good = (ta >= 0) & (ta == tb)
@@ -159,9 +258,13 @@ def main():
         dk, dd, dc, dz = [np.concatenate(x) for x in v]
         print(f"{lab:<26}{len(dk):>8,}{rs(dk):>9.4f}{1e4 * rs(dd):>9.0f}"
               f"{rs(dc):>9.4f}{1e4 * rs(dz):>9.0f}")
+    sconst = {}
+    if a.scattering and scat:
+        sconst = report_scattering({k: np.concatenate(v) for k, v in scat.items()})
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "mask": a.mask, "counts": acc,
+                   "scattering_const": sconst,
                    "match": {f"{k[0]}|{k[1]}": v for k, v in mtot.items()},
                    "resolutions": {k: [len(np.concatenate(v[0])),
                                        rs(np.concatenate(v[0])),
