@@ -128,7 +128,8 @@ D0_PRIOR_CM = 1.0        # uniform half-range for the d0 prior; see kf_run
 
 def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
            has_angle=None, d0_prior_cm=D0_PRIOR_CM, ms_scale=MS_SCALE,
-           it_ot_scale=IT_OT_SCALE, pt_for_ms=None, layers=None):
+           it_ot_scale=IT_OT_SCALE, pt_for_ms=None, layers=None,
+           reverse=False):
     """Vectorised FIVE-parameter KF over ntrack x nlayer arrays, inner to outer.
 
     THE MODEL, and it is the same one the exact three-point solve uses:
@@ -254,10 +255,20 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     # ---- positions ---------------------------------------------------------
     # r_prev tracks the radius of each track's last used layer, which is where a
     # kink between that layer and this one effectively sits.
+    # DIRECTION MATTERS ONLY ONCE Q IS NONZERO. With Q = 0 the forward filter's
+    # terminal state IS the exact global least-squares solution, so order is
+    # irrelevant -- which is why everything worked before. With Q > 0 the
+    # terminal state is the estimate AT THE LAST LAYER PROCESSED. Going inner to
+    # outer that is the OT, so Q inflates the IT-determined d0 covariance right
+    # before hits arrive that carry no d0 information. Reversed, the terminal
+    # state lives at the innermost layer, where d0 is actually measured.
+    # The proper remedy is a smoother (Frühwirth NIM A262 (1987) 444, sec. 4);
+    # this is the cheap test of whether direction is the whole story.
     r_prev = np.zeros(nt)
     seen_any = np.zeros(nt, bool)
     lay_arr = None if layers is None else np.asarray(layers)
-    for L in range(nl):
+    seq = range(nl - 1, -1, -1) if reverse else range(nl)
+    for L in seq:
         use = valid[:, L] & ok
         if not use.any():
             continue
@@ -266,10 +277,12 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
             step = use & seen_any
             if step.any():
                 sc = ms_scale
-                if lay_arr is not None and L > 0:
-                    # the crossing step is the one whose previous layer was IT
-                    # and whose current layer is OT
-                    cross = (lay_arr[L] > 10) & (r_prev < 20.0) & (r_prev > 0)
+                if lay_arr is not None:
+                    # the crossing step joins an IT radius to an OT one, in
+                    # whichever direction the filter is running
+                    here_ot = lay_arr[L] > 10
+                    cross = np.where(here_ot, (r_prev < 20.0) & (r_prev > 0),
+                                     r_prev > 20.0)
                     sc = np.where(cross, ms_scale * it_ot_scale, ms_scale)
                 sd = np.where(step, sc / np.maximum(np.abs(pt_for_ms), 1e-3), 0.0)
                 q = sd * sd
@@ -543,7 +556,8 @@ def hits_from_seed(U, out, layers=None):
 
 def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
                d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, gidx=None,
-               pt_hint=None, ms_scale=MS_SCALE, it_ot_scale=IT_OT_SCALE):
+               pt_hint=None, ms_scale=MS_SCALE, it_ot_scale=IT_OT_SCALE,
+               reverse=False):
     """Assemble each seed's track and fit it. Returns fitted parameters + hits.
 
     gidx, when given, is the hit table the seeding already built; otherwise the
@@ -588,7 +602,7 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     m0 = M.wrap(T["PH"] - phi_ref[:, None])
     out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb, ang,
                  d0_prior_cm, ms_scale, it_ot_scale,
-                 pt_for_ms=pt0[:, 0], layers=layers)
+                 pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse)
     (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
      c2p, c2z, c2a, nang, vphi) = out
     fit = {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,

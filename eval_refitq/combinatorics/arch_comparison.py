@@ -104,10 +104,11 @@ def main():
             good = (ta >= 0) & (ta == tb)
             scales = ([float(x) for x in a.ms_scan.split(",") if x.strip()]
                       if a.ms_scan else [0.0])
-            for msc in scales:
+            for msc, rev in [(m, r) for m in scales for r in (False, True)]:
                 fit, G = AP.refit_matched(U, Q, IT, OT, ia, ib,
                                           ms_scale=msc,
-                                          it_ot_scale=a.it_ot_scale)
+                                          it_ot_scale=a.it_ot_scale,
+                                          reverse=rev)
                 if not good.any():
                     continue
                 gA = IT["gA"][ia][good]
@@ -115,8 +116,9 @@ def main():
                 f2 = {k: (v[good] if isinstance(v, np.ndarray) and v.ndim == 1
                           else v) for k, v in fit.items() if k != "hits"}
                 dk, dd, dc, dz, rm = KF.truth_residuals(U, tr, f2, TP)
-                lab = ("PARALLEL matched+refit" if msc == 0.0 else
-                       f"  + process noise {msc:g}")
+                d = "out->in" if rev else "in->out"
+                lab = (f"PARALLEL refit, Q=0 {d}" if msc == 0.0 else
+                       f"  + Q {msc:g} {d}")
                 r = res.setdefault(lab, [[], [], [], []])
                 for i, v in enumerate((dk, dd, dc, dz)):
                     r[i].append(v)

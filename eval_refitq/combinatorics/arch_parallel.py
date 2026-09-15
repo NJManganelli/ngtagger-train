@@ -182,7 +182,7 @@ def match_systems(IT, OT, pars=MATCH_PARS, max_chi2=50.0):
 
 
 def refit_matched(U, Q, IT, OT, ia, ib, kf_opts=None,
-                  ms_scale=None, it_ot_scale=None):
+                  ms_scale=None, it_ot_scale=None, reverse=False):
     """Refit each matched pair on the UNION of its two tracks' hits."""
     kf_opts = kf_opts or {}
     d0_opt = {k: v for k, v in kf_opts.items() if k == "d0_prior_cm"}
@@ -210,6 +210,7 @@ def refit_matched(U, Q, IT, OT, ia, ib, kf_opts=None,
         extra["ms_scale"] = ms_scale
     if it_ot_scale is not None:
         extra["it_ot_scale"] = it_ot_scale
+    extra["reverse"] = reverse
     fit = KF.fit_tracks(U, Q, trip, gidx=G, use_angles=False,
                         pt_hint=pt, **d0_opt, **extra)
     return fit, G
