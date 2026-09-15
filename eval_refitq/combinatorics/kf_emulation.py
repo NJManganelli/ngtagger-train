@@ -173,16 +173,25 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     C44 = np.full(nt, d0_prior_cm ** 2 / 3.0)
     C22 = np.full(nt, 100.0); C23 = np.zeros(nt); C33 = np.full(nt, 1.0e4)
     nseen = np.zeros(nt, np.int32)
+    chi2_rphi = np.zeros(nt); chi2_rz = np.zeros(nt)
+    chi2_ang = np.zeros(nt); nang = np.zeros(nt, np.int32)
     ok = valid.sum(axis=1) >= 2
 
-    def upd3(h0, h1, h4, resid, v, use):
-        """r-phi update against a measurement row (h0, h1, h4)."""
+    def upd3(h0, h1, h4, resid, v, use, chi2=None):
+        """r-phi update against a measurement row (h0, h1, h4).
+
+        chi2, when given, accumulates r^2 / R -- the same increment
+        KFbase::adjustChi2 adds. R is scalar here because every measurement is
+        one-dimensional, so no matrix inverse is needed.
+        """
         nonlocal x0, x1, x4, C00, C01, C04, C11, C14, C44
         S0 = C00 * h0 + C01 * h1 + C04 * h4
         S1 = C01 * h0 + C11 * h1 + C14 * h4
         S4 = C04 * h0 + C14 * h1 + C44 * h4
         R = np.where(use, h0 * S0 + h1 * S1 + h4 * S4 + v, 1.0)
         R = np.where(np.abs(R) > 1e-30, R, 1e-30)
+        if chi2 is not None:
+            chi2 += np.where(use, resid * resid / R, 0.0)
         K0, K1, K4 = S0 / R, S1 / R, S4 / R
         x0 = np.where(use, x0 + resid * K0, x0)
         x1 = np.where(use, x1 + resid * K1, x1)
@@ -194,13 +203,15 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
         C14 = np.where(use, C14 - K1 * S4, C14)
         C44 = np.where(use, C44 - K4 * S4, C44)
 
-    def upd2(h2, h3, resid, v, use):
+    def upd2(h2, h3, resid, v, use, chi2=None):
         """r-z update against a measurement row (h2, h3)."""
         nonlocal x2, x3, C22, C23, C33
         S2 = C22 * h2 + C23 * h3
         S3 = C23 * h2 + C33 * h3
         R = np.where(use, h2 * S2 + h3 * S3 + v, 1.0)
         R = np.where(np.abs(R) > 1e-30, R, 1e-30)
+        if chi2 is not None:
+            chi2 += np.where(use, resid * resid / R, 0.0)
         K2, K3 = S2 / R, S3 / R
         x2 = np.where(use, x2 + resid * K2, x2)
         x3 = np.where(use, x3 + resid * K3, x3)
@@ -216,9 +227,10 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
         r = np.where(use, np.maximum(H[:, L], 1e-3), 1.0)
         g = 1.0 / r
         pred = x0 * r + x1 + x4 * g
-        upd3(r, np.ones(nt), g, np.where(use, m0[:, L] - pred, 0.0), v0[:, L], use)
+        upd3(r, np.ones(nt), g, np.where(use, m0[:, L] - pred, 0.0), v0[:, L],
+             use, chi2_rphi)
         upd2(r, np.ones(nt), np.where(use, m1[:, L] - (x2 * r + x3), 0.0),
-             v1[:, L], use)
+             v1[:, L], use, chi2_rz)
         nseen = np.where(use, nseen + 1, nseen)
     # ---- SmartPixels angles, on every instrumented layer including the seed --
     if ANG:
@@ -230,12 +242,14 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
             h4 = -1.0 / (r * r)
             pred = x0 + x4 * h4
             upd3(np.ones(nt), np.zeros(nt), h4,
-                 np.where(ua, ma[:, L] - pred, 0.0), va[:, L], ua)
+                 np.where(ua, ma[:, L] - pred, 0.0), va[:, L], ua, chi2_ang)
             upd2(np.ones(nt), np.zeros(nt),
-                 np.where(ua, mb[:, L] - x2, 0.0), vb[:, L], ua)
+                 np.where(ua, mb[:, L] - x2, 0.0), vb[:, L], ua, chi2_ang)
+            nang = np.where(ua, nang + 1, nang)
     kappa = -x0 / M.C_BEND
     return (kappa, x1, x4, x2, x3,
-            C00 / (M.C_BEND ** 2), C44, C22, C33, nseen, ok)
+            C00 / (M.C_BEND ** 2), C44, C22, C33, nseen, ok,
+            chi2_rphi, chi2_rz, chi2_ang, nang)
 
 
 # ==========================================================================
@@ -269,6 +283,7 @@ def _selftest():
     valid = np.ones(r.shape, bool)
     out = kf_run(r, phi, z, v0, v1, valid, d0_prior_cm=5.0)
     kf_kap, kf_phi0, kf_d0, kf_cot, kf_z0 = out[:5]
+    assert len(out) == 15
     bad = [f"{nm}: max |err| {np.abs(a - b).max():.3e}"
            for nm, a, b in (("kappa", kf_kap, kap), ("phi0", kf_phi0, phi0),
                             ("d0", kf_d0, d0), ("cot", kf_cot, cot),
@@ -510,10 +525,95 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     m0 = M.wrap(T["PH"] - phi_ref[:, None])
     out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb, ang,
                  d0_prior_cm)
-    kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok = out
-    return {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,
-            "cot": cot, "z0": z0, "var_kappa": vk, "var_d0": vd,
-            "var_cot": vc, "var_z0": vz, "nhit": nhit, "ok": ok, "hits": T}
+    (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
+     c2p, c2z, c2a, nang) = out
+    fit = {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,
+           "cot": cot, "z0": z0, "var_kappa": vk, "var_d0": vd,
+           "var_cot": vc, "var_z0": vz, "nhit": nhit, "ok": ok, "hits": T,
+           "chi2_rphi": c2p, "chi2_rz": c2z}
+    if use_angles:
+        # angles were consumed by the fit, so their residuals are no longer an
+        # independent test; report what the updates contributed
+        fit["chi2_angle"], fit["n_angle"] = c2a, nang
+    else:
+        fit["chi2_angle"], fit["n_angle"] = angle_chi2(T, fit, alpha_scale,
+                                                       beta_scale)
+    return fit
+
+
+def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
+    """SmartPixels angle consistency for a track fitted on POSITIONS ONLY.
+
+    THIS IS THE ANGLES' JOB. Feeding alpha and beta into the fit buys nothing --
+    measured: sigma(kappa) 0.0093 with them against 0.0093 without, at any
+    weighting, because sigma(kappa_alpha) is 0.64 at IL1 where the positions
+    already deliver 0.019. What they CAN do is say whether a cluster's own
+    direction agrees with the trajectory the positions found, which is a test of
+    whether the cluster belongs on the track at all. That is precisely the role
+    the OT gives stub bend: bendchi2 is a feature of its quality MVA, not a
+    measurement in its KF.
+
+    alpha predicts x0 - x4 / r^2 and beta predicts x2, the same rows the fit
+    would have used. The pull uses the MEASUREMENT variance only and neglects
+    the fitted state's own uncertainty, which makes the chi2 conservative -- the
+    same simplification bend chi2 makes, and harmless for a discriminant that
+    only has to be monotonic.
+    """
+    r = np.maximum(T["R"], 1e-3)
+    x0 = -M.C_BEND * fit["kappa"][:, None]
+    pred_a = x0 - fit["d0"][:, None] / (r * r)
+    res_a = (-M.C_BEND * T["KA"]) - pred_a
+    var_a = (M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale) ** 2
+    res_b = T["CT"] - fit["cot"][:, None]
+    var_b = (np.maximum(T["SCT"], 1e-9) * beta_scale) ** 2
+    use = T["VALID"] & T["ANG"]
+    c2 = (np.where(use, res_a * res_a / var_a, 0.0).sum(axis=1)
+          + np.where(use, res_b * res_b / var_b, 0.0).sum(axis=1))
+    return c2, use.sum(axis=1).astype(np.int32)
+
+
+# ---- acceptance, mirroring KFParamsComb::isGoodState ---------------------
+# All cuts are indexed by the number of layers on the track, from
+# L1Trigger/TrackFindingTMTT/python/TMTrackProducer_Defaults_cfi.py. They LOOSEN
+# with layer count because chi2 grows with the degrees of freedom.
+KF_CHISQ_CUT5 = (999., 999., 10., 30., 80., 120., 160.)     # KFLayerVsChiSq5
+KF_Z0_CUT5 = (999., 999., 25.5, 25.5, 25.5, 25.5, 25.5)     # KFLayerVsZ0Cut5, cm
+KF_D0_CUT5 = (999., 999., 999., 10., 10., 10., 10.)         # KFLayerVsD0Cut5, cm
+KF_PT_TOLER = (999., 999., 0.1, 0.1, 0.05, 0.05, 0.05)      # KFLayerVsPtToler
+CHI2_RPHI_SCALE = 8.0                                        # KalmanChi2RphiScale
+
+
+def good_state(fit, ptmin):
+    """The real acceptance: scaled chi2, |z0|, |d0| and pT, all per layer count.
+
+    chi2scaled = chi2rphi / 8 + chi2rz is the quantity cut on, not chi2 itself:
+    the r-phi component is scaled down to keep electrons, which radiate.
+    """
+    n = np.clip(fit["nhit"], 0, len(KF_CHISQ_CUT5) - 1)
+    chi2s = fit["chi2_rphi"] / CHI2_RPHI_SCALE + fit["chi2_rz"]
+    pt = 1.0 / np.maximum(np.abs(fit["kappa"]), 1e-6)
+    keep = fit["ok"] & (chi2s <= np.asarray(KF_CHISQ_CUT5)[n])
+    keep &= np.abs(fit["z0"]) <= np.asarray(KF_Z0_CUT5)[n]
+    keep &= np.abs(fit["d0"]) <= np.asarray(KF_D0_CUT5)[n]
+    keep &= pt >= ptmin - np.asarray(KF_PT_TOLER)[n]
+    return keep, chi2s
+
+
+def rank_score(fit, chi2s, w_angle=0.0):
+    """Rank candidates the way the real accumulator does, optionally using angles.
+
+    KalmanFilter.cc's accumulator sorts on the number of CONSISTENT layers
+    first, then consistent PS layers, keeping one state per track id. Layers
+    dominate; chi2 breaks ties. w_angle folds in the angle chi2 per angle-bearing
+    cluster, which is the knob for testing whether the SmartPixels directions
+    add ranking power the positions do not already have.
+    """
+    per = chi2s / np.maximum(fit["nhit"], 1)
+    score = fit["nhit"].astype(np.float64) - 0.02 * per
+    if w_angle:
+        score -= w_angle * fit["chi2_angle"] / np.maximum(fit["n_angle"], 1)
+    return score
+
 
 
 def truth_residuals(U, trip, fit, TP):

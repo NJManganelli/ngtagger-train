@@ -218,6 +218,25 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
     return out
 
 
+def filter_tracks(out, keep):
+    """Restrict a run_seed result to a boolean subset of its tracks.
+
+    Used to apply the KF chi2 acceptance, which can only be evaluated after the
+    fit and therefore after the 4-layer rule that run_seed applies.
+    """
+    o = dict(out)
+    o["_gA"], o["_gB"] = out["_gA"][keep], out["_gB"][keep]
+    o["_gC"] = None if out.get("_gC") is None else out["_gC"][keep]
+    o["_d0"] = None if out.get("_d0") is None else out["_d0"][keep]
+    o["_nconf"] = out["_nconf"][keep]
+    remap = np.full(len(keep), -1, np.int64)
+    remap[np.flatnonzero(keep)] = np.arange(int(keep.sum()))
+    o["_hits"] = {L: (remap[rows][remap[rows] >= 0], gc[remap[rows] >= 0])
+                  for L, (rows, gc) in out.get("_hits", {}).items()}
+    o["tracks_to_fit"] = int(keep.sum())
+    return o
+
+
 def recovered_keys(U, out):
     """TPs recovered by a seed, requiring the SEED's own layers to be truthful.
 

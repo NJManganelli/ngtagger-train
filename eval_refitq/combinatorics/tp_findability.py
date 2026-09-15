@@ -57,7 +57,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 8
+FORMAT_VERSION = 9
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -334,6 +334,32 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None):
         if o is None or not o.get("tracks_to_fit"):
             counters[s_i] = {"pairs": 0.0, "cand": 0.0, "fit": 0.0}
             continue
+        # ---- KF chi2 ACCEPTANCE, not a post-hoc quality metric -----------
+        # KFParamsComb::isGoodState cuts on chi2rphi/8 + chi2rz against a
+        # per-layer-count budget, plus |z0|, |d0| and pT. It can only be
+        # evaluated after the fit, so the fit runs on EVERY track that passed
+        # the 4-layer rule and the survivors are what the seed is credited with.
+        # MEASURED: this is what makes doublet parameters usable at all --
+        # sigma(kappa) for the IL3+IL4 doublet goes 0.4728 -> 0.0056 and
+        # sigma(d0) 568 -> 55 um, because the rejected tracks were the ones
+        # carrying wrong projected hits. The angle chi2 is computed but NOT cut
+        # on, matching the OT's treatment of stub bend as a ranking feature.
+        n_pre = int(o["tracks_to_fit"])
+        gidx_all = KF.hits_from_seed(U, o)
+        ga0, gb0, gc0 = o["_gA"], o["_gB"], o.get("_gC")
+        trip0 = (ga0, gb0, gc0 if gc0 is not None else gb0)
+        fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, use_angles=False,
+                             **{k: v for k, v in kf_opts.items()
+                                if k == "d0_prior_cm"})
+        keep, chi2s = KF.good_state(fit0, ptmin)
+        if not keep.any():
+            counters[s_i] = {"arity": float(sd.arity), "pairs": 0.0,
+                             "cand": float(o.get("cand_all_targets", 0)),
+                             "fit": 0.0, "before_chi2": float(n_pre)}
+            continue
+        w_ang = 0.30 if sd.arity == 2 else 0.03
+        score = KF.rank_score(fit0, chi2s, w_angle=w_ang)
+        o = SA.filter_tracks(o, keep)
         ga, gb, gc = o["_gA"], o["_gB"], o.get("_gC")
         ta = U["tpIdx"][ga]
         real = (ta >= 0) & (ta == U["tpIdx"][gb])
@@ -341,10 +367,15 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None):
             real &= ta == U["tpIdx"][gc]
         counters[s_i] = {
             "arity": float(sd.arity),
+            "before_chi2": float(n_pre),
+            "chi2_scaled_sum": float(chi2s[keep].sum()),
+            "chi2_angle_sum": float(fit0["chi2_angle"][keep].sum()),
+            "n_angle_sum": float(fit0["n_angle"][keep].sum()),
+            "rank_sum": float(score[keep].sum()),
             "seed_objects": float(o.get("seed_objects", 0)),
             "pairs": float(o.get("tracklets", 0)),
             "cand": float(o.get("cand_all_targets", 0)),
-            "fit": float(o.get("tracks_to_fit", 0)),
+            "fit": float(o["tracks_to_fit"]),
             "before_minlayers": float(o.get("tracks_before_minlayers", 0)),
             "nlayer_sum": float((sd.arity + o["_nconf"]).sum()),
             # NOT comparable across arity: a doublet is credited when its two
@@ -532,6 +563,10 @@ def seed_table(C):
             "min_proj": sd.min_proj(),
             "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
             "pass_frac": c.get("fit", 0.0) / max(c.get("before_minlayers", 1.0), 1.0),
+            "chi2_pass": c.get("fit", 0.0) / max(c.get("before_chi2", 1.0), 1.0),
+            "chi2_per_layer": c.get("chi2_scaled_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
+            "chi2_angle_per_cl": (c.get("chi2_angle_sum", 0.0)
+                                  / max(c.get("n_angle_sum", 1.0), 1.0)),
             "pairs": c.get("pairs", 0.0) / nev, "cand": c.get("cand", 0.0) / nev,
             "fit": c.get("fit", 0.0) / nev,
             "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
@@ -593,11 +628,13 @@ def main():
     rows = [r for r in seed_table(C) if not r.get("infeasible")]
     rows.sort(key=lambda r: -r["n_found"])
     print(f"\n{'seed':<20}{'ar':>3}{'found':>9}{'cand/ev':>11}{'fit/ev':>8}"
-          f"{'pass%':>6}{'nlay':>6}{'fake':>7}{'s(kap)':>9}{'s(d0)um':>9}"
-          f"{'s(cot)':>9}{'s(z0)um':>9}")
+          f"{'X2pass%':>8}{'X2/lay':>7}{'X2ang':>7}{'nlay':>6}{'fake':>7}"
+          f"{'s(kap)':>9}{'s(d0)um':>9}{'s(cot)':>9}{'s(z0)um':>9}")
     for r in rows[:30]:
         print(f"{r['seed']:<20}{r['arity']:>3}{r['n_found']:>9,}{r['cand']:>11,.0f}"
-              f"{r['fit']:>8,.0f}{100 * r['pass_frac']:>6.0f}{r['nlayer']:>6.1f}"
+              f"{r['fit']:>8,.0f}{100 * r['chi2_pass']:>8.0f}"
+              f"{r['chi2_per_layer']:>7.2f}{r['chi2_angle_per_cl']:>7.2f}"
+              f"{r['nlayer']:>6.1f}"
               f"{r['fake']:>7.3f}{r['sig_kappa']:>9.4f}{1e4 * r['sig_d0_cm']:>9.0f}"
               f"{r['sig_cot']:>9.4f}{1e4 * r['sig_z0_cm']:>9.0f}")
     if a.out:
