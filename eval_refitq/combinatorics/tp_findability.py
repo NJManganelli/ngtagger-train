@@ -57,7 +57,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 10
+FORMAT_VERSION = 12
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -283,136 +283,157 @@ def chunk_census(U):
             "hit_it": hit_it, "hit_ot": hit_ot}
 
 
-def _qual(U, Q, out, rng, nmax, kf_opts):
-    """POST-FIT track resolutions, from the KF emulation of the OT track finder.
-
-    Fitted on EXACTLY the track the seeding built: the follow stage already
-    chose one hit per layer under the projection windows, so the KF is handed
-    that table rather than re-projecting and possibly choosing differently.
-
-    Truth-matched first, then subsampled. Resolution is only defined on tracks
-    the seed found correctly, and subsampling before matching starves exactly
-    the seeds that need the statistics most -- at a 95% fake rate, 400 sampled
-    tracks leave ~22 matched, under the 30 a robust spread needs, so every
-    high-fake seed reported nan while clean ones looked fine.
-    """
-    ga, gb, gc = out["_gA"], out["_gB"], out.get("_gC")
-    ta = U["tpIdx"][ga]
-    real = (ta >= 0) & (ta == U["tpIdx"][gb])
-    if gc is not None:
-        real &= ta == U["tpIdx"][gc]
-    idx = np.flatnonzero(real)
-    if not len(idx):
-        return np.zeros((0, 5), np.float32)
-    if len(idx) > nmax:
-        idx = idx[rng.choice(len(idx), nmax, replace=False)]
-    gidx = KF.hits_from_seed(U, out)[idx]
-    trip = (ga[idx], gb[idx], (gc[idx] if gc is not None else gb[idx]))
-    TP = KF.tp_truth_table(U)
-    fit = KF.fit_tracks(U, Q, trip, gidx=gidx, **kf_opts)
-    dk, dd, dc, dz, rm = KF.truth_residuals(U, trip, fit, TP)
-    if not len(dk):
-        return np.zeros((0, 5), np.float32)
-    return np.stack([dk, dd, dc, dz,
-                     fit["nhit"][rm].astype(np.float64)], axis=1).astype(np.float32)
-
-
 def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
-                  feat_per_chunk=0):
-    """Run every seed over one chunk and reduce to census + bitmap + counters."""
+                  feat_per_chunk=0, do_dr=True):
+    """Run every seed over one chunk and reduce to census + bitmap + counters.
+
+    TWO PASSES, because duplicate removal is inherently cross-seed. The first
+    pass runs each seed through pairing, projection, the 4-layer rule and the KF
+    chi2 acceptance and holds its survivors. DR then runs ONCE over all of them
+    together -- several seeds finding the same track is exactly what it exists
+    to collapse -- and only then is each seed credited with what survived.
+
+    Quality and MVA rows are taken after DR too, so the resolutions and the
+    training sample describe the tracks a real system would actually emit.
+    """
     kf_opts = kf_opts or {}
-    feats, labels = {}, {}
+    d0_opt = {k: v for k, v in kf_opts.items() if k == "d0_prior_cm"}
     cen = chunk_census(U)
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
+    # TWO BITMAPS, and the distinction is not bookkeeping.
+    #   found    = what a seed reaches ON ITS OWN, before DR.
+    #   found_dr = what it still owns after DR.
+    # DR assigns each real track to exactly ONE seed, so found_dr destroys
+    # precisely the overlap information the greedy menu composition needs:
+    # the greedy has to know that seed B would have found a TP if seed A were
+    # not in the menu, and post-DR that is unknowable. Composition therefore
+    # uses `found`, while track rates, resolutions and MVA rows use the post-DR
+    # survivors, which is what a real system emits.
     found = np.zeros((ntp, nw), np.uint64)
+    found_dr = np.zeros((ntp, nw), np.uint64)
     targets = list(SA.IL) + list(SA.OT_BARREL)
-    counters, qual = {}, {}
+    counters, qual, feats, labels = {}, {}, {}, {}
+
+    # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
+    held = {}
     for s_i, sd in enumerate(seeds):
         try:
-            o = SA.run_seed(U, Q, sd, ptmin, targets, **{})
+            o = SA.run_seed(U, Q, sd, ptmin, targets)
         except M.TooWide as e:
             counters[s_i] = {"infeasible": 1.0, "n": float(e.n)}
             continue
         if o is None or not o.get("tracks_to_fit"):
             counters[s_i] = {"pairs": 0.0, "cand": 0.0, "fit": 0.0}
             continue
-        # ---- KF chi2 ACCEPTANCE, not a post-hoc quality metric -----------
-        # KFParamsComb::isGoodState cuts on chi2rphi/8 + chi2rz against a
-        # per-layer-count budget, plus |z0|, |d0| and pT. It can only be
-        # evaluated after the fit, so the fit runs on EVERY track that passed
-        # the 4-layer rule and the survivors are what the seed is credited with.
-        # MEASURED: this is what makes doublet parameters usable at all --
-        # sigma(kappa) for the IL3+IL4 doublet goes 0.4728 -> 0.0056 and
-        # sigma(d0) 568 -> 55 um, because the rejected tracks were the ones
-        # carrying wrong projected hits. The angle chi2 is computed but NOT cut
-        # on, matching the OT's treatment of stub bend as a ranking feature.
         n_pre = int(o["tracks_to_fit"])
         gidx_all = KF.hits_from_seed(U, o)
-        ga0, gb0, gc0 = o["_gA"], o["_gB"], o.get("_gC")
-        trip0 = (ga0, gb0, gc0 if gc0 is not None else gb0)
+        gc0 = o.get("_gC")
+        trip0 = (o["_gA"], o["_gB"], gc0 if gc0 is not None else o["_gB"])
         fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, use_angles=False,
-                             **{k: v for k, v in kf_opts.items()
-                                if k == "d0_prior_cm"})
+                             **d0_opt)
         keep, chi2s = KF.good_state(fit0, ptmin)
+        base = {"arity": float(sd.arity), "before_chi2": float(n_pre),
+                "seed_objects": float(o.get("seed_objects", 0)),
+                "pairs": float(o.get("tracklets", 0)),
+                "cand": float(o.get("cand_all_targets", 0)),
+                "before_minlayers": float(o.get("tracks_before_minlayers", 0)),
+                "fit": 0.0}
         if not keep.any():
-            counters[s_i] = {"arity": float(sd.arity), "pairs": 0.0,
-                             "cand": float(o.get("cand_all_targets", 0)),
-                             "fit": 0.0, "before_chi2": float(n_pre)}
+            counters[s_i] = base
             continue
         w_ang = 0.30 if sd.arity == 2 else 0.03
-        score = KF.rank_score(fit0, chi2s, w_angle=w_ang)
-        # ---- MVA training rows ------------------------------------------
-        # Features and labels for the surviving tracks. The label that matters
-        # is the WRONG-HIT COUNT, not real-vs-fake: real-vs-fake is nearly
-        # solved by chi2_rphi alone (AUC 0.87-0.99 from that one feature),
-        # whereas how many hits are wrong is what drives the d0 resolution a
-        # downstream tagger has to trust, and it is free to label here.
-        if feat_per_chunk:
-            ks = np.flatnonzero(keep)
-            if len(ks) > feat_per_chunk:
-                ks = ks[rng.choice(len(ks), feat_per_chunk, replace=False)]
-            Tf = KF.gather_hits(U, Q, gidx_all[ks], KF.LAYER_ORDER)
-            ff = {k: (v[ks] if isinstance(v, np.ndarray) and v.ndim >= 1
-                      and len(v) == len(keep) else v)
-                  for k, v in fit0.items() if k != "hits"}
-            ff["_arity"] = sd.arity
-            tripf = tuple(x[ks] for x in trip0)
-            TPf = KF.tp_truth_table(U)
-            feats[s_i] = KF.track_features(U, Q, Tf, ff)
-            labels[s_i] = KF.track_labels(U, Tf, ff, tripf, TPf)
-        o = SA.filter_tracks(o, keep)
+        # standalone reach, recorded before DR can reassign anything
+        o_keep = SA.filter_tracks(o, keep)
+        rk0 = SA.recovered_keys(U, o_keep)
+        if len(rk0):
+            p0 = np.searchsorted(cen["key"], rk0)
+            found[p0, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
+        base["found_standalone"] = float(len(rk0))
+        held[s_i] = {"o": o_keep, "sd": sd, "base": base,
+                     "gidx": gidx_all[keep],
+                     "score": KF.rank_score(fit0, chi2s, w_angle=w_ang)[keep],
+                     "chi2s": chi2s[keep],
+                     "c2a": fit0["chi2_angle"][keep],
+                     "nang": fit0["n_angle"][keep]}
+        del o, fit0
+
+    # ---- duplicate removal, once, across every seed ---------------------
+    keys = sorted(held)
+    if keys and do_dr:
+        G = np.concatenate([held[i]["gidx"] for i in keys])
+        SC = np.concatenate([held[i]["score"] for i in keys])
+        surv = SA.duplicate_removal(G, SC)
+        off = 0
+        for i in keys:
+            n = len(held[i]["score"])
+            held[i]["dr"] = surv[off:off + n]
+            off += n
+    else:
+        for i in keys:
+            held[i]["dr"] = np.ones(len(held[i]["score"]), bool)
+
+    # ---- pass 2: credit each seed with what survived --------------------
+    TP = KF.tp_truth_table(U)
+    for s_i in keys:
+        h = held[s_i]
+        sd, dr = h["sd"], h["dr"]
+        c = dict(h["base"])
+        c["before_dr"] = float(len(dr))
+        if not dr.any():
+            counters[s_i] = c
+            continue
+        o = SA.filter_tracks(h["o"], dr)
+        gidx = h["gidx"][dr]
         ga, gb, gc = o["_gA"], o["_gB"], o.get("_gC")
         ta = U["tpIdx"][ga]
         real = (ta >= 0) & (ta == U["tpIdx"][gb])
         if gc is not None:
             real &= ta == U["tpIdx"][gc]
-        counters[s_i] = {
-            "arity": float(sd.arity),
-            "before_chi2": float(n_pre),
-            "chi2_scaled_sum": float(chi2s[keep].sum()),
-            "chi2_angle_sum": float(fit0["chi2_angle"][keep].sum()),
-            "n_angle_sum": float(fit0["n_angle"][keep].sum()),
-            "rank_sum": float(score[keep].sum()),
-            "seed_objects": float(o.get("seed_objects", 0)),
-            "pairs": float(o.get("tracklets", 0)),
-            "cand": float(o.get("cand_all_targets", 0)),
+        c.update({
             "fit": float(o["tracks_to_fit"]),
-            "before_minlayers": float(o.get("tracks_before_minlayers", 0)),
+            "chi2_scaled_sum": float(h["chi2s"][dr].sum()),
+            "chi2_angle_sum": float(h["c2a"][dr].sum()),
+            "n_angle_sum": float(h["nang"][dr].sum()),
+            "rank_sum": float(h["score"][dr].sum()),
             "nlayer_sum": float((sd.arity + o["_nconf"]).sum()),
             # NOT comparable across arity: a doublet is credited when its two
             # seed clusters share a TP, a triplet when all three do, and a
-            # 2-cluster coincidence is far likelier. Kept per arity, compared
-            # only within it.
-            "trip": float(len(ta)), "trip_true": float(real.sum())}
-        keys = SA.recovered_keys(U, o)
-        if len(keys):
-            p = np.searchsorted(cen["key"], keys)
-            if p.max() >= ntp or not np.array_equal(cen["key"][p], keys):
+            # 2-cluster coincidence is far likelier.
+            "trip": float(len(ta)), "trip_true": float(real.sum())})
+        counters[s_i] = c
+        rkeys = SA.recovered_keys(U, o)
+        if len(rkeys):
+            p = np.searchsorted(cen["key"], rkeys)
+            if p.max() >= ntp or not np.array_equal(cen["key"][p], rkeys):
                 raise SystemExit("recovered TP absent from the chunk census")
-            found[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-        qual[s_i] = _qual(U, Q, o, rng, qual_per_chunk, kf_opts)
-        del o
-    return cen, found, counters, qual, feats, labels
+            found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
+        trip = (ga, gb, gc if gc is not None else gb)
+        # ---- resolutions, on truth-matched survivors --------------------
+        idx = np.flatnonzero(real)
+        if len(idx):
+            if len(idx) > qual_per_chunk:
+                idx = idx[rng.choice(len(idx), qual_per_chunk, replace=False)]
+            tq = tuple(x[idx] for x in trip)
+            fq = KF.fit_tracks(U, Q, tq, gidx=gidx[idx], use_angles=False,
+                               **d0_opt)
+            dk, dd, dc, dz, rm = KF.truth_residuals(U, tq, fq, TP)
+            qual[s_i] = (np.stack([dk, dd, dc, dz,
+                                   fq["nhit"][rm].astype(np.float64)],
+                                  axis=1).astype(np.float32)
+                         if len(dk) else np.zeros((0, 5), np.float32))
+        # ---- MVA rows, on every survivor whether real or not ------------
+        if feat_per_chunk:
+            ks = np.arange(o["tracks_to_fit"])
+            if len(ks) > feat_per_chunk:
+                ks = rng.choice(len(ks), feat_per_chunk, replace=False)
+            tf = tuple(x[ks] for x in trip)
+            Tf = KF.gather_hits(U, Q, gidx[ks], KF.LAYER_ORDER)
+            ff = KF.fit_tracks(U, Q, tf, gidx=gidx[ks], use_angles=False,
+                               **d0_opt)
+            ff["_arity"] = sd.arity
+            feats[s_i] = KF.track_features(U, Q, Tf, ff)
+            labels[s_i] = KF.track_labels(U, Tf, ff, tf, TP)
+    return cen, found, found_dr, counters, qual, feats, labels
 
 
 def _shard_path(d, i):
@@ -488,11 +509,12 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, counters, qual, feats, labels = process_chunk(
+            cen, found, found_dr, counters, qual, feats, labels = process_chunk(
                 U, Q, seeds, ptmin, rng, QUAL_PER_CHUNK, kf_opts,
                 feat_per_chunk)
             np.savez_compressed(
-                _shard_path(d, ci), found=found, n_events=len(ev),
+                _shard_path(d, ci), found=found, found_dr=found_dr,
+                n_events=len(ev),
                 counters=json.dumps({str(k): v for k, v in counters.items()}),
                 **{f"cen_{k}": v for k, v in cen.items()},
                 **{f"qual_{k}": v for k, v in qual.items()},
@@ -516,7 +538,7 @@ def load(d, nev=None, verbose=True):
         raise SystemExit(f"{d} has no shards")
     cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "hit_it", "hit_ot"]
     parts = {c: [] for c in cols}
-    fnd, cnt, qs, fts, lbs, nread = [], {}, {}, {}, {}, 0
+    fnd, fdr, cnt, qs, fts, lbs, nread = [], [], {}, {}, {}, {}, 0
     for sh in shards:
         if nev is not None and nread >= nev:
             break                    # a prefix of the shards is a valid census
@@ -524,6 +546,7 @@ def load(d, nev=None, verbose=True):
         for c in cols:
             parts[c].append(z[f"cen_{c}"])
         fnd.append(z["found"])
+        fdr.append(z["found_dr"])
         nread += int(z["n_events"])
         for k, v in json.loads(str(z["counters"])).items():
             a = cnt.setdefault(int(k), {})
@@ -538,6 +561,7 @@ def load(d, nev=None, verbose=True):
                 lbs.setdefault(int(f[4:]), []).append(z[f])
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
+    C["found_dr"] = np.concatenate(fdr, axis=0)
     C["n_events"] = nread
     C["seeds"] = [SA.Seed(tuple(x)) for x in meta["seeds"]]
     C["seed_tags"] = meta["seed_tags"]
@@ -561,9 +585,15 @@ def load(d, nev=None, verbose=True):
 # ==========================================================================
 # query helpers -- what the interactive tool is built on
 # ==========================================================================
-def seed_mask(C, i):
-    """Boolean over TPs: did seed i recover this TrackingParticle?"""
-    return (C["found"][:, i >> 6] >> np.uint64(i & 63)) & np.uint64(1) != 0
+def seed_mask(C, i, after_dr=False):
+    """Boolean over TPs: did seed i recover this TrackingParticle?
+
+    after_dr=False is the seed's STANDALONE reach and is what menu composition
+    must use; after_dr=True is what it still owns once duplicate removal has
+    assigned each track to a single seed.
+    """
+    b = C["found_dr"] if after_dr else C["found"]
+    return (b[:, i >> 6] >> np.uint64(i & 63)) & np.uint64(1) != 0
 
 
 def union_mask(C, idxs):
@@ -594,10 +624,12 @@ def seed_table(C):
         rows.append({
             "seed": tag, "arity": sd.arity, "note": C["seed_notes"][i],
             "n_found": int(seed_mask(C, i).sum()),
+            "n_found_dr": int(seed_mask(C, i, after_dr=True).sum()),
             "min_proj": sd.min_proj(),
             "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
             "pass_frac": c.get("fit", 0.0) / max(c.get("before_minlayers", 1.0), 1.0),
-            "chi2_pass": c.get("fit", 0.0) / max(c.get("before_chi2", 1.0), 1.0),
+            "chi2_pass": c.get("before_dr", 0.0) / max(c.get("before_chi2", 1.0), 1.0),
+            "dr_pass": c.get("fit", 0.0) / max(c.get("before_dr", 1.0), 1.0),
             "chi2_per_layer": c.get("chi2_scaled_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
             "chi2_angle_per_cl": (c.get("chi2_angle_sum", 0.0)
                                   / max(c.get("n_angle_sum", 1.0), 1.0)),
@@ -666,13 +698,13 @@ def main():
     rows = [r for r in seed_table(C) if not r.get("infeasible")]
     rows.sort(key=lambda r: -r["n_found"])
     print(f"\n{'seed':<20}{'ar':>3}{'found':>9}{'cand/ev':>11}{'fit/ev':>8}"
-          f"{'X2pass%':>8}{'X2/lay':>7}{'X2ang':>7}{'nlay':>6}{'fake':>7}"
+          f"{'ownDR':>8}{'X2%':>5}{'DR%':>5}{'X2ang':>8}{'nlay':>6}{'fake':>7}"
           f"{'s(kap)':>9}{'s(d0)um':>9}{'s(cot)':>9}{'s(z0)um':>9}")
     for r in rows[:30]:
         print(f"{r['seed']:<20}{r['arity']:>3}{r['n_found']:>9,}{r['cand']:>11,.0f}"
-              f"{r['fit']:>8,.0f}{100 * r['chi2_pass']:>8.0f}"
-              f"{r['chi2_per_layer']:>7.2f}{r['chi2_angle_per_cl']:>7.2f}"
-              f"{r['nlayer']:>6.1f}"
+              f"{r['fit']:>8,.0f}{r['n_found_dr']:>8,}"
+              f"{100 * r['chi2_pass']:>5.0f}{100 * r['dr_pass']:>5.0f}"
+              f"{r['chi2_angle_per_cl']:>8.1f}{r['nlayer']:>6.1f}"
               f"{r['fake']:>7.3f}{r['sig_kappa']:>9.4f}{1e4 * r['sig_d0_cm']:>9.0f}"
               f"{r['sig_cot']:>9.4f}{1e4 * r['sig_z0_cm']:>9.0f}")
     if a.out:

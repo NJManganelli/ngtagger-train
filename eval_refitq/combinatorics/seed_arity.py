@@ -253,3 +253,61 @@ def recovered_keys(U, out):
     if not real.any():
         return np.empty(0, np.int64)
     return np.unique(M.tp_key(U["event"][ga][real], ta[real]))
+
+
+# ==========================================================================
+# duplicate removal
+# ==========================================================================
+MIN_SHARED_LAYERS = 3      # Settings.h minIndStubs_ = 3
+
+# L1Trigger/TrackFindingTracklet PurgeDuplicate.cc:171, ranks{1,5,2,7,4,3,8,6}
+# over seeds L1L2, L2L3, L3L4, L5L6, D1D2, D3D4, L1D1, L2D1 -- lower wins. So
+# among barrel doublets the real priority is L1L2 > L3L4 > L2L3 > L5L6, and
+# EXTENDED (triplet) seeds are pushed to rank 9, the lowest of all.
+OT_SEED_RANK = {(11, 12): 1, (13, 14): 2, (12, 13): 5, (15, 16): 7}
+
+
+def duplicate_removal(gidx, score, min_shared=MIN_SHARED_LAYERS):
+    """Merge-style DR: drop a track sharing >= min_shared IDENTICAL hits with an
+    already-accepted track in the same event.
+
+    This is PurgeDuplicate's "merge" criterion with mergeComparison CompareBest
+    -- nShareLay counted over layers where both tracks have a hit and it is the
+    same hit, merged when nShareLay >= minIndStubs (3).
+
+    PREFERENCE DIVERGES DELIBERATELY. The real code picks the survivor from a
+    static seedRank table, which ranks every extended (triplet) seed below every
+    prompt doublet regardless of what the individual tracks look like -- and
+    carries a comment admitting one of its swaps is unexplained ("The swap here
+    reduces the duplicate rate for extended tracking by 1/4. Why???"). Here the
+    survivor is the track with the better rank_score, which already folds in the
+    layer count and the chi2 the static table only proxies for. That is a
+    superset of the information, and it is the natural place for the ranking to
+    be used.
+
+    Implementation is by INVERTED INDEX on the cluster indices rather than
+    pairwise comparison: a global cluster index identifies a hit uniquely within
+    the chunk, so each candidate only has to look at tracks already accepted on
+    one of its own ~8 hits. Pairwise would be O(n^2) at ~3,000 tracks/event.
+
+    No event argument is needed: a cluster belongs to exactly one event, so two
+    tracks from different events can never share one and cross-event merging is
+    impossible by construction.
+    """
+    order = np.argsort(-score, kind="stable")
+    keep = np.zeros(len(score), bool)
+    owners = {}                      # cluster index -> list of accepted tracks
+    from collections import Counter
+    for t in order:
+        hits = gidx[t][gidx[t] >= 0]
+        c = Counter()
+        for h in hits:
+            o = owners.get(int(h))
+            if o:
+                c.update(o)
+        if c and max(c.values()) >= min_shared:
+            continue
+        keep[t] = True
+        for h in hits:
+            owners.setdefault(int(h), []).append(t)
+    return keep
