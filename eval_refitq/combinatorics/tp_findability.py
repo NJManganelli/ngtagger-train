@@ -57,7 +57,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 12
+FORMAT_VERSION = 13
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -315,6 +315,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     counters, qual, feats, labels = {}, {}, {}, {}
 
     # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
+    TP = KF.tp_truth_table(U)
     held = {}
     for s_i, sd in enumerate(seeds):
         try:
@@ -342,25 +343,69 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
             counters[s_i] = base
             continue
         w_ang = 0.30 if sd.arity == 2 else 0.03
-        # standalone reach, recorded before DR can reassign anything
+        # STANDALONE, before DR can reassign anything. Everything the menu uses
+        # -- reach, fake rate, layer count, resolutions, MVA rows -- is recorded
+        # here, because composition asks "if I add this seed, what does it
+        # bring?" and the answer is what it finds ON ITS OWN. Post-DR numbers
+        # answer a different question ("in a 30-seed system, what does it end up
+        # owning?") and mixing the two put a seed in the menu for 66,803 TPs it
+        # reaches while reporting fake 0.973 for the remnant it does not own.
         o_keep = SA.filter_tracks(o, keep)
         rk0 = SA.recovered_keys(U, o_keep)
         if len(rk0):
             p0 = np.searchsorted(cen["key"], rk0)
             found[p0, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
         base["found_standalone"] = float(len(rk0))
-        held[s_i] = {"o": o_keep, "sd": sd, "base": base,
-                     "gidx": gidx_all[keep],
-                     "score": KF.rank_score(fit0, chi2s, w_angle=w_ang)[keep],
-                     "chi2s": chi2s[keep],
-                     "c2a": fit0["chi2_angle"][keep],
-                     "nang": fit0["n_angle"][keep]}
+        gk = gidx_all[keep]
+        gck = o_keep.get("_gC")
+        tripk = (o_keep["_gA"], o_keep["_gB"],
+                 gck if gck is not None else o_keep["_gB"])
+        ta = U["tpIdx"][o_keep["_gA"]]
+        real = (ta >= 0) & (ta == U["tpIdx"][o_keep["_gB"]])
+        if gck is not None:
+            real &= ta == U["tpIdx"][gck]
+        base.update({
+            "fit": float(o_keep["tracks_to_fit"]),
+            "found_standalone": float(len(rk0)),
+            "chi2_scaled_sum": float(chi2s[keep].sum()),
+            "chi2_angle_sum": float(fit0["chi2_angle"][keep].sum()),
+            "n_angle_sum": float(fit0["n_angle"][keep].sum()),
+            "nlayer_sum": float((sd.arity + o_keep["_nconf"]).sum()),
+            # NOT comparable across arity: a doublet is credited when its two
+            # seed clusters share a TP, a triplet when all three do.
+            "trip": float(len(ta)), "trip_true": float(real.sum())})
+        counters[s_i] = base
+        idx = np.flatnonzero(real)
+        if len(idx):
+            if len(idx) > qual_per_chunk:
+                idx = idx[rng.choice(len(idx), qual_per_chunk, replace=False)]
+            tq = tuple(x[idx] for x in tripk)
+            fq = KF.fit_tracks(U, Q, tq, gidx=gk[idx], use_angles=False,
+                               **d0_opt)
+            dk, dd, dc, dz, rm = KF.truth_residuals(U, tq, fq, TP)
+            qual[s_i] = (np.stack([dk, dd, dc, dz,
+                                   fq["nhit"][rm].astype(np.float64)],
+                                  axis=1).astype(np.float32)
+                         if len(dk) else np.zeros((0, 5), np.float32))
+        if feat_per_chunk:
+            ks = np.arange(o_keep["tracks_to_fit"])
+            if len(ks) > feat_per_chunk:
+                ks = rng.choice(len(ks), feat_per_chunk, replace=False)
+            tf = tuple(x[ks] for x in tripk)
+            Tf = KF.gather_hits(U, Q, gk[ks], KF.LAYER_ORDER)
+            ff = KF.fit_tracks(U, Q, tf, gidx=gk[ks], use_angles=False,
+                               **d0_opt)
+            ff["_arity"] = sd.arity
+            feats[s_i] = KF.track_features(U, Q, Tf, ff)
+            labels[s_i] = KF.track_labels(U, Tf, ff, tf, TP)
+        held[s_i] = {"o": o_keep, "sd": sd,
+                     "score": KF.rank_score(fit0, chi2s, w_angle=w_ang)[keep]}
         del o, fit0
 
     # ---- duplicate removal, once, across every seed ---------------------
     keys = sorted(held)
     if keys and do_dr:
-        G = np.concatenate([held[i]["gidx"] for i in keys])
+        G = np.concatenate([KF.hits_from_seed(U, held[i]["o"]) for i in keys])
         SC = np.concatenate([held[i]["score"] for i in keys])
         surv = SA.duplicate_removal(G, SC)
         off = 0
@@ -372,67 +417,19 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         for i in keys:
             held[i]["dr"] = np.ones(len(held[i]["score"]), bool)
 
-    # ---- pass 2: credit each seed with what survived --------------------
-    TP = KF.tp_truth_table(U)
+    # ---- pass 2: post-DR OWNERSHIP only ---------------------------------
     for s_i in keys:
         h = held[s_i]
-        sd, dr = h["sd"], h["dr"]
-        c = dict(h["base"])
-        c["before_dr"] = float(len(dr))
+        dr = h["dr"]
+        counters[s_i]["owned"] = float(dr.sum())
+        counters[s_i]["before_dr"] = float(len(dr))
         if not dr.any():
-            counters[s_i] = c
             continue
         o = SA.filter_tracks(h["o"], dr)
-        gidx = h["gidx"][dr]
-        ga, gb, gc = o["_gA"], o["_gB"], o.get("_gC")
-        ta = U["tpIdx"][ga]
-        real = (ta >= 0) & (ta == U["tpIdx"][gb])
-        if gc is not None:
-            real &= ta == U["tpIdx"][gc]
-        c.update({
-            "fit": float(o["tracks_to_fit"]),
-            "chi2_scaled_sum": float(h["chi2s"][dr].sum()),
-            "chi2_angle_sum": float(h["c2a"][dr].sum()),
-            "n_angle_sum": float(h["nang"][dr].sum()),
-            "rank_sum": float(h["score"][dr].sum()),
-            "nlayer_sum": float((sd.arity + o["_nconf"]).sum()),
-            # NOT comparable across arity: a doublet is credited when its two
-            # seed clusters share a TP, a triplet when all three do, and a
-            # 2-cluster coincidence is far likelier.
-            "trip": float(len(ta)), "trip_true": float(real.sum())})
-        counters[s_i] = c
         rkeys = SA.recovered_keys(U, o)
         if len(rkeys):
             p = np.searchsorted(cen["key"], rkeys)
-            if p.max() >= ntp or not np.array_equal(cen["key"][p], rkeys):
-                raise SystemExit("recovered TP absent from the chunk census")
             found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-        trip = (ga, gb, gc if gc is not None else gb)
-        # ---- resolutions, on truth-matched survivors --------------------
-        idx = np.flatnonzero(real)
-        if len(idx):
-            if len(idx) > qual_per_chunk:
-                idx = idx[rng.choice(len(idx), qual_per_chunk, replace=False)]
-            tq = tuple(x[idx] for x in trip)
-            fq = KF.fit_tracks(U, Q, tq, gidx=gidx[idx], use_angles=False,
-                               **d0_opt)
-            dk, dd, dc, dz, rm = KF.truth_residuals(U, tq, fq, TP)
-            qual[s_i] = (np.stack([dk, dd, dc, dz,
-                                   fq["nhit"][rm].astype(np.float64)],
-                                  axis=1).astype(np.float32)
-                         if len(dk) else np.zeros((0, 5), np.float32))
-        # ---- MVA rows, on every survivor whether real or not ------------
-        if feat_per_chunk:
-            ks = np.arange(o["tracks_to_fit"])
-            if len(ks) > feat_per_chunk:
-                ks = rng.choice(len(ks), feat_per_chunk, replace=False)
-            tf = tuple(x[ks] for x in trip)
-            Tf = KF.gather_hits(U, Q, gidx[ks], KF.LAYER_ORDER)
-            ff = KF.fit_tracks(U, Q, tf, gidx=gidx[ks], use_angles=False,
-                               **d0_opt)
-            ff["_arity"] = sd.arity
-            feats[s_i] = KF.track_features(U, Q, Tf, ff)
-            labels[s_i] = KF.track_labels(U, Tf, ff, tf, TP)
     return cen, found, found_dr, counters, qual, feats, labels
 
 
@@ -628,8 +625,8 @@ def seed_table(C):
             "min_proj": sd.min_proj(),
             "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
             "pass_frac": c.get("fit", 0.0) / max(c.get("before_minlayers", 1.0), 1.0),
-            "chi2_pass": c.get("before_dr", 0.0) / max(c.get("before_chi2", 1.0), 1.0),
-            "dr_pass": c.get("fit", 0.0) / max(c.get("before_dr", 1.0), 1.0),
+            "chi2_pass": c.get("fit", 0.0) / max(c.get("before_chi2", 1.0), 1.0),
+            "dr_pass": c.get("owned", 0.0) / max(c.get("before_dr", 1.0), 1.0),
             "chi2_per_layer": c.get("chi2_scaled_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
             "chi2_angle_per_cl": (c.get("chi2_angle_sum", 0.0)
                                   / max(c.get("n_angle_sum", 1.0), 1.0)),
