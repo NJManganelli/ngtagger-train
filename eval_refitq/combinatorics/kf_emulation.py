@@ -1,51 +1,58 @@
-"""Emulation of the OT track finder's Kalman filter, run on SmartPixels seeds.
+"""Emulation of the prompt hybrid Kalman filter, run on SmartPixels seeds.
 
-WHAT THE REAL ONE DOES, read off L1Trigger/TrackFindingTracklet (CMSSW_20_1_0_pre1)
-rather than assumed, because the details are what make the numbers comparable:
+WHICH KALMAN FILTER, because there are two and they are not the same. The prompt
+hybrid chain fits with tmtt::KFParamsComb -- HybridFit.cc:181 constructs it
+directly -- NOT with L1Trigger/TrackFindingTracklet/src/KalmanFilter.cc, which
+belongs to the newer TrackerTFP path. An earlier version of this file emulated
+the latter; the differences are in the measurement model and they matter.
 
-  * THE r-phi AND r-z HALVES ARE DECOUPLED. State.h carries x0..x3 with
-    covariance C00/C01/C11 and C22/C23/C33 and no cross terms, so it is two
-    independent filters, not one joint matrix. x0 is the curvature (inv2R), x1
-    the azimuth at the reference radius, x2 cot(theta), x3 z there.
+WHAT KFParamsComb DOES, read off L1Trigger/TrackFindingTMTT:
 
-  * IT IS 4-PARAMETER AND PROMPT AS SHIPPED, AND THIS IS NOT. KalmanFilter.cc
-    line 101 carries a fifth parameter x4 entering the residual as x4/H -- the
-    displaced d0 term -- but update() propagates only x0..x3, so d0 is pinned at
-    zero there. This emulation implements the 5-parameter fit that slot
-    anticipates, because that is the one SmartPixels needs: with d0 fixed a real
-    impact parameter is absorbed into curvature at 10.34 per cm for an IL1+IL2
-    pair, which is the coupling these studies spent their time removing.
-    Everything else below is read off CMSSW unchanged.
+  * DIFFUSE PRIOR, then one update per stub (KFParamsComb.cc:52-64). There is no
+    exact two-point seed. The priors are
+        inv2R 0.0314*invPtToInvR , phi0 0.0102 , z0 5.0 , tanL 0.5 , d0 1.0 cm
+    and d0Sigma = 1.0 cm is why D0_PRIOR_CM below is 1.0 and should stay there:
+    tuning it to reproduce a resolution would be fitting the prior to cover for
+    a defect elsewhere.
 
-  * NO PROCESS NOISE. update() adds nothing between layers. Multiple scattering
-    is absorbed entirely into INFLATED PER-STUB MEASUREMENT VARIANCES, via
-    SensorModule::dPhi:
-        dPhi = (dR + scattering) * |inv2R| + clusterWidth * pitchRow / r + addPhi
-        dZ   = pitchCol + |cot| * dR
-    with scattering = 0.5 cm, i.e. the scattering allowance is proportional to
-    curvature and so is a pT-dependent inflation, not a constant.
+  * NO PROCESS NOISE. KFbase.cc:462 is explicit -- "Get scattering contribution
+    to helix parameter covariance (currently zero)". Scattering lives in the
+    measurement variance instead.
 
-  * THE VARIANCES ARE UNIFORM-WINDOW, NOT GAUSSIAN. State.cc sets
-    v0 = (dPhi/2)^2 / 3 and v1 = (dZ/2)^2 / 3 -- dPhi and dZ are full widths,
-    halved by DuplicateRemoval, and a uniform distribution of half-width d has
-    variance d^2/3. Treating them as Gaussian sigmas would be wrong by sqrt(3).
+  * BARREL MEASUREMENT VARIANCE (KFParamsComb::matrixV), which with the shipped
+    higher-order flags (KalmanHOtilted False, KalmanHOfw True) reduces to
 
-  * SEEDED FROM TWO STUBS, then one update per added layer. calcSeeds() takes
-    the exact two-point solution and its covariance, which is what our cluster
-    PAIR already is, so a SmartPixels pair seed enters this filter the same way
-    an OT tracklet seed does. Two azimuths cannot determine three r-phi
-    parameters, so d0 starts at zero under an explicit prior and the third and
-    later layers determine it.
+        vphi = (sigmaPerp / r)^2 + (MULT_SCATT_TERM / pT)^2
+        vz   =  sigmaPar^2
 
-WHAT IS AN ASSUMPTION HERE, and it is the main caveat: the OT filter has no
-notion of a SmartPixels cluster, so the IT measurement variances are not read
-off CMSSW. They use the MEASURED per-cluster CPE sigmas the nano already carries
-(sigX, sigY) as true Gaussian sigmas, plus the same 0.5 cm scattering allowance
-the OT applies. The scattering term is the borrowed part; sigX/sigY are not.
+    with sigmaPerp = stripPitch/sqrt(12) and sigmaPar = stripLength/sqrt(12). No
+    cluster-width factor, no additive phi term, no tilt correction: the tilted
+    branch is off and kalmanHOfw pins vz to sigmaPar^2 regardless.
 
-UNITS: cm and radians throughout. inv2R = C_BEND * (1/pT) with C_BEND in 1/cm,
-so x0 = -inv2R under the phi(r) = phi0 - c*r*kappa convention used everywhere
-else in these studies.
+    The SensorModule model this file used before -- clusterWidth * pitch / r plus
+    an additive addPhiUncertainty -- belongs to the OTHER filter. It made the
+    r-phi variance 5x too large at r = 100 cm and, being pT-independent where the
+    scattering term is not, mis-weighted high-pT stubs -- precisely where
+    sigma(kappa) is determined.
+
+FIVE PARAMETERS. The samples are produced with promptHnpar=5, so the prompt
+collection carries a real fitted d0 and a 5x5 covariance; KFbase pins d0 only on
+nHelixPar==4. The model is the one the exact three-point solve also uses:
+
+    phi(r) = phi0 + d0 / r - c * kappa * r        (r-phi, 3 parameters)
+    z(r)   = z0   + cot * r                       (r-z,   2 parameters)
+
+so the state is (x0, x1, x4 | x2, x3) = (-c*kappa, phi0, d0 | cot, z0) and the
+two halves stay decoupled -- a transverse impact parameter does not touch r-z to
+first order.
+
+SMARTPIXELS CLUSTERS enter by the same form, with the nano's measured per-cluster
+CPE sigmas playing sigmaPerp and sigmaPar, which they already are. The scattering
+constant is the OT's own, applied to a system it was not tuned for; that is the
+one borrowed piece.
+
+Radii are ABSOLUTE, not offsets from a reference: the 1/r term has to be d0/r to
+mean d0. The fixed-point digitisation is not emulated at all.
 """
 from __future__ import annotations
 import sys
@@ -55,50 +62,34 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
 
-# ---- CMSSW L1Trigger/TrackerDTC/python/Setup_cfi.py -----------------------
+# ---- L1Trigger/TrackFindingTMTT + TrackerDTC Setup_cfi.py ----------------
 CBC_PITCH, CBC_LENGTH = 0.009, 5.025        # 2S strip pitch / length, cm
 MPA_PITCH, MPA_LENGTH = 0.01, 0.1467        # PS pixel pitch / length, cm
-TILT_UNCERTAINTY_R = 0.12                   # tilted-barrel radial uncertainty, cm
-SCATTERING = 0.5                            # scattering allowance, cm
-# indexed (Barrel2S, BarrelPSFlat, BarrelPSTilted, Disk2S, DiskPS), the order
-# SensorModule::module() returns
-CLUSTER_WIDTH = (1.612, 1.469, 1.183, 1.138, 1.225)
-ADD_PHI_UNCERTAINTY = (0.00045, 0.00015, 0.00035, 0.00155, 0.00055)
-
-# OT barrel: layers 1-3 are PS, 4-6 are 2S. A PS module is tilted away from the
-# barrel centre; the flat/tilted split is taken from |z| against the measured
-# extent of the flat section rather than from the detId, which the flat hit
-# table does not carry.
-PS_LAYERS = (1, 2, 3)
-FLAT_HALF_Z = 15.0          # cm; PS modules within this |z| are flat
+INV_ROOT12 = 1.0 / np.sqrt(12.0)
+MULT_SCATT_TERM = 0.00075                   # KalmanMultiScattTerm, rad*GeV
+PS_LAYERS = (1, 2, 3)                       # OT barrel 1-3 are PS, 4-6 are 2S
 
 
-def ot_variances(layer, r, z, inv2R, cot):
-    """(v0, v1) for OT barrel stubs, following SensorModule + State."""
+def ot_variances(layer, r, pt):
+    """(vphi, vz) for OT barrel stubs, following KFParamsComb::matrixV."""
     ps = np.isin(layer, PS_LAYERS)
-    tilted = ps & (np.abs(z) > FLAT_HALF_Z)
-    pitch_row = np.where(ps, MPA_PITCH, CBC_PITCH)
-    pitch_col = np.where(ps, MPA_LENGTH, CBC_LENGTH)
-    idx = np.where(ps, np.where(tilted, 2, 1), 0)
-    cw = np.asarray(CLUSTER_WIDTH)[idx]
-    add = np.asarray(ADD_PHI_UNCERTAINTY)[idx]
-    dR = np.where(tilted, TILT_UNCERTAINTY_R, 0.0)
-    dphi = (dR + SCATTERING) * np.abs(inv2R) + cw * pitch_row / np.maximum(r, 1e-3) + add
-    dz = pitch_col + np.abs(cot) * dR
-    return (0.5 * dphi) ** 2 / 3.0, (0.5 * dz) ** 2 / 3.0
+    sigma_perp = np.where(ps, MPA_PITCH, CBC_PITCH) * INV_ROOT12
+    sigma_par = np.where(ps, MPA_LENGTH, CBC_LENGTH) * INV_ROOT12
+    scat = MULT_SCATT_TERM / np.maximum(np.abs(pt), 1e-3)
+    return ((sigma_perp / np.maximum(r, 1e-3)) ** 2 + scat ** 2,
+            np.broadcast_to(sigma_par ** 2, np.shape(r)).copy())
 
 
-def it_variances(r, sigX, sigY, inv2R, scattering=SCATTERING):
-    """(v0, v1) for SmartPixels clusters.
+def it_variances(r, sigX, sigY, pt):
+    """(vphi, vz) for SmartPixels clusters, by the same form.
 
-    sigX/sigY are the nano's per-cluster CPE sigmas and are used as Gaussian
-    sigmas directly. The scattering allowance is the OT's, converted from a
-    uniform half-width to a variance the same way State.cc does, so that the two
-    systems' stubs enter the filter on the same footing.
+    sigX and sigY are the nano's measured per-cluster CPE sigmas and are already
+    the Gaussian sigmas that sigmaPerp and sigmaPar are, so they substitute
+    directly. Only the scattering constant is borrowed from the OT.
     """
-    v0 = (np.maximum(sigX, 1e-6) / np.maximum(r, 1e-3)) ** 2 \
-        + (0.5 * scattering * np.abs(inv2R)) ** 2 / 3.0
-    return v0, np.maximum(sigY, 1e-6) ** 2
+    scat = MULT_SCATT_TERM / np.maximum(np.abs(pt), 1e-3)
+    return ((np.maximum(sigX, 1e-6) / np.maximum(r, 1e-3)) ** 2 + scat ** 2,
+            np.maximum(sigY, 1e-6) ** 2)
 
 
 D0_PRIOR_CM = 1.0        # uniform half-range for the d0 prior; see kf_run
@@ -380,13 +371,11 @@ def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
         sel, key_c = sel[o], key_c[o]
         zc, rc, pc = U["globalZ"][sel], U["globalR"][sel], U["globalPhi"][sel]
         sg = np.maximum(U["sigY"][sel], 1e-6)
+        pt_typ = 1.0 / max(float(np.median(np.abs(kap))), 1e-3)
         if L > 10:
-            w0, _w1 = ot_variances(np.full(len(sel), L - 10), rc, zc,
-                                   M.C_BEND * np.median(np.abs(kap)),
-                                   np.median(np.abs(cot)))
+            w0, _w1 = ot_variances(np.full(len(sel), L - 10), rc, pt_typ)
         else:
-            w0, _w1 = it_variances(rc, U["sigX"][sel], U["sigY"][sel],
-                                   M.C_BEND * np.median(np.abs(kap)))
+            w0, _w1 = it_variances(rc, U["sigX"][sel], U["sigY"][sel], pt_typ)
         sphi = np.sqrt(np.maximum(w0, 1e-12))
         rows = np.flatnonzero(need)
         rmed = float(np.median(rc))
@@ -481,8 +470,7 @@ def hits_from_seed(U, out, layers=None):
 
 
 def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
-               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, scattering=SCATTERING,
-               gidx=None):
+               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, gidx=None):
     """Assemble each seed's track and fit it. Returns fitted parameters + hits.
 
     gidx, when given, is the hit table the seeding already built; otherwise the
@@ -492,23 +480,20 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
          else collect_track_hits(U, Q, trip, layers))
     lay = np.tile(np.asarray(layers), (T["R"].shape[0], 1))
     is_ot = lay > 10
-    # A first curvature/cot estimate is needed because the OT stub variances
-    # depend on them (the scattering allowance is proportional to |inv2R|).
+    # A pT estimate is needed before the fit because the scattering term scales
+    # as 1/pT. KFParamsComb takes it "from input track candidate as more
+    # stable" (matrixV, first line); the seed pair's two-point curvature is the
+    # equivalent here.
     ga, gb = trip[0], trip[1]
     dr = U["globalR"][gb] - U["globalR"][ga]
     safe = np.where(np.abs(dr) > 0.5, dr, 1e9)
-    kap0 = (M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb]) / (M.C_BEND * safe))[:, None]
-    cot0 = ((U["globalZ"][gb] - U["globalZ"][ga]) / safe)[:, None]
-    inv2R = M.C_BEND * kap0
-    v0 = np.zeros_like(T["R"]); v1 = np.zeros_like(T["R"])
-    if is_ot.any():
-        o0, o1 = ot_variances(np.where(is_ot, lay - 10, 1), T["R"], T["Z"],
-                              np.broadcast_to(inv2R, T["R"].shape),
-                              np.broadcast_to(cot0, T["R"].shape))
-        v0 = np.where(is_ot, o0, v0); v1 = np.where(is_ot, o1, v1)
-    i0, i1 = it_variances(T["R"], T["SX"], T["SY"],
-                          np.broadcast_to(inv2R, T["R"].shape), scattering)
-    v0 = np.where(is_ot, v0, i0); v1 = np.where(is_ot, v1, i1)
+    kap0 = np.abs(M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb])
+                  / (M.C_BEND * safe))[:, None]
+    pt0 = np.broadcast_to(1.0 / np.maximum(kap0, 1e-3), T["R"].shape)
+    o0, o1 = ot_variances(np.where(is_ot, lay - 10, 1), T["R"], pt0)
+    i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
+    v0 = np.where(is_ot, o0, i0)
+    v1 = np.where(is_ot, o1, i1)
     ma = va = mb = vb = ang = None
     if use_angles:
         # alpha and beta enter as measurements of x0 - x4/r^2 and of x2; the

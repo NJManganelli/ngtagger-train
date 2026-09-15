@@ -2722,7 +2722,6 @@ def _composition_side_table(out, res):
 
 
 # ---- (15) seed menus per SmartPixels build ---------------------------------
-N_ADJACENT = 2           # adjacent target layers per doublet
 SEED_MENU_MASKS = ["AAAA", "AAAI", "AAIA", "AIAA", "IAAA", "AAII", "AIAI",
                    "AIIA", "IAAI", "IAIA", "IIAA", "AIII", "IAII", "IIAI", "IIIA"]
 IL_OF = {0: 1, 1: 2, 2: 3, 3: 4}
@@ -2756,10 +2755,9 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         m = _ilu.module_from_spec(sp)
         sp.loader.exec_module(m)
         return m
-    SMC = _mod("seed_menu_composition")
     TF = _mod("tp_findability")
     SA = _mod("seed_arity")
-    M = SMC.M
+    M = TF.M
     # THIS STUDY STREAMS; the rest of the omnibus does not. load() concatenates
     # every input up front with no event cap, which is fine for one 100-event
     # file and tens of GB across ten, so the census gets its own input spec and
@@ -2778,7 +2776,7 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     # seed's recovered key set in memory at once. The shards are keyed on the
     # inputs, so a rerun of this study is a load, not a recomputation.
     try:
-        C = TF.build(spec, NEV, PTMIN, list(TF.ALL_LAYERS), N_ADJACENT,
+        C = TF.build(spec, NEV, PTMIN, list(TF.ALL_LAYERS), 2,
                      int(out.get("_menu_chunk", 16)),
                      out.get("_menu_cache", os.path.join(_here, "cache")),
                      out.get("_menu_cache_mode", "auto"),
@@ -2886,7 +2884,7 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         menu = compose(False)
         menu_cost = compose(True)
         builds[mask] = {"n_seeds": len(found), "denominator": n_den,
-                        "n_it_layers": len(il), "it_layers": [SMC.NAME[L] for L in il],
+                        "n_it_layers": len(il), "it_layers": [SA.NAME[L] for L in il],
                         "menu": menu, "menu_cost_weighted": menu_cost,
                         "eff_3_cost_weighted": (menu_cost[2]["cum_eff"]
                                                 if len(menu_cost) > 2 else 0.0),

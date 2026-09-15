@@ -57,7 +57,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 7
+FORMAT_VERSION = 8
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -141,53 +141,13 @@ def calibrate(spec, nev, ptmin):
     return {"sigz_ot": sigz, "r_median": rmed, "calib_events": nI}
 
 
-def seed_universe(rmed, layers, n_adjacent):
-    """Every ordered (inner, outer) pair of instrumented layers, each projected to
-    its n_adjacent nearest-in-radius OTHER layers.
-
-    No acceptance heuristic picks the target. An earlier revision chose the
-    single target with the largest TP overlap, which for IL1+IL2 selected OL2
-    over OL1 on a 1.3% margin while OL1 wins on efficiency, cost and fake rate,
-    and which buried IL4 -- the cheapest target of all -- because a TP reaching
-    IL2 often stops before IL4.
-    """
-    L = sorted(layers, key=lambda x: rmed.get(x, 0.0))
-    out = []
-    for i, la in enumerate(L):
-        for lb in L[i + 1:]:
-            rest = [x for x in L if x not in (la, lb)]
-            rmid = 0.5 * (rmed[la] + rmed[lb])
-            for lc in sorted(rest, key=lambda x: abs(rmed[x] - rmid))[:n_adjacent]:
-                out.append((la, lb, lc))
-    return out
-
-
-# THE REAL OT TRACKLET SEEDS, from L1Trigger/TrackFindingTracklet Settings.h:679
-# (enum Seed / seedlayers_). The barrel-barrel set is exactly these four; note
-# there is NO L4L5 -- the design jumps L3L4 -> L5L6 across the PS/2S boundary.
-# The disk (D1D2, D3D4) and overlap (L1D1, L2D1) seeds do not apply here because
-# the unified table keeps only barrel stubs within |eta| <= ETA_MATCHED.
-#
-# Enumerating all 15 OT-only pairs instead invents 24 of 35 seeds, among them
-# OL1+OL3 and OL3+OL5, and then credits the OT with efficiency it cannot
-# actually deliver. Mixed IT+OT pairs are NOT restricted: SmartPixels does not
-# exist in the OT design, so there is no standard to respect and the full
-# enumeration is the point.
-OT_DESIGN_PAIRS = frozenset({(11, 12), (12, 13), (13, 14), (15, 16)})
-
 BUILD_MASKS = ["AAAA", "AAAI", "AAIA", "AIAA", "IAAA", "AAII", "AIAI",
                "AIIA", "IAAI", "IAIA", "IIAA", "AIII", "IAII", "IIAI", "IIIA"]
 IL_OF = {0: 1, 1: 2, 2: 3, 3: 4}
 OT_BARREL = (11, 12, 13, 14, 15, 16)
 
 
-def in_ot_design(seed):
-    """True unless the seed is an OT-only pair the tracklet design does not have."""
-    la, lb = seed[0], seed[1]
-    return not (la > 10 and lb > 10) or (min(la, lb), max(la, lb)) in OT_DESIGN_PAIRS
-
-
-def seed_universe_over_builds(rmed, masks, n_adjacent, ot_design_only=True):
+def seed_universe_over_builds(rmed, masks):
     """Union over builds of each build's own doublet and triplet seeds.
 
     Which seeds exist depends on which IT layers are instrumented, but a seed's
@@ -409,8 +369,7 @@ def _shard_path(d, i):
 
 def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           hash_content=False, calib_events=100, verbose=True,
-          budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None,
-          ot_design_only=True):
+          budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
     The cache is a DIRECTORY OF PER-CHUNK SHARDS, not one file, so a run that
@@ -425,9 +384,12 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     # event order is fixed, so a 100-event cache is the first seven chunks of the
     # 1000-event one: asking for more RESUMES rather than rebuilding, and asking
     # for less reads a prefix.
+    # kf_opts IS part of the identity. It changes the quality columns in every
+    # shard, so a cache built with one angle weighting or d0 prior must not be
+    # silently extended by a run using another.
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
            "chunk": chunk, "calib_events": calib_events, "masks": masks,
-           "ot_design_only": ot_design_only}
+           "kf_opts": dict(sorted((kf_opts or {}).items()))}
     kh = cache_key(man, cfg)
     d = os.path.join(cache_dir, f"tpcensus_{kh}")
     mpath = os.path.join(d, "manifest.json")
@@ -444,9 +406,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             raise SystemExit(f"no cache for key {kh} under {cache_dir}")
         os.makedirs(d, exist_ok=True)
         cal = calibrate(spec, calib_events, ptmin)
-        seeds = (seed_universe_over_builds(cal["r_median"], masks, n_adjacent,
-                                           ot_design_only)
-                 if masks else seed_universe(cal["r_median"], layers, n_adjacent))
+        seeds = (seed_universe_over_builds(cal["r_median"], masks)
+                 if masks else SA.enumerate_seeds(list(SA.IL)))
         meta = {"cache_key": kh, "format": FORMAT_VERSION, "inputs": man,
                 "config": cfg, "calibration": cal,
                 "seeds": [list(sd.layers) for sd in seeds],
@@ -603,9 +564,6 @@ def main():
     ap.add_argument("--cache-dir", default="eval_refitq/combinatorics/cache")
     ap.add_argument("--cache", default="auto",
                     choices=["auto", "rebuild", "off", "require"])
-    ap.add_argument("--all-ot-pairs", action="store_true",
-                    help="enumerate every OT layer pair, not just the four the "
-                         "tracklet design actually seeds on")
     ap.add_argument("--d0-prior-cm", type=float, default=KF.D0_PRIOR_CM)
     ap.add_argument("--kf-angles", default="on", choices=["on", "off"],
                     help="use the SmartPixels alpha/beta in the KF updates")
@@ -623,8 +581,7 @@ def main():
               a.cache_dir, a.cache, a.hash_content, a.calib_events, masks=masks,
               kf_opts={"use_angles": a.kf_angles == "on",
                        "alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
-                       "d0_prior_cm": a.d0_prior_cm},
-              ot_design_only=not a.all_ot_pairs)
+                       "d0_prior_cm": a.d0_prior_cm})
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "
