@@ -92,11 +92,43 @@ def it_variances(r, sigX, sigY, pt):
             np.maximum(sigY, 1e-6) ** 2)
 
 
+# ---- process noise ------------------------------------------------------
+# Q = 0 in both CMSSW and this file by default (KFbase.cc:462, "Get scattering
+# contribution to helix parameter covariance (currently zero)"). Scattering is
+# instead folded into the MEASUREMENT variance, which treats it as INDEPENDENT
+# per hit. A real scatter is CORRELATED: it deflects every downstream layer
+# coherently. That approximation is harmless within one system, whose hits span
+# a short radial range, and is not harmless across r = 3 -> 108 cm.
+#
+# WHERE A KINK LIVES. With phi(r) = phi0 + d0/r - c*kappa*r the basis functions
+# are 1, 1/r and r. A kink of angle delta at radius r_s adds
+#     delta * (r - r_s)/r  =  delta * 1  -  delta * r_s * (1/r)
+# which is EXACTLY a phi0 shift of +delta together with a d0 shift of
+# -delta*r_s, with NO kappa component to first order. So a 1 mrad scatter at
+# r_s = 20 cm is indistinguishable from 200 um of impact parameter. With Q = 0
+# the OT hits pin phi0 and kappa -- 1/r is nearly flat at large radius, so they
+# carry almost no d0 information -- and the IT azimuths must then be explained
+# by d0 alone. d0 is the sink for inter-system scattering by construction, which
+# is why a matched refit measured WORSE d0 (40 um) than the standalone IT
+# mini-track (29 um).
+#
+# Q therefore enters in the (phi0, d0) and (cot, z0) planes with the correlation
+# a kink implies, and nothing in kappa:
+#     Q[phi0,phi0] = s^2 , Q[d0,d0] = s^2 r_s^2 , Q[phi0,d0] = -s^2 r_s
+# MS_SCALE is the per-step scattering angle at 1 GeV, scaling as 1/pT after the
+# PDG small-angle form. There is no material map here, so it is a PARAMETER to
+# be scanned, not a derived number; IT_OT_SCALE multiplies it for the single
+# step that crosses between the systems, where the support and services sit.
+MS_SCALE = 0.0             # rad*GeV per step; 0 reproduces CMSSW exactly
+IT_OT_SCALE = 1.0          # extra factor on the IT -> OT crossing
+
+
 D0_PRIOR_CM = 1.0        # uniform half-range for the d0 prior; see kf_run
 
 
 def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
-           has_angle=None, d0_prior_cm=D0_PRIOR_CM):
+           has_angle=None, d0_prior_cm=D0_PRIOR_CM, ms_scale=MS_SCALE,
+           it_ot_scale=IT_OT_SCALE, pt_for_ms=None, layers=None):
     """Vectorised FIVE-parameter KF over ntrack x nlayer arrays, inner to outer.
 
     THE MODEL, and it is the same one the exact three-point solve uses:
@@ -220,11 +252,34 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
         C33 = np.where(use, C33 - K3 * S3, C33)
 
     # ---- positions ---------------------------------------------------------
+    # r_prev tracks the radius of each track's last used layer, which is where a
+    # kink between that layer and this one effectively sits.
+    r_prev = np.zeros(nt)
+    seen_any = np.zeros(nt, bool)
+    lay_arr = None if layers is None else np.asarray(layers)
     for L in range(nl):
         use = valid[:, L] & ok
         if not use.any():
             continue
         r = np.where(use, np.maximum(H[:, L], 1e-3), 1.0)
+        if ms_scale and pt_for_ms is not None:
+            step = use & seen_any
+            if step.any():
+                sc = ms_scale
+                if lay_arr is not None and L > 0:
+                    # the crossing step is the one whose previous layer was IT
+                    # and whose current layer is OT
+                    cross = (lay_arr[L] > 10) & (r_prev < 20.0) & (r_prev > 0)
+                    sc = np.where(cross, ms_scale * it_ot_scale, ms_scale)
+                sd = np.where(step, sc / np.maximum(np.abs(pt_for_ms), 1e-3), 0.0)
+                q = sd * sd
+                rs_ = np.where(step, r_prev, 0.0)
+                C11 = C11 + q                      # phi0
+                C44 = C44 + q * rs_ * rs_          # d0
+                C14 = C14 - q * rs_                # correlation a kink implies
+                C22 = C22 + q                      # cot
+                C33 = C33 + q * rs_ * rs_          # z0
+                C23 = C23 - q * rs_
         g = 1.0 / r
         pred = x0 * r + x1 + x4 * g
         upd3(r, np.ones(nt), g, np.where(use, m0[:, L] - pred, 0.0), v0[:, L],
@@ -232,6 +287,8 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
         upd2(r, np.ones(nt), np.where(use, m1[:, L] - (x2 * r + x3), 0.0),
              v1[:, L], use, chi2_rz)
         nseen = np.where(use, nseen + 1, nseen)
+        r_prev = np.where(use, r, r_prev)
+        seen_any = seen_any | use
     # ---- SmartPixels angles, on every instrumented layer including the seed --
     if ANG:
         for L in range(nl):
@@ -486,7 +543,7 @@ def hits_from_seed(U, out, layers=None):
 
 def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
                d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, gidx=None,
-               pt_hint=None):
+               pt_hint=None, ms_scale=MS_SCALE, it_ot_scale=IT_OT_SCALE):
     """Assemble each seed's track and fit it. Returns fitted parameters + hits.
 
     gidx, when given, is the hit table the seeding already built; otherwise the
@@ -530,7 +587,8 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     phi_ref = ref[np.arange(len(first)), first]
     m0 = M.wrap(T["PH"] - phi_ref[:, None])
     out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb, ang,
-                 d0_prior_cm)
+                 d0_prior_cm, ms_scale, it_ot_scale,
+                 pt_for_ms=pt0[:, 0], layers=layers)
     (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
      c2p, c2z, c2a, nang, vphi) = out
     fit = {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,

@@ -49,6 +49,13 @@ def main():
     ap.add_argument("--ptmin", type=float, default=2.0)
     ap.add_argument("--mask", default="AAAA")
     ap.add_argument("--it-min-layers", type=int, default=AP.IT_MIN_LAYERS)
+    ap.add_argument("--ms-scan", default="",
+                    help="comma-separated process-noise scales (rad*GeV per "
+                         "step) to scan for the matched refit, e.g. "
+                         "0,0.0003,0.001,0.003,0.01")
+    ap.add_argument("--it-ot-scale", type=float, default=3.0,
+                    help="extra factor on the IT->OT crossing step, where the "
+                         "support and services sit")
     ap.add_argument("-o", "--out", default=None)
     a = ap.parse_args()
 
@@ -91,18 +98,26 @@ def main():
                     d["right"] += int(((ta >= 0) & (ta == tb)).sum())
                     d["both_real"] += int(((ta >= 0) & (tb >= 0)).sum())
         # resolutions for the three architectures, at the default cut
-        ia, ib, _ = AP.match_systems(IT, OT, AP.MATCH_PARS, 50.0)
+        ia, ib, _ = AP.match_systems(IT, OT, ("phi0", "z0", "cot"), 25.0)
         if len(ia):
-            fit, G = AP.refit_matched(U, Q, IT, OT, ia, ib)
             ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
             good = (ta >= 0) & (ta == tb)
-            if good.any():
+            scales = ([float(x) for x in a.ms_scan.split(",") if x.strip()]
+                      if a.ms_scan else [0.0])
+            for msc in scales:
+                fit, G = AP.refit_matched(U, Q, IT, OT, ia, ib,
+                                          ms_scale=msc,
+                                          it_ot_scale=a.it_ot_scale)
+                if not good.any():
+                    continue
                 gA = IT["gA"][ia][good]
                 tr = (gA, IT["gB"][ia][good], gA)
                 f2 = {k: (v[good] if isinstance(v, np.ndarray) and v.ndim == 1
                           else v) for k, v in fit.items() if k != "hits"}
                 dk, dd, dc, dz, rm = KF.truth_residuals(U, tr, f2, TP)
-                r = res.setdefault("PARALLEL matched+refit", [[], [], [], []])
+                lab = ("PARALLEL matched+refit" if msc == 0.0 else
+                       f"  + process noise {msc:g}")
+                r = res.setdefault(lab, [[], [], [], []])
                 for i, v in enumerate((dk, dd, dc, dz)):
                     r[i].append(v)
         # the two ingredients on their own

@@ -181,7 +181,8 @@ def match_systems(IT, OT, pars=MATCH_PARS, max_chi2=50.0):
     return (np.array(ia_l, int), np.array(ib_l, int), np.array(c2_l))
 
 
-def refit_matched(U, Q, IT, OT, ia, ib, kf_opts=None):
+def refit_matched(U, Q, IT, OT, ia, ib, kf_opts=None,
+                  ms_scale=None, it_ot_scale=None):
     """Refit each matched pair on the UNION of its two tracks' hits."""
     kf_opts = kf_opts or {}
     d0_opt = {k: v for k, v in kf_opts.items() if k == "d0_prior_cm"}
@@ -204,6 +205,11 @@ def refit_matched(U, Q, IT, OT, ia, ib, kf_opts=None):
     # OT track, whose curvature is the better of the two by a long way.
     trip = (IT["gA"][ia], IT["gB"][ia], IT["gA"][ia])
     pt = 1.0 / np.maximum(np.abs(OT["kappa"][ib]), 1e-3)
+    extra = {}
+    if ms_scale is not None:
+        extra["ms_scale"] = ms_scale
+    if it_ot_scale is not None:
+        extra["it_ot_scale"] = it_ot_scale
     fit = KF.fit_tracks(U, Q, trip, gidx=G, use_angles=False,
-                        pt_hint=pt, **d0_opt)
+                        pt_hint=pt, **d0_opt, **extra)
     return fit, G
