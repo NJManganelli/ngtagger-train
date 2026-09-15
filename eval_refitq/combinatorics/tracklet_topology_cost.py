@@ -377,7 +377,9 @@ def load_flat(spec, table, cols, nev=None):
 
 IT_COLS = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
            "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
-           "sigY", "tpIdx", "tpPt", "tpVx", "tpVy", "tpVz", "tpPhi", "tpEta"]
+           # sigX is the r-phi CPE sigma; the KF emulation needs it for the
+           # position variance and sigY alone (the z sigma) is not a substitute.
+           "sigX", "sigY", "tpIdx", "tpPt", "tpVx", "tpVy", "tpVz", "tpPhi", "tpEta"]
 
 
 def it_chunks(path, nev, step=16):

@@ -312,5 +312,307 @@ def _selftest():
           + ("exact" if e < 1e-6 else "BIASED"))
 
 
+_MAIN = None
+
+
+# ==========================================================================
+# assembling a track: the seed's three clusters plus one projection per layer
+# ==========================================================================
+LAYER_ORDER = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
+
+
+def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
+    """For each seed triple, gather at most one hit per layer.
+
+    The seed's own three clusters are taken as given. Every OTHER instrumented
+    layer is then PROJECTED to along the seed's own three-point helix, and the
+    best hit in that layer is attached -- best meaning smallest combined
+    (dphi, dz) pull, so a layer contributes nothing rather than a wrong hit when
+    nothing is compatible. This is the track-following the OT finder does after
+    its seed, and it is what turns a 3-point seed into a fittable track.
+
+    Returns the per-layer arrays kf_run wants, shaped (ntrack, nlayer).
+    """
+    ga, gb, gc = trip
+    nt = len(ga)
+    nl = len(layers)
+    R = np.zeros((nt, nl)); PH = np.zeros((nt, nl)); Z = np.zeros((nt, nl))
+    SX = np.zeros((nt, nl)); SY = np.zeros((nt, nl))
+    KA = np.zeros((nt, nl)); SKA = np.zeros((nt, nl))
+    CT = np.zeros((nt, nl)); SCT = np.zeros((nt, nl))
+    VALID = np.zeros((nt, nl), bool)
+    ANG = np.zeros((nt, nl), bool)
+    GIDX = np.full((nt, nl), -1, np.int64)
+    lpos = {L: i for i, L in enumerate(layers)}
+
+    def place(g):
+        lay = U["layer"][g]
+        for L in np.unique(lay):
+            if L not in lpos:
+                continue
+            j = lpos[int(L)]
+            m = lay == L
+            rowi = np.flatnonzero(m)
+            GIDX[rowi, j] = g[m]
+            VALID[rowi, j] = True
+    for g in (ga, gb, gc):
+        place(g)
+    # seed helix from the exact three-point solve, which is what the seed has
+    phi0, d0, kap, ok3 = M.solve3(U["globalR"][ga], U["globalPhi"][ga],
+                                  U["globalR"][gb], U["globalPhi"][gb],
+                                  U["globalR"][gc], U["globalPhi"][gc])
+    dr = U["globalR"][gb] - U["globalR"][ga]
+    cot = (U["globalZ"][gb] - U["globalZ"][ga]) / np.where(np.abs(dr) > 0.5, dr, 1e9)
+    z0 = U["globalZ"][ga] - U["globalR"][ga] * cot
+    ev = U["event"][ga]
+    for L in layers:
+        j = lpos[L]
+        need = ~VALID[:, j]
+        if not need.any():
+            continue
+        sel = np.flatnonzero(U["layer"] == L)
+        if len(sel) < 1:
+            continue
+        # candidates in the same event, nearest in predicted z then arbitrated
+        # on the combined pull
+        key_c = U["event"][sel].astype(np.int64)
+        o = np.lexsort((U["globalZ"][sel], key_c))
+        sel, key_c = sel[o], key_c[o]
+        zc, rc, pc = U["globalZ"][sel], U["globalR"][sel], U["globalPhi"][sel]
+        sg = np.maximum(U["sigY"][sel], 1e-6)
+        if L > 10:
+            w0, _w1 = ot_variances(np.full(len(sel), L - 10), rc, zc,
+                                   M.C_BEND * np.median(np.abs(kap)),
+                                   np.median(np.abs(cot)))
+        else:
+            w0, _w1 = it_variances(rc, U["sigX"][sel], U["sigY"][sel],
+                                   M.C_BEND * np.median(np.abs(kap)))
+        sphi = np.sqrt(np.maximum(w0, 1e-12))
+        rows = np.flatnonzero(need)
+        rmed = float(np.median(rc))
+        zpred = z0[rows] + rmed * cot[rows]
+        ppred = M.wrap(phi0[rows] + d0[rows] / rmed - M.C_BEND * kap[rows] * rmed)
+        lo = np.searchsorted(key_c, ev[rows])
+        hi = np.searchsorted(key_c, ev[rows], side="right")
+        best = np.full(len(rows), -1, np.int64)
+        bp = np.full(len(rows), np.inf)
+        # per-track scan over its own event's clusters in this layer; the
+        # occupancy per (event, layer) is small enough that this stays cheap
+        for t in range(len(rows)):
+            a, b = lo[t], hi[t]
+            if b <= a:
+                continue
+            dz = (zc[a:b] - (z0[rows[t]] + rc[a:b] * cot[rows[t]])) / sg[a:b]
+            dp = M.wrap(pc[a:b] - M.wrap(phi0[rows[t]] + d0[rows[t]] / rc[a:b]
+                                         - M.C_BEND * kap[rows[t]] * rc[a:b]))
+            # The azimuth tolerance is the layer's OWN uncertainty, not a flat
+            # number. A hardcoded 5 mrad accepted ~8 of 10 layers and degraded
+            # sigma(d0) from 37 to 53 um by attaching wrong hits -- a projection
+            # that accepts everything is not a projection.
+            pull = np.hypot(dz, dp / sphi[a:b])
+            k = int(np.argmin(pull))
+            if pull[k] < nsig * np.sqrt(2.0):
+                best[t] = sel[a + k]
+                bp[t] = pull[k]
+        got = best >= 0
+        GIDX[rows[got], j] = best[got]
+        VALID[rows[got], j] = True
+    # gather the per-hit quantities
+    for j in range(nl):
+        g = GIDX[:, j]
+        m = g >= 0
+        if not m.any():
+            continue
+        gg = g[m]
+        R[m, j] = U["globalR"][gg]
+        PH[m, j] = U["globalPhi"][gg]
+        Z[m, j] = U["globalZ"][gg]
+        SY[m, j] = np.maximum(U["sigY"][gg], 1e-6)
+        SX[m, j] = np.maximum(U.get("sigX", U["sigY"])[gg], 1e-6)
+        isit = U["layer"][gg] <= 4
+        ANG[np.flatnonzero(m)[isit], j] = True
+        KA[m, j] = Q["kap_a"][gg]
+        SKA[m, j] = Q["s_kap"][gg]
+        CT[m, j] = U.get("globalClusterCotTheta", np.zeros(len(U["layer"])))[gg]
+        SCT[m, j] = U.get("sigGlobalClusterCotTheta",
+                          np.ones(len(U["layer"])))[gg]
+    return dict(R=R, PH=PH, Z=Z, SX=SX, SY=SY, KA=KA, SKA=SKA, CT=CT, SCT=SCT,
+                VALID=VALID, ANG=ANG, GIDX=GIDX, layers=np.array(layers))
+
+
+def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
+               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, scattering=SCATTERING):
+    """Assemble each seed's track and fit it. Returns fitted parameters + hits."""
+    T = collect_track_hits(U, Q, trip, layers)
+    lay = np.tile(np.asarray(layers), (T["R"].shape[0], 1))
+    is_ot = lay > 10
+    # A first curvature/cot estimate is needed because the OT stub variances
+    # depend on them (the scattering allowance is proportional to |inv2R|).
+    ga, gb = trip[0], trip[1]
+    dr = U["globalR"][gb] - U["globalR"][ga]
+    safe = np.where(np.abs(dr) > 0.5, dr, 1e9)
+    kap0 = (M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb]) / (M.C_BEND * safe))[:, None]
+    cot0 = ((U["globalZ"][gb] - U["globalZ"][ga]) / safe)[:, None]
+    inv2R = M.C_BEND * kap0
+    v0 = np.zeros_like(T["R"]); v1 = np.zeros_like(T["R"])
+    if is_ot.any():
+        o0, o1 = ot_variances(np.where(is_ot, lay - 10, 1), T["R"], T["Z"],
+                              np.broadcast_to(inv2R, T["R"].shape),
+                              np.broadcast_to(cot0, T["R"].shape))
+        v0 = np.where(is_ot, o0, v0); v1 = np.where(is_ot, o1, v1)
+    i0, i1 = it_variances(T["R"], T["SX"], T["SY"],
+                          np.broadcast_to(inv2R, T["R"].shape), scattering)
+    v0 = np.where(is_ot, v0, i0); v1 = np.where(is_ot, v1, i1)
+    ma = va = mb = vb = ang = None
+    if use_angles:
+        # alpha and beta enter as measurements of x0 - x4/r^2 and of x2; the
+        # scales are the retuned weights, applied to the VARIANCE.
+        ma = -M.C_BEND * T["KA"]
+        va = (M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale) ** 2
+        mb = T["CT"]
+        vb = (np.maximum(T["SCT"], 1e-9) * beta_scale) ** 2
+        ang = T["ANG"]
+    # azimuth relative to each track's own first hit, so no 2pi wrap enters
+    ref = np.where(T["VALID"], T["PH"], 0.0)
+    first = np.argmax(T["VALID"], axis=1)
+    phi_ref = ref[np.arange(len(first)), first]
+    m0 = M.wrap(T["PH"] - phi_ref[:, None])
+    out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb, ang,
+                 d0_prior_cm)
+    kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok = out
+    return {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,
+            "cot": cot, "z0": z0, "var_kappa": vk, "var_d0": vd,
+            "var_cot": vc, "var_z0": vz, "nhit": nhit, "ok": ok, "hits": T}
+
+
+def truth_residuals(U, trip, fit, TP):
+    """(dkappa, dd0, dcot, dz0, mask) against the TrackingParticle truth."""
+    ga, gb, gc = trip
+    ta = U["tpIdx"][ga]
+    real = (ta >= 0) & (ta == U["tpIdx"][gb]) & (ta == U["tpIdx"][gc]) & fit["ok"]
+    kk = M.tp_key(U["event"][ga], np.maximum(ta, 0))
+    p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
+    real &= (len(TP["key"]) > 0) & (TP["key"][p] == kk)
+    if not real.any():
+        z = np.zeros(0)
+        return z, z, z, z, real
+    q = p[real]
+    # |kappa|, NOT kappa: the nano carries no TrackingParticle charge, so truth
+    # is 1/pT and unsigned. Comparing a signed fit against it gives a residual of
+    # -2/pT for every negative track, which reads as sigma(kappa) = 0.45 on a
+    # sample whose kappa only spans +-0.5 -- i.e. as a total loss of curvature
+    # resolution, when the fit is in fact fine.
+    return (np.abs(fit["kappa"][real]) - TP["kappa"][q],
+            fit["d0"][real] - TP["d0"][q],
+            fit["cot"][real] - TP["cot"][q],
+            fit["z0"][real] - TP["z0"][q], real)
+
+
+def tp_truth_table(U):
+    """Per-TrackingParticle truth helix, keyed and sorted for searchsorted.
+
+    Built from IT cluster rows only: an OT stub row carries no tpEta/tpPhi/tpV*,
+    so reading truth off the inner hit gives nonsense for every OT-only seed.
+    """
+    m = (U["layer"] <= 4) & (U["tpIdx"] >= 0)
+    k = M.tp_key(U["event"][m], U["tpIdx"][m])
+    o = np.argsort(k, kind="stable")
+    k = k[o]
+    f = np.r_[True, k[1:] != k[:-1]] if len(k) else np.zeros(0, bool)
+    sel = np.flatnonzero(m)[o][f]
+    ph = U["tpPhi"][sel]
+    return {"key": k[f],
+            "kappa": 1.0 / np.maximum(U["tpPt"][sel], 1e-6),
+            "d0": -U["tpVx"][sel] * np.sin(ph) + U["tpVy"][sel] * np.cos(ph),
+            "cot": np.sinh(U["tpEta"][sel]), "z0": U["tpVz"][sel]}
+
+
+def rs(x):
+    if len(x) < 30:
+        return float("nan")
+    q = np.percentile(x, [15.865, 84.135])
+    return float(0.5 * (q[1] - q[0]))
+
+
+def retune(U, Q, trip, TP, scales=(0.25, 0.5, 1.0, 2.0, 4.0, 8.0), **kw):
+    """Scan the alpha and beta variance scales and report what each buys.
+
+    THE REFIT'S OWN WEIGHTS ARE NOT TRANSFERABLE. It weights alpha and beta by
+    the sigmas its network reports, tuned for per-cluster angle recovery on a
+    different population; here they enter a 5-parameter helix fit alongside
+    positions from two detector systems. Scanning the scale applied to those
+    variances is what says whether they are over- or under-trusted, and the
+    minimum of the resolution curve is the retuned value. A scale above 1 means
+    the reported sigmas are too small.
+    """
+    rows = []
+    base = fit_tracks(U, Q, trip, use_angles=False, **kw)
+    dk, dd, dc, dz, _ = truth_residuals(U, trip, base, TP)
+    rows.append({"alpha_scale": None, "beta_scale": None, "n": int(len(dk)),
+                 "sig_kappa": rs(dk), "sig_d0_um": 1e4 * rs(dd),
+                 "sig_cot": rs(dc), "sig_z0_um": 1e4 * rs(dz)})
+    for s in scales:
+        f = fit_tracks(U, Q, trip, True, s, s, **kw)
+        dk, dd, dc, dz, _ = truth_residuals(U, trip, f, TP)
+        rows.append({"alpha_scale": s, "beta_scale": s, "n": int(len(dk)),
+                     "sig_kappa": rs(dk), "sig_d0_um": 1e4 * rs(dd),
+                     "sig_cot": rs(dc), "sig_z0_um": 1e4 * rs(dz)})
+    return rows
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("-i", "--input", required=True)
+    ap.add_argument("-n", "--nev", type=int, default=20)
+    ap.add_argument("--ptmin", type=float, default=2.0)
+    ap.add_argument("--seed", default="IL1+IL2>IL3")
+    ap.add_argument("--max-tracks", type=int, default=3000)
+    ap.add_argument("--d0-prior-cm", type=float, default=D0_PRIOR_CM)
+    a = ap.parse_args()
+    import tp_findability as TF
+    cal = calibrate_for(a.input, a.ptmin)
+    la, rest = a.seed.split("+"); lb, lc = rest.split(">")
+    LA, LB, LC = TF.CODE[la], TF.CODE[lb], TF.CODE[lc]
+    Us, Qs, trips = [], [], []
+    for (U, Q), ev in TF.unified_chunks(a.input, a.nev, 4, cal):
+        o = M.it_pair_seed(U, Q, np.arange(len(U["layer"])), LA, LB, LC,
+                           a.ptmin, True, False, 0.0)
+        if "_trip" not in o:
+            continue
+        Us.append(U); Qs.append(Q); trips.append(o["_trip"])
+    if not trips:
+        raise SystemExit("no triples")
+    print(f"{a.seed}: {sum(len(t[0]) for t in trips):,} candidate triples "
+          f"over {a.nev} events")
+    allrows = []
+    for U, Q, trip in zip(Us, Qs, trips):
+        if len(trip[0]) > a.max_tracks:
+            k = np.random.default_rng(0).choice(len(trip[0]), a.max_tracks, False)
+            trip = tuple(x[k] for x in trip)
+        TP = tp_truth_table(U)
+        allrows.append(retune(U, Q, trip, TP, d0_prior_cm=a.d0_prior_cm))
+    keys = ["n", "sig_kappa", "sig_d0_um", "sig_cot", "sig_z0_um"]
+    print(f"\n{'alpha/beta scale':>17}{'n':>8}{'sig(kappa)':>12}"
+          f"{'sig(d0) um':>12}{'sig(cot)':>11}{'sig(z0) um':>12}")
+    for i in range(len(allrows[0])):
+        lab = allrows[0][i]["alpha_scale"]
+        n = sum(r[i]["n"] for r in allrows)
+        vals = [np.median([r[i][k] for r in allrows if np.isfinite(r[i][k])])
+                for k in keys[1:]]
+        print(f"{'positions only' if lab is None else f'x{lab:g}':>17}{n:>8,}"
+              f"{vals[0]:>12.4f}{vals[1]:>12.0f}{vals[2]:>11.4f}{vals[3]:>12.0f}")
+
+
+def calibrate_for(spec, ptmin, nev=50):
+    import tp_findability as TF
+    c = TF.calibrate(spec, nev, ptmin)
+    return {int(k): float(v) for k, v in c["sigz_ot"].items()}
+
+
 if __name__ == "__main__":
-    _selftest()
+    import sys as _s
+    if "--selftest" in _s.argv:
+        _selftest()
+    else:
+        main()

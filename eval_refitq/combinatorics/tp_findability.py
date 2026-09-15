@@ -46,6 +46,7 @@ import uproot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
+import kf_emulation as KF           # noqa: E402
 
 NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
         11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
@@ -55,7 +56,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 4
+FORMAT_VERSION = 6
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -237,6 +238,12 @@ def _unify(I, O, sigz_ot):
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
          "globalPhi": np.r_[I["globalPhi"], O["phi"][bar]],
          "sigY": np.r_[I["sigY"], sig],
+         # an OT stub has no r-phi CPE sigma of its own; ot_variances builds its
+         # variance from pitch and scattering instead, so this is never read there
+         "sigX": np.r_[I["sigX"], sig],
+         "globalClusterCotTheta": np.r_[I["globalClusterCotTheta"], np.zeros(n)],
+         "sigGlobalClusterCotTheta": np.r_[I["sigGlobalClusterCotTheta"],
+                                           np.full(n, 1e9)],
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
@@ -299,48 +306,49 @@ def chunk_census(U):
             "hit_it": hit_it, "hit_ot": hit_ot}
 
 
-def _qual(U, trip, TPK, TPVZ, TPET):
-    """Seed-level residuals for the truth-matched triples: kappa, cot(theta), z0.
+def _qual(U, Q, trip, rng, nmax, kf_opts):
+    """POST-FIT track resolutions, from the KF emulation of the OT track finder.
 
-    Truth is looked up PER TRACKINGPARTICLE, never off the inner hit row: OT stub
-    rows carry NaN for tpVz/tpEta, so reading truth off the inner hit gives
-    nonsense for every OT-only seed -- it read sigma(z0) as 42,000-64,000 um and
-    sigma(cot) as nan before this was keyed on the TP.
+    This replaces a seed-level placeholder that reported what a seed's own three
+    points imply. What a system actually cares about is what comes out of the
+    fit after the seed has been projected to every other layer and picked up the
+    hits there, which is what this measures: MEASURED on IL1+IL2>IL3, following
+    the projections takes sigma(kappa) from 0.0189 to 0.0093, so the seed-level
+    number was pessimistic by 2x and in a seed-dependent way.
+
+    Fitted on a bounded random subsample, because the fit is per-track work and
+    the robust spreads are converged long before the full candidate list is.
     """
+    # TRUTH-MATCH FIRST, THEN SUBSAMPLE. Resolution is only defined on tracks
+    # the seed found correctly, so fitting fakes is wasted work -- and
+    # subsampling before matching starves exactly the seeds that need the
+    # statistics most: at a 95% fake rate, 400 sampled triples leave ~22
+    # truth-matched, under the 30 a robust spread needs, so every high-fake
+    # mixed IT+OT seed reported nan while the clean IT seeds looked fine.
     ga, gb, gc = trip
-    dr = U["globalR"][gb] - U["globalR"][ga]
-    okp = np.abs(dr) > 0.5
-    safe = np.where(okp, dr, 1e9)
-    kap = M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb]) / (M.C_BEND * safe)
-    cot = (U["globalZ"][gb] - U["globalZ"][ga]) / safe
-    z0 = U["globalZ"][ga] - U["globalR"][ga] * cot
     ta = U["tpIdx"][ga]
-    real = okp & (ta >= 0) & (ta == U["tpIdx"][gb]) & (ta == U["tpIdx"][gc])
-    if not len(TPK) or not real.any():
-        return np.zeros((0, 3), np.float32)
-    kk = M.tp_key(U["event"][ga], np.maximum(ta, 0))
-    p = np.clip(np.searchsorted(TPK, kk), 0, len(TPK) - 1)
-    real &= TPK[p] == kk
-    if not real.any():
-        return np.zeros((0, 3), np.float32)
-    r = real
-    return np.stack([np.abs(kap[r]) - 1.0 / np.maximum(U["tpPt"][ga][r], 1e-6),
-                     cot[r] - np.sinh(TPET[p[r]]),
-                     z0[r] - TPVZ[p[r]]], axis=1).astype(np.float32)
+    real = (ta >= 0) & (ta == U["tpIdx"][gb]) & (ta == U["tpIdx"][gc])
+    idx = np.flatnonzero(real)
+    if not len(idx):
+        return np.zeros((0, 5), np.float32)
+    if len(idx) > nmax:
+        idx = idx[rng.choice(len(idx), nmax, replace=False)]
+    trip = tuple(x[idx] for x in trip)
+    TP = KF.tp_truth_table(U)
+    fit = KF.fit_tracks(U, Q, trip, **kf_opts)
+    dk, dd, dc, dz, real = KF.truth_residuals(U, trip, fit, TP)
+    if not len(dk):
+        return np.zeros((0, 5), np.float32)
+    return np.stack([dk, dd, dc, dz,
+                     fit["nhit"][real].astype(np.float64)], axis=1).astype(np.float32)
 
 
-def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk):
+def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None):
     """Run every seed over one chunk and reduce to census + bitmap + counters."""
     cen = chunk_census(U)
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
     found = np.zeros((ntp, nw), np.uint64)
-    # per-TP truth table, for the quality residuals
-    itrow = (U["layer"] <= 4) & (U["tpIdx"] >= 0)
-    tk = M.tp_key(U["event"][itrow], U["tpIdx"][itrow])
-    to = np.argsort(tk, kind="stable")
-    tk, tvz, tet = tk[to], U["tpVz"][itrow][to], U["tpEta"][itrow][to]
-    tf = np.r_[True, tk[1:] != tk[:-1]] if len(tk) else np.zeros(0, bool)
-    TPK, TPVZ, TPET = tk[tf], tvz[tf], tet[tf]
+    kf_opts = kf_opts or {}
     allidx = np.arange(len(U["layer"]))
     counters, qual = {}, {}
     for s_i, (la, lb, lc) in enumerate(seeds):
@@ -367,10 +375,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk):
                 if p.max() >= ntp or not np.array_equal(cen["key"][p], keys):
                     raise SystemExit("recovered TP absent from the chunk census")
                 found[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-            q = _qual(U, trip, TPK, TPVZ, TPET)
-            if len(q) > qual_per_chunk:
-                q = q[rng.choice(len(q), qual_per_chunk, replace=False)]
-            qual[s_i] = q
+            qual[s_i] = _qual(U, Q, trip, rng, qual_per_chunk, kf_opts)
             del o["_trip"]
         counters[s_i] = c
     return cen, found, counters, qual
@@ -385,7 +390,7 @@ def _shard_path(d, i):
 
 def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           hash_content=False, calib_events=100, verbose=True,
-          budget_gb=0.4, rss_gb=8.0, masks=None):
+          budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
     The cache is a DIRECTORY OF PER-CHUNK SHARDS, not one file, so a run that
@@ -446,7 +451,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
             cen, found, counters, qual = process_chunk(U, Q, seeds, ptmin, rng,
-                                                       QUAL_PER_CHUNK)
+                                                       QUAL_PER_CHUNK, kf_opts)
             np.savez_compressed(
                 _shard_path(d, ci), found=found, n_events=len(ev),
                 counters=json.dumps({str(k): v for k, v in counters.items()}),
@@ -493,7 +498,7 @@ def load(d, nev=None, verbose=True):
     C["seed_tags"] = meta["seed_tags"]
     C["calibration"] = meta["calibration"]
     C["counters"] = {i: cnt.get(i, {}) for i in range(len(C["seeds"]))}
-    C["qual"] = {i: (np.concatenate(v) if v else np.zeros((0, 3), np.float32))
+    C["qual"] = {i: (np.concatenate(v) if v else np.zeros((0, 5), np.float32))
                  for i, v in qs.items()}
     C["cache_dir"] = d
     if verbose:
@@ -534,14 +539,16 @@ def seed_table(C):
         if c.get("infeasible"):
             rows.append({"seed": tag, "infeasible": True})
             continue
-        q = C["qual"].get(i, np.zeros((0, 3), np.float32))
+        q = C["qual"].get(i, np.zeros((0, 5), np.float32))
         rows.append({
             "seed": tag, "n_found": int(seed_mask(C, i).sum()),
             "pairs": c.get("pairs", 0.0) / nev, "cand": c.get("cand", 0.0) / nev,
             "fit": c.get("fit", 0.0) / nev,
             "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
-            "sig_kappa": robust_sigma(q[:, 0]), "sig_cot": robust_sigma(q[:, 1]),
-            "sig_z0_cm": robust_sigma(q[:, 2])})
+            "sig_kappa": robust_sigma(q[:, 0]), "sig_d0_cm": robust_sigma(q[:, 1]),
+            "sig_cot": robust_sigma(q[:, 2]), "sig_z0_cm": robust_sigma(q[:, 3]),
+            "n_fit": int(len(q)),
+            "mean_nhit": float(q[:, 4].mean()) if len(q) else float("nan")})
     return rows
 
 
@@ -567,6 +574,12 @@ def main():
     ap.add_argument("--cache-dir", default="eval_refitq/combinatorics/cache")
     ap.add_argument("--cache", default="auto",
                     choices=["auto", "rebuild", "off", "require"])
+    ap.add_argument("--d0-prior-cm", type=float, default=KF.D0_PRIOR_CM)
+    ap.add_argument("--kf-angles", default="on", choices=["on", "off"],
+                    help="use the SmartPixels alpha/beta in the KF updates")
+    ap.add_argument("--alpha-scale", type=float, default=1.0,
+                    help="scale on the alpha sigma; <1 trusts it more")
+    ap.add_argument("--beta-scale", type=float, default=1.0)
     ap.add_argument("--hash-content", action="store_true",
                     help="digest file contents instead of trusting size+mtime")
     ap.add_argument("-o", "--out", default=None, help="write the seed table as JSON")
@@ -575,7 +588,10 @@ def main():
     masks = None if a.masks.strip().lower() == "none" else \
         [m.strip() for m in a.masks.split(",") if m.strip()]
     C = build(a.input, a.nev, a.ptmin, layers, a.n_adjacent, a.chunk,
-              a.cache_dir, a.cache, a.hash_content, a.calib_events, masks=masks)
+              a.cache_dir, a.cache, a.hash_content, a.calib_events, masks=masks,
+              kf_opts={"use_angles": a.kf_angles == "on",
+                       "alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
+                       "d0_prior_cm": a.d0_prior_cm})
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "
@@ -587,10 +603,11 @@ def main():
     rows = [r for r in seed_table(C) if not r.get("infeasible")]
     rows.sort(key=lambda r: -r["n_found"])
     print(f"\n{'seed':<18}{'found':>10}{'cand/ev':>11}{'fit/ev':>9}{'fake':>7}"
-          f"{'s(kap)':>9}{'s(cot)':>9}{'s(z0)um':>9}")
+          f"{'nhit':>6}{'s(kap)':>9}{'s(d0)um':>9}{'s(cot)':>9}{'s(z0)um':>9}")
     for r in rows[:25]:
         print(f"{r['seed']:<18}{r['n_found']:>10,}{r['cand']:>11,.0f}"
-              f"{r['fit']:>9,.0f}{r['fake']:>7.3f}{r['sig_kappa']:>9.4f}"
+              f"{r['fit']:>9,.0f}{r['fake']:>7.3f}{r['mean_nhit']:>6.1f}"
+              f"{r['sig_kappa']:>9.4f}{1e4 * r['sig_d0_cm']:>9.0f}"
               f"{r['sig_cot']:>9.4f}{1e4 * r['sig_z0_cm']:>9.0f}")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)

@@ -2810,14 +2810,19 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         m = TF.seed_mask(C, i)
         if not m.any():
             continue
-        q = C["qual"].get(i, np.zeros((0, 3), np.float32))
+        q = C["qual"].get(i, np.zeros((0, 5), np.float32))
         FOUND[tag] = m
         COST[tag] = {"cand": c.get("cand", 0.0) / nev,
                      "fit": c.get("fit", 0.0) / nev,
                      "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
+                     # POST-FIT, from the KF emulation: columns are
+                     # (dkappa, dd0, dcot, dz0, nhit), not the old
+                     # seed-level (dkappa, dcot, dz0).
                      "sig_kappa": TF.robust_sigma(q[:, 0]),
-                     "sig_cot": TF.robust_sigma(q[:, 1]),
-                     "sig_z0_cm": TF.robust_sigma(q[:, 2])}
+                     "sig_d0_cm": TF.robust_sigma(q[:, 1]),
+                     "sig_cot": TF.robust_sigma(q[:, 2]),
+                     "sig_z0_cm": TF.robust_sigma(q[:, 3]),
+                     "mean_nhit": float(q[:, 4].mean()) if len(q) else float("nan")}
     if not FOUND:
         for a in ax_row:
             a.axis("off")
@@ -2950,21 +2955,27 @@ def _menu_by_build_table(out, builds):
                 fh.write(f"  -- {lbl}\n")
                 fh.write(f"  {'#':>2} {'seed':<18}{'marginal':>10}{'cum eff':>9}"
                          f"{'marg/kcand':>12}{'cand/ev':>11}{'fit/ev':>8}{'fake':>7}"
-                         f"{'sig(kap)':>10}{'sig(z0)um':>11}{'sig(cot)':>10}\n")
+                         f"{'nhit':>6}{'sig(kap)':>10}{'sig(d0)um':>11}"
+                         f"{'sig(z0)um':>11}{'sig(cot)':>10}\n")
                 for i, m in enumerate(b.get(key, []), 1):
-                    sz = m.get("sig_z0_cm", float("nan"))
+                    um = lambda k: (m.get(k, float("nan")) * 1e4
+                                    if m.get(k, float("nan")) == m.get(k, float("nan"))
+                                    else float("nan"))
                     fh.write(f"  {i:>2} {m['seed']:<18}{m['marginal_tps']:>10,d}"
                              f"{m['cum_eff']:>9.3f}"
                              f"{m.get('marg_per_kcand', float('nan')):>12.1f}"
                              f"{m['cand']:>11,.0f}{m['fit']:>8,.0f}{m['fake']:>7.3f}"
+                             f"{m.get('mean_nhit', float('nan')):>6.1f}"
                              f"{m.get('sig_kappa', float('nan')):>10.4f}"
-                             f"{sz*1e4 if sz == sz else float('nan'):>11,.0f}"
+                             f"{um('sig_d0_cm'):>11,.0f}{um('sig_z0_cm'):>11,.0f}"
                              f"{m.get('sig_cot', float('nan')):>10.4f}\n")
                 fh.write("\n")
             fh.write("  marg/kcand = marginal TPs per 1000 candidate triplets per event.\n"
-                     "  sig(kappa)/sig(z0)/sig(cot) are the seed's OWN parameter\n"
-                     "  resolutions on the triples it recovers -- the hook a proper\n"
-                     "  track-resolution metric will replace.\n\n")
+                     "  nhit and the sigmas are POST-FIT, from the 5-parameter KF\n"
+                     "  emulation of the OT track finder run on the seed's clusters\n"
+                     "  plus one projected hit per remaining layer -- not the seed's\n"
+                     "  own three points. Following the projections is worth ~2x on\n"
+                     "  sigma(kappa), so the seed-level number was pessimistic.\n\n")
     print(f"    wrote {p}")
 
 
