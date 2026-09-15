@@ -2758,6 +2758,7 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         return m
     SMC = _mod("seed_menu_composition")
     TF = _mod("tp_findability")
+    SA = _mod("seed_arity")
     M = SMC.M
     # THIS STUDY STREAMS; the rest of the omnibus does not. load() concatenates
     # every input up front with no event cap, which is fine for one 100-event
@@ -2807,12 +2808,15 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         c = C["counters"].get(i, {})
         if c.get("infeasible"):
             continue
+        sd = C["seeds"][i]
         m = TF.seed_mask(C, i)
         if not m.any():
             continue
         q = C["qual"].get(i, np.zeros((0, 5), np.float32))
         FOUND[tag] = m
         COST[tag] = {"cand": c.get("cand", 0.0) / nev,
+                     "arity": sd.arity, "note": C["seed_notes"][i],
+                     "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
                      "fit": c.get("fit", 0.0) / nev,
                      "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
                      # POST-FIT, from the KF emulation: columns are
@@ -2843,14 +2847,16 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
         layers = il + list(OT_BARREL)
         found, cost = {}, {}
-        for la, lb, lc in TF.seed_universe(rmed, layers, N_ADJACENT):
-            if not TF.in_ot_design((la, lb, lc)):
-                continue
+        # PER BUILD, including arity: which seeds exist depends on which IT
+        # layers are instrumented, and the locality rule that governs mixed
+        # seeds is anchored on the OUTERMOST instrumented IT layer, so a build's
+        # seed list is not a subset of a richer build's.
+        for sd in SA.enumerate_seeds(il):
+            la, lb = sd.layers[0], sd.layers[1]
             if float((above & ON[la] & ON[lb]).sum()) / nev < 20.0:
                 continue
-            tag = TF.seed_tag((la, lb, lc))
-            if tag in FOUND:
-                found[tag], cost[tag] = FOUND[tag], COST[tag]
+            if sd.tag in FOUND:
+                found[sd.tag], cost[sd.tag] = FOUND[sd.tag], COST[sd.tag]
         if not found:
             builds[mask] = {"n_seeds": 0}
             continue
@@ -2957,7 +2963,7 @@ def _menu_by_build_table(out, builds):
                 fh.write(f"  -- {lbl}\n")
                 fh.write(f"  {'#':>2} {'seed':<18}{'marginal':>10}{'cum eff':>9}"
                          f"{'marg/kcand':>12}{'cand/ev':>11}{'fit/ev':>8}{'fake':>7}"
-                         f"{'nhit':>6}{'sig(kap)':>10}{'sig(d0)um':>11}"
+                         f"{'ar':>4}{'nlay':>6}{'sig(kap)':>10}{'sig(d0)um':>11}"
                          f"{'sig(z0)um':>11}{'sig(cot)':>10}\n")
                 for i, m in enumerate(b.get(key, []), 1):
                     um = lambda k: (m.get(k, float("nan")) * 1e4
@@ -2967,7 +2973,7 @@ def _menu_by_build_table(out, builds):
                              f"{m['cum_eff']:>9.3f}"
                              f"{m.get('marg_per_kcand', float('nan')):>12.1f}"
                              f"{m['cand']:>11,.0f}{m['fit']:>8,.0f}{m['fake']:>7.3f}"
-                             f"{m.get('mean_nhit', float('nan')):>6.1f}"
+                             f"{m.get('arity', 0):>4d}{m.get('nlayer', float('nan')):>6.1f}"
                              f"{m.get('sig_kappa', float('nan')):>10.4f}"
                              f"{um('sig_d0_cm'):>11,.0f}{um('sig_z0_cm'):>11,.0f}"
                              f"{m.get('sig_cot', float('nan')):>10.4f}\n")

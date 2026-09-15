@@ -417,13 +417,27 @@ def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
         got = best >= 0
         GIDX[rows[got], j] = best[got]
         VALID[rows[got], j] = True
-    # gather the per-hit quantities
+    return gather_hits(U, Q, GIDX, layers)
+
+
+def gather_hits(U, Q, GIDX, layers):
+    """Per-hit quantities for a (ntrack, nlayer) table of global cluster indices.
+
+    -1 means the track has nothing on that layer. Shared by the standalone
+    projection path and by the seed follow stage, which has already chosen its
+    hits and must not choose different ones here.
+    """
+    nt, nl = GIDX.shape
+    z = lambda: np.zeros((nt, nl))
+    R, PH, Z, SX, SY = z(), z(), z(), z(), z()
+    KA, SKA, CT, SCT = z(), z(), z(), z()
+    VALID = GIDX >= 0
+    ANG = np.zeros((nt, nl), bool)
     for j in range(nl):
-        g = GIDX[:, j]
-        m = g >= 0
+        m = VALID[:, j]
         if not m.any():
             continue
-        gg = g[m]
+        gg = GIDX[m, j]
         R[m, j] = U["globalR"][gg]
         PH[m, j] = U["globalPhi"][gg]
         Z[m, j] = U["globalZ"][gg]
@@ -433,17 +447,49 @@ def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
         ANG[np.flatnonzero(m)[isit], j] = True
         KA[m, j] = Q["kap_a"][gg]
         SKA[m, j] = Q["s_kap"][gg]
-        CT[m, j] = U.get("globalClusterCotTheta", np.zeros(len(U["layer"])))[gg]
-        SCT[m, j] = U.get("sigGlobalClusterCotTheta",
-                          np.ones(len(U["layer"])))[gg]
+        CT[m, j] = U["globalClusterCotTheta"][gg]
+        SCT[m, j] = U["sigGlobalClusterCotTheta"][gg]
+    return dict(R=R, PH=PH, Z=Z, SX=SX, SY=SY, KA=KA, SKA=SKA, CT=CT, SCT=SCT,
+                VALID=VALID, ANG=ANG, GIDX=GIDX, layers=np.array(layers))
+
+
+def hits_from_seed(U, out, layers=None):
+    """(ntrack, nlayer) cluster-index table from a seed_arity.run_seed result.
+
+    The follow stage already chose one hit per layer under the projection
+    windows; re-projecting here would both duplicate the work and risk choosing
+    differently, so the fit is done on exactly the track the seeding built.
+    """
+    layers = LAYER_ORDER if layers is None else layers
+    lpos = {L: i for i, L in enumerate(layers)}
+    gA, gB, gC = out["_gA"], out["_gB"], out.get("_gC")
+    GIDX = np.full((len(gA), len(layers)), -1, np.int64)
+    for g in ([gA, gB] + ([gC] if gC is not None else [])):
+        lay = U["layer"][g]
+        for L in np.unique(lay):
+            if int(L) in lpos:
+                m = lay == L
+                GIDX[np.flatnonzero(m), lpos[int(L)]] = g[m]
+    for L, (rows, gc) in out.get("_hits", {}).items():
+        if L in lpos and len(rows):
+            GIDX[rows, lpos[L]] = gc
+    return GIDX
+
+
     return dict(R=R, PH=PH, Z=Z, SX=SX, SY=SY, KA=KA, SKA=SKA, CT=CT, SCT=SCT,
                 VALID=VALID, ANG=ANG, GIDX=GIDX, layers=np.array(layers))
 
 
 def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
-               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, scattering=SCATTERING):
-    """Assemble each seed's track and fit it. Returns fitted parameters + hits."""
-    T = collect_track_hits(U, Q, trip, layers)
+               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, scattering=SCATTERING,
+               gidx=None):
+    """Assemble each seed's track and fit it. Returns fitted parameters + hits.
+
+    gidx, when given, is the hit table the seeding already built; otherwise the
+    track is assembled here by projecting the seed helix.
+    """
+    T = (gather_hits(U, Q, gidx, layers) if gidx is not None
+         else collect_track_hits(U, Q, trip, layers))
     lay = np.tile(np.asarray(layers), (T["R"].shape[0], 1))
     is_ot = lay > 10
     # A first curvature/cot estimate is needed because the OT stub variances

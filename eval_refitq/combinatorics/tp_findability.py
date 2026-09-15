@@ -47,6 +47,7 @@ import uproot
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
 import kf_emulation as KF           # noqa: E402
+import seed_arity as SA             # noqa: E402
 
 NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
         11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
@@ -56,7 +57,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 6
+FORMAT_VERSION = 7
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -187,29 +188,25 @@ def in_ot_design(seed):
 
 
 def seed_universe_over_builds(rmed, masks, n_adjacent, ot_design_only=True):
-    """Union over builds of each build's OWN seed enumeration.
+    """Union over builds of each build's own doublet and triplet seeds.
 
-    A target layer must itself be instrumented, and which layers are adjacent
-    depends on which exist -- so the enumeration is not build-independent even
-    though a seed's RESULT is. In AAIA, IL1+IL2's two nearest available targets
-    are IL4 and OL1; over all ten layers they would be IL3 and IL4, and
-    IL1+IL2>OL1 -- the seed that actually leads AAIA's cost-weighted menu -- would
-    never be run. Enumerating per build and taking the union is what makes one
-    pass serve every build.
+    Which seeds exist depends on which IT layers are instrumented, but a seed's
+    RESULT does not, so every distinct seed is run once and each build composes
+    its menu from that. Enumeration and the locality rule live in seed_arity.
     """
-    seen, out = set(), []
+    seen, out = {}, []
     for mask in masks:
-        layers = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"] + list(OT_BARREL)
-        for s in seed_universe(rmed, layers, n_adjacent):
-            if s in seen or (ot_design_only and not in_ot_design(s)):
-                continue
-            seen.add(s)
-            out.append(s)
-    return sorted(out, key=lambda s: (rmed[s[0]], rmed[s[1]], rmed[s[2]]))
+        il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
+        for sd in SA.enumerate_seeds(il):
+            if sd.layers not in seen:
+                seen[sd.layers] = sd
+                out.append(sd)
+    return sorted(out, key=lambda sd: (sd.arity,) + tuple(rmed.get(L, 0.0)
+                                                          for L in sd.layers))
 
 
 def seed_tag(s):
-    return f"{NAME[s[0]]}+{NAME[s[1]]}>{NAME[s[2]]}"
+    return s.tag if hasattr(s, "tag") else SA.Seed(s).tag
 
 
 # ==========================================================================
@@ -326,84 +323,86 @@ def chunk_census(U):
             "hit_it": hit_it, "hit_ot": hit_ot}
 
 
-def _qual(U, Q, trip, rng, nmax, kf_opts):
+def _qual(U, Q, out, rng, nmax, kf_opts):
     """POST-FIT track resolutions, from the KF emulation of the OT track finder.
 
-    This replaces a seed-level placeholder that reported what a seed's own three
-    points imply. What a system actually cares about is what comes out of the
-    fit after the seed has been projected to every other layer and picked up the
-    hits there, which is what this measures: MEASURED on IL1+IL2>IL3, following
-    the projections takes sigma(kappa) from 0.0189 to 0.0093, so the seed-level
-    number was pessimistic by 2x and in a seed-dependent way.
+    Fitted on EXACTLY the track the seeding built: the follow stage already
+    chose one hit per layer under the projection windows, so the KF is handed
+    that table rather than re-projecting and possibly choosing differently.
 
-    Fitted on a bounded random subsample, because the fit is per-track work and
-    the robust spreads are converged long before the full candidate list is.
+    Truth-matched first, then subsampled. Resolution is only defined on tracks
+    the seed found correctly, and subsampling before matching starves exactly
+    the seeds that need the statistics most -- at a 95% fake rate, 400 sampled
+    tracks leave ~22 matched, under the 30 a robust spread needs, so every
+    high-fake seed reported nan while clean ones looked fine.
     """
-    # TRUTH-MATCH FIRST, THEN SUBSAMPLE. Resolution is only defined on tracks
-    # the seed found correctly, so fitting fakes is wasted work -- and
-    # subsampling before matching starves exactly the seeds that need the
-    # statistics most: at a 95% fake rate, 400 sampled triples leave ~22
-    # truth-matched, under the 30 a robust spread needs, so every high-fake
-    # mixed IT+OT seed reported nan while the clean IT seeds looked fine.
-    ga, gb, gc = trip
+    ga, gb, gc = out["_gA"], out["_gB"], out.get("_gC")
     ta = U["tpIdx"][ga]
-    real = (ta >= 0) & (ta == U["tpIdx"][gb]) & (ta == U["tpIdx"][gc])
+    real = (ta >= 0) & (ta == U["tpIdx"][gb])
+    if gc is not None:
+        real &= ta == U["tpIdx"][gc]
     idx = np.flatnonzero(real)
     if not len(idx):
         return np.zeros((0, 5), np.float32)
     if len(idx) > nmax:
         idx = idx[rng.choice(len(idx), nmax, replace=False)]
-    trip = tuple(x[idx] for x in trip)
+    gidx = KF.hits_from_seed(U, out)[idx]
+    trip = (ga[idx], gb[idx], (gc[idx] if gc is not None else gb[idx]))
     TP = KF.tp_truth_table(U)
-    fit = KF.fit_tracks(U, Q, trip, **kf_opts)
-    dk, dd, dc, dz, real = KF.truth_residuals(U, trip, fit, TP)
+    fit = KF.fit_tracks(U, Q, trip, gidx=gidx, **kf_opts)
+    dk, dd, dc, dz, rm = KF.truth_residuals(U, trip, fit, TP)
     if not len(dk):
         return np.zeros((0, 5), np.float32)
     return np.stack([dk, dd, dc, dz,
-                     fit["nhit"][real].astype(np.float64)], axis=1).astype(np.float32)
+                     fit["nhit"][rm].astype(np.float64)], axis=1).astype(np.float32)
 
 
 def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None):
     """Run every seed over one chunk and reduce to census + bitmap + counters."""
+    kf_opts = kf_opts or {}
     cen = chunk_census(U)
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
     found = np.zeros((ntp, nw), np.uint64)
-    kf_opts = kf_opts or {}
-    allidx = np.arange(len(U["layer"]))
+    targets = list(SA.IL) + list(SA.OT_BARREL)
     counters, qual = {}, {}
-    for s_i, (la, lb, lc) in enumerate(seeds):
+    for s_i, sd in enumerate(seeds):
         try:
-            o = M.it_pair_seed(U, Q, allidx, la, lb, lc, ptmin, True, False, 0.0)
+            o = SA.run_seed(U, Q, sd, ptmin, targets, **{})
         except M.TooWide as e:
             counters[s_i] = {"infeasible": 1.0, "n": float(e.n)}
             continue
-        c = {"pairs": float(o.get("tracklets", 0)),
-             "cand": float(o.get("match_cand", 0)),
-             "cand_z": float(o.get("match_cand_z", 0)),
-             "fit": float(o.get("tracks_to_fit", 0))}
-        if "_trip" in o:
-            trip = o["_trip"]
-            nc, nt = M.cand_purity(U, *trip)
-            c["trip"], c["trip_true"] = float(nc), float(nt)
-            keys = M.recovered_keys(U, *trip)
-            if len(keys):
-                # Every recovered key IS in this chunk's census -- the census is
-                # every TP with a hit and a recovered TP has three. So this is a
-                # direct placement, and a miss means the two disagree about event
-                # numbering, which is worth failing on rather than filtering away.
-                p = np.searchsorted(cen["key"], keys)
-                if p.max() >= ntp or not np.array_equal(cen["key"][p], keys):
-                    raise SystemExit("recovered TP absent from the chunk census")
-                found[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-            qual[s_i] = _qual(U, Q, trip, rng, qual_per_chunk, kf_opts)
-            del o["_trip"]
-        counters[s_i] = c
+        if o is None or not o.get("tracks_to_fit"):
+            counters[s_i] = {"pairs": 0.0, "cand": 0.0, "fit": 0.0}
+            continue
+        ga, gb, gc = o["_gA"], o["_gB"], o.get("_gC")
+        ta = U["tpIdx"][ga]
+        real = (ta >= 0) & (ta == U["tpIdx"][gb])
+        if gc is not None:
+            real &= ta == U["tpIdx"][gc]
+        counters[s_i] = {
+            "arity": float(sd.arity),
+            "seed_objects": float(o.get("seed_objects", 0)),
+            "pairs": float(o.get("tracklets", 0)),
+            "cand": float(o.get("cand_all_targets", 0)),
+            "fit": float(o.get("tracks_to_fit", 0)),
+            "before_minlayers": float(o.get("tracks_before_minlayers", 0)),
+            "nlayer_sum": float((sd.arity + o["_nconf"]).sum()),
+            # NOT comparable across arity: a doublet is credited when its two
+            # seed clusters share a TP, a triplet when all three do, and a
+            # 2-cluster coincidence is far likelier. Kept per arity, compared
+            # only within it.
+            "trip": float(len(ta)), "trip_true": float(real.sum())}
+        keys = SA.recovered_keys(U, o)
+        if len(keys):
+            p = np.searchsorted(cen["key"], keys)
+            if p.max() >= ntp or not np.array_equal(cen["key"][p], keys):
+                raise SystemExit("recovered TP absent from the chunk census")
+            found[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
+        qual[s_i] = _qual(U, Q, o, rng, qual_per_chunk, kf_opts)
+        del o
     return cen, found, counters, qual
 
 
-# ==========================================================================
-# build + cache
-# ==========================================================================
 def _shard_path(d, i):
     return os.path.join(d, f"chunk_{i:05d}.npz")
 
@@ -450,11 +449,12 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                  if masks else seed_universe(cal["r_median"], layers, n_adjacent))
         meta = {"cache_key": kh, "format": FORMAT_VERSION, "inputs": man,
                 "config": cfg, "calibration": cal,
-                "seeds": [list(s) for s in seeds],
-                "seed_tags": [seed_tag(s) for s in seeds],
+                "seeds": [list(sd.layers) for sd in seeds],
+                "seed_notes": [sd.note for sd in seeds],
+                "seed_tags": [sd.tag for sd in seeds],
                 "chunks_done": 0, "n_events": 0}
         json.dump(meta, open(mpath, "w"), indent=1, default=float)
-    seeds = [tuple(s) for s in meta["seeds"]]
+    seeds = [SA.Seed(tuple(x)) for x in meta["seeds"]]
     sigz = {int(k): float(v) for k, v in meta["calibration"]["sigz_ot"].items()}
     if verbose:
         print(f"cache {d}\n  {len(seeds)} seeds, chunk = {chunk} events, "
@@ -517,8 +517,9 @@ def load(d, nev=None, verbose=True):
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
     C["n_events"] = nread
-    C["seeds"] = [tuple(s) for s in meta["seeds"]]
+    C["seeds"] = [SA.Seed(tuple(x)) for x in meta["seeds"]]
     C["seed_tags"] = meta["seed_tags"]
+    C["seed_notes"] = meta.get("seed_notes", [""] * len(meta["seeds"]))
     C["calibration"] = meta["calibration"]
     C["counters"] = {i: cnt.get(i, {}) for i in range(len(C["seeds"]))}
     C["qual"] = {i: (np.concatenate(v) if v else np.zeros((0, 5), np.float32))
@@ -558,13 +559,18 @@ def seed_table(C):
     nev = max(C["n_events"], 1)
     rows = []
     for i, tag in enumerate(C["seed_tags"]):
+        sd = C["seeds"][i]
         c = C["counters"].get(i, {})
         if c.get("infeasible"):
-            rows.append({"seed": tag, "infeasible": True})
+            rows.append({"seed": tag, "arity": sd.arity, "infeasible": True})
             continue
         q = C["qual"].get(i, np.zeros((0, 5), np.float32))
         rows.append({
-            "seed": tag, "n_found": int(seed_mask(C, i).sum()),
+            "seed": tag, "arity": sd.arity, "note": C["seed_notes"][i],
+            "n_found": int(seed_mask(C, i).sum()),
+            "min_proj": sd.min_proj(),
+            "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
+            "pass_frac": c.get("fit", 0.0) / max(c.get("before_minlayers", 1.0), 1.0),
             "pairs": c.get("pairs", 0.0) / nev, "cand": c.get("cand", 0.0) / nev,
             "fit": c.get("fit", 0.0) / nev,
             "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
@@ -629,12 +635,13 @@ def main():
         print(f"    pT >= {c:>3} GeV: {int(m.sum()):>9,}")
     rows = [r for r in seed_table(C) if not r.get("infeasible")]
     rows.sort(key=lambda r: -r["n_found"])
-    print(f"\n{'seed':<18}{'found':>10}{'cand/ev':>11}{'fit/ev':>9}{'fake':>7}"
-          f"{'nhit':>6}{'s(kap)':>9}{'s(d0)um':>9}{'s(cot)':>9}{'s(z0)um':>9}")
-    for r in rows[:25]:
-        print(f"{r['seed']:<18}{r['n_found']:>10,}{r['cand']:>11,.0f}"
-              f"{r['fit']:>9,.0f}{r['fake']:>7.3f}{r['mean_nhit']:>6.1f}"
-              f"{r['sig_kappa']:>9.4f}{1e4 * r['sig_d0_cm']:>9.0f}"
+    print(f"\n{'seed':<20}{'ar':>3}{'found':>9}{'cand/ev':>11}{'fit/ev':>8}"
+          f"{'pass%':>6}{'nlay':>6}{'fake':>7}{'s(kap)':>9}{'s(d0)um':>9}"
+          f"{'s(cot)':>9}{'s(z0)um':>9}")
+    for r in rows[:30]:
+        print(f"{r['seed']:<20}{r['arity']:>3}{r['n_found']:>9,}{r['cand']:>11,.0f}"
+              f"{r['fit']:>8,.0f}{100 * r['pass_frac']:>6.0f}{r['nlayer']:>6.1f}"
+              f"{r['fake']:>7.3f}{r['sig_kappa']:>9.4f}{1e4 * r['sig_d0_cm']:>9.0f}"
               f"{r['sig_cot']:>9.4f}{1e4 * r['sig_z0_cm']:>9.0f}")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
