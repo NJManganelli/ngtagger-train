@@ -161,13 +161,32 @@ def seed_universe(rmed, layers, n_adjacent):
     return out
 
 
+# THE REAL OT TRACKLET SEEDS, from L1Trigger/TrackFindingTracklet Settings.h:679
+# (enum Seed / seedlayers_). The barrel-barrel set is exactly these four; note
+# there is NO L4L5 -- the design jumps L3L4 -> L5L6 across the PS/2S boundary.
+# The disk (D1D2, D3D4) and overlap (L1D1, L2D1) seeds do not apply here because
+# the unified table keeps only barrel stubs within |eta| <= ETA_MATCHED.
+#
+# Enumerating all 15 OT-only pairs instead invents 24 of 35 seeds, among them
+# OL1+OL3 and OL3+OL5, and then credits the OT with efficiency it cannot
+# actually deliver. Mixed IT+OT pairs are NOT restricted: SmartPixels does not
+# exist in the OT design, so there is no standard to respect and the full
+# enumeration is the point.
+OT_DESIGN_PAIRS = frozenset({(11, 12), (12, 13), (13, 14), (15, 16)})
+
 BUILD_MASKS = ["AAAA", "AAAI", "AAIA", "AIAA", "IAAA", "AAII", "AIAI",
                "AIIA", "IAAI", "IAIA", "IIAA", "AIII", "IAII", "IIAI", "IIIA"]
 IL_OF = {0: 1, 1: 2, 2: 3, 3: 4}
 OT_BARREL = (11, 12, 13, 14, 15, 16)
 
 
-def seed_universe_over_builds(rmed, masks, n_adjacent):
+def in_ot_design(seed):
+    """True unless the seed is an OT-only pair the tracklet design does not have."""
+    la, lb = seed[0], seed[1]
+    return not (la > 10 and lb > 10) or (min(la, lb), max(la, lb)) in OT_DESIGN_PAIRS
+
+
+def seed_universe_over_builds(rmed, masks, n_adjacent, ot_design_only=True):
     """Union over builds of each build's OWN seed enumeration.
 
     A target layer must itself be instrumented, and which layers are adjacent
@@ -182,9 +201,10 @@ def seed_universe_over_builds(rmed, masks, n_adjacent):
     for mask in masks:
         layers = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"] + list(OT_BARREL)
         for s in seed_universe(rmed, layers, n_adjacent):
-            if s not in seen:
-                seen.add(s)
-                out.append(s)
+            if s in seen or (ot_design_only and not in_ot_design(s)):
+                continue
+            seen.add(s)
+            out.append(s)
     return sorted(out, key=lambda s: (rmed[s[0]], rmed[s[1]], rmed[s[2]]))
 
 
@@ -390,7 +410,8 @@ def _shard_path(d, i):
 
 def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           hash_content=False, calib_events=100, verbose=True,
-          budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None):
+          budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None,
+          ot_design_only=True):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
     The cache is a DIRECTORY OF PER-CHUNK SHARDS, not one file, so a run that
@@ -406,7 +427,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     # 1000-event one: asking for more RESUMES rather than rebuilding, and asking
     # for less reads a prefix.
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
-           "chunk": chunk, "calib_events": calib_events, "masks": masks}
+           "chunk": chunk, "calib_events": calib_events, "masks": masks,
+           "ot_design_only": ot_design_only}
     kh = cache_key(man, cfg)
     d = os.path.join(cache_dir, f"tpcensus_{kh}")
     mpath = os.path.join(d, "manifest.json")
@@ -423,7 +445,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             raise SystemExit(f"no cache for key {kh} under {cache_dir}")
         os.makedirs(d, exist_ok=True)
         cal = calibrate(spec, calib_events, ptmin)
-        seeds = (seed_universe_over_builds(cal["r_median"], masks, n_adjacent)
+        seeds = (seed_universe_over_builds(cal["r_median"], masks, n_adjacent,
+                                           ot_design_only)
                  if masks else seed_universe(cal["r_median"], layers, n_adjacent))
         meta = {"cache_key": kh, "format": FORMAT_VERSION, "inputs": man,
                 "config": cfg, "calibration": cal,
@@ -574,6 +597,9 @@ def main():
     ap.add_argument("--cache-dir", default="eval_refitq/combinatorics/cache")
     ap.add_argument("--cache", default="auto",
                     choices=["auto", "rebuild", "off", "require"])
+    ap.add_argument("--all-ot-pairs", action="store_true",
+                    help="enumerate every OT layer pair, not just the four the "
+                         "tracklet design actually seeds on")
     ap.add_argument("--d0-prior-cm", type=float, default=KF.D0_PRIOR_CM)
     ap.add_argument("--kf-angles", default="on", choices=["on", "off"],
                     help="use the SmartPixels alpha/beta in the KF updates")
@@ -591,7 +617,8 @@ def main():
               a.cache_dir, a.cache, a.hash_content, a.calib_events, masks=masks,
               kf_opts={"use_angles": a.kf_angles == "on",
                        "alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
-                       "d0_prior_cm": a.d0_prior_cm})
+                       "d0_prior_cm": a.d0_prior_cm},
+              ot_design_only=not a.all_ot_pairs)
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "

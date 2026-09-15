@@ -2844,6 +2844,8 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         layers = il + list(OT_BARREL)
         found, cost = {}, {}
         for la, lb, lc in TF.seed_universe(rmed, layers, N_ADJACENT):
+            if not TF.in_ot_design((la, lb, lc)):
+                continue
             if float((above & ON[la] & ON[lb]).sum()) / nev < 20.0:
                 continue
             tag = TF.seed_tag((la, lb, lc))
