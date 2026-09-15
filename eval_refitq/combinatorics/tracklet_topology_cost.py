@@ -775,25 +775,41 @@ def pairs_joint_z0_phi(evA, phiA, z0A, sA, B, half_phi,
 _JOINT_PAIRING = True
 
 
-def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
-                 d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM, kap_min=0.0):
-    """One seed type over an ENTIRE CHUNK -- all events at once, no event loop.
-    ev_idx is the cluster index set to consider (normally the whole chunk); the
-    event is folded into the pair-matching sort key, so cross-event pairs are
-    impossible by construction rather than by iteration."""
-    idx = {L: ev_idx[D["layer"][ev_idx] == L] for L in (la, lb, lc)}
-    out = {"in_A": len(idx[la]), "in_B": len(idx[lb]), "in_C": len(idx[lc])}
+def alpha_veto(D, Q, idxL, kmax, displaced):
+    """Single-cluster alpha veto. Independent per layer, so doublet and triplet
+    seeds apply exactly the same test to whichever layers they use."""
+    k = np.abs(Q["kap_a"][idxL]) <= kmax + NSIG * Q["s_kap"][idxL]
+    k |= Q["ovf_a"][idxL] & displaced      # displaced KEEPS alpha overflow
+    return idxL[k]
+
+
+def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
+             d0_cm=0.0, kap_min=0.0):
+    """STAGE 1 ONLY: the surviving cluster pairs, over an ENTIRE CHUNK.
+
+    Split out of it_pair_seed so that a DOUBLET seed (which projects to every
+    remaining layer) and a TRIPLET seed (which requires a confirmed hit in one
+    named layer before projecting to the rest) share one implementation of the
+    pair formation, gating and arbitration rather than two that can drift.
+
+    The event is folded into the pair-matching sort key, so cross-event pairs are
+    impossible by construction rather than by iteration.
+
+    Returns (out, gA, gB, kap, cot, z0p, idx) where idx carries the
+    alpha-vetoed cluster index sets for la and lb.
+    """
+    idx = {L: ev_idx[D["layer"][ev_idx] == L] for L in (la, lb)}
+    out = {"in_A": len(idx[la]), "in_B": len(idx[lb])}
+    none = (out, None, None, None, None, None, idx)
     if min(len(v) for v in idx.values()) < 2:
-        return out
+        return none
     kmax = 1.0 / ptmin
-    if use_angles:                        # single-cluster alpha veto
-        for L in (la, lb, lc):
-            k = np.abs(Q["kap_a"][idx[L]]) <= kmax + NSIG * Q["s_kap"][idx[L]]
-            k |= Q["ovf_a"][idx[L]] & displaced      # displaced KEEPS alpha overflow
-            idx[L] = idx[L][k]
-        out["after_alpha_veto"] = sum(len(idx[L]) for L in (la, lb, lc))
+    if use_angles:
+        for L in (la, lb):
+            idx[L] = alpha_veto(D, Q, idx[L], kmax, displaced)
+        out["after_alpha_veto"] = sum(len(idx[L]) for L in (la, lb))
     if min(len(v) for v in idx.values()) < 2:
-        return out
+        return none
     rA = np.median(D["globalR"][idx[la]]); rB = np.median(D["globalR"][idx[lb]])
     dr = abs(rB - rA)
     ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
@@ -889,12 +905,37 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
         out["pairs_z0_ok"] = n_zok
     out["tracklets"] = int(sum(len(x) for x in keepA))
     if not keepA:
-        return out
+        return none
     gA, gB = np.concatenate(keepA), np.concatenate(keepB)
     kap, cot, z0p = (np.concatenate(keepK), np.concatenate(keepC),
                      np.concatenate(keepZ))
     del keepA, keepB, keepK, keepC, keepZ
+    return out, gA, gB, kap, cot, z0p, idx
 
+
+
+def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
+               displaced=False, d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM,
+               use_angles=True, d0_meas=None):
+    """STAGE 2: project a set of cluster pairs to ONE target layer.
+
+    Called once by a triplet seed (for its required third layer) and once per
+    remaining layer by a doublet seed, so both pay the same per-target cost and
+    the counters are commensurable.
+    """
+    kmax = 1.0 / ptmin
+    idx = dict(idx)
+    idx[lc] = np.arange(len(D["layer"]))[D["layer"] == lc]
+    if use_angles:
+        idx[lc] = alpha_veto(D, Q, idx[lc], kmax, displaced)
+    out["in_C"] = len(idx[lc])
+    if len(idx[lc]) < 1:
+        return out
+    rA = np.median(D["globalR"][idx[la]]); rB = np.median(D["globalR"][idx[lb]])
+    dr = abs(rB - rA)
+    ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
+    d0_eff = D0_DISPLACED_CM if displaced else d0_cm
+    d0_allow = d0_eff / min(rA, rB)
     # ---- per-cluster layer-C arrays, gathered ONCE --------------------------
     # NOT D["globalR"][idx[lc]][jb] inside the loop, which the previous revision
     # did: that copies the whole layer-C column and THEN indexes it, rebuilding
@@ -904,7 +945,13 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
     rC, phC, zC = D["globalR"][cC], D["globalPhi"][cC], D["globalZ"][cC]
     sgC = np.maximum(D["sigY"][cC], 1e-6)
 
-    phi0 = wrap(D["globalPhi"][gA] + C_BEND * D["globalR"][gA] * kap)
+    # d0_meas is the SOLVED impact parameter, available only once three
+    # azimuths exist. A doublet has none and passes None, which is the d0 = 0
+    # assumption its window must then pay for; a triplet passes the solve3 value
+    # and projects along the real trajectory instead of a prompt approximation.
+    dm = np.zeros(len(gA)) if d0_meas is None else d0_meas
+    phi0 = wrap(D["globalPhi"][gA] - dm / D["globalR"][gA]
+                + C_BEND * D["globalR"][gA] * kap)
     # PROJECT TO EACH CANDIDATE'S OWN RADIUS, not the layer median. Comparing a
     # median-radius projection against a candidate's actual z carries an error
     #     dz = (r_actual - r_median) * cot(theta)
@@ -934,7 +981,7 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
         rc_i = D["globalR"][gC]
         zC_i = z0p[ja] + rc_i * cot[ja]
         szp_i = np.hypot(np.maximum(D["sigY"][gC], 1e-6), rc_i * sct[ja]) + rc_i * ms
-        phiC_i = wrap(phi0[ja] - C_BEND * rc_i * kap[ja])
+        phiC_i = wrap(phi0[ja] + dm[ja] / rc_i - C_BEND * rc_i * kap[ja])
         dphi = np.abs(wrap(D["globalPhi"][gC] - phiC_i))
         good = np.abs(D["globalZ"][gC] - zC_i) <= NSIG * szp_i
         if displaced:
@@ -970,7 +1017,28 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
     pk = o[first]
     out["tracks_to_fit"] = int(len(pk))
     out["_trip"] = (gA[pa[pk]], gB[pa[pk]], pc[pk])
+    # WHICH cluster pair each match belongs to. _trip carries global cluster
+    # indices, which cannot be attributed back to a seed once several seeds
+    # share a cluster -- a doublet following four target layers has to know
+    # which of its pairs each confirmation came from to count layers per track.
+    out["_pairidx"] = pa[pk]
     return out
+
+
+def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
+                 d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM, kap_min=0.0):
+    """A TRIPLET seed: pair la+lb, then require a confirmed hit in lc.
+
+    Kept as the composition of the two stages it always was, so --selftest still
+    exercises exactly this path. A DOUBLET seed is the same stage 1 followed by
+    it_project over every remaining layer instead of one named one.
+    """
+    out, gA, gB, kap, cot, z0p, idx = it_pairs(
+        D, Q, ev_idx, la, lb, ptmin, use_angles, displaced, d0_cm, kap_min)
+    if gA is None:
+        return out
+    return it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
+                      displaced, d0_cm, d0_max, use_angles)
 
 
 def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
