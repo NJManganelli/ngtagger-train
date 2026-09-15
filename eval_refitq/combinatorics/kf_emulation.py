@@ -541,6 +541,26 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     return fit
 
 
+# MEASURED per-layer pull widths of the SmartPixels angles against TRUTH
+# (tpGlobalClusterPhi / tpGlobalClusterCotTheta, 60 events, tpPt > 2), and
+# independently against the fitted track, which agree: alpha is calibrated to
+# within 8% and beta reads about 20% optimistic on every layer. These scale the
+# reported sigmas so an angle pull is a pull.
+#
+# This supersedes an earlier inference that the sigmas were ~6.6x optimistic,
+# taken from a MEAN chi2_angle per cluster of 44-50. That mean was arithmetic,
+# not calibration: with ~2% of surviving tracks contaminated and carrying angle
+# pulls near 40, those few dominate the average. The clean-track pull is 1.0-1.26.
+ALPHA_PULL_SCALE = {1: 1.089, 2: 1.045, 3: 1.079, 4: 0.922}
+BETA_PULL_SCALE = {1: 1.231, 2: 1.191, 3: 1.124, 4: 1.131}
+
+
+def _layer_scales(layers):
+    a = np.array([ALPHA_PULL_SCALE.get(int(L), 1.0) for L in layers])
+    b = np.array([BETA_PULL_SCALE.get(int(L), 1.0) for L in layers])
+    return a[None, :], b[None, :]
+
+
 def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
     """SmartPixels angle consistency for a track fitted on POSITIONS ONLY.
 
@@ -559,17 +579,29 @@ def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
     same simplification bend chi2 makes, and harmless for a discriminant that
     only has to be monotonic.
     """
+    pa, pb = angle_pulls(T, fit, alpha_scale, beta_scale)
+    use = T["VALID"] & T["ANG"]
+    c2 = (np.where(use, pa * pa, 0.0).sum(axis=1)
+          + np.where(use, pb * pb, 0.0).sum(axis=1))
+    return c2, use.sum(axis=1).astype(np.int32)
+
+
+def angle_pulls(T, fit, alpha_scale=1.0, beta_scale=1.0):
+    """Per-(track, layer) alpha and beta pulls against the fitted trajectory.
+
+    Kept separate from the summed chi2 because WHICH layer disagrees is the
+    interesting part: four IT layers give eight direction pulls, each localising
+    a suspect hit, where one summed bend-chi2 cannot.
+    """
     r = np.maximum(T["R"], 1e-3)
+    sa, sb = _layer_scales(T["layers"])
     x0 = -M.C_BEND * fit["kappa"][:, None]
     pred_a = x0 - fit["d0"][:, None] / (r * r)
     res_a = (-M.C_BEND * T["KA"]) - pred_a
-    var_a = (M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale) ** 2
+    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * sa * alpha_scale
     res_b = T["CT"] - fit["cot"][:, None]
-    var_b = (np.maximum(T["SCT"], 1e-9) * beta_scale) ** 2
-    use = T["VALID"] & T["ANG"]
-    c2 = (np.where(use, res_a * res_a / var_a, 0.0).sum(axis=1)
-          + np.where(use, res_b * res_b / var_b, 0.0).sum(axis=1))
-    return c2, use.sum(axis=1).astype(np.int32)
+    sig_b = np.maximum(T["SCT"], 1e-9) * sb * beta_scale
+    return res_a / sig_a, res_b / sig_b
 
 
 # ---- acceptance, mirroring KFParamsComb::isGoodState ---------------------
@@ -747,3 +779,104 @@ if __name__ == "__main__":
         _selftest()
     else:
         main()
+
+
+# ==========================================================================
+# per-track features for a track-quality MVA
+# ==========================================================================
+FEATURE_NAMES = (
+    # --- what the OT's own TQ MVA gets (Setup_cfi FeatureNames) ------------
+    "cot", "z0", "chi2_rphi_per_layer", "chi2_rz_per_layer", "nhit",
+    "n_miss_interior",
+    # --- the combined scenario's extras -----------------------------------
+    "arity", "n_it", "n_ot", "inv_pt", "abs_d0", "d0_over_sigma",
+    "chi2_scaled", "chi2_angle_per_cl", "n_angle",
+    "max_angle_pull", "max_pos_pull", "second_angle_pull",
+    "chi2_rphi_it", "chi2_rphi_ot",
+)
+LABEL_NAMES = ("n_wrong", "is_clean", "tp_pt", "d0_resid_cm")
+
+
+def track_features(U, Q, T, fit, alpha_scale=1.0, beta_scale=1.0):
+    """Per-track feature matrix for a quality MVA, ordered by FEATURE_NAMES.
+
+    THE POINT OF THE EXTRAS. The OT's MVA sees one summed bendchi2 and binned
+    chi2rphi/chi2rz. Here every SmartPixels cluster carries its own direction, so
+    max_angle_pull and second_angle_pull localise a suspect hit rather than
+    averaging it away, and chi2_rphi is split by system so "IT-consistent but
+    OT-inconsistent" is distinguishable from the reverse -- states that a single
+    summed chi2 cannot separate.
+    """
+    lay = np.asarray(T["layers"])[None, :]
+    use = T["VALID"]
+    is_it = use & (lay <= 4)
+    is_ot = use & (lay > 10)
+    nhit = use.sum(axis=1).astype(np.float64)
+    pa, pb = angle_pulls(T, fit, alpha_scale, beta_scale)
+    uang = use & T["ANG"]
+    apull = np.where(uang, np.maximum(np.abs(pa), np.abs(pb)), 0.0)
+    srt = np.sort(apull, axis=1)[:, ::-1]
+    # position residual pulls, post-fit, for the same localisation purpose
+    r = np.maximum(T["R"], 1e-3)
+    dz = T["Z"] - (fit["cot"][:, None] * r + fit["z0"][:, None])
+    ppos = np.where(use, np.abs(dz) / np.maximum(T["SY"], 1e-6), 0.0)
+    # interior layers with no hit: between the innermost and outermost hit
+    idx = np.arange(use.shape[1])[None, :]
+    lo = np.where(use, idx, 99).min(axis=1)
+    hi = np.where(use, idx, -1).max(axis=1)
+    span = (idx >= lo[:, None]) & (idx <= hi[:, None])
+    n_miss = (span & ~use).sum(axis=1).astype(np.float64)
+    c2a, nang = angle_chi2(T, fit, alpha_scale, beta_scale)
+    chi2s = fit["chi2_rphi"] / CHI2_RPHI_SCALE + fit["chi2_rz"]
+    cols = {
+        "cot": fit["cot"], "z0": fit["z0"],
+        "chi2_rphi_per_layer": fit["chi2_rphi"] / np.maximum(nhit, 1),
+        "chi2_rz_per_layer": fit["chi2_rz"] / np.maximum(nhit, 1),
+        "nhit": nhit, "n_miss_interior": n_miss,
+        "arity": np.full(len(nhit), float(fit.get("_arity", 0))),
+        "n_it": is_it.sum(axis=1).astype(np.float64),
+        "n_ot": is_ot.sum(axis=1).astype(np.float64),
+        "inv_pt": np.abs(fit["kappa"]),
+        "abs_d0": np.abs(fit["d0"]),
+        "d0_over_sigma": np.abs(fit["d0"]) / np.sqrt(np.maximum(fit["var_d0"], 1e-12)),
+        "chi2_scaled": chi2s,
+        "chi2_angle_per_cl": c2a / np.maximum(nang, 1),
+        "n_angle": nang.astype(np.float64),
+        "max_angle_pull": srt[:, 0],
+        "max_pos_pull": ppos.max(axis=1),
+        "second_angle_pull": srt[:, 1] if srt.shape[1] > 1 else srt[:, 0],
+        "chi2_rphi_it": np.where(is_it.any(axis=1),
+                                 fit["chi2_rphi"] * is_it.sum(axis=1)
+                                 / np.maximum(nhit, 1), 0.0),
+        "chi2_rphi_ot": np.where(is_ot.any(axis=1),
+                                 fit["chi2_rphi"] * is_ot.sum(axis=1)
+                                 / np.maximum(nhit, 1), 0.0),
+    }
+    return np.stack([cols[n] for n in FEATURE_NAMES], axis=1).astype(np.float32)
+
+
+def track_labels(U, T, fit, trip, TP):
+    """(n_wrong, is_clean, tp_pt, d0_residual) per track.
+
+    n_wrong is the TARGET that matters: it is what drives the d0 resolution a
+    downstream tagger has to trust. MEASURED, same seed: sigma(d0) is ~45 um on
+    tracks with no wrong hit and ~570 um once contaminated, a 12x spread in the
+    very quantity an impact-parameter tagger integrates over. A predicted
+    wrong-hit count is therefore strictly more useful than a binary keep/reject.
+    """
+    G = T["GIDX"]
+    ga = trip[0]
+    want = U["tpIdx"][ga][:, None]
+    on = G >= 0
+    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -2)
+    n_wrong = (on & (tp_of != want)).sum(axis=1).astype(np.float32)
+    seed_real = U["tpIdx"][ga] >= 0
+    clean = seed_real & (n_wrong == 0)
+    kk = M.tp_key(U["event"][ga], np.maximum(U["tpIdx"][ga], 0))
+    p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
+    hit = (len(TP["key"]) > 0) & (TP["key"][p] == kk) & seed_real
+    tp_pt = np.where(hit, 1.0 / np.maximum(TP["kappa"][p], 1e-6), np.nan)
+    d0res = np.where(hit, fit["d0"] - TP["d0"][p], np.nan)
+    return np.stack([n_wrong, clean.astype(np.float32),
+                     tp_pt.astype(np.float32), d0res.astype(np.float32)],
+                    axis=1).astype(np.float32)
