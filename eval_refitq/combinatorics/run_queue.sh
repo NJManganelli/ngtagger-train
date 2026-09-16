@@ -35,6 +35,18 @@ step () {                     # step <name> <logfile> <cmd...>
   fi
 }
 
+# 0. Conflict-graph scale: decides whether the interactive page can do
+#    duplicate removal the way a real system would -- keyed on SHARED HITS,
+#    never on truth. Grouping by TrackingParticle is an oracle no L1 system has,
+#    and it distorts BOTH ways at once: real tracks deduplicated better than any
+#    implementable DR could manage, fakes not deduplicated at all. Run first
+#    because the answer changes what the exporter must ship.
+#    10% of the sample, not a 50k toy: one low-statistics point is not a basis
+#    for a claim about interactivity.
+step "DR conflict graph scale (100 ev)" "$R/dr_scale.log" \
+  $PY -u $S/dr_conflict_scale.py -i "$ALL" -n 100 --chunk 8 \
+      -o "$R/dr_conflict_scale.json"
+
 # 1. Quality MVA on full statistics. The 96.2% three-class accuracy and the
 #    sigma(d0)-by-predicted-class calibration were measured on EIGHT events.
 step "track quality MVA, full stats" "$R/tq_mva.log" \
@@ -57,6 +69,6 @@ step "parallel architecture tracks" "$R/arch_tracks.log" \
       -o "$R/arch_comparison_1000.json"
 
 echo "[queue] done at $(date)"
-for f in "$R"/tq_mva.log "$R"/scattering_eta.log "$R"/arch_tracks.log; do
+for f in "$R"/dr_scale.log "$R"/tq_mva.log "$R"/scattering_eta.log "$R"/arch_tracks.log; do
   printf "  %-28s %s\n" "$(basename "$f")" "$(tail -1 "$f" | cut -c1-70)"
 done
