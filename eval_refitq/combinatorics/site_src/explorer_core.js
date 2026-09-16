@@ -66,36 +66,46 @@ function binnedEfficiency(tp, cols, nRows, keep, found, nWords, mask,
   return { num, den, nx, ny };
 }
 
-// ---- per-menu duplicate removal over the track table ----------------------
-// The table is sorted by tp_key with fakes in a contiguous tp_key < 0 block, so
-// this is one linear scan rather than a hash over millions of rows.
+// ---- per-menu duplicate removal ------------------------------------------
+// KEYED ON SHARED HITS, NEVER ON TRUTH. An earlier version grouped tracks by
+// tp_key and kept the best rank_score per TrackingParticle. That is an oracle no
+// L1 system has, and it distorted in BOTH directions at once: real tracks
+// deduplicated better than any implementable DR could manage, fakes not
+// deduplicated at all because they have no TP to group by. A fake rate read off
+// such a page would mislead about the thing the page most exists to show. It is
+// deleted rather than left behind a flag.
 //
-// LIMITATION, and it is not hideable: this dedupes REAL tracks only, by keeping
-// the best rank_score per TrackingParticle among the enabled seeds. Fake tracks
-// have no TP to group by, and the real criterion (>= 3 shared hits) needs hit
-// lists that are far too large to ship. So fake counts here are PRE-DR and the
-// fake rate a selection shows is an OVERESTIMATE relative to a full DR run.
-function drSurvivors(trk, cols, nRows, enabled) {
-  const nc = cols.length;
-  const jk = cols.indexOf('tp_key'), js = cols.indexOf('seed_idx'),
-        jr = cols.indexOf('rank_score');
+// What runs instead is the real criterion -- two tracks conflict when they share
+// identical hits on >= 3 layers -- over a conflict graph precomputed at export.
+// The greedy itself is unchanged from the emulator's: take tracks in descending
+// rank_score, accept one if no already-accepted track conflicts with it, and
+// kill its neighbours.
+//
+// `order` is the global descending-rank_score ordering. It is MENU-INDEPENDENT,
+// because rank_score is a per-track quantity, so it is computed once at export
+// and shipped. Only which tracks are enabled changes per menu.
+//
+// A DISABLED TRACK MUST NOT KILL ITS NEIGHBOURS -- hence the enabled test before
+// the accept, not after. Getting that backwards would let a seed the user has
+// switched off go on suppressing tracks.
+function drSurvivorsGraph(order, seedOf, indptr, nbr, enabled) {
+  const n = order.length;
+  const dead = new Uint8Array(n);
   const out = [];
-  let i = 0;
-  // fakes first: every enabled-seed fake row survives, see limitation above
-  for (; i < nRows && trk[i * nc + jk] < 0; i++) {
-    if (enabled[trk[i * nc + js] | 0]) out.push(i);
+  for (let oi = 0; oi < n; oi++) {
+    const t = order[oi];
+    if (!enabled[seedOf[t]]) continue;
+    if (dead[t]) continue;
+    out.push(t);
+    for (let k = indptr[t]; k < indptr[t + 1]; k++) dead[nbr[k]] = 1;
   }
-  while (i < nRows) {
-    const key = trk[i * nc + jk];
-    let best = -1, bestR = -Infinity, j = i;
-    for (; j < nRows && trk[j * nc + jk] === key; j++) {
-      if (!enabled[trk[j * nc + js] | 0]) continue;
-      const r = trk[j * nc + jr];
-      if (r > bestR) { bestR = r; best = j; }
-    }
-    if (best >= 0) out.push(best);
-    i = j;
-  }
+  return out;
+}
+
+// No conflict graph available (or DR switched off): every enabled track.
+function allEnabled(seedOf, nRows, enabled) {
+  const out = [];
+  for (let i = 0; i < nRows; i++) if (enabled[seedOf[i]]) out.push(i);
   return out;
 }
 
@@ -168,6 +178,6 @@ function linEdges(lo, hi, n) {
 
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { seedMaskWords, anyBitSet, tpSelect, binIndex,
-                     binnedEfficiency, drSurvivors, robustSigma, binnedStat,
-                     binnedFakeRate, linEdges };
+                     binnedEfficiency, drSurvivorsGraph, allEnabled,
+                     robustSigma, binnedStat, binnedFakeRate, linEdges };
 }

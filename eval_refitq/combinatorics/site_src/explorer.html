@@ -78,7 +78,7 @@ const HINTS = {
   eff: 'Union over enabled seeds, against a fixed denominator of TPs with >= 4 layers hit (fewer cannot be emitted at all).',
   sd0: 'Robust 68% half-width of fitted minus true d0, on the tracks surviving the current selection.',
   spt: 'Robust half-width of |kappa| - 1/pT_true. Truth carries no charge, so |kappa| is the comparable quantity.',
-  fakefrac: 'Fakes have no TrackingParticle and bin in FITTED coordinates, not truth. DR here dedupes real tracks only, so this is an OVERESTIMATE.',
+  fakefrac: 'Fakes have no TrackingParticle and bin in FITTED coordinates, not truth. DR is keyed on shared hits, as a real system would be -- never on truth.',
   fakeev: 'Fake tracks per event per bin, the rate-budget number rather than the purity one.',
   nwrong: 'Mean wrong-hit count. sigma(d0) is ~53 um at 0-1 wrong hits and 417-667 um at >= 2.',
   count: 'Raw occupancy, to see where the statistics actually are.'
@@ -97,6 +97,17 @@ async function boot() {
   S.found = await bin(m.found.file, Uint32Array);
   S.foundDr = await bin(m.found_dr.file, Uint32Array);
   S.trk = await bin(m.track.file, Float32Array);
+  // seed index and rank ordering pulled out once as flat arrays: the DR scan
+  // touches them per track per control change and must not stride the wide
+  // float table to do it
+  const nc = m.track.cols.length, js = m.track.cols.indexOf('seed_idx');
+  S.seedOf = new Int32Array(m.track.rows);
+  for (let i = 0; i < m.track.rows; i++) S.seedOf[i] = S.trk[i * nc + js];
+  if (m.conflict) {
+    S.indptr = await bin(m.conflict.indptr, Int32Array);
+    S.nbr = await bin(m.conflict.neighbours, Int32Array);
+    S.order = await bin(m.conflict.order, Int32Array);
+  }
   S.nTp = m.tp.rows; S.nW = m.found.words; S.nTrk = m.track.rows;
   const b = document.getElementById('build');
   Object.keys(m.builds).forEach(k => b.add(new Option(k, k)));
@@ -163,13 +174,9 @@ function draw() {
     title = `efficiency, ${idx.length} seeds` + (useDr ? ' (post-DR ownership)' : ' (standalone reach)');
   } else {
     const en = []; idx.forEach(i => en[i] = true);
-    const rows = document.getElementById('dr').checked
-      ? C.drSurvivors(S.trk, m.track.cols, S.nTrk, en)
-      : (() => { const o = [], nc = m.track.cols.length,
-                       js = m.track.cols.indexOf('seed_idx');
-                 for (let i = 0; i < S.nTrk; i++)
-                   if (en[S.trk[i * nc + js] | 0]) o.push(i);
-                 return o; })();
+    const rows = (document.getElementById('dr').checked && S.indptr)
+      ? C.drSurvivorsGraph(S.order, S.seedOf, S.indptr, S.nbr, en)
+      : C.allEnabled(S.seedOf, S.nTrk, en);
     if (metric === 'fakefrac' || metric === 'fakeev') {
       const r = C.binnedFakeRate(S.trk, m.track.cols, rows, xName, yName, xE, yE,
                                  m.n_events);
