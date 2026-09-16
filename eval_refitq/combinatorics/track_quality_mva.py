@@ -34,6 +34,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tp_findability as TF   # noqa: E402
+import kf_emulation as KF     # noqa: E402
 
 
 def robust_sigma(x):
@@ -49,14 +50,19 @@ def load_rows(cache_dir):
     ds = sorted(glob.glob(f"{cache_dir}/tpcensus_*"))
     if not ds:
         raise SystemExit(f"no census under {cache_dir}")
-    C = TF.load(ds[-1], verbose=False)
-    if not C["feat"]:
-        raise SystemExit("census has no feature rows; rerun with "
-                         "--features-per-chunk")
-    X = np.concatenate([C["feat"][i] for i in sorted(C["feat"])])
-    Y = np.concatenate([C["labels"][i] for i in sorted(C["labels"])])
-    seed = np.concatenate([np.full(len(C["feat"][i]), i)
-                           for i in sorted(C["feat"])])
+    C = TF.load(ds[-1], verbose=False, with_tracks=True)
+    if not C["tracks"]:
+        raise SystemExit("census has no track rows; rerun with --export-tracks")
+    T = np.concatenate([C["tracks"][i] for i in sorted(C["tracks"])])
+    col = {c: j for j, c in enumerate(C["track_cols"])}
+    # The MVA may see only the quality columns. Identity, fitted kinematics and
+    # every truth column are excluded by name, so a column added to TRACK_COLS
+    # for the interactive page cannot leak into training by accident.
+    fidx = [col[c] for c in KF.MVA_FEATURES]
+    X = T[:, fidx]
+    Y = np.stack([T[:, col["n_wrong"]], T[:, col["is_clean"]],
+                  T[:, col["tp_pt"]], T[:, col["d_d0"]]], axis=1)
+    seed = T[:, col["seed_idx"]]
     ok = np.isfinite(X).all(axis=1) & np.isfinite(Y[:, 0])
     return X[ok], Y[ok], seed[ok], C
 
@@ -73,7 +79,7 @@ def main():
     from sklearn.inspection import permutation_importance
 
     X, Y, seed, C = load_rows(a.cache_dir)
-    nm = C["feature_names"]
+    nm = list(KF.MVA_FEATURES)
     nw, d0res = Y[:, 0], Y[:, 3]
     print(f"{len(X):,} tracks, {len(nm)} features, "
           f"{C['n_events']} events, {len(C['seed_tags'])} seeds")
@@ -86,7 +92,7 @@ def main():
               f"sigma(d0) = {1e4 * robust_sigma(d0res[m]):>6.0f} um")
 
     out = {"n_tracks": int(len(X)), "n_events": C["n_events"],
-           "features": nm, "sigma_d0_by_true_nwrong": {}}
+           "features": list(nm), "sigma_d0_by_true_nwrong": {}}
     for k in (0, 1, 2, 3):
         m = (nw == k) if k < 3 else (nw >= 3)
         if m.sum() >= 30:

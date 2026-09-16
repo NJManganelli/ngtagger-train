@@ -57,7 +57,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 13
+FORMAT_VERSION = 14
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -284,7 +284,7 @@ def chunk_census(U):
 
 
 def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
-                  feat_per_chunk=0, do_dr=True):
+                  export_tracks=0, do_dr=True):
     """Run every seed over one chunk and reduce to census + bitmap + counters.
 
     TWO PASSES, because duplicate removal is inherently cross-seed. The first
@@ -312,7 +312,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
     targets = list(SA.IL) + list(SA.OT_BARREL)
-    counters, qual, feats, labels = {}, {}, {}, {}
+    counters, qual, trk = {}, {}, {}
 
     # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
     TP = KF.tp_truth_table(U)
@@ -356,6 +356,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
             p0 = np.searchsorted(cen["key"], rk0)
             found[p0, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
         base["found_standalone"] = float(len(rk0))
+        h_score = KF.rank_score(fit0, chi2s, w_angle=w_ang)[keep]
         gk = gidx_all[keep]
         gck = o_keep.get("_gC")
         tripk = (o_keep["_gA"], o_keep["_gB"],
@@ -387,19 +388,20 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
                                    fq["nhit"][rm].astype(np.float64)],
                                   axis=1).astype(np.float32)
                          if len(dk) else np.zeros((0, 5), np.float32))
-        if feat_per_chunk:
+        if export_tracks:
+            # EVERY track, not a sample: the page needs the full fake population
+            # to bin fake rate, and fakes are ~98% of the emitted collection. A
+            # cap would quietly soften exactly the distribution it exists to show.
             ks = np.arange(o_keep["tracks_to_fit"])
-            if len(ks) > feat_per_chunk:
-                ks = rng.choice(len(ks), feat_per_chunk, replace=False)
+            if 0 < export_tracks < len(ks):
+                ks = rng.choice(len(ks), export_tracks, replace=False)
             tf = tuple(x[ks] for x in tripk)
             Tf = KF.gather_hits(U, Q, gk[ks], KF.LAYER_ORDER)
             ff = KF.fit_tracks(U, Q, tf, gidx=gk[ks], use_angles=False,
                                **d0_opt)
-            ff["_arity"] = sd.arity
-            feats[s_i] = KF.track_features(U, Q, Tf, ff)
-            labels[s_i] = KF.track_labels(U, Tf, ff, tf, TP)
-        held[s_i] = {"o": o_keep, "sd": sd,
-                     "score": KF.rank_score(fit0, chi2s, w_angle=w_ang)[keep]}
+            trk[s_i] = KF.track_rows(U, Q, Tf, ff, tf, TP, s_i, sd.arity,
+                                     KF.sysclass_of(sd.layers), h_score[ks])
+        held[s_i] = {"o": o_keep, "sd": sd, "score": h_score}
         del o, fit0
 
     # ---- duplicate removal, once, across every seed ---------------------
@@ -430,7 +432,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         if len(rkeys):
             p = np.searchsorted(cen["key"], rkeys)
             found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-    return cen, found, found_dr, counters, qual, feats, labels
+    return cen, found, found_dr, counters, qual, trk
 
 
 def _shard_path(d, i):
@@ -440,7 +442,7 @@ def _shard_path(d, i):
 def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           hash_content=False, calib_events=100, verbose=True,
           budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None,
-          feat_per_chunk=0):
+          export_tracks=0):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
     The cache is a DIRECTORY OF PER-CHUNK SHARDS, not one file, so a run that
@@ -461,7 +463,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
            "chunk": chunk, "calib_events": calib_events, "masks": masks,
            "kf_opts": dict(sorted((kf_opts or {}).items())),
-           "feat_per_chunk": feat_per_chunk}
+           "export_tracks": export_tracks}
     kh = cache_key(man, cfg)
     d = os.path.join(cache_dir, f"tpcensus_{kh}")
     mpath = os.path.join(d, "manifest.json")
@@ -506,17 +508,16 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, found_dr, counters, qual, feats, labels = process_chunk(
+            cen, found, found_dr, counters, qual, trk = process_chunk(
                 U, Q, seeds, ptmin, rng, QUAL_PER_CHUNK, kf_opts,
-                feat_per_chunk)
+                export_tracks)
             np.savez_compressed(
                 _shard_path(d, ci), found=found, found_dr=found_dr,
                 n_events=len(ev),
                 counters=json.dumps({str(k): v for k, v in counters.items()}),
                 **{f"cen_{k}": v for k, v in cen.items()},
                 **{f"qual_{k}": v for k, v in qual.items()},
-                **{f"feat_{k}": v for k, v in feats.items()},
-                **{f"lab_{k}": v for k, v in labels.items()})
+                **{f"trk_{k}": v for k, v in trk.items()})
             done, nev_seen = ci + 1, nev_seen + len(ev)
             meta["chunks_done"], meta["n_events"] = done, nev_seen
             json.dump(meta, open(mpath, "w"), indent=1, default=float)
@@ -528,14 +529,14 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     return load(d, nev=nev, verbose=verbose)
 
 
-def load(d, nev=None, verbose=True):
+def load(d, nev=None, verbose=True, with_tracks=False):
     meta = json.load(open(os.path.join(d, "manifest.json")))
     shards = sorted(Path(d).glob("chunk_*.npz"))
     if not shards:
         raise SystemExit(f"{d} has no shards")
     cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "hit_it", "hit_ot"]
     parts = {c: [] for c in cols}
-    fnd, fdr, cnt, qs, fts, lbs, nread = [], [], {}, {}, {}, {}, 0
+    fnd, fdr, cnt, qs, fts, nread = [], [], {}, {}, {}, 0
     for sh in shards:
         if nev is not None and nread >= nev:
             break                    # a prefix of the shards is a valid census
@@ -552,10 +553,8 @@ def load(d, nev=None, verbose=True):
         for f in z.files:
             if f.startswith("qual_"):
                 qs.setdefault(int(f[5:]), []).append(z[f])
-            elif f.startswith("feat_"):
-                fts.setdefault(int(f[5:]), []).append(z[f])
-            elif f.startswith("lab_"):
-                lbs.setdefault(int(f[4:]), []).append(z[f])
+            elif with_tracks and f.startswith("trk_"):
+                fts.setdefault(int(f[4:]), []).append(z[f])
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
     C["found_dr"] = np.concatenate(fdr, axis=0)
@@ -567,10 +566,10 @@ def load(d, nev=None, verbose=True):
     C["counters"] = {i: cnt.get(i, {}) for i in range(len(C["seeds"]))}
     C["qual"] = {i: (np.concatenate(v) if v else np.zeros((0, 5), np.float32))
                  for i, v in qs.items()}
-    C["feat"] = {i: np.concatenate(v) for i, v in fts.items()}
-    C["labels"] = {i: np.concatenate(v) for i, v in lbs.items()}
-    C["feature_names"] = list(KF.FEATURE_NAMES)
-    C["label_names"] = list(KF.LABEL_NAMES)
+    # tracks are NOT concatenated unless asked: the full table is ~6M rows and
+    # the menu study has no use for it
+    C["tracks"] = {i: np.concatenate(v) for i, v in fts.items()}
+    C["track_cols"] = list(KF.TRACK_COLS)
     C["cache_dir"] = d
     if verbose:
         print(f"loaded {len(fnd)} shard(s): {nread} events, "
@@ -662,9 +661,11 @@ def main():
     ap.add_argument("--cache-dir", default="eval_refitq/combinatorics/cache")
     ap.add_argument("--cache", default="auto",
                     choices=["auto", "rebuild", "off", "require"])
-    ap.add_argument("--features-per-chunk", type=int, default=0,
-                    help="export this many per-track MVA training rows per seed "
-                         "per chunk; 0 disables")
+    ap.add_argument("--export-tracks", type=int, default=0, nargs="?",
+                    const=-1,
+                    help="write per-track rows for the interactive page and the "
+                         "quality MVA; bare flag exports EVERY track, a number "
+                         "caps per seed per chunk, 0 disables")
     ap.add_argument("--d0-prior-cm", type=float, default=KF.D0_PRIOR_CM)
     ap.add_argument("--kf-angles", default="on", choices=["on", "off"],
                     help="use the SmartPixels alpha/beta in the KF updates")
@@ -683,7 +684,7 @@ def main():
               kf_opts={"use_angles": a.kf_angles == "on",
                        "alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
                        "d0_prior_cm": a.d0_prior_cm},
-              feat_per_chunk=a.features_per_chunk)
+              export_tracks=a.export_tracks)
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "

@@ -852,54 +852,74 @@ def calibrate_for(spec, ptmin, nev=50):
     return {int(k): float(v) for k, v in c["sigz_ot"].items()}
 
 
-if __name__ == "__main__":
-    import sys as _s
-    if "--selftest" in _s.argv:
-        _selftest()
-    else:
-        main()
+
 
 
 # ==========================================================================
 # per-track features for a track-quality MVA
 # ==========================================================================
-FEATURE_NAMES = (
-    # --- what the OT's own TQ MVA gets (Setup_cfi FeatureNames) ------------
-    "cot", "z0", "chi2_rphi_per_layer", "chi2_rz_per_layer", "nhit",
-    "n_miss_interior",
-    # --- the combined scenario's extras -----------------------------------
-    "arity", "n_it", "n_ot", "inv_pt", "abs_d0", "d0_over_sigma",
-    "chi2_scaled", "chi2_angle_per_cl", "n_angle",
-    "max_angle_pull", "max_pos_pull", "second_angle_pull",
-    "chi2_rphi_it", "chi2_rphi_ot",
+# ONE TABLE SERVES BOTH the interactive page and the quality MVA. The page needs
+# identity and fitted kinematics to bin on; the MVA needs the chi2 and pull
+# columns; both need the truth labels. Keeping two exports in step was not going
+# to survive, so columns are selected by NAME from a single row set.
+#
+# Ordering is deliberate: identity, then fitted, then quality, then truth. The
+# exporter quantises per column, and the truth block is dropped entirely for any
+# payload that must not carry MC information.
+TRACK_COLS = (
+    # --- identity ---
+    "seed_idx", "arity", "sysclass", "event", "tp_key",
+    # --- fitted parameters, what the page bins on ---
+    "inv_pt", "phi0", "eta", "cot", "z0", "d0",
+    # --- quality: the OT TQ MVA's own features first ---
+    "nhit", "n_miss_interior", "chi2_rphi_per_layer", "chi2_rz_per_layer",
+    "chi2_scaled",
+    # --- quality: what the combined scenario adds ---
+    "n_it", "n_ot", "n_angle", "chi2_angle_per_cl", "max_angle_pull",
+    "second_angle_pull", "max_pos_pull", "chi2_rphi_it", "chi2_rphi_ot",
+    "d0_over_sigma", "rank_score",
+    # --- truth ---
+    "n_wrong", "is_clean", "tp_pt", "tp_eta", "tp_d0", "tp_z0",
+    "d_kappa", "d_d0", "d_cot", "d_z0",
 )
-LABEL_NAMES = ("n_wrong", "is_clean", "tp_pt", "d0_resid_cm")
+N_TRACK_COLS = len(TRACK_COLS)
+# columns the quality MVA trains on; the rest are identity, fitted kinematics or
+# truth and must not be fed to it
+MVA_FEATURES = tuple(c for c in TRACK_COLS if c not in (
+    "seed_idx", "arity", "sysclass", "event", "tp_key", "phi0", "eta",
+    "n_wrong", "is_clean", "tp_pt", "tp_eta", "tp_d0", "tp_z0",
+    "d_kappa", "d_d0", "d_cot", "d_z0"))
+SYS_IT, SYS_OT, SYS_MIX = 0, 1, 2
 
 
-def track_features(U, Q, T, fit, alpha_scale=1.0, beta_scale=1.0):
-    """Per-track feature matrix for a quality MVA, ordered by FEATURE_NAMES.
+def sysclass_of(layers):
+    """0 = IT-only seed, 1 = OT-only, 2 = spans both."""
+    it = any(L <= 4 for L in layers)
+    ot = any(L > 10 for L in layers)
+    return SYS_MIX if (it and ot) else (SYS_IT if it else SYS_OT)
 
-    THE POINT OF THE EXTRAS. The OT's MVA sees one summed bendchi2 and binned
-    chi2rphi/chi2rz. Here every SmartPixels cluster carries its own direction, so
-    max_angle_pull and second_angle_pull localise a suspect hit rather than
-    averaging it away, and chi2_rphi is split by system so "IT-consistent but
-    OT-inconsistent" is distinguishable from the reverse -- states that a single
-    summed chi2 cannot separate.
+
+def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
+               alpha_scale=1.0, beta_scale=1.0):
+    """One row per track, ordered by TRACK_COLS. float32 throughout.
+
+    tp_key is -1 for a fake, which is what lets the exporter sort the table by
+    TP and keep fakes in a contiguous block: the per-menu duplicate removal in
+    the browser is then a linear scan over the sorted region, and fake queries
+    skip it entirely.
     """
     lay = np.asarray(T["layers"])[None, :]
     use = T["VALID"]
+    nhit = use.sum(axis=1).astype(np.float64)
     is_it = use & (lay <= 4)
     is_ot = use & (lay > 10)
-    nhit = use.sum(axis=1).astype(np.float64)
     pa, pb = angle_pulls(T, fit, alpha_scale, beta_scale)
     uang = use & T["ANG"]
     apull = np.where(uang, np.maximum(np.abs(pa), np.abs(pb)), 0.0)
     srt = np.sort(apull, axis=1)[:, ::-1]
-    # position residual pulls, post-fit, for the same localisation purpose
     r = np.maximum(T["R"], 1e-3)
     dz = T["Z"] - (fit["cot"][:, None] * r + fit["z0"][:, None])
     ppos = np.where(use, np.abs(dz) / np.maximum(T["SY"], 1e-6), 0.0)
-    # interior layers with no hit: between the innermost and outermost hit
     idx = np.arange(use.shape[1])[None, :]
     lo = np.where(use, idx, 99).min(axis=1)
     hi = np.where(use, idx, -1).max(axis=1)
@@ -907,55 +927,59 @@ def track_features(U, Q, T, fit, alpha_scale=1.0, beta_scale=1.0):
     n_miss = (span & ~use).sum(axis=1).astype(np.float64)
     c2a, nang = angle_chi2(T, fit, alpha_scale, beta_scale)
     chi2s = fit["chi2_rphi"] / CHI2_RPHI_SCALE + fit["chi2_rz"]
-    cols = {
-        "cot": fit["cot"], "z0": fit["z0"],
-        "chi2_rphi_per_layer": fit["chi2_rphi"] / np.maximum(nhit, 1),
-        "chi2_rz_per_layer": fit["chi2_rz"] / np.maximum(nhit, 1),
-        "nhit": nhit, "n_miss_interior": n_miss,
-        "arity": np.full(len(nhit), float(fit.get("_arity", 0))),
-        "n_it": is_it.sum(axis=1).astype(np.float64),
-        "n_ot": is_ot.sum(axis=1).astype(np.float64),
-        "inv_pt": np.abs(fit["kappa"]),
-        "abs_d0": np.abs(fit["d0"]),
-        "d0_over_sigma": np.abs(fit["d0"]) / np.sqrt(np.maximum(fit["var_d0"], 1e-12)),
-        "chi2_scaled": chi2s,
-        "chi2_angle_per_cl": c2a / np.maximum(nang, 1),
-        "n_angle": nang.astype(np.float64),
-        "max_angle_pull": srt[:, 0],
-        "max_pos_pull": ppos.max(axis=1),
-        "second_angle_pull": srt[:, 1] if srt.shape[1] > 1 else srt[:, 0],
-        "chi2_rphi_it": np.where(is_it.any(axis=1),
-                                 fit["chi2_rphi"] * is_it.sum(axis=1)
-                                 / np.maximum(nhit, 1), 0.0),
-        "chi2_rphi_ot": np.where(is_ot.any(axis=1),
-                                 fit["chi2_rphi"] * is_ot.sum(axis=1)
-                                 / np.maximum(nhit, 1), 0.0),
-    }
-    return np.stack([cols[n] for n in FEATURE_NAMES], axis=1).astype(np.float32)
-
-
-def track_labels(U, T, fit, trip, TP):
-    """(n_wrong, is_clean, tp_pt, d0_residual) per track.
-
-    n_wrong is the TARGET that matters: it is what drives the d0 resolution a
-    downstream tagger has to trust. MEASURED, same seed: sigma(d0) is ~45 um on
-    tracks with no wrong hit and ~570 um once contaminated, a 12x spread in the
-    very quantity an impact-parameter tagger integrates over. A predicted
-    wrong-hit count is therefore strictly more useful than a binary keep/reject.
-    """
-    G = T["GIDX"]
+    # truth
     ga = trip[0]
-    want = U["tpIdx"][ga][:, None]
+    G = T["GIDX"]
     on = G >= 0
+    want = U["tpIdx"][ga][:, None]
     tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -2)
-    n_wrong = (on & (tp_of != want)).sum(axis=1).astype(np.float32)
+    n_wrong = (on & (tp_of != want)).sum(axis=1).astype(np.float64)
     seed_real = U["tpIdx"][ga] >= 0
-    clean = seed_real & (n_wrong == 0)
     kk = M.tp_key(U["event"][ga], np.maximum(U["tpIdx"][ga], 0))
     p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
     hit = (len(TP["key"]) > 0) & (TP["key"][p] == kk) & seed_real
-    tp_pt = np.where(hit, 1.0 / np.maximum(TP["kappa"][p], 1e-6), np.nan)
-    d0res = np.where(hit, fit["d0"] - TP["d0"][p], np.nan)
-    return np.stack([n_wrong, clean.astype(np.float32),
-                     tp_pt.astype(np.float32), d0res.astype(np.float32)],
-                    axis=1).astype(np.float32)
+    nan = np.full(len(ga), np.nan)
+    cols = {
+        "seed_idx": np.full(len(ga), float(seed_idx)),
+        "arity": np.full(len(ga), float(arity)),
+        "sysclass": np.full(len(ga), float(sysclass)),
+        "event": U["event"][ga].astype(np.float64),
+        "tp_key": np.where(hit, kk, -1.0),
+        "inv_pt": np.abs(fit["kappa"]), "phi0": fit["phi0"],
+        "eta": np.arcsinh(np.clip(fit["cot"], -30, 30)),
+        "cot": fit["cot"], "z0": fit["z0"], "d0": fit["d0"],
+        "nhit": nhit, "n_miss_interior": n_miss,
+        "chi2_rphi_per_layer": fit["chi2_rphi"] / np.maximum(nhit, 1),
+        "chi2_rz_per_layer": fit["chi2_rz"] / np.maximum(nhit, 1),
+        "chi2_scaled": chi2s,
+        "n_it": is_it.sum(axis=1).astype(np.float64),
+        "n_ot": is_ot.sum(axis=1).astype(np.float64),
+        "n_angle": nang.astype(np.float64),
+        "chi2_angle_per_cl": c2a / np.maximum(nang, 1),
+        "max_angle_pull": srt[:, 0],
+        "second_angle_pull": srt[:, 1] if srt.shape[1] > 1 else srt[:, 0],
+        "max_pos_pull": ppos.max(axis=1),
+        "chi2_rphi_it": fit["chi2_rphi"] * is_it.sum(axis=1) / np.maximum(nhit, 1),
+        "chi2_rphi_ot": fit["chi2_rphi"] * is_ot.sum(axis=1) / np.maximum(nhit, 1),
+        "d0_over_sigma": np.abs(fit["d0"]) / np.sqrt(np.maximum(fit["var_d0"], 1e-12)),
+        "rank_score": np.asarray(rank, float),
+        "n_wrong": n_wrong,
+        "is_clean": (seed_real & (n_wrong == 0)).astype(np.float64),
+        "tp_pt": np.where(hit, 1.0 / np.maximum(TP["kappa"][p], 1e-6), nan),
+        "tp_eta": np.where(hit, np.arcsinh(np.clip(TP["cot"][p], -30, 30)), nan),
+        "tp_d0": np.where(hit, TP["d0"][p], nan),
+        "tp_z0": np.where(hit, TP["z0"][p], nan),
+        "d_kappa": np.where(hit, np.abs(fit["kappa"]) - TP["kappa"][p], nan),
+        "d_d0": np.where(hit, fit["d0"] - TP["d0"][p], nan),
+        "d_cot": np.where(hit, fit["cot"] - TP["cot"][p], nan),
+        "d_z0": np.where(hit, fit["z0"] - TP["z0"][p], nan),
+    }
+    return np.stack([cols[c] for c in TRACK_COLS], axis=1).astype(np.float32)
+
+
+if __name__ == "__main__":
+    import sys as _s
+    if "--selftest" in _s.argv:
+        _selftest()
+    else:
+        main()
