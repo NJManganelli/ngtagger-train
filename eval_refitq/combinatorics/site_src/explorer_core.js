@@ -196,9 +196,30 @@ function binnedStat(trk, cols, rows, xName, yName, xEdges, yEdges, valueName,
   return { val, cnt, nx, ny };
 }
 
-// fake rate: fraction of surviving tracks with no TrackingParticle, per bin
-function binnedFakeRate(trk, cols, rows, xName, yName, xEdges, yEdges, nEvents) {
-  const nc = cols.length, jk = cols.indexOf('tp_key');
+// FAKE RATE, and the DEFINITION IS SELECTABLE because there is no single right
+// one and the obvious choice is the misleading one.
+//   'noise'  tp_key < 0   -- the inner seed cluster belongs to no TP at all.
+//                            Only 4.1% of tracks, because in PU200 almost every
+//                            cluster belongs to SOME particle. Quoting this as
+//                            "the fake rate" understates the problem twentyfold.
+//   'dirty'  n_wrong >= 1 -- any wrong hit.
+//   'unusable' n_wrong>=2 -- the DEFAULT, and the physically meaningful one:
+//                            sigma(d0) is 50-76 um at 0-1 wrong hits and
+//                            243-289 um at >= 2, so this is the line across
+//                            which a track stops being useful for impact
+//                            parameter work. 80% of tracks fall here.
+const FAKE_DEFS = { noise: 'tp_key', dirty: 'n_wrong', unusable: 'n_wrong' };
+function isFake(trk, nc, i, cols, def) {
+  if (def === 'noise') return trk[i * nc + cols.indexOf('tp_key')] < 0;
+  const w = trk[i * nc + cols.indexOf('n_wrong')];
+  return def === 'dirty' ? w >= 1 : w >= 2;
+}
+
+function binnedFakeRate(trk, cols, rows, xName, yName, xEdges, yEdges, nEvents,
+                        def) {
+  def = def || 'unusable';
+  const nc = cols.length;
+  const jk = cols.indexOf('tp_key'), jw = cols.indexOf('n_wrong');
   const nx = xEdges.length - 1, ny = yEdges.length - 1;
   const fake = new Float64Array(nx * ny), tot = new Float64Array(nx * ny);
   const jx = cols.indexOf(xName), jy = cols.indexOf(yName);
@@ -207,7 +228,10 @@ function binnedFakeRate(trk, cols, rows, xName, yName, xEdges, yEdges, nEvents) 
     const by = binIndex(trk[i * nc + jy], yEdges); if (by < 0) continue;
     const b = by * nx + bx;
     tot[b] += 1;
-    if (trk[i * nc + jk] < 0) fake[b] += 1;
+    const bad = def === 'noise' ? (trk[i * nc + jk] < 0)
+              : def === 'dirty' ? (trk[i * nc + jw] >= 1)
+              : (trk[i * nc + jw] >= 2);
+    if (bad) fake[b] += 1;
   }
   const frac = new Float64Array(nx * ny).fill(NaN);
   const perEv = new Float64Array(nx * ny);
@@ -257,5 +281,5 @@ if (typeof module !== 'undefined' && module.exports) {
                      binnedEfficiency, drSurvivorsGraph, allEnabled,
                      drJob, allEnabledJob,
                      robustSigma, binnedStat, binnedFakeRate, effByBand,
-                     linEdges };
+                     isFake, FAKE_DEFS, linEdges };
 }

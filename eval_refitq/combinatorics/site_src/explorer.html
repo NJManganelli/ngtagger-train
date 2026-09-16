@@ -57,6 +57,11 @@ button.big { font-size: 12px; padding: 4px 10px; }
       <option value="count">tracks per bin</option>
     </select>
     <label><input type="checkbox" id="dr" checked> duplicate removal</label>
+    <br>fake means <select id="fakedef">
+      <option value="unusable">&ge;2 wrong hits (unusable d0)</option>
+      <option value="dirty">&ge;1 wrong hit</option>
+      <option value="noise">seed cluster is noise</option>
+    </select>
     <p class="hint" id="metrichint"></p>
   </fieldset>
   <fieldset><legend>axes</legend>
@@ -147,7 +152,7 @@ const HINTS = {
   eff: 'Fraction of FINDABLE TrackingParticles reached by at least one enabled seed. Findable = >= minimum layers hit, set opposite. This is a per-PARTICLE fraction, never a per-candidate one.',
   sd0: 'Robust 68% half-width of fitted minus true d0, on the tracks surviving the current selection.',
   spt: 'Robust half-width of |kappa| - 1/pT_true. Truth carries no charge, so |kappa| is the comparable quantity.',
-  fakefrac: 'Denominator is TRACKS surviving the selection, not particles. Fakes have no TrackingParticle and bin in FITTED coordinates, not truth. DR is keyed on shared hits, as a real system would be -- never on truth.',
+  fakefrac: 'Denominator is TRACKS surviving the selection, not particles, and binned in FITTED coordinates. NOTE the fake definition selector: "seed cluster is noise" is only 4.1% of tracks because almost every PU200 cluster belongs to some particle, and quoting that as the fake rate understates the problem ~20x. ">=2 wrong hits" (80% of tracks) is the line where sigma(d0) goes from 50-76 um to 243-289 um.',
   fakeev: 'Fake tracks per EVENT per bin -- a rate, not a ratio. This is the number a bandwidth budget cares about; the fraction above is the purity one.',
   nwrong: 'Mean wrong-hit count. sigma(d0) is ~53 um at 0-1 wrong hits and 417-667 um at >= 2.',
   count: 'Raw occupancy, to see where the statistics actually are.'
@@ -277,8 +282,9 @@ async function drawInner() {
     prog(1, `${rows.length.toLocaleString()} tracks selected — binning`, true);
     await yieldFrame();
     if (metric === 'fakefrac' || metric === 'fakeev') {
+      const fd = document.getElementById('fakedef').value;
       const r = C.binnedFakeRate(S.trk, m.track.cols, rows, xName, yName, xE, yE,
-                                 m.n_events);
+                                 m.n_events, fd);
       z = Array.from(metric === 'fakefrac' ? r.frac : r.perEv);
       text = Array.from(r.tot, (t, i) => `tracks=${t}  fake=${r.fake[i]}`);
       nx = r.nx; ny = r.ny; title = HINTS[metric].split('.')[0];
