@@ -72,18 +72,40 @@ def scatter_rows(U, IT, OT, ia, ib, TP):
     good = TP["key"][p] == kk
     a_, b_, p = a_[good], b_[good], p[good]
     return {"inv_pt": TP["kappa"][p],
+            "abs_eta": np.abs(np.arcsinh(np.clip(TP["cot"][p], -30, 30))),
             "dphi": M.wrap(IT["phi0"][a_] - OT["phi0"][b_]),
             "dcot": IT["cot"][a_] - OT["cot"][b_],
             "vphi": IT["var_phi0"][a_] + OT["var_phi0"][b_],
             "vcot": IT["var_cot"][a_] + OT["var_cot"][b_]}
 
 
-def report_scattering(S):
+ETA_BANDS = ((0.0, 0.5), (0.5, 0.9), (0.9, 1.4))
+
+
+def report_scattering(S, eta_bands=ETA_BANDS):
+    """Inter-system disagreement vs 1/pT, per |eta| band.
+
+    BINNING IN ETA IS THE POINT, not a refinement. Material grows with |eta|
+    while the measurement variance's pT dependence does not, so the eta profile
+    both breaks the degeneracy that made the phi0 channel unusable in a single
+    barrel-wide fit AND is the quantity a tkLayout x/X0-vs-eta curve can be
+    compared against directly. A barrel average can only be checked against a
+    barrel average.
+    """
+    for lo, hi in eta_bands:
+        m = (S["abs_eta"] >= lo) & (S["abs_eta"] < hi)
+        if m.sum() < 120:
+            continue
+        print(f"\n--- |eta| {lo}-{hi}   {int(m.sum()):,} pairs")
+        _report_one({k: v[m] for k, v in S.items()})
+    print("\n--- all |eta| < 1.4")
+    return _report_one(S)
+
+
+def _report_one(S):
     """Width of the inter-system disagreement vs 1/pT, with the fits' own
     resolution subtracted in quadrature. The residual slope IS the scattering
     constant, in the same rad*GeV units as the OT's KalmanMultiScattTerm."""
-    print(f"\nINTER-SYSTEM SCATTERING, measured from independently fitted "
-          f"IT and OT tracks on the same particle ({len(S['inv_pt']):,} pairs)")
     print(f"{'pT band':<12}{'n':>7}{'sig(dphi0)':>12}{'expected':>10}{'excess':>10}"
           f"{'sig(dcot)':>12}{'expected':>10}{'excess':>10}")
     bands = [(2, 3), (3, 5), (5, 10), (10, 1e9)]
@@ -131,6 +153,27 @@ def report_scattering(S):
     return out
 
 
+# TRACK_COLS plus two columns the census table cannot carry: which architecture
+# produced the row, and which stage of it. Written to a SEPARATE file rather than
+# extending the census schema, so the combined-architecture census can run
+# undisturbed -- its shards are keyed on a format version that must not move.
+ARCH_EXTRA = ("arch_mode", "track_stage")
+ARCH_COMBINED, ARCH_PARALLEL = 0, 1
+STAGE_IT, STAGE_OT, STAGE_MATCHED = 0, 1, 2
+
+
+def arch_rows(U, Q, TP, gidx, trip, fit, rank, stage, seed_idx):
+    """One block of parallel-architecture track rows, TRACK_COLS + the two extras."""
+    T = KF.gather_hits(U, Q, gidx, KF.LAYER_ORDER)
+    base = KF.track_rows(U, Q, T, fit, trip, TP, seed_idx, 0,
+                         KF.SYS_IT if stage == STAGE_IT else
+                         (KF.SYS_OT if stage == STAGE_OT else KF.SYS_MIX), rank)
+    n = len(base)
+    extra = np.stack([np.full(n, float(ARCH_PARALLEL)),
+                      np.full(n, float(stage))], axis=1).astype(np.float32)
+    return np.concatenate([base, extra], axis=1)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("-i", "--input", required=True)
@@ -149,6 +192,11 @@ def main():
     ap.add_argument("--scattering", action="store_true",
                     help="measure the inter-system scattering angle from "
                          "independently fitted IT and OT tracks")
+    ap.add_argument("--export-tracks", default=None,
+                    help="npz path for per-track rows of the PARALLEL "
+                         "architecture: IT mini-tracks, OT tracks and matched "
+                         "refits, in the census TRACK_COLS schema plus "
+                         "arch_mode and track_stage")
     ap.add_argument("-o", "--out", default=None)
     a = ap.parse_args()
 
@@ -169,6 +217,7 @@ def main():
     mtot = {}
     res = {}
     scat = {}
+    trows = []
     for (U, Q), ev in TF.unified_chunks(a.input, a.nev, a.chunk, sigz):
         TP = KF.tp_truth_table(U)
         IT = AP.pool_and_dr(U, AP.find_system(U, Q, seeds, a.ptmin, "IT",
@@ -193,6 +242,24 @@ def main():
                     d["both_real"] += int(((ta >= 0) & (tb >= 0)).sum())
         # resolutions for the three architectures, at the default cut
         ia, ib, _ = AP.match_systems(IT, OT, ("phi0", "z0", "cot"), 25.0)
+        if a.export_tracks:
+            # the two ingredients, then the matched-and-refit product
+            for S, stage in ((IT, STAGE_IT), (OT, STAGE_OT)):
+                gA, gB = S["gA"], S["gB"]
+                f = {k: S[k] for k in ("kappa", "phi0", "d0", "cot", "z0",
+                                       "var_kappa", "var_phi0", "var_d0",
+                                       "var_cot", "var_z0", "nhit")}
+                # the per-track chi2 is not carried through pool_and_dr; refit
+                # to recover it rather than plumbing a parallel array
+                fr = KF.fit_tracks(U, Q, (gA, gB, gA), gidx=S["gidx"],
+                                   use_angles=False)
+                trows.append(arch_rows(U, Q, TP, S["gidx"], (gA, gB, gA), fr,
+                                       S["score"], stage, -1))
+            if len(ia):
+                fitm, Gm = AP.refit_matched(U, Q, IT, OT, ia, ib)
+                gA = IT["gA"][ia]
+                trows.append(arch_rows(U, Q, TP, Gm, (gA, IT["gB"][ia], gA),
+                                       fitm, IT["score"][ia], STAGE_MATCHED, -1))
         if a.scattering and len(ia):
             sr = scatter_rows(U, IT, OT, ia, ib, TP)
             if sr:
@@ -260,7 +327,17 @@ def main():
               f"{rs(dc):>9.4f}{1e4 * rs(dz):>9.0f}")
     sconst = {}
     if a.scattering and scat:
+        print(f"\nINTER-SYSTEM SCATTERING, from independently fitted IT and OT "
+              f"tracks on the same particle")
         sconst = report_scattering({k: np.concatenate(v) for k, v in scat.items()})
+    if a.export_tracks and trows:
+        A = np.concatenate(trows)
+        Path(a.export_tracks).parent.mkdir(parents=True, exist_ok=True)
+        np.savez_compressed(a.export_tracks, tracks=A,
+                            cols=np.array(list(KF.TRACK_COLS) + list(ARCH_EXTRA)),
+                            n_events=nev)
+        print(f"\nwrote {a.export_tracks}: {len(A):,} parallel-architecture "
+              f"track rows ({len(A) / nev:,.0f}/ev)")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "mask": a.mask, "counts": acc,
