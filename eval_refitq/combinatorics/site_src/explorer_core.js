@@ -109,6 +109,54 @@ function allEnabled(seedOf, nRows, enabled) {
   return out;
 }
 
+// ---- chunked jobs, so the page can repaint -------------------------------
+// A synchronous loop over 12.6M rows blocks the main thread for seconds and the
+// browser cannot paint a spinner, let alone a progress bar, while it runs. These
+// return a job whose step(budget) does a slice and returns how far it has got,
+// so the caller can yield to the event loop between slices. Splitting the work
+// costs a few percent; showing nothing for ten seconds costs the user's trust
+// that the page is alive.
+function drJob(order, seedOf, indptr, nbr, enabled) {
+  const n = order.length;
+  const dead = new Uint8Array(n);
+  const out = [];
+  let i = 0;
+  return {
+    total: n,
+    result: out,
+    get done() { return i >= n; },
+    get at() { return i; },
+    step(budget) {
+      const end = Math.min(i + budget, n);
+      for (; i < end; i++) {
+        const t = order[i];
+        if (!enabled[seedOf[t]]) continue;
+        if (dead[t]) continue;
+        out.push(t);
+        for (let k = indptr[t]; k < indptr[t + 1]; k++) dead[nbr[k]] = 1;
+      }
+      return i;
+    }
+  };
+}
+
+// every enabled track, no DR; chunked for the same reason
+function allEnabledJob(seedOf, nRows, enabled) {
+  const out = [];
+  let i = 0;
+  return {
+    total: nRows,
+    result: out,
+    get done() { return i >= nRows; },
+    get at() { return i; },
+    step(budget) {
+      const end = Math.min(i + budget, nRows);
+      for (; i < end; i++) if (enabled[seedOf[i]]) out.push(i);
+      return i;
+    }
+  };
+}
+
 // ---- robust spread, for resolution maps ----------------------------------
 function robustSigma(vals) {
   if (vals.length < 30) return NaN;
@@ -207,6 +255,7 @@ function linEdges(lo, hi, n) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { seedMaskWords, anyBitSet, tpSelect, binIndex,
                      binnedEfficiency, drSurvivorsGraph, allEnabled,
+                     drJob, allEnabledJob,
                      robustSigma, binnedStat, binnedFakeRate, effByBand,
                      linEdges };
 }

@@ -8,6 +8,16 @@ body { font-family: system-ui, sans-serif; margin: 0; display: flex; height: 100
 #main { flex: 1; display: flex; flex-direction: column; padding: 8px; }
 #plot { flex: 1; }
 #status { font-size: 12px; color: #52514e; padding: 4px 8px; min-height: 18px; }
+/* A PERMANENT, ALWAYS-VISIBLE progress area. Not a spinner that appears and
+   vanishes: the user needs to know where to look before anything is slow, and
+   a 2.4 GB fetch plus a multi-second recomputation are both slow enough to look
+   like a hung page if nothing is advertised. */
+#progwrap { padding: 4px 8px 6px; border-bottom: 1px solid #e3e6ea; }
+#progbar { height: 10px; background: #e3e6ea; border-radius: 5px; overflow: hidden; }
+#progfill { height: 100%; width: 0%; background: #0b5fa5; transition: width .12s linear; }
+#progfill.busy { background: #b4590a; }
+#progtext { font-size: 11px; color: #52514e; margin-top: 3px;
+            font-variant-numeric: tabular-nums; }
 fieldset { border: 1px solid #ccc; margin: 0 0 10px; padding: 6px 8px; }
 legend { font-weight: 600; font-size: 11px; color: #666; }
 label { display: inline-block; margin: 1px 6px 1px 0; }
@@ -67,7 +77,12 @@ button.big { font-size: 12px; padding: 4px 10px; }
   <fieldset><legend>cuts</legend><div id="cuts"></div></fieldset>
   <fieldset><legend>provenance</legend><ul id="notes"></ul></fieldset>
 </div>
-<div id="main"><div id="status">loading&hellip;</div><div id="plot"></div></div>
+<div id="main">
+  <div id="progwrap">
+    <div id="progbar"><div id="progfill"></div></div>
+    <div id="progtext">idle</div>
+  </div>
+  <div id="status">starting&hellip;</div><div id="plot"></div></div>
 <script src="plotly.min.js"></script>
 <script src="explorer_core.js"></script>
 <script>
@@ -81,10 +96,49 @@ function status(msg, bad) {
   const e = document.getElementById('status');
   e.innerHTML = msg; e.className = bad ? 'err' : '';
 }
-async function bin(url, Type) {
+function prog(frac, text, busy) {
+  const f = document.getElementById('progfill');
+  f.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
+  f.className = busy ? 'busy' : '';
+  document.getElementById('progtext').textContent = text;
+}
+const MB = (b) => (b / 1048576).toFixed(0) + ' MB';
+// Streamed so bytes can be counted as they arrive. await response.arrayBuffer()
+// gives no visibility at all, which on a 435 MB conflict graph means minutes of
+// apparently nothing happening.
+async function bin(url, Type, label, done, total) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(url + ': ' + r.status);
-  return new Type(await r.arrayBuffer());
+  const len = +(r.headers.get('content-length') || 0);
+  if (!r.body || !len) {
+    const b = await r.arrayBuffer();
+    return new Type(b);
+  }
+  const chunks = [];
+  let got = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    const { done: fin, value } = await reader.read();
+    if (fin) break;
+    chunks.push(value); got += value.length;
+    prog((done + got) / total, `loading ${label} — ${MB(done + got)} of `
+      + `${MB(total)} (${(100 * (done + got) / total).toFixed(0)}%)`);
+  }
+  const buf = new Uint8Array(got);
+  let o = 0;
+  for (const c of chunks) { buf.set(c, o); o += c.length; }
+  return new Type(buf.buffer);
+}
+// yield to the event loop so the browser can actually paint the bar
+const yieldFrame = () => new Promise(r => setTimeout(r, 0));
+async function runJob(job, label, budget) {
+  while (!job.done) {
+    job.step(budget);
+    prog(job.at / job.total, `${label} — ${(100 * job.at / job.total).toFixed(0)}%`
+      + ` (${job.result.length.toLocaleString()} kept)`, true);
+    await yieldFrame();
+  }
+  return job.result;
 }
 // TP-side cut ranges; tracks reuse the fitted columns of the same name
 const CUTS = [['pt', 0, 100], ['eta', -1.6, 1.6], ['phi', -3.2, 3.2],
@@ -102,27 +156,41 @@ async function boot() {
   try {
     S.m = await (await fetch('manifest.json')).json();
   } catch (e) {
+    prog(0, 'failed');
     status('Cannot load manifest.json. This page fetches binary data, which the '
       + 'browser blocks on file:// &mdash; serve the directory over HTTP, e.g. '
       + '<code>python3 -m http.server 8742</code>', true);
     return;
   }
   const m = S.m;
-  S.tp = await bin(m.tp.file, Float32Array);
-  S.found = await bin(m.found.file, Uint32Array);
-  S.foundDr = await bin(m.found_dr.file, Uint32Array);
-  S.trk = await bin(m.track.file, Float32Array);
+  // total bytes up front so the bar is a real fraction of the whole load, not
+  // per-file percentages that each restart at zero
+  const files = [[m.tp.file, Float32Array, 'TP table', 'tp'],
+                 [m.found.file, Uint32Array, 'seed bitmap', 'found'],
+                 [m.found_dr.file, Uint32Array, 'post-DR bitmap', 'foundDr'],
+                 [m.track.file, Float32Array, 'track table', 'trk']];
+  if (m.conflict) files.push(
+    [m.conflict.indptr, Int32Array, 'conflict index', 'indptr'],
+    [m.conflict.neighbours, Int32Array, 'conflict edges', 'nbr'],
+    [m.conflict.order, Int32Array, 'rank order', 'order']);
+  let total = 0;
+  for (const f of files) {
+    const h = await fetch(f[0], { method: 'HEAD' });
+    total += +(h.headers.get('content-length') || 0);
+  }
+  prog(0, `loading ${MB(total)} across ${files.length} files`);
+  let done = 0;
+  for (const [file, Type, label, key] of files) {
+    S[key] = await bin(file, Type, label, done, total);
+    done += S[key].byteLength;
+  }
+  prog(1, `loaded ${MB(done)}`);
   // seed index and rank ordering pulled out once as flat arrays: the DR scan
   // touches them per track per control change and must not stride the wide
   // float table to do it
   const nc = m.track.cols.length, js = m.track.cols.indexOf('seed_idx');
   S.seedOf = new Int32Array(m.track.rows);
   for (let i = 0; i < m.track.rows; i++) S.seedOf[i] = S.trk[i * nc + js];
-  if (m.conflict) {
-    S.indptr = await bin(m.conflict.indptr, Int32Array);
-    S.nbr = await bin(m.conflict.neighbours, Int32Array);
-    S.order = await bin(m.conflict.order, Int32Array);
-  }
   S.nTp = m.tp.rows; S.nW = m.found.words; S.nTrk = m.track.rows;
   const b = document.getElementById('build');
   Object.keys(m.builds).forEach(k => b.add(new Option(k, k)));
@@ -142,7 +210,7 @@ async function boot() {
     e.addEventListener('change', () => { if (e.id === 'build') buildSeeds(); draw(); }));
   document.getElementById('all').onclick = () => { setAll(true); draw(); };
   document.getElementById('none').onclick = () => { setAll(false); draw(); };
-  draw();
+  await draw();
 }
 function buildSeeds() {
   const m = S.m, allowed = new Set(m.builds[document.getElementById('build').value]);
@@ -162,7 +230,18 @@ function enabledSeeds() {
   document.querySelectorAll('.sd').forEach(e => { if (e.checked) idx.push(+e.dataset.i); });
   return idx;
 }
-function draw() {
+let drawing = false;
+async function draw() {
+  // a control change while a recomputation is in flight would interleave two
+  // jobs over the same arrays; coalesce instead
+  if (drawing) { S.again = true; return; }
+  drawing = true;
+  try { await drawInner(); } finally {
+    drawing = false;
+    if (S.again) { S.again = false; draw(); }
+  }
+}
+async function drawInner() {
   // explorer_core.js exports under node/JXA for tests and declares the same
   // functions globally in a browser; take whichever exists.
   const m = S.m, C = CORE, metric = document.getElementById('metric').value;
@@ -189,9 +268,14 @@ function draw() {
     title = `efficiency, ${idx.length} seeds` + (useDr ? ' (post-DR ownership)' : ' (standalone reach)');
   } else {
     const en = []; idx.forEach(i => en[i] = true);
-    const rows = (document.getElementById('dr').checked && S.indptr)
-      ? C.drSurvivorsGraph(S.order, S.seedOf, S.indptr, S.nbr, en)
-      : C.allEnabled(S.seedOf, S.nTrk, en);
+    const useDr = document.getElementById('dr').checked && S.indptr;
+    const job = useDr
+      ? C.drJob(S.order, S.seedOf, S.indptr, S.nbr, en)
+      : C.allEnabledJob(S.seedOf, S.nTrk, en);
+    const rows = await runJob(job, useDr ? 'duplicate removal' : 'selecting tracks',
+                              400000);
+    prog(1, `${rows.length.toLocaleString()} tracks selected — binning`, true);
+    await yieldFrame();
     if (metric === 'fakefrac' || metric === 'fakeev') {
       const r = C.binnedFakeRate(S.trk, m.track.cols, rows, xName, yName, xE, yE,
                                  m.n_events);
@@ -255,6 +339,7 @@ function draw() {
       + `CANDIDATES kept: there are ~13.7 candidates per TP, so those differ by `
       + `about fivefold.</span>`;
   }
+  prog(1, `ready — last update ${(performance.now() - t0).toFixed(0)} ms`);
   status(`${m.n_events} events, ${S.nTp.toLocaleString()} TPs, `
     + `${S.nTrk.toLocaleString()} tracks, ${idx.length} seeds &mdash; `
     + `${(performance.now() - t0).toFixed(0)} ms`);
