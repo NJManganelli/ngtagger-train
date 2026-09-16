@@ -57,6 +57,8 @@ button.big { font-size: 12px; padding: 4px 10px; }
       <option value="count">tracks per bin</option>
     </select>
     <label><input type="checkbox" id="dr" checked> duplicate removal</label>
+    <br>MVA score &ge; <input type="number" id="mvacut" value="0" min="0"
+        max="1" step="0.05"> <span id="mvainfo" class="hint"></span>
     <br>fake means <select id="fakedef">
       <option value="unusable">&ge;2 wrong hits (unusable d0)</option>
       <option value="dirty">&ge;1 wrong hit</option>
@@ -67,6 +69,10 @@ button.big { font-size: 12px; padding: 4px 10px; }
   <fieldset><legend>axes</legend>
     x <select id="xcol"></select> bins <input type="number" id="xbins" value="24" min="2" max="80">
     <br>y <select id="ycol"></select> bins <input type="number" id="ybins" value="18" min="2" max="80">
+  </fieldset>
+  <fieldset><legend>cuts</legend><div id="cuts"></div>
+    <p class="hint">Applied to the TP table for efficiency and to the track
+      table for everything else; the same quantity, different objects.</p>
   </fieldset>
   <fieldset><legend>efficiency denominator</legend>
     minimum layers hit <input type="number" id="minlay" value="4" min="1" max="16">
@@ -79,7 +85,12 @@ button.big { font-size: 12px; padding: 4px 10px; }
     <div id="bands"></div>
     <p class="hint" id="softhint"></p>
   </fieldset>
-  <fieldset><legend>cuts</legend><div id="cuts"></div></fieldset>
+  <fieldset><legend>sigma(d0) by wrong-hit count</legend>
+    <div id="sbw"></div>
+    <p class="hint">Measured from the current selection, not asserted. This is
+      why the MVA target is "&le; 1 wrong hit": 0 and 1 sit in one regime and
+      &ge; 2 in another.</p>
+  </fieldset>
   <fieldset><legend>provenance</legend><ul id="notes"></ul></fieldset>
 </div>
 <div id="main">
@@ -96,6 +107,8 @@ const S = {};
 // 1-2 GeV is broken out deliberately: soft tracks are where SmartPixels could
 // add something the OT cannot, and they matter for jet resolution and tagging.
 const PT_BANDS = [[1, 2], [2, 3], [3, 5], [5, 10], [10, 1e9]];
+const AXLAB = { pt: 'pT  [GeV]', eta: 'eta', phi: 'phi  [rad]',
+                d0: 'd0  [cm]', z0: 'z0  [cm]', n_layers: 'layers on track' };
 const BAND_NAMES = ['1-2', '2-3', '3-5', '5-10', '10+'];
 function status(msg, bad) {
   const e = document.getElementById('status');
@@ -119,19 +132,23 @@ async function bin(url, Type, label, done, total) {
     const b = await r.arrayBuffer();
     return new Type(b);
   }
-  const chunks = [];
+  // PRE-ALLOCATE from Content-Length. Collecting chunks in an array and then
+  // copying into one buffer needs BOTH alive at once -- 3.5 GB of peak for the
+  // 1.77 GB track table, which is enough to kill the tab on a machine that can
+  // comfortably hold the final 2.4 GB. Since the length is known up front there
+  // is no reason to ever hold two copies.
+  const buf = new Uint8Array(len);
   let got = 0;
   const reader = r.body.getReader();
   for (;;) {
     const { done: fin, value } = await reader.read();
     if (fin) break;
-    chunks.push(value); got += value.length;
+    buf.set(value, got);
+    got += value.length;
     prog((done + got) / total, `loading ${label} — ${MB(done + got)} of `
       + `${MB(total)} (${(100 * (done + got) / total).toFixed(0)}%)`);
   }
-  const buf = new Uint8Array(got);
-  let o = 0;
-  for (const c of chunks) { buf.set(c, o); o += c.length; }
+  if (got !== len) throw new Error(`${url}: got ${got} of ${len} bytes`);
   return new Type(buf.buffer);
 }
 // yield to the event loop so the browser can actually paint the bar
@@ -146,15 +163,18 @@ async function runJob(job, label, budget) {
   return job.result;
 }
 // TP-side cut ranges; tracks reuse the fitted columns of the same name
-const CUTS = [['pt', 0, 100], ['eta', -1.6, 1.6], ['phi', -3.2, 3.2],
-              ['d0', -1, 1], ['z0', -20, 20], ['n_layers', 4, 16]];
+// d0 defaulted to +-1 cm, which at 24 bins is 833 um per bin against a ~50 um
+// resolution -- every prompt track landed in one column. +-0.05 cm still covers
+// the displaced tail that matters (95% of pT>2 TPs sit under 100 um).
+const CUTS = [['pt', 0, 25], ['eta', -1.6, 1.6], ['phi', -3.2, 3.2],
+              ['d0', -0.05, 0.05], ['z0', -20, 20], ['n_layers', 3, 16]];
 const HINTS = {
   eff: 'Fraction of FINDABLE TrackingParticles reached by at least one enabled seed. Findable = >= minimum layers hit, set opposite. This is a per-PARTICLE fraction, never a per-candidate one.',
   sd0: 'Robust 68% half-width of fitted minus true d0, on the tracks surviving the current selection.',
   spt: 'Robust half-width of |kappa| - 1/pT_true. Truth carries no charge, so |kappa| is the comparable quantity.',
-  fakefrac: 'Denominator is TRACKS surviving the selection, not particles, and binned in FITTED coordinates. NOTE the fake definition selector: "seed cluster is noise" is only 4.1% of tracks because almost every PU200 cluster belongs to some particle, and quoting that as the fake rate understates the problem ~20x. ">=2 wrong hits" (80% of tracks) is the line where sigma(d0) goes from 50-76 um to 243-289 um.',
+  fakefrac: 'ONLY the two fake metrics respond to the fake-definition selector. Denominator is TRACKS surviving the selection, not particles, and binned in FITTED coordinates. NOTE the fake definition selector: "seed cluster is noise" is only 4.1% of tracks because almost every PU200 cluster belongs to some particle, and quoting that as the fake rate understates the problem ~20x. ">=2 wrong hits" (80% of tracks) is the line where sigma(d0) goes from 50-76 um to 243-289 um.',
   fakeev: 'Fake tracks per EVENT per bin -- a rate, not a ratio. This is the number a bandwidth budget cares about; the fraction above is the purity one.',
-  nwrong: 'Mean wrong-hit count. sigma(d0) is ~53 um at 0-1 wrong hits and 417-667 um at >= 2.',
+  nwrong: 'Mean number of hits on the track that belong to a DIFFERENT particle than its seed, averaged over the tracks surviving the current selection (post-DR if enabled). It is per emitted TRACK, not per TP and not per candidate, so 2-3 means a typical surviving track in that bin carries 2-3 foreign hits.',
   count: 'Raw occupancy, to see where the statistics actually are.'
 };
 async function boot() {
@@ -277,10 +297,36 @@ async function drawInner() {
     const job = useDr
       ? C.drJob(S.order, S.seedOf, S.indptr, S.nbr, en)
       : C.allEnabledJob(S.seedOf, S.nTrk, en);
-    const rows = await runJob(job, useDr ? 'duplicate removal' : 'selecting tracks',
-                              400000);
+    let rows = await runJob(job, useDr ? 'duplicate removal' : 'selecting tracks',
+                            400000);
+    // MVA cut, applied after DR: the score is a per-track quantity, so cutting
+    // first would let a rejected duplicate suppress a survivor it outranked.
+    const mvacut = +document.getElementById('mvacut').value;
+    const jm = m.track.cols.indexOf('mva_score');
+    if (mvacut > 0 && jm >= 0) {
+      const nc2 = m.track.cols.length, before = rows.length;
+      rows = rows.filter(i => S.trk[i * nc2 + jm] >= mvacut);
+      document.getElementById('mvainfo').textContent =
+        `keeps ${(100 * rows.length / Math.max(before, 1)).toFixed(1)}% `
+        + `of ${before.toLocaleString()} tracks`;
+    } else {
+      document.getElementById('mvainfo').textContent =
+        jm < 0 ? 'no mva_score column in this export' : 'no cut';
+    }
     prog(1, `${rows.length.toLocaleString()} tracks selected — binning`, true);
     await yieldFrame();
+    // live sigma(d0) by wrong-hit count, replacing the hardcoded caption
+    try {
+      const sb = C.sigmaByWrong(S.trk, m.track.cols, rows);
+      document.getElementById('sbw').innerHTML =
+        '<table style="font-size:11px;width:100%"><tr><th align="left">wrong hits'
+        + '</th><th align="right">tracks</th><th align="right">sigma(d0)</th></tr>'
+        + ['0', '1', '&ge;2'].map((lab, k) =>
+            `<tr><td>${lab}</td><td align="right">${sb[k].n.toLocaleString()}`
+            + `</td><td align="right">${Number.isFinite(sb[k].sigma_um)
+                ? sb[k].sigma_um.toFixed(0) + ' um' : '--'}</td></tr>`).join('')
+        + '</table>';
+    } catch (e) { document.getElementById('sbw').textContent = String(e.message); }
     if (metric === 'fakefrac' || metric === 'fakeev') {
       const fd = document.getElementById('fakedef').value;
       const r = C.binnedFakeRate(S.trk, m.track.cols, rows, xName, yName, xE, yE,
@@ -307,7 +353,8 @@ async function drawInner() {
     y: Array.from({ length: ny }, (_, j) => 0.5 * (yE[j] + yE[j + 1])),
     colorscale: 'Viridis', colorbar: { thickness: 12 }
   }], { margin: { l: 55, r: 10, t: 30, b: 45 }, title: { text: title, font: { size: 13 } },
-        xaxis: { title: xName }, yaxis: { title: yName } }, { responsive: true });
+        xaxis: { title: { text: AXLAB[xName] || xName } },
+        yaxis: { title: { text: AXLAB[yName] || yName } } }, { responsive: true });
   // always-on accounting, so no number on this page is an unlabelled ratio
   if (metric === 'eff') {
     const mask2 = C.seedMaskWords(idx, S.nW);
@@ -320,7 +367,8 @@ async function drawInner() {
     const rows = PT_BANDS.map((b, i) => {
       dt += r2.den[i]; nt += r2.num[i];
       const e = r2.den[i] > 0 ? (100 * r2.num[i] / r2.den[i]).toFixed(1) : '--';
-      const warn = (i === 0) ? ' style="color:#b4590a"' : '';
+        const pmw = (m.ptmin === undefined ? 2.0 : m.ptmin);
+      const warn = (b[1] <= pmw) ? ' style="color:#b4590a"' : '';
       return `<tr${warn}><td>${BAND_NAMES[i]} GeV</td><td align="right">`
         + `${r2.den[i].toLocaleString()}</td><td align="right">`
         + `${r2.num[i].toLocaleString()}</td><td align="right">${e}%</td></tr>`;
@@ -329,12 +377,17 @@ async function drawInner() {
       '<table style="font-size:11px;width:100%"><tr><th align="left">band</th>'
       + '<th align="right">findable</th><th align="right">found</th>'
       + '<th align="right">eff</th></tr>' + rows + '</table>';
-    document.getElementById('softhint').innerHTML =
-      '<b>1-2 GeV is below the seeding threshold.</b> These seeds were built for '
-      + 'pT &ge; 2 &mdash; windows, curvature gate and scattering allowance all '
-      + 'sized for it &mdash; so this band measures what a 2 GeV system '
-      + 'incidentally picks up, NOT what SmartPixels could reach if aimed at '
-      + 'soft tracks. That needs a ptmin = 1 production.';
+    // conditional on what this export actually is, not asserted in prose
+    const pm = m.ptmin === undefined ? 2.0 : m.ptmin;
+    document.getElementById('softhint').innerHTML = (pm > 1.05)
+      ? `<b>Bands below ${pm.toFixed(1)} GeV are under this dataset's seeding `
+        + `threshold.</b> Windows, curvature gate and scattering allowance were `
+        + `all sized for pT &ge; ${pm.toFixed(1)}, so those rows measure what a `
+        + `${pm.toFixed(1)} GeV system incidentally picks up &mdash; not what `
+        + `SmartPixels could reach aimed at soft tracks. A ptmin = 1 export `
+        + `exists separately; load that directory to see the real figure.`
+      : `<b>Seeded from pT &ge; ${pm.toFixed(1)}</b>, so every band shown is at `
+        + `or above threshold and the soft rows are a real measurement.`;
     document.getElementById('effdef').innerHTML =
       `<b>denominator</b>: TPs with &ge; ${minLay} layers hit and passing the `
       + `cuts &mdash; <b>${dt.toLocaleString()}</b> `

@@ -11,14 +11,15 @@ Everything the page shows is a mask and a bin over those. Efficiency for a seed
 menu is `distinct tp_key present`, which is a set union and correct by
 construction -- pre-binned per-seed histograms could not be summed without
 double-counting a TP that several seeds find. Fake rate is additive over tracks
-and needs no such care. Resolution needs the per-menu DR, which is why the track
+and needs no such care, but its DEFINITION does: see the selector on the page,
+which defaults to >= 2 wrong hits rather than the much rarer tp_key < 0. Resolution needs the per-menu DR, which is why the track
 table is PRE-DR and sorted:
 
-  SORTED BY tp_key WITH FAKES IN A CONTIGUOUS tp_key < 0 BLOCK. The per-menu
-  duplicate removal in the browser -- group by TP, take the best rank_score among
-  ENABLED seeds -- is then a single linear scan over the sorted region instead of
-  a hash over millions of rows, and fake queries skip that region entirely. At
-  ~12.6M rows that is the difference between interactive and not.
+  SORTED BY tp_key, WITH NOISE-SEEDED ROWS (tp_key < 0) IN A CONTIGUOUS BLOCK.
+  The per-menu duplicate removal in the browser is then a linear scan over the
+  sorted region instead of a hash over millions of rows. At ~12.6M rows that is
+  the difference between interactive and not. Note those rows are NOT "the
+  fakes" -- see n_noise_seed below.
 
 float32 throughout. The hardware bit encoding (TTTrack_TrackWord) is deliberately
 not used: it is still being evolved upstream, and baking a moving target into an
@@ -74,11 +75,28 @@ def build_tp_table(C):
 
 
 def build_track_table(C):
-    """Concatenate every seed's track rows and sort for the browser's DR scan."""
+    """Concatenate every seed's track rows, add pt and the MVA score, and sort.
+
+    pt IS ADDED HERE, not derived in the browser, because the axis menu offers
+    TP-table names and the track table stores inv_pt. Leaving them out of step
+    meant cols.indexOf('pt') returned -1 and trk[i*nc - 1] read the LAST COLUMN
+    OF THE PREVIOUS ROW -- valid memory, plausible values, and every track-based
+    plot silently binning d_z0 of track i-1 as though it were pT. Same for phi
+    (stored phi0) and n_layers (stored nhit), which are aliased below.
+    """
     if not C["tracks"]:
         raise SystemExit("census has no track rows; rerun with --export-tracks")
     T = np.concatenate([C["tracks"][i] for i in sorted(C["tracks"])])
-    col = {c: j for j, c in enumerate(C["track_cols"])}
+    cols = list(C["track_cols"])
+    col = {c: j for j, c in enumerate(cols)}
+    add = {"pt": 1.0 / np.maximum(np.abs(T[:, col["inv_pt"]]), 1e-6),
+           "phi": T[:, col["phi0"]],
+           "n_layers": T[:, col["nhit"]]}
+    T = np.concatenate([T] + [v.astype(np.float32)[:, None]
+                              for v in add.values()], axis=1)
+    cols += list(add)
+    col = {c: j for j, c in enumerate(cols)}
+    C["track_cols"] = cols
     k = T[:, col["tp_key"]]
     # fakes (tp_key < 0) first as one contiguous block, then real rows sorted by
     # TP so the per-menu DR is a linear scan
@@ -91,9 +109,54 @@ def build_track_table(C):
     # defaults to >= 2 wrong hits, which is where sigma(d0) goes from 50-76 um
     # to 243-289 um.
     n_noise_seed = int((T[:, col["tp_key"]] < 0).sum())
+    T, col = _add_mva_score(T, col, C)
     # the permutation is returned so the hit lists can be put in the SAME order;
     # the conflict graph indexes rows of the sorted table, not the raw one
     return T, col, n_noise_seed, order
+
+
+def _add_mva_score(T, col, C):
+    """Per-track quality score, so the page can CUT on it.
+
+    Trained here rather than shipped as a model: evaluating a GBDT in the
+    browser would mean reimplementing it, and the score is a fixed function of
+    per-track features, so it can travel as a column. Target is <= 1 wrong hit,
+    the split where sigma(d0) changes regime (50-76 um against 243-289), which
+    reaches AUC 0.9953 -- a far better-posed problem than the 3-class version,
+    whose middle class had 30% recall because 0 and 1 wrong hits are not
+    physically separated.
+    """
+    try:
+        from sklearn.ensemble import HistGradientBoostingClassifier as GB
+    except ImportError:
+        print("  sklearn unavailable; no mva_score column")
+        return T, col
+    feats = [c for c in KF.MVA_FEATURES if c in col]
+    X = T[:, [col[c] for c in feats]]
+    y = (T[:, col["n_wrong"]] <= 1).astype(int)
+    ok = np.isfinite(X).all(axis=1)
+    if ok.sum() < 10000 or len(np.unique(y[ok])) < 2:
+        print("  too few usable rows; no mva_score column")
+        return T, col
+    rng = np.random.default_rng(1)
+    sub = np.flatnonzero(ok)
+    if len(sub) > 2_000_000:
+        sub = sub[rng.choice(len(sub), 2_000_000, replace=False)]
+    t0 = time.perf_counter()
+    g = GB(max_iter=200, learning_rate=0.1, random_state=1).fit(X[sub], y[sub])
+    sc = np.zeros(len(T), np.float32)
+    # predict in blocks: 12.5M rows at once is a needless 100 MB+ of temporaries
+    for i in range(0, len(T), 1_000_000):
+        j = min(i + 1_000_000, len(T))
+        b = X[i:j]
+        sc[i:j] = np.where(np.isfinite(b).all(axis=1),
+                           g.predict_proba(np.nan_to_num(b))[:, 1], np.nan)
+    print(f"  mva_score: trained on {len(sub):,} rows, scored {len(T):,} "
+          f"in {time.perf_counter() - t0:.0f}s")
+    T = np.concatenate([T, sc[:, None]], axis=1)
+    cols = list(C["track_cols"]) + ["mva_score"]
+    C["track_cols"] = cols
+    return T, {c: j for j, c in enumerate(cols)}
 
 
 def main():
@@ -142,6 +205,9 @@ def main():
     meta = {
         "n_events": C["n_events"],
         "source": ds[-1],
+        # so the page can tell whether a pT band is below the seeding threshold
+        # rather than asserting it in baked-in prose
+        "ptmin": float(C.get("ptmin", 2.0)),
         "seeds": [{"idx": i, "tag": t,
                    "layers": list(C["seeds"][i].layers),
                    "arity": C["seeds"][i].arity,

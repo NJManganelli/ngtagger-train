@@ -42,6 +42,17 @@ function tpSelect(tp, cols, nRows, cuts) {
   return keep;
 }
 
+// A MISSING COLUMN MUST THROW, never return -1. trk[i*nc + (-1)] reads the last
+// column of the PREVIOUS row -- valid memory, plausible numbers, silently wrong.
+// That is exactly how the track plots came to bin d_z0 of track i-1 as though it
+// were pT: the axis menu offered TP-table names and the track table calls the
+// same quantities inv_pt, phi0 and nhit.
+function need(cols, name, where) {
+  const j = cols.indexOf(name);
+  if (j < 0) throw new Error(`${where}: no column "${name}" in [${cols.join(',')}]`);
+  return j;
+}
+
 function binIndex(v, edges) {
   if (!(v >= edges[0]) || v > edges[edges.length - 1]) return -1;
   let lo = 0, hi = edges.length - 1;
@@ -52,7 +63,9 @@ function binIndex(v, edges) {
 // ---- efficiency: distinct TPs reached, over a fixed denominator -----------
 function binnedEfficiency(tp, cols, nRows, keep, found, nWords, mask,
                           xName, yName, xEdges, yEdges) {
-  const nc = cols.length, jx = cols.indexOf(xName), jy = cols.indexOf(yName);
+  const nc = cols.length;
+  const jx = need(cols, xName, 'binnedEfficiency x');
+  const jy = need(cols, yName, 'binnedEfficiency y');
   const nx = xEdges.length - 1, ny = yEdges.length - 1;
   const num = new Float64Array(nx * ny), den = new Float64Array(nx * ny);
   for (let i = 0; i < nRows; i++) {
@@ -170,8 +183,10 @@ function robustSigma(vals) {
 
 function binnedStat(trk, cols, rows, xName, yName, xEdges, yEdges, valueName,
                     stat) {
-  const nc = cols.length, jx = cols.indexOf(xName), jy = cols.indexOf(yName),
-        jv = valueName ? cols.indexOf(valueName) : -1;
+  const nc = cols.length;
+  const jx = need(cols, xName, 'binnedStat x');
+  const jy = need(cols, yName, 'binnedStat y');
+  const jv = valueName ? need(cols, valueName, 'binnedStat value') : -1;
   const nx = xEdges.length - 1, ny = yEdges.length - 1;
   const buckets = new Array(nx * ny);
   const cnt = new Float64Array(nx * ny);
@@ -187,11 +202,14 @@ function binnedStat(trk, cols, rows, xName, yName, xEdges, yEdges, valueName,
   }
   const val = new Float64Array(nx * ny).fill(NaN);
   for (let b = 0; b < nx * ny; b++) {
+    // 'count' has no value column, so it comes from cnt. Reading it out of
+    // `buckets` is why "tracks per bin" rendered an empty plot: jv < 0 skipped
+    // the push, so every bucket stayed undefined and every value stayed NaN.
+    if (stat === 'count') { val[b] = cnt[b]; continue; }
     const s = buckets[b];
     if (!s) continue;
     val[b] = stat === 'sigma' ? robustSigma(s)
-           : stat === 'mean' ? s.reduce((p, c) => p + c, 0) / s.length
-           : s.length;
+           : s.reduce((p, c) => p + c, 0) / s.length;
   }
   return { val, cnt, nx, ny };
 }
@@ -219,10 +237,10 @@ function binnedFakeRate(trk, cols, rows, xName, yName, xEdges, yEdges, nEvents,
                         def) {
   def = def || 'unusable';
   const nc = cols.length;
-  const jk = cols.indexOf('tp_key'), jw = cols.indexOf('n_wrong');
+  const jk = need(cols, 'tp_key', 'fakeRate'), jw = need(cols, 'n_wrong', 'fakeRate');
   const nx = xEdges.length - 1, ny = yEdges.length - 1;
   const fake = new Float64Array(nx * ny), tot = new Float64Array(nx * ny);
-  const jx = cols.indexOf(xName), jy = cols.indexOf(yName);
+  const jx = need(cols, xName, 'fakeRate x'), jy = need(cols, yName, 'fakeRate y');
   for (const i of rows) {
     const bx = binIndex(trk[i * nc + jx], xEdges); if (bx < 0) continue;
     const by = binIndex(trk[i * nc + jy], yEdges); if (by < 0) continue;
@@ -253,7 +271,8 @@ function binnedFakeRate(trk, cols, rows, xName, yName, xEdges, yEdges, nEvents,
 // of particles. Reporting the first number as "efficiency" understates the
 // truth fivefold.
 function effByBand(tp, cols, nRows, keep, found, nWords, mask, bands, minLayers) {
-  const nc = cols.length, jp = cols.indexOf('pt'), jl = cols.indexOf('n_layers');
+  const nc = cols.length;
+  const jp = need(cols, 'pt', 'effByBand'), jl = need(cols, 'n_layers', 'effByBand');
   const den = new Float64Array(bands.length), num = new Float64Array(bands.length);
   for (let i = 0; i < nRows; i++) {
     if (!keep[i]) continue;
@@ -270,6 +289,24 @@ function effByBand(tp, cols, nRows, keep, found, nWords, mask, bands, minLayers)
   return { num, den };
 }
 
+// sigma(d0) split by TRUE wrong-hit count, computed from whatever is selected.
+// This replaces a hardcoded sentence in the UI quoting 53 um and 417-667 um --
+// numbers from an 8-event run, since superseded by full statistics
+// (50 / 76 / 243 / 289), and which could never update as results came in.
+function sigmaByWrong(trk, cols, rows) {
+  const nc = cols.length;
+  const jw = need(cols, 'n_wrong', 'sigmaByWrong');
+  const jd = need(cols, 'd_d0', 'sigmaByWrong');
+  const buckets = [[], [], []];
+  for (const i of rows) {
+    const v = trk[i * nc + jd];
+    if (!Number.isFinite(v)) continue;
+    const w = trk[i * nc + jw];
+    buckets[w >= 2 ? 2 : w | 0].push(v);
+  }
+  return buckets.map(b => ({ n: b.length, sigma_um: 1e4 * robustSigma(b) }));
+}
+
 function linEdges(lo, hi, n) {
   const e = new Float64Array(n + 1);
   for (let i = 0; i <= n; i++) e[i] = lo + (hi - lo) * i / n;
@@ -281,5 +318,5 @@ if (typeof module !== 'undefined' && module.exports) {
                      binnedEfficiency, drSurvivorsGraph, allEnabled,
                      drJob, allEnabledJob,
                      robustSigma, binnedStat, binnedFakeRate, effByBand,
-                     isFake, FAKE_DEFS, linEdges };
+                     isFake, FAKE_DEFS, sigmaByWrong, need, linEdges };
 }

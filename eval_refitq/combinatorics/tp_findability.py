@@ -597,6 +597,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["seed_tags"] = meta["seed_tags"]
     C["seed_notes"] = meta.get("seed_notes", [""] * len(meta["seeds"]))
     C["calibration"] = meta["calibration"]
+    C["ptmin"] = float(meta["config"].get("ptmin", 2.0))
+    C["min_layers"] = int(meta["config"].get("min_layers", SA.MIN_LAYERS))
     C["counters"] = {i: cnt.get(i, {}) for i in range(len(C["seeds"]))}
     C["qual"] = {i: (np.concatenate(v) if v else np.zeros((0, 5), np.float32))
                  for i, v in qs.items()}
