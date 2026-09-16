@@ -72,3 +72,9 @@ echo "[queue] done at $(date)"
 for f in "$R"/dr_scale.log "$R"/tq_mva.log "$R"/scattering_eta.log "$R"/arch_tracks.log; do
   printf "  %-28s %s\n" "$(basename "$f")" "$(tail -1 "$f" | cut -c1-70)"
 done
+
+# NOTE FOR ANYONE EDITING THIS FILE WHILE IT IS RUNNING: don't. bash reads a
+# script by BYTE OFFSET, so inserting or deleting lines above the point it has
+# reached makes it resume mid-token and execute garbage. If the queue is already
+# waiting on a PID, kill it and relaunch after editing. This was learned the
+# obvious way.
