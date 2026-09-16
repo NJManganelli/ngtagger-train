@@ -129,7 +129,7 @@ def enumerate_seeds(il_instrumented, ot=OT_BARREL):
 
 
 def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
-             strict_cmssw=False, d0_cm=0.0):
+             strict_cmssw=False, d0_cm=0.0, min_layers=None):
     """Run one seed and follow it to EVERY target layer.
 
     A doublet projects to all of them with a d0 = 0 helix. A triplet first
@@ -194,7 +194,14 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
     out["cand_all_targets"] = cand_tot
     out["targets_followed"] = len([L for L in targets if L not in used])
     # ---- the 4-layer rule -----------------------------------------------
-    need = seed.min_proj(strict_cmssw)
+    # min_layers overrides the 4-layer rule. It has to be settable: the rule is
+    # defined against six OT barrel layers, and a soft IT-only configuration may
+    # have only three layers in total, where demanding four means demanding a
+    # confirmation the geometry cannot supply.
+    if min_layers is None:
+        need = seed.min_proj(strict_cmssw)
+    else:
+        need = max(min_layers - seed.arity, 0)
     keep = nconf >= need
     out["min_proj"] = need
     out["tracks_before_minlayers"] = int(len(gA))

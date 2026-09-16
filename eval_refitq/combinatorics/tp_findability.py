@@ -147,7 +147,15 @@ IL_OF = {0: 1, 1: 2, 2: 3, 3: 4}
 OT_BARREL = (11, 12, 13, 14, 15, 16)
 
 
-def seed_universe_over_builds(rmed, masks):
+SOFT_BUILDS = ("AAAA", "AAAI", "AAIA", "AIAA", "IAAA")
+# Soft tracks make OT stubs almost exclusively on OL1-OL3. MEASURED at
+# 1.0-1.5 GeV: OL1 14.5%, OL2 25.3%, OL3 13.4%, then OL4 2.5%, OL5 2.0%,
+# OL6 1.7%. Including the outer three would buy ~2% occupancy for their full
+# combinatorial cost.
+SOFT_TARGETS = (1, 2, 3, 4, 11, 12, 13)
+
+
+def seed_universe_over_builds(rmed, masks, seed_classes=None):
     """Union over builds of each build's own doublet and triplet seeds.
 
     Which seeds exist depends on which IT layers are instrumented, but a seed's
@@ -284,7 +292,8 @@ def chunk_census(U):
 
 
 def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
-                  export_tracks=0, do_dr=True):
+                  export_tracks=0, do_dr=True, targets=None,
+                  min_layers=SA.MIN_LAYERS):
     """Run every seed over one chunk and reduce to census + bitmap + counters.
 
     TWO PASSES, because duplicate removal is inherently cross-seed. The first
@@ -311,7 +320,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     # survivors, which is what a real system emits.
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
-    targets = list(SA.IL) + list(SA.OT_BARREL)
+    targets = list(targets) if targets else list(SA.IL) + list(SA.OT_BARREL)
     counters, qual, trk, hits = {}, {}, {}, {}
 
     # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
@@ -319,7 +328,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     held = {}
     for s_i, sd in enumerate(seeds):
         try:
-            o = SA.run_seed(U, Q, sd, ptmin, targets)
+            o = SA.run_seed(U, Q, sd, ptmin, targets, min_layers=min_layers)
         except M.TooWide as e:
             counters[s_i] = {"infeasible": 1.0, "n": float(e.n)}
             continue
@@ -449,7 +458,8 @@ def _shard_path(d, i):
 def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           hash_content=False, calib_events=100, verbose=True,
           budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None,
-          export_tracks=0):
+          export_tracks=0, seed_classes=None, targets=None,
+          min_layers=SA.MIN_LAYERS):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
     The cache is a DIRECTORY OF PER-CHUNK SHARDS, not one file, so a run that
@@ -470,7 +480,10 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
            "chunk": chunk, "calib_events": calib_events, "masks": masks,
            "kf_opts": dict(sorted((kf_opts or {}).items())),
-           "export_tracks": export_tracks}
+           "export_tracks": export_tracks,
+           "seed_classes": sorted(seed_classes) if seed_classes else None,
+           "targets": sorted(targets) if targets else None,
+           "min_layers": min_layers}
     kh = cache_key(man, cfg)
     d = os.path.join(cache_dir, f"tpcensus_{kh}")
     mpath = os.path.join(d, "manifest.json")
@@ -487,8 +500,10 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             raise SystemExit(f"no cache for key {kh} under {cache_dir}")
         os.makedirs(d, exist_ok=True)
         cal = calibrate(spec, calib_events, ptmin)
-        seeds = (seed_universe_over_builds(cal["r_median"], masks)
+        seeds = (seed_universe_over_builds(cal["r_median"], masks, seed_classes)
                  if masks else SA.enumerate_seeds(list(SA.IL)))
+        if not seeds:
+            raise SystemExit("no seeds after filtering; check --seed-classes")
         meta = {"cache_key": kh, "format": FORMAT_VERSION, "inputs": man,
                 "config": cfg, "calibration": cal,
                 "seeds": [list(sd.layers) for sd in seeds],
@@ -517,7 +532,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 continue
             cen, found, found_dr, counters, qual, trk, hits = process_chunk(
                 U, Q, seeds, ptmin, rng, QUAL_PER_CHUNK, kf_opts,
-                export_tracks)
+                export_tracks, targets=targets, min_layers=min_layers)
             np.savez_compressed(
                 _shard_path(d, ci), found=found, found_dr=found_dr,
                 n_events=len(ev),
@@ -666,6 +681,21 @@ def main():
     ap.add_argument("--ptmin", type=float, default=2.0)
     ap.add_argument("--layers", default=",".join(NAME[L] for L in ALL_LAYERS))
     ap.add_argument("--n-adjacent", type=int, default=2)
+    ap.add_argument("--seed-classes", default=None,
+                    help="restrict the seed universe by class: comma list of "
+                         "it,ot,mixed. Soft-track finding wants 'it' alone, "
+                         "because the OT cannot SEED below its stub threshold "
+                         "-- only 4.4%% of 1-2 GeV TPs reach >= 4 OT layers.")
+    ap.add_argument("--targets", default=None,
+                    help="layers to follow into, e.g. IL1,IL2,IL3,IL4,OL1,OL2,OL3. "
+                         "Soft tracks make OT stubs almost only on OL1-OL3 "
+                         "(measured 14.5/25.3/13.4%% at 1.0-1.5 GeV, then ~2%% "
+                         "on OL4-OL6), so following the outer three buys "
+                         "combinatorics and no acceptance.")
+    ap.add_argument("--min-layers", type=int, default=SA.MIN_LAYERS,
+                    help="layers required on a track. The OT's 4 is defined "
+                         "against six barrel layers; a 3-layer IT-only build "
+                         "cannot supply a fourth from the IT alone.")
     ap.add_argument("--masks", default=",".join(BUILD_MASKS),
                     help="activeSP builds to enumerate seeds for; 'none' for a "
                          "flat enumeration over --layers")
@@ -699,12 +729,18 @@ def main():
     layers = [CODE[x.strip()] for x in a.layers.split(",") if x.strip()]
     masks = None if a.masks.strip().lower() == "none" else \
         [m.strip() for m in a.masks.split(",") if m.strip()]
+    CLS = {"it": KF.SYS_IT, "ot": KF.SYS_OT, "mixed": KF.SYS_MIX}
+    scl = ({CLS[x.strip()] for x in a.seed_classes.split(",") if x.strip()}
+           if a.seed_classes else None)
+    tgt = ([CODE[x.strip()] for x in a.targets.split(",") if x.strip()]
+           if a.targets else None)
     C = build(a.input, a.nev, a.ptmin, layers, a.n_adjacent, a.chunk,
               a.cache_dir, a.cache, a.hash_content, a.calib_events, masks=masks,
               kf_opts={"use_angles": a.kf_angles == "on",
                        "alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
                        "d0_prior_cm": a.d0_prior_cm},
-              export_tracks=a.export_tracks)
+              export_tracks=a.export_tracks, seed_classes=scl, targets=tgt,
+              min_layers=a.min_layers)
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "
