@@ -170,6 +170,34 @@ function binnedFakeRate(trk, cols, rows, xName, yName, xEdges, yEdges, nEvents) 
   return { frac, perEv, tot, fake, nx, ny };
 }
 
+// ---- explicit efficiency accounting ---------------------------------------
+// DENOMINATORS ARE THE WHOLE GAME and the page must never leave one implicit.
+// Three quantities got confused in analysis and would confuse a reader faster:
+//   candidates kept   ~18%  -- a fraction of TRACKS, not an efficiency at all
+//   TPs with >=1 cand ~11%  -- 871/ev, dominated by soft particles that donate
+//                              one cluster to a fake; not a findable set
+//   FINDABLE TPs      ~92%  -- pT >= threshold and >= 4 layers, 118/ev
+// There are ~13.7 candidates per TP, so discarding 82% of candidates costs 8%
+// of particles. Reporting the first number as "efficiency" understates the
+// truth fivefold.
+function effByBand(tp, cols, nRows, keep, found, nWords, mask, bands, minLayers) {
+  const nc = cols.length, jp = cols.indexOf('pt'), jl = cols.indexOf('n_layers');
+  const den = new Float64Array(bands.length), num = new Float64Array(bands.length);
+  for (let i = 0; i < nRows; i++) {
+    if (!keep[i]) continue;
+    if (tp[i * nc + jl] < minLayers) continue;
+    const pt = tp[i * nc + jp];
+    for (let b = 0; b < bands.length; b++) {
+      if (pt >= bands[b][0] && pt < bands[b][1]) {
+        den[b] += 1;
+        if (anyBitSet(found, i, nWords, mask)) num[b] += 1;
+        break;
+      }
+    }
+  }
+  return { num, den };
+}
+
 function linEdges(lo, hi, n) {
   const e = new Float64Array(n + 1);
   for (let i = 0; i <= n; i++) e[i] = lo + (hi - lo) * i / n;
@@ -179,5 +207,6 @@ function linEdges(lo, hi, n) {
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { seedMaskWords, anyBitSet, tpSelect, binIndex,
                      binnedEfficiency, drSurvivorsGraph, allEnabled,
-                     robustSigma, binnedStat, binnedFakeRate, linEdges };
+                     robustSigma, binnedStat, binnedFakeRate, effByBand,
+                     linEdges };
 }

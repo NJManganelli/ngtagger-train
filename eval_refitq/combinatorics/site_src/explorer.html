@@ -53,6 +53,17 @@ button.big { font-size: 12px; padding: 4px 10px; }
     x <select id="xcol"></select> bins <input type="number" id="xbins" value="24" min="2" max="80">
     <br>y <select id="ycol"></select> bins <input type="number" id="ybins" value="18" min="2" max="80">
   </fieldset>
+  <fieldset><legend>efficiency denominator</legend>
+    minimum layers hit <input type="number" id="minlay" value="4" min="1" max="16">
+    <p class="hint">A TrackingParticle with fewer layers than the track finder's
+      MinLayers cannot be emitted by any seed, so including it puts an
+      unreachable population in the denominator. 4 is the OT's value.</p>
+    <div id="effdef"></div>
+  </fieldset>
+  <fieldset><legend>efficiency by pT band</legend>
+    <div id="bands"></div>
+    <p class="hint" id="softhint"></p>
+  </fieldset>
   <fieldset><legend>cuts</legend><div id="cuts"></div></fieldset>
   <fieldset><legend>provenance</legend><ul id="notes"></ul></fieldset>
 </div>
@@ -62,6 +73,10 @@ button.big { font-size: 12px; padding: 4px 10px; }
 <script>
 const CORE = (typeof module !== 'undefined' && module.exports) ? module.exports : window;
 const S = {};
+// 1-2 GeV is broken out deliberately: soft tracks are where SmartPixels could
+// add something the OT cannot, and they matter for jet resolution and tagging.
+const PT_BANDS = [[1, 2], [2, 3], [3, 5], [5, 10], [10, 1e9]];
+const BAND_NAMES = ['1-2', '2-3', '3-5', '5-10', '10+'];
 function status(msg, bad) {
   const e = document.getElementById('status');
   e.innerHTML = msg; e.className = bad ? 'err' : '';
@@ -75,11 +90,11 @@ async function bin(url, Type) {
 const CUTS = [['pt', 0, 100], ['eta', -1.6, 1.6], ['phi', -3.2, 3.2],
               ['d0', -1, 1], ['z0', -20, 20], ['n_layers', 4, 16]];
 const HINTS = {
-  eff: 'Union over enabled seeds, against a fixed denominator of TPs with >= 4 layers hit (fewer cannot be emitted at all).',
+  eff: 'Fraction of FINDABLE TrackingParticles reached by at least one enabled seed. Findable = >= minimum layers hit, set opposite. This is a per-PARTICLE fraction, never a per-candidate one.',
   sd0: 'Robust 68% half-width of fitted minus true d0, on the tracks surviving the current selection.',
   spt: 'Robust half-width of |kappa| - 1/pT_true. Truth carries no charge, so |kappa| is the comparable quantity.',
-  fakefrac: 'Fakes have no TrackingParticle and bin in FITTED coordinates, not truth. DR is keyed on shared hits, as a real system would be -- never on truth.',
-  fakeev: 'Fake tracks per event per bin, the rate-budget number rather than the purity one.',
+  fakefrac: 'Denominator is TRACKS surviving the selection, not particles. Fakes have no TrackingParticle and bin in FITTED coordinates, not truth. DR is keyed on shared hits, as a real system would be -- never on truth.',
+  fakeev: 'Fake tracks per EVENT per bin -- a rate, not a ratio. This is the number a bandwidth budget cares about; the fraction above is the purity one.',
   nwrong: 'Mean wrong-hit count. sigma(d0) is ~53 um at 0-1 wrong hits and 417-667 um at >= 2.',
   count: 'Raw occupancy, to see where the statistics actually are.'
 };
@@ -203,6 +218,43 @@ function draw() {
     colorscale: 'Viridis', colorbar: { thickness: 12 }
   }], { margin: { l: 55, r: 10, t: 30, b: 45 }, title: { text: title, font: { size: 13 } },
         xaxis: { title: xName }, yaxis: { title: yName } }, { responsive: true });
+  // always-on accounting, so no number on this page is an unlabelled ratio
+  if (metric === 'eff') {
+    const mask2 = C.seedMaskWords(idx, S.nW);
+    const keep2 = C.tpSelect(S.tp, m.tp.cols, S.nTp, cuts);
+    const minLay = +document.getElementById('minlay').value;
+    const r2 = C.effByBand(S.tp, m.tp.cols, S.nTp, keep2,
+      document.getElementById('dr').checked ? S.foundDr : S.found,
+      S.nW, mask2, PT_BANDS, minLay);
+    let dt = 0, nt = 0;
+    const rows = PT_BANDS.map((b, i) => {
+      dt += r2.den[i]; nt += r2.num[i];
+      const e = r2.den[i] > 0 ? (100 * r2.num[i] / r2.den[i]).toFixed(1) : '--';
+      const warn = (i === 0) ? ' style="color:#b4590a"' : '';
+      return `<tr${warn}><td>${BAND_NAMES[i]} GeV</td><td align="right">`
+        + `${r2.den[i].toLocaleString()}</td><td align="right">`
+        + `${r2.num[i].toLocaleString()}</td><td align="right">${e}%</td></tr>`;
+    }).join('');
+    document.getElementById('bands').innerHTML =
+      '<table style="font-size:11px;width:100%"><tr><th align="left">band</th>'
+      + '<th align="right">findable</th><th align="right">found</th>'
+      + '<th align="right">eff</th></tr>' + rows + '</table>';
+    document.getElementById('softhint').innerHTML =
+      '<b>1-2 GeV is below the seeding threshold.</b> These seeds were built for '
+      + 'pT &ge; 2 &mdash; windows, curvature gate and scattering allowance all '
+      + 'sized for it &mdash; so this band measures what a 2 GeV system '
+      + 'incidentally picks up, NOT what SmartPixels could reach if aimed at '
+      + 'soft tracks. That needs a ptmin = 1 production.';
+    document.getElementById('effdef').innerHTML =
+      `<b>denominator</b>: TPs with &ge; ${minLay} layers hit and passing the `
+      + `cuts &mdash; <b>${dt.toLocaleString()}</b> `
+      + `(${(dt / m.n_events).toFixed(0)}/event)<br><b>numerator</b>: those `
+      + `reached by &ge;1 enabled seed &mdash; <b>${nt.toLocaleString()}</b>`
+      + `<br><b>efficiency ${dt > 0 ? (100 * nt / dt).toFixed(1) : '--'}%</b>`
+      + `<br><span class="hint">Not to be confused with the fraction of track `
+      + `CANDIDATES kept: there are ~13.7 candidates per TP, so those differ by `
+      + `about fivefold.</span>`;
+  }
   status(`${m.n_events} events, ${S.nTp.toLocaleString()} TPs, `
     + `${S.nTrk.toLocaleString()} tracks, ${idx.length} seeds &mdash; `
     + `${(performance.now() - t0).toFixed(0)} ms`);

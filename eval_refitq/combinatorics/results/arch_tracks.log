@@ -1,1 +1,36 @@
 AAAA: 19 seeds (10 IT-only, 6 OT-only, 3 mixed)
+
+400 events
+  IT mini-tracks       77/ev  (100.0% seed-real)
+  OT tracks           405/ev  (65.9% seed-real)
+
+IT<->OT MATCH: which parameters, and how tight
+parameters      chi2 cut  matches/ev  correct  of both-real
+phi0+z0                5          27      91%           94%
+phi0+z0               10          40      92%           95%
+phi0+z0               25          54      91%           94%
+phi0+z0               50          59      89%           93%
+phi0+z0              200          66      82%           88%
+phi0+z0       1000000000          77      71%           80%
+phi0+z0+cot            5          19      97%           99%
+phi0+z0+cot           10          31      97%           99%
+phi0+z0+cot           25          48      97%           99%
+phi0+z0+cot           50          55      97%           99%
+phi0+z0+cot          200          59      95%           98%
+phi0+z0+cot   1000000000          77      77%           86%
+all four               5          16      97%          100%
+all four              10          29      98%          100%
+all four              25          47      98%          100%
+all four              50          54      97%           99%
+all four             200          58      97%           99%
+all four      1000000000          77      77%           86%
+
+stage                            n   s(kap)  s(d0)um   s(cot)  s(z0)um
+PARALLEL refit, Q=0 in->out  18,671   0.0049       38   0.0010       54
+PARALLEL refit, Q=0 out->in  18,671   0.0049       38   0.0010       54
+  IT mini-track alone       30,326   0.0113       27   0.0011       56
+  OT track alone            34,060   0.0082      913   0.0054     1832
+
+wrote eval_refitq/combinatorics/results/arch_parallel_tracks.npz: 211,829 parallel-architecture track rows (530/ev)
+
+wrote eval_refitq/combinatorics/results/arch_comparison_1000.json
