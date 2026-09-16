@@ -60,6 +60,29 @@ def load_rows(cache_dir):
     # for the interactive page cannot leak into training by accident.
     fidx = [col[c] for c in KF.MVA_FEATURES]
     X = T[:, fidx]
+    # ---- DERIVED DOF FEATURES, for the soft-track regime -----------------
+    # The r-phi half has 3 free parameters and r-z has 2, so a track's degrees
+    # of freedom are nhit-3 and nhit-2. At 8 hits that is a detail. At THREE
+    # hits dof_rphi is ZERO: three azimuths determine (kappa, phi0, d0) exactly
+    # and nothing is left to test the hits against each other -- chi2_rphi then
+    # measures consistency with the d0 PRIOR, not with the data. The same column
+    # therefore means two different things at different hit counts, which a tree
+    # handles badly unless told.
+    #
+    # This REVERSES the earlier decision to skip per-dof normalisation. That was
+    # right for the hard MVA, where hit counts span 5-10 and the difference is a
+    # monotone function of nhit that the tree can absorb. It is wrong for soft
+    # tracks, where dof_rphi runs 0, 1, 2 and dividing chi2 by the LAYER count
+    # instead actively obscures whether the quantity means anything at all.
+    nh = T[:, col["nhit"]]
+    dof_p = np.maximum(nh - 3.0, 0.0)
+    dof_z = np.maximum(nh - 2.0, 0.0)
+    extra = np.stack([
+        dof_p, dof_z,
+        T[:, col["chi2_rphi_per_layer"]] * nh / np.maximum(dof_p, 1.0),
+        T[:, col["chi2_rz_per_layer"]] * nh / np.maximum(dof_z, 1.0),
+    ], axis=1)
+    X = np.concatenate([X, extra], axis=1)
     Y = np.stack([T[:, col["n_wrong"]], T[:, col["is_clean"]],
                   T[:, col["tp_pt"]], T[:, col["d_d0"]]], axis=1)
     seed = T[:, col["seed_idx"]]
@@ -79,10 +102,19 @@ def main():
     from sklearn.inspection import permutation_importance
 
     X, Y, seed, C = load_rows(a.cache_dir)
-    nm = list(KF.MVA_FEATURES)
+    nm = list(KF.MVA_FEATURES) + ["dof_rphi", "dof_rz",
+                                  "chi2_rphi_per_dof", "chi2_rz_per_dof"]
     nw, d0res = Y[:, 0], Y[:, 3]
     print(f"{len(X):,} tracks, {len(nm)} features, "
           f"{C['n_events']} events, {len(C['seed_tags'])} seeds")
+    hb = np.bincount(T[:, col["nhit"]].astype(int), minlength=12)[:12]
+    print("  hit-count distribution: "
+          + "  ".join(f"{i}:{hb[i]:,}" for i in range(3, 12) if hb[i]))
+    j3 = nm.index("dof_rphi")
+    n3 = int((X[:, j3] == 0).sum())
+    if n3:
+        print(f"  {n3:,} tracks have ZERO r-phi degrees of freedom; for those "
+              f"chi2_rphi tests the d0 prior, not the hits")
     print("\nsigma(d0) by TRUE wrong-hit count")
     for k in (0, 1, 2, 3):
         m = (nw == k) if k < 3 else (nw >= 3)
