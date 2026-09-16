@@ -1,0 +1,46 @@
+9,930,800 tracks, 20 features, 800 events, 30 seeds
+
+sigma(d0) by TRUE wrong-hit count
+  n_wrong 0: 1,332,524 sigma(d0) =     50 um
+  n_wrong 1: 456,440 sigma(d0) =     76 um
+  n_wrong 2: 200,195 sigma(d0) =    243 um
+  n_wrong >=3: 7,941,641 sigma(d0) =    289 um
+
+(a) CLEAN vs contaminated
+    chi2_rphi_per_layer      alone   AUC 0.8439
+    chi2_scaled              alone   AUC 0.7161
+    max_angle_pull           alone   AUC 0.9272
+    chi2_angle_per_cl        alone   AUC 0.9335
+    GBDT, all features       AUC 0.9891
+    GBDT, no angle features  AUC 0.9883   (angles worth +0.0009)
+      [no-angle set also drops rank_score, which embeds chi2_angle by construction]
+
+(a2) <=1 vs >=2 wrong hits   AUC 0.9953
+     cut 0.50: keeps  17.8% of tracks, sigma(d0) =    55 um, purity 95%
+     cut 0.80: keeps  16.6% of tracks, sigma(d0) =    51 um, purity 97%
+     cut 0.95: keeps  14.2% of tracks, sigma(d0) =    45 um, purity 99%
+
+(b) 3-class n_wrong 0 / 1 / 2+    accuracy 0.955
+    confusion (rows true, cols predicted)
+    [[ 449710   10309    6364]
+     [  77734   48242   33778]
+     [  12122   15459 2822062]]
+
+    sigma(d0) by PREDICTED class -- the calibration a tagger uses
+      pred 0 : 539,566 sigma(d0) =     50 um   purity 83%
+      pred 1 :  74,010 sigma(d0) =    102 um   purity 65%
+      pred 2+: 2,862,204 sigma(d0) =    292 um   purity 99%
+
+top features (permutation importance, binary task)
+   rank_score              +0.1452
+   second_angle_pull       +0.1178
+   chi2_angle_per_cl       +0.0486
+   n_miss_interior         +0.0112
+   chi2_rphi_per_layer     +0.0109
+   n_it                    +0.0024
+   max_pos_pull            +0.0023
+   cot                     +0.0021
+   chi2_rz_per_layer       +0.0009
+   n_ot                    +0.0008
+
+wrote eval_refitq/combinatorics/results/tq_mva.json

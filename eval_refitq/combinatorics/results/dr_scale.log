@@ -1,0 +1,37 @@
+  8 events, 96,882 tracks
+  16 events, 174,798 tracks
+  24 events, 267,103 tracks
+  32 events, 364,250 tracks
+  40 events, 475,704 tracks
+  48 events, 553,994 tracks
+  56 events, 654,781 tracks
+  64 events, 759,520 tracks
+  72 events, 871,135 tracks
+  80 events, 967,464 tracks
+  88 events, 1,054,902 tracks
+  96 events, 1,173,437 tracks
+  100 events, 1,244,592 tracks
+
+collected 1,244,592 tracks over 100 events (12,446/ev) in 630s
+
+CONFLICT GRAPH
+  incidences                      6,234,741
+  clusters                        1,080,880
+  max_tracks_per_cluster                155
+  co_occurrence_pairs            54,896,707
+  distinct_pairs                 25,147,617
+  edges                           5,372,482
+  build time                          17.6s
+  tracks with >=1 conflict          865,531  (69.5%)
+  mean / max degree                8.6 / 135
+  edge list bytes (2x int32)     42,979,856  -> 435 MB at 12.6M tracks
+
+DUPLICATE REMOVAL, 1,244,592 tracks
+  naive per-track loop (seed_arity)      8.35s   49.8% kept
+  greedy over precomputed edges          1.53s   49.8% kept
+  agreement                            100.00%
+  speedup (greedy only)                   5.5x
+
+  extrapolated to 12.6M tracks: naive 85s, edge-greedy 16s, graph build 178s
+
+wrote eval_refitq/combinatorics/results/dr_conflict_scale.json
