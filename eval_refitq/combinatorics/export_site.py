@@ -24,9 +24,16 @@ float32 throughout. The hardware bit encoding (TTTrack_TrackWord) is deliberatel
 not used: it is still being evolved upstream, and baking a moving target into an
 exported payload would age badly. See the note in kf_emulation for what an
 encoding option would need.
+
+NO SUBSETTING AND NO APPROXIMATION. This is a diagnostic tool, so the whole
+sample goes out and duplicate removal is the exact hit-sharing greedy, not a
+cheaper stand-in. At full scale that is ~2.4 GB in the tab and of order ten
+seconds per DR recomputation, which is the right trade for an analysis page:
+approximations introduced before anything has been verified are how a tool
+starts lying quietly.
 """
 from __future__ import annotations
-import argparse, glob, json, os, sys
+import argparse, glob, json, os, sys, time
 from pathlib import Path
 import numpy as np
 
@@ -34,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tp_findability as TF   # noqa: E402
 import kf_emulation as KF     # noqa: E402
 import seed_arity as SA       # noqa: E402
+import dr_conflict_scale as DRS  # noqa: E402
 
 TP_COLS = ("key", "event", "pt", "eta", "phi", "d0", "z0", "vr",
            "hit_it", "hit_ot", "n_layers")
@@ -77,7 +85,9 @@ def build_track_table(C):
     order = np.lexsort((k, k >= 0))
     T = T[order]
     n_fake = int((T[:, col["tp_key"]] < 0).sum())
-    return T, col, n_fake
+    # the permutation is returned so the hit lists can be put in the SAME order;
+    # the conflict graph indexes rows of the sorted table, not the raw one
+    return T, col, n_fake, order
 
 
 def main():
@@ -94,9 +104,33 @@ def main():
         raise SystemExit(f"no census under {a.cache_dir}")
     C = TF.load(ds[-1], nev=a.nev, with_tracks=True)
     os.makedirs(a.outdir, exist_ok=True)
+    a_outdir = a.outdir
 
     TPA, found, found_dr = build_tp_table(C)
-    T, col, n_fake = build_track_table(C)
+    T, col, n_fake, order_orig = build_track_table(C)
+    conflict = None
+    if C.get("hits"):
+        # the conflict graph, built once here rather than per interaction in the
+        # browser. 178 s at full scale against ~10 s per menu change, so it
+        # belongs on this side of the wire.
+        H = np.concatenate([C["hits"][i] for i in sorted(C["hits"])])[order_orig]
+        t0 = time.perf_counter()
+        edges, st = DRS.conflict_edges(H)
+        a = np.r_[edges[:, 0], edges[:, 1]]
+        b = np.r_[edges[:, 1], edges[:, 0]]
+        o = np.argsort(a, kind="stable")
+        a, b = a[o], b[o]
+        indptr = np.searchsorted(a, np.arange(len(T) + 1)).astype(np.int32)
+        # descending rank_score, MENU-INDEPENDENT so it ships once
+        rank_order = np.argsort(-T[:, col["rank_score"]],
+                                kind="stable").astype(np.int32)
+        indptr.tofile(os.path.join(a_outdir, "conf_indptr.bin"))
+        b.astype(np.int32).tofile(os.path.join(a_outdir, "conf_nbr.bin"))
+        rank_order.tofile(os.path.join(a_outdir, "conf_order.bin"))
+        conflict = {"indptr": "conf_indptr.bin", "neighbours": "conf_nbr.bin",
+                    "order": "conf_order.bin", "edges": int(len(edges)),
+                    "min_shared": SA.MIN_SHARED_LAYERS,
+                    "build_seconds": round(time.perf_counter() - t0, 1), **st}
     meta = {
         "n_events": C["n_events"],
         "source": ds[-1],
@@ -120,6 +154,7 @@ def main():
         "track": {"file": "track.bin", "cols": list(C["track_cols"]),
                   "rows": int(len(T)), "dtype": "float32",
                   "n_fake": n_fake, "sorted_by": "tp_key, fakes first"},
+        **({"conflict": conflict} if conflict else {}),
         "notes": [
             "Efficiency denominator is TPs with >= 4 layers hit: MinLayers = 4 "
             "means fewer cannot be emitted by any seed.",
@@ -135,6 +170,9 @@ def main():
             "directly comparable to the hardware chi2/dof bin tables.",
             "Seed quality columns describe each seed's STANDALONE population; "
             "post-DR ownership is a separate bitmap (found_dr).",
+            "Duplicate removal is the EXACT hit-sharing greedy (>= 3 shared "
+            "hits), run in the browser over a precomputed conflict graph. No "
+            "truth is used anywhere in it.",
         ],
     }
     if a.arch_tracks and os.path.exists(a.arch_tracks):

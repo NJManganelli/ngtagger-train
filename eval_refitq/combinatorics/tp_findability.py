@@ -57,7 +57,7 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 14
+FORMAT_VERSION = 15
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
@@ -312,7 +312,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
     targets = list(SA.IL) + list(SA.OT_BARREL)
-    counters, qual, trk = {}, {}, {}
+    counters, qual, trk, hits = {}, {}, {}, {}
 
     # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
     TP = KF.tp_truth_table(U)
@@ -401,6 +401,13 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
                                **d0_opt)
             trk[s_i] = KF.track_rows(U, Q, Tf, ff, tf, TP, s_i, sd.arity,
                                      KF.sysclass_of(sd.layers), h_score[ks])
+            # HIT LISTS, for duplicate removal the way a real system does it.
+            # DR conflicts on >= 3 SHARED HITS, which cannot be reconstructed
+            # from fitted parameters, so the cluster indices have to travel with
+            # the track. 10 int32 per track, ~500 MB over the full sample --
+            # affordable, and it keeps min_shared (and the criterion itself)
+            # changeable without re-running the seeding.
+            hits[s_i] = gk[ks].astype(np.int32)
         held[s_i] = {"o": o_keep, "sd": sd, "score": h_score}
         del o, fit0
 
@@ -432,7 +439,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         if len(rkeys):
             p = np.searchsorted(cen["key"], rkeys)
             found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-    return cen, found, found_dr, counters, qual, trk
+    return cen, found, found_dr, counters, qual, trk, hits
 
 
 def _shard_path(d, i):
@@ -508,7 +515,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, found_dr, counters, qual, trk = process_chunk(
+            cen, found, found_dr, counters, qual, trk, hits = process_chunk(
                 U, Q, seeds, ptmin, rng, QUAL_PER_CHUNK, kf_opts,
                 export_tracks)
             np.savez_compressed(
@@ -517,7 +524,12 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 counters=json.dumps({str(k): v for k, v in counters.items()}),
                 **{f"cen_{k}": v for k, v in cen.items()},
                 **{f"qual_{k}": v for k, v in qual.items()},
-                **{f"trk_{k}": v for k, v in trk.items()})
+                # n_clusters lets load() offset the chunk-local cluster indices
+                # into a global space; chunks are written independently and
+                # resumably, so the offset cannot be baked in at write time
+                n_clusters=len(U["layer"]),
+                **{f"trk_{k}": v for k, v in trk.items()},
+                **{f"hit_{k}": v for k, v in hits.items()})
             done, nev_seen = ci + 1, nev_seen + len(ev)
             meta["chunks_done"], meta["n_events"] = done, nev_seen
             json.dump(meta, open(mpath, "w"), indent=1, default=float)
@@ -536,7 +548,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
         raise SystemExit(f"{d} has no shards")
     cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "hit_it", "hit_ot"]
     parts = {c: [] for c in cols}
-    fnd, fdr, cnt, qs, fts, nread = [], [], {}, {}, {}, 0
+    fnd, fdr, cnt, qs, fts, hts, nread = [], [], {}, {}, {}, {}, 0
+    cl_tot = cl_off = 0
     for sh in shards:
         if nev is not None and nread >= nev:
             break                    # a prefix of the shards is a valid census
@@ -545,6 +558,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
             parts[c].append(z[f"cen_{c}"])
         fnd.append(z["found"])
         fdr.append(z["found_dr"])
+        cl_off = cl_tot
+        cl_tot += int(z["n_clusters"]) if "n_clusters" in z.files else 0
         nread += int(z["n_events"])
         for k, v in json.loads(str(z["counters"])).items():
             a = cnt.setdefault(int(k), {})
@@ -555,6 +570,10 @@ def load(d, nev=None, verbose=True, with_tracks=False):
                 qs.setdefault(int(f[5:]), []).append(z[f])
             elif with_tracks and f.startswith("trk_"):
                 fts.setdefault(int(f[4:]), []).append(z[f])
+            elif with_tracks and f.startswith("hit_"):
+                h = z[f]
+                hts.setdefault(int(f[4:]), []).append(
+                    np.where(h >= 0, h + cl_off, -1).astype(np.int64))
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
     C["found_dr"] = np.concatenate(fdr, axis=0)
@@ -569,6 +588,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     # tracks are NOT concatenated unless asked: the full table is ~6M rows and
     # the menu study has no use for it
     C["tracks"] = {i: np.concatenate(v) for i, v in fts.items()}
+    C["hits"] = {i: np.concatenate(v) for i, v in hts.items()}
     C["track_cols"] = list(KF.TRACK_COLS)
     C["cache_dir"] = d
     if verbose:
