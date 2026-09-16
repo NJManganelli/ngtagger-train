@@ -84,11 +84,16 @@ def find_system(U, Q, seeds, ptmin, system, min_layers, kf_opts=None):
         if not enough.any():
             continue
         o = SA.filter_tracks(o, enough)
-        gidx = KF.hits_from_seed(U, o, targets)
+        # FULL 10-layer layout even though only this system's layers can be
+        # populated. Restricting the table to the system's own targets made it
+        # 4 or 6 columns wide, which then failed to broadcast against anything
+        # downstream expecting LAYER_ORDER -- the matched refit and the track-row
+        # export both do. Unused columns stay -1 and are skipped, so the fit is
+        # identical either way.
+        gidx = KF.hits_from_seed(U, o)
         gc = o.get("_gC")
         trip = (o["_gA"], o["_gB"], gc if gc is not None else o["_gB"])
-        fit = KF.fit_tracks(U, Q, trip, gidx=gidx, layers=targets,
-                            use_angles=False, **d0_opt)
+        fit = KF.fit_tracks(U, Q, trip, gidx=gidx, use_angles=False, **d0_opt)
         keep, chi2s = KF.good_state(fit, ptmin)
         if not keep.any():
             continue

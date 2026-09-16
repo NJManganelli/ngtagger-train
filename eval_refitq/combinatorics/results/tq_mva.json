@@ -1,0 +1,86 @@
+{
+ "n_tracks": 9930800,
+ "n_events": 800,
+ "features": [
+  "inv_pt",
+  "cot",
+  "z0",
+  "d0",
+  "nhit",
+  "n_miss_interior",
+  "chi2_rphi_per_layer",
+  "chi2_rz_per_layer",
+  "chi2_scaled",
+  "n_it",
+  "n_ot",
+  "n_angle",
+  "chi2_angle_per_cl",
+  "max_angle_pull",
+  "second_angle_pull",
+  "max_pos_pull",
+  "chi2_rphi_it",
+  "chi2_rphi_ot",
+  "d0_over_sigma",
+  "rank_score"
+ ],
+ "sigma_d0_by_true_nwrong": {
+  "0": [
+   1332524,
+   49.89403998479247
+  ],
+  "1": [
+   456440,
+   76.4871141933836
+  ],
+  "2": [
+   200195,
+   243.1759658353403
+  ],
+  "3": [
+   7941641,
+   289.2776485532522
+  ]
+ },
+ "binary": {
+  "singles": {
+   "chi2_rphi_per_layer": 0.8438757395790637,
+   "chi2_scaled": 0.7160600571650266,
+   "max_angle_pull": 0.9272431295080692,
+   "chi2_angle_per_cl": 0.9335267072065662
+  },
+  "auc_all": 0.9891117902735096,
+  "auc_no_angles": 0.9889831984082713
+ },
+ "threeclass": {
+  "accuracy": 0.9551853109230158,
+  "sigma_d0_by_pred": {
+   "0": [
+    539566,
+    49.897148774471134,
+    83.3466156132892
+   ],
+   "1": [
+    74010,
+    102.05156799871475,
+    65.18308336711254
+   ],
+   "2": [
+    2862204,
+    292.2864091368392,
+    98.59751436305729
+   ]
+  }
+ },
+ "importance": {
+  "rank_score": 0.14524546711454556,
+  "second_angle_pull": 0.11776637632740723,
+  "chi2_angle_per_cl": 0.04858809305686732,
+  "n_miss_interior": 0.011192841354233448,
+  "chi2_rphi_per_layer": 0.010879548642780216,
+  "n_it": 0.0024337905822761075,
+  "max_pos_pull": 0.0023186862670945274,
+  "cot": 0.0021298511497286343,
+  "chi2_rz_per_layer": 0.0008919320469962985,
+  "n_ot": 0.0008097748674193624
+ }
+}

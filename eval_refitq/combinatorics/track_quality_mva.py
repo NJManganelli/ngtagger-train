@@ -113,12 +113,39 @@ def main():
             print(f"    {f:<24} alone   AUC {s:.4f}")
     g = GB(max_iter=250, learning_rate=0.1, random_state=1).fit(Xtr, ytr)
     auc_all = roc_auc_score(yte, g.predict_proba(Xte)[:, 1])
-    noang = [i for i, n in enumerate(nm) if "angle" not in n]
+    # rank_score MUST be dropped from the no-angle ablation: rank_score is
+    # nhit - 0.02*chi2/nhit - w_angle*chi2_angle/n_angle, so it EMBEDS the angle
+    # chi2 by construction and is not caught by a name filter. Leaving it in
+    # made the "without angles" model still see the angles, which is why the
+    # ablation read as costing 0.0001 AUC while angle features occupied the top
+    # three importances -- two results that cannot both be true.
+    ANGLE_EMBEDDING = ("angle", "rank_score")
+    noang = [i for i, n in enumerate(nm)
+             if not any(k in n for k in ANGLE_EMBEDDING)]
     g2 = GB(max_iter=250, learning_rate=0.1, random_state=1).fit(Xtr[:, noang], ytr)
     auc_noang = roc_auc_score(yte, g2.predict_proba(Xte[:, noang])[:, 1])
     print(f"    GBDT, all features       AUC {auc_all:.4f}")
     print(f"    GBDT, no angle features  AUC {auc_noang:.4f}   "
           f"(angles worth {auc_all - auc_noang:+.4f})")
+    print(f"      [no-angle set also drops rank_score, which embeds "
+          f"chi2_angle by construction]")
+    # the operationally useful split: 0 and 1 wrong hits give nearly the same
+    # d0, while >= 2 is a different regime, so a binary target is both easier
+    # and closer to what a tagger would act on than the 3-class one
+    yb2 = (nw <= 1).astype(int)
+    X2tr, X2te, y2tr, y2te, _, D2te = train_test_split(
+        X, yb2, d0res, test_size=a.test_frac, random_state=1, stratify=yb2)
+    g2b = GB(max_iter=250, learning_rate=0.1, random_state=1).fit(X2tr, y2tr)
+    p2 = g2b.predict_proba(X2te)[:, 1]
+    print(f"\n(a2) <=1 vs >=2 wrong hits   AUC {roc_auc_score(y2te, p2):.4f}")
+    for thr in (0.5, 0.8, 0.95):
+        m = p2 >= thr
+        if m.sum() < 50:
+            continue
+        print(f"     cut {thr:.2f}: keeps {100 * m.mean():5.1f}% of tracks, "
+              f"sigma(d0) = {1e4 * robust_sigma(D2te[m]):>5.0f} um, "
+              f"purity {100 * (y2te[m] == 1).mean():.0f}%")
+    out["binary_le1"] = {"auc": float(roc_auc_score(y2te, p2))}
     out["binary"] = {"singles": singles, "auc_all": auc_all,
                      "auc_no_angles": auc_noang}
 

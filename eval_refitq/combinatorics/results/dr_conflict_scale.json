@@ -1,0 +1,17 @@
+{
+ "n_events": 100,
+ "n_tracks": 1244592,
+ "incidences": 6234741,
+ "clusters": 1080880,
+ "max_tracks_per_cluster": 155,
+ "co_occurrence_pairs": 54896707,
+ "distinct_pairs": 25147617,
+ "edges": 5372482,
+ "t_build": 17.605297042056918,
+ "t_greedy": 1.5321436249651015,
+ "t_naive": 8.353147458750755,
+ "frac_with_conflict": 0.6954335235964878,
+ "mean_degree": 8.633322406057568,
+ "max_degree": 135,
+ "agreement": 1.0
+}
