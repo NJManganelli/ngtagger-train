@@ -39,6 +39,11 @@ TP_COLS = ("key", "event", "pt", "eta", "phi", "d0", "z0", "vr",
            "hit_it", "hit_ot", "n_layers")
 
 
+def _u32(b):
+    """uint64 seed bitmap -> uint32 word pairs, little-endian, lo word first."""
+    return np.ascontiguousarray(b.astype(np.uint64)).view(np.uint32)
+
+
 def build_tp_table(C):
     """Per-TP rows plus the two seed bitmaps, restricted to a usable denominator.
 
@@ -109,9 +114,9 @@ def main():
         "tp": {"file": "tp.bin", "cols": list(TP_COLS), "rows": int(len(TPA)),
                "dtype": "float32"},
         "found": {"file": "found.bin", "rows": int(len(TPA)),
-                  "words": int(found.shape[1]), "dtype": "uint64"},
+                  "words": int(found.shape[1]) * 2, "dtype": "uint32"},
         "found_dr": {"file": "found_dr.bin", "rows": int(len(TPA)),
-                     "words": int(found_dr.shape[1]), "dtype": "uint64"},
+                     "words": int(found_dr.shape[1]) * 2, "dtype": "uint32"},
         "track": {"file": "track.bin", "cols": list(C["track_cols"]),
                   "rows": int(len(T)), "dtype": "float32",
                   "n_fake": n_fake, "sorted_by": "tp_key, fakes first"},
@@ -145,11 +150,31 @@ def main():
             "OT finding, then matched refit) and carry arch_mode/track_stage. "
             "They are a different pipeline from the main track table, not a "
             "subset of it.")
+    # BITMAPS GO OUT AS uint32, NOT uint64. JavaScript has no fast 64-bit
+    # integer type -- BigUint64Array forces BigInt arithmetic, which is an order
+    # of magnitude slower than Uint32 ops and allocates per operation. The seed
+    # mask is ANDed against every TP on every control change, so this is the
+    # single hottest operation on the page. 30 seeds fit in one 32-bit word.
     TPA.astype(np.float32).tofile(os.path.join(a.outdir, "tp.bin"))
-    found.astype(np.uint64).tofile(os.path.join(a.outdir, "found.bin"))
-    found_dr.astype(np.uint64).tofile(os.path.join(a.outdir, "found_dr.bin"))
+    _u32(found).tofile(os.path.join(a.outdir, "found.bin"))
+    _u32(found_dr).tofile(os.path.join(a.outdir, "found_dr.bin"))
     T.astype(np.float32).tofile(os.path.join(a.outdir, "track.bin"))
     json.dump(meta, open(os.path.join(a.outdir, "manifest.json"), "w"), indent=1)
+    # assemble the page next to its data. plotly is VENDORED, never a CDN, so
+    # the directory works on a machine with no outbound network.
+    import shutil
+    src = Path(__file__).parent / "site_src"
+    for f in ("explorer.html", "explorer_core.js"):
+        shutil.copy(src / f, Path(a.outdir) / f)
+    plotly = next((p for p in (
+        Path(__file__).parents[2] / "eval_mva_explorer/site/plotly.min.js",
+        Path(__file__).parents[2] / "eval_spixel/site/plotly.min.js")
+        if p.exists()), None)
+    if plotly:
+        shutil.copy(plotly, Path(a.outdir) / "plotly.min.js")
+    else:
+        print("WARNING: no vendored plotly.min.js found; copy one into the "
+              "output directory or the page will not render")
     tot = sum(os.path.getsize(os.path.join(a.outdir, f))
               for f in os.listdir(a.outdir))
     print(f"{len(TPA):,} TP rows, {len(T):,} track rows ({n_fake:,} fake), "
