@@ -983,3 +983,28 @@ if __name__ == "__main__":
         _selftest()
     else:
         main()
+
+
+# ---- DEFERRED: hardware-style bit encoding -------------------------------
+# DataFormats/L1TrackTrigger/interface/TTTrack_TrackWord.h encodes an L1 track
+# in 96 bits: uniform steps for the kinematics (stepD0 = 1/256 cm over 13 bits,
+# kZ0Size = 12, stepTanL = 1/4096) and NON-UNIFORM predefined bin tables for the
+# chi2 quantities --
+#     chi2RPhiBins (4 bits) 0, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 10, 15, 20, 35, 60, 200
+#     chi2RZBins   (4 bits) 0, .5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 6, 8, 10, 20, 50
+#     bendChi2Bins (3 bits) 0, 0.75, 1, 1.5, 2.25, 3.5, 5, 20
+# -- fine where the discrimination is, coarse out to a saturating top bin.
+#
+# NOT adopted yet, deliberately: the track word is still being evolved upstream,
+# so encoding to it now would bake in a moving target. float32 stays the default
+# and the encoding belongs behind an option.
+#
+# WHAT THAT OPTION WOULD NEED, when it is built: a configurable bit count per
+# column, and for any column feeding the MVA an ALGORITHM to choose the edges
+# rather than a hand-written table. Quantile edges are the wrong default for a
+# learned feature -- they maximise the encoded variable's own entropy, not its
+# information about the label. Optimal k-bin discretisation against a binary
+# target is exactly solvable by dynamic programming in O(n*k) after sorting,
+# maximising mutual information (equivalently minimising the AUC lost to
+# quantisation), and that is what should be used for the chi2 and pull columns.
+# The physics-motivated tables above are a reasonable prior to seed it with.

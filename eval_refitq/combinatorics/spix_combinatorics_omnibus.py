@@ -2782,7 +2782,8 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
                      out.get("_menu_cache_mode", "auto"),
                      masks=SEED_MENU_MASKS,
                      budget_gb=float(out.get("_menu_budget_gb", 0.4)),
-                     rss_gb=float(out.get("_menu_rss_gb", 8.0)))
+                     rss_gb=float(out.get("_menu_rss_gb", 8.0)),
+                     export_tracks=int(out.get("_menu_export_tracks", 0)))
     except Exception as exc:
         for a in ax_row:
             a.axis("off")
@@ -3280,6 +3281,13 @@ def main():
                                          "cache"))
     ap.add_argument("--menu-cache-mode", default="auto",
                     choices=["auto", "rebuild", "off", "require"])
+    ap.add_argument("--menu-export-tracks", type=int, default=0, nargs="?",
+                    const=-1,
+                    help="write per-track rows into the census shards for the "
+                         "interactive page and the quality MVA; bare flag "
+                         "exports every track. This is part of the CACHE KEY, "
+                         "so a census built without it cannot be extended with "
+                         "it -- set it on the run that is meant to serve both.")
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -3296,7 +3304,8 @@ def main():
            "_menu_inputs": args.menu_inputs, "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
            "_menu_budget_gb": args.menu_budget_gb,
            "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
-           "_menu_cache_mode": args.menu_cache_mode}
+           "_menu_cache_mode": args.menu_cache_mode,
+           "_menu_export_tracks": args.menu_export_tracks}
 
     gp = write_glossary(args.outdir)
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
