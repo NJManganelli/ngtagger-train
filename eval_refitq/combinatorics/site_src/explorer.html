@@ -3,117 +3,432 @@
 <title>SmartPixels seed explorer</title>
 <style>
 body { font-family: system-ui, sans-serif; margin: 0; display: flex; height: 100vh; }
-#sidebar { width: 480px; min-width: 480px; overflow-y: auto; padding: 12px;
+#sidebar { width: 430px; min-width: 430px; overflow-y: auto; padding: 12px;
            background: #f5f6f8; border-right: 1px solid #ccc; font-size: 12px; }
-#main { flex: 1; display: flex; flex-direction: column; padding: 8px; }
-#plot { flex: 1; }
-#status { font-size: 12px; color: #52514e; padding: 4px 8px; min-height: 18px; }
-/* A PERMANENT, ALWAYS-VISIBLE progress area. Not a spinner that appears and
-   vanishes: the user needs to know where to look before anything is slow, and
-   a 2.4 GB fetch plus a multi-second recomputation are both slow enough to look
-   like a hung page if nothing is advertised. */
-#progwrap { padding: 4px 8px 6px; border-bottom: 1px solid #e3e6ea; }
-#progbar { height: 10px; background: #e3e6ea; border-radius: 5px; overflow: hidden; }
+#main { flex: 1; display: flex; flex-direction: column; padding: 6px; min-width: 0; }
+#grid { flex: 1; display: grid; gap: 4px; min-height: 0; }
+.cell { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.cellsel { font-size: 11px; padding: 1px 2px; }
+.cellplot { flex: 1; min-height: 0; }
+#status { font-size: 12px; color: #52514e; padding: 3px 6px; }
+#loadbar { padding: 4px 6px; border-bottom: 1px solid #e3e6ea; font-size: 11px; }
+#loadbar button { font-size: 12px; padding: 3px 14px; margin-right: 8px; }
+#loadinfo { color: #666; }
+#progwrap { padding: 4px 6px 6px; border-bottom: 1px solid #e3e6ea; }
+#progbar { height: 9px; background: #e3e6ea; border-radius: 5px; overflow: hidden; }
 #progfill { height: 100%; width: 0%; background: #0b5fa5; transition: width .12s linear; }
 #progfill.busy { background: #b4590a; }
 #progtext { font-size: 11px; color: #52514e; margin-top: 3px;
             font-variant-numeric: tabular-nums; }
-fieldset { border: 1px solid #ccc; margin: 0 0 10px; padding: 6px 8px; }
+fieldset { border: 1px solid #ccc; margin: 0 0 9px; padding: 5px 8px; }
 legend { font-weight: 600; font-size: 11px; color: #666; }
 label { display: inline-block; margin: 1px 6px 1px 0; }
 select, input { font-size: 11px; }
-input[type=number] { width: 62px; }
-.hint { color: #666; font-size: 11px; margin: 4px 0 0; line-height: 1.35; }
+input[type=number] { width: 58px; }
+.hint { color: #666; font-size: 11px; margin: 3px 0 0; line-height: 1.35; }
 .seedgrp { margin: 3px 0; }
 .seedgrp b { font-size: 10px; color: #666; text-transform: uppercase; }
 .err { color: #b00; }
-button.big { font-size: 12px; padding: 4px 10px; }
-#notes { font-size: 10.5px; color: #666; line-height: 1.4; }
-#notes li { margin-bottom: 3px; }
+button { font-size: 11px; padding: 2px 8px; }
+table.kv { font-size: 11px; width: 100%; border-collapse: collapse; }
+table.kv th { text-align: right; font-weight: 600; color: #666; }
+table.kv td { font-variant-numeric: tabular-nums; }
+.soft { color: #b4590a; }
+input.slide { width: 150px; vertical-align: middle; }
 </style>
 <div id="sidebar">
-  <div style="font-weight:600;margin-bottom:6px">SmartPixels seed explorer</div>
+  <fieldset><legend>scenario</legend>
+    <label><input type="radio" name="scen" value="joint" checked> joint finding + fitting</label>
+    <label><input type="radio" name="scen" value="refit"> refit</label>
+    <label><input type="radio" name="scen" value="baseline"> Phase-2 baseline</label>
+    <label><input type="radio" name="scen" value="baseline_emu"> Phase-2 baseline (re-emulated)</label>
+    <p class="hint" id="scenhint"></p>
+  </fieldset>
   <fieldset><legend>build (activeSP)</legend>
     <select id="build"></select>
-    <p class="hint">A = instrumented. An uninstrumented IT layer emits nothing
-      at L1, so it cannot appear in a seed &mdash; the seed list below is gated
-      on this, not merely filtered.</p>
+    <p class="hint">A = instrumented. An uninstrumented IT layer emits nothing,
+      so its seeds are absent rather than unchecked.</p>
   </fieldset>
   <fieldset><legend>seeds</legend>
     <div id="seeds"></div>
-    <button class="big" id="all">all</button>
-    <button class="big" id="none">none</button>
-    <p class="hint">Efficiency over a menu is a set <i>union</i>: a
-      TrackingParticle several seeds find counts once.</p>
+    <button id="all">all</button> <button id="none">none</button>
   </fieldset>
-  <fieldset><legend>what to show</legend>
-    <select id="metric">
-      <option value="eff">efficiency (+ per-bin N)</option>
-      <option value="sd0">sigma(d0), um</option>
-      <option value="spt">sigma(1/pT)</option>
-      <option value="fakefrac">fake fraction of tracks</option>
-      <option value="fakeev">fakes per event</option>
-      <option value="nwrong">mean wrong hits</option>
-      <option value="count">tracks per bin</option>
-    </select>
+  <fieldset><legend>quality</legend>
+    <div>A <select id="mvaA"></select> &ge;
+      <input type="number" id="cutA" value="0" min="0" max="1" step="0.05">
+      <input type="range" id="slideA" value="0" min="0" max="1" step="0.01"
+             class="slide"></div>
+    <div>B <select id="mvaB"></select> &ge;
+      <input type="number" id="cutB" value="0" min="0" max="1" step="0.05">
+      <input type="range" id="slideB" value="0" min="0" max="1" step="0.01"
+             class="slide"></div>
     <label><input type="checkbox" id="dr" checked> duplicate removal</label>
-    <br>MVA score &ge; <input type="number" id="mvacut" value="0" min="0"
-        max="1" step="0.05"> <span id="mvainfo" class="hint"></span>
-    <br>fake means <select id="fakedef">
-      <option value="unusable">&ge;2 wrong hits (unusable d0)</option>
-      <option value="dirty">&ge;1 wrong hit</option>
-      <option value="noise">seed cluster is noise</option>
-    </select>
-    <p class="hint" id="metrichint"></p>
+    <div id="mvainfo" class="hint"></div>
+    <p class="hint" id="mvadefA"></p>
+    <p class="hint" id="mvadefB"></p>
+    <p class="hint" id="mvahint"></p>
+  </fieldset>
+  <fieldset><legend>panels</legend>
+    <select id="npanel">
+      <option value="1">1</option><option value="2">2</option>
+      <option value="4" selected>4</option>
+    </select> shown simultaneously; each panel picks its own quantity and all
+    share the seeds, cuts and quality settings above.
+    <table class="kv">
+      <tr><th>efficiency</th><td>found / findable TPs, truth binning</td></tr>
+      <tr><th>sigma(d0)</th><td>half the 15.9-84.1 percentile span of
+        (fitted d0 &minus; true d0 of the majority owner)</td></tr>
+      <tr><th>sigma(1/pT)</th><td>same, on |fitted curvature| &minus; 1/pT
+        true</td></tr>
+      <tr><th>sigma(z0), sigma(phi0), sigma(cot)</th><td>same, for the other
+        three fitted parameters</td></tr>
+      <tr><th>fake fraction</th><td>fakes / tracks shown, in a bin</td></tr>
+      <tr><th>fakes per event</th><td>fakes in a bin / events</td></tr>
+      <tr><th>mean wrong hits</th><td>per track shown, counting hits whose
+        cluster belongs to another particle</td></tr>
+      <tr><th>tracks per bin</th><td>count after the selection above</td></tr>
+    </table>
+    <p class="hint">To see what a score buys, put it on an axis and pick a
+      resolution as the metric: that is sigma(parameter) against score. For the
+      joint distribution instead, put the score on one axis and a residual on
+      the other with "tracks per bin".</p>
+    <p class="hint">"Tracks shown" are the candidates surviving duplicate
+      removal, the cuts and the score threshold. Every track panel bins fitted
+      quantities; the efficiency panel bins truth.</p>
+    <p class="hint">Resolutions are residuals against the TrackingParticle, not
+      the fit's own covariance, which is measured 1.6-3.4x optimistic even on
+      clean tracks. Truth is referenced to the particle owning the most hits on
+      the track, so the residual and the wrong-hit count describe the same
+      particle.</p>
   </fieldset>
   <fieldset><legend>axes</legend>
-    x <select id="xcol"></select> bins <input type="number" id="xbins" value="24" min="2" max="80">
-    <br>y <select id="ycol"></select> bins <input type="number" id="ybins" value="18" min="2" max="80">
+    x <select id="xcol"></select> bins <input type="number" id="xbins" value="20" min="2" max="60">
+    <br>y <select id="ycol"></select> bins <input type="number" id="ybins" value="16" min="2" max="60">
   </fieldset>
   <fieldset><legend>cuts</legend><div id="cuts"></div>
-    <p class="hint">Applied to the TP table for efficiency and to the track
-      table for everything else; the same quantity, different objects.</p>
+    <p class="hint">Applied to TrackingParticles for efficiency, to tracks for
+      everything else.</p>
   </fieldset>
-  <fieldset><legend>efficiency denominator</legend>
-    minimum layers hit <input type="number" id="minlay" value="4" min="1" max="16">
-    <p class="hint">A TrackingParticle with fewer layers than the track finder's
-      MinLayers cannot be emitted by any seed, so including it puts an
-      unreachable population in the denominator. 4 is the OT's value.</p>
+  <fieldset><legend>efficiency</legend>
+    particles <select id="tpsplit">
+      <option value="all">all</option>
+      <option value="prompt">prompt only</option>
+      <option value="displaced">displaced only</option>
+    </select>
+    <br>minimum layers <input type="number" id="minlay" value="4" min="1" max="16">
+    <br>a track delivers a particle when it holds
+    <select id="owndef">
+      <option value="majority">more than half its hits (min 3)</option>
+      <option value="min3">at least 3 of its hits</option>
+      <option value="clean">every hit on the track</option>
+    </select>
     <div id="effdef"></div>
+    <p class="hint"><b>Seed-truthful</b>: the seed's own clusters all belong to
+      the particle. It judges a seed &mdash; could this pair of layers start a
+      search that reaches this particle &mdash; is fixed when the census is
+      built, and does not move when you change the cuts or the score
+      thresholds.<br>
+      <b>Delivered</b>: some surviving track is owned by the particle under the
+      rule above. It judges the system &mdash; does a usable track come out
+      &mdash; and responds to the seeds, duplicate removal, cuts and scores.<br>
+      They differ because the search adds hits after seeding and sometimes adds
+      the wrong ones, so a track can start on one particle and end up made of
+      another's hits. Seed-truthful is the more generous number.</p>
   </fieldset>
-  <fieldset><legend>efficiency by pT band</legend>
+  <fieldset><legend>by impact parameter</legend>
+    <div id="ipbands"></div>
+    <p class="hint">Split on the particle's true d0, so this is a statement
+      about which particles exist, not a per-track inference. Displaced
+      efficiency is the number that matters for flavour tagging and is measured
+      on a population that is a few percent of the whole.</p>
+  </fieldset>
+  <fieldset><legend>by pT band</legend>
     <div id="bands"></div>
     <p class="hint" id="softhint"></p>
   </fieldset>
-  <fieldset><legend>sigma(d0) by wrong-hit count</legend>
-    <div id="sbw"></div>
-    <p class="hint">Measured from the current selection, not asserted. This is
-      why the MVA target is "&le; 1 wrong hit": 0 and 1 sit in one regime and
-      &ge; 2 in another.</p>
+  <fieldset><legend>sigma(d0) by wrong hits</legend><div id="sbw"></div></fieldset>
+  <fieldset><legend>fake definition</legend>
+    <select id="fakedef">
+      <option value="unusable">&ge;2 wrong hits</option>
+      <option value="dirty">&ge;1 wrong hit</option>
+      <option value="noise">no hit belongs to any TP</option>
+    </select>
+    <p class="hint">Affects the fake panels only. The wrong-hit table above
+      shows what each definition costs in d0 resolution for this selection.</p>
+    <div id="fakerates" class="hint"></div>
   </fieldset>
-  <fieldset><legend>provenance</legend><ul id="notes"></ul></fieldset>
+  <fieldset><legend>dataset</legend><div id="prov"></div></fieldset>
 </div>
 <div id="main">
-  <div id="progwrap">
-    <div id="progbar"><div id="progfill"></div></div>
-    <div id="progtext">idle</div>
+  <div id="progwrap"><div id="progbar"><div id="progfill"></div></div>
+    <div id="progtext">idle</div></div>
+  <div id="loadbar">
+    <button id="loadbtn" disabled>Load data</button>
+    <span id="loadinfo">If this button stays disabled and the line below still
+      says "the page script has not run", then no JavaScript executed at all:
+      the browser is serving a cached document or the script failed to
+      parse.</span>
   </div>
-  <div id="status">starting&hellip;</div><div id="plot"></div></div>
+  <div id="status">the page script has not run</div>
+  <div id="grid"></div>
+</div>
 <script src="plotly.min.js"></script>
 <script src="explorer_core.js"></script>
 <script>
 const CORE = (typeof module !== 'undefined' && module.exports) ? module.exports : window;
 const S = {};
-// 1-2 GeV is broken out deliberately: soft tracks are where SmartPixels could
-// add something the OT cannot, and they matter for jet resolution and tagging.
 const PT_BANDS = [[1, 2], [2, 3], [3, 5], [5, 10], [10, 1e9]];
-const AXLAB = { pt: 'pT  [GeV]', eta: 'eta', phi: 'phi  [rad]',
-                d0: 'd0  [cm]', z0: 'z0  [cm]', n_layers: 'layers on track' };
 const BAND_NAMES = ['1-2', '2-3', '3-5', '5-10', '10+'];
-function status(msg, bad) {
-  const e = document.getElementById('status');
-  e.innerHTML = msg; e.className = bad ? 'err' : '';
+// Every axis carries a unit. Dimensionless quantities say so rather than
+// leaving the reader to assume: eta, cot(theta) and the scores are genuinely
+// unitless, and a bare "1e-3" would read as an angle.
+// A METRICS entry carries its unit in a trailing bracket. A heatmap states the
+// quantity in its title and the unit on its colour bar, so these split the two
+// apart -- setting the colour bar to the whole label repeated the title
+// verbatim on every heatmap panel.
+function labName(s) { return String(s).replace(/\s*\[[^\]]*\]\s*$/, ''); }
+function labUnit(s) {
+  const m = String(s).match(/\[([^\]]*)\]\s*$/);
+  return m ? m[1] : 'unitless';
 }
+const AXLAB = {
+  pt: 'pT [GeV]', eta: 'eta [unitless]', phi: 'phi [rad]',
+  d0: 'd0 [cm]', z0: 'z0 [cm]',
+  n_layers: 'layers on track [count]', nhit: 'hits on track [count]',
+  n_own: 'hits from the owner [count]',
+  d_d0: 'd0 residual [cm]', d_z0: 'z0 residual [cm]',
+  d_kappa: '1/pT residual [1/GeV]', d_phi0: 'phi0 residual [rad]',
+  d_cot: 'cot(theta) residual [unitless]',
+  d_pt_rel: 'pT residual [%]', d_eta: 'eta residual [unitless]',
+  n_it_right: 'correct IT hits [count]', n_it_wrong: 'wrong IT hits [count]',
+  n_ot_right: 'correct OT hits [count]', n_ot_wrong: 'wrong OT hits [count]',
+  n_ot_combinatoric: 'combinatoric OT stubs [count]',
+  n_ot_unknown: 'noise OT stubs [count]',
+  n_wrong: 'wrong hits on track [count]',
+  sig_kf_d0: "fit's claimed sigma(d0) [cm]",
+  tp_pt: 'true pT [GeV]', tp_eta: 'true eta [unitless]',
+  tp_d0: 'true d0 [cm]', tp_z0: 'true z0 [cm]',
+  trkMVA1: 'track-quality score [unitless, 0-1]',
+  genuine: 'CMS genuine flag [0 or 1]',
+  combinatoric: 'CMS combinatoric flag [0 or 1]',
+  unknown: 'CMS unknown flag [0 or 1]',
+  // cluster-angle table
+  res_a: 'alpha residual [rad/cm]', res_b: 'beta residual [unitless, d cot]',
+  meas_a: 'cluster alpha [rad/cm]', meas_b: 'cluster cot(theta) [unitless]',
+  ang_a_rad: 'alpha residual [rad]',
+  layer: 'IT layer [index]', hit_wrong: 'cluster wrongly assigned [0 or 1]',
+};
+// Composition axes exist only on the track table: they are properties of a
+// reconstructed track, so the efficiency panel (which bins TrackingParticles)
+// cannot use them and says so rather than failing.
+const TRACK_ONLY = { nhit: [0, 10], n_own: [0, 10], n_it_right: [0, 4],
+                     n_it_wrong: [0, 4], n_ot_right: [0, 6], n_ot_wrong: [0, 6],
+                     sig_kf_d0: [0, 0.02],
+                     d_d0: [-0.05, 0.05], d_z0: [-1, 1], d_kappa: [-0.05, 0.05],
+                     d_phi0: [-0.05, 0.05], d_cot: [-0.05, 0.05] };
+// Displaced means a TRUE impact parameter above this. The same number splits
+// the tagger variants, where it is applied to the FITTED d0 instead so the
+// variant is decidable online.
+const D0_SPLIT_CM = 0.02;
+// The whole score family. Members absent from an export are offered as disabled
+// "pending" entries rather than hidden, so it is clear which taggers exist,
+// which are still training, and that a missing one is not a silent zero.
+// Eight, down from fifteen. rz ranks z0 and cot(theta) together and rphi ranks
+// 1/pT and phi0 together, because in each pair one score reached the other's
+// target to within 0.01 AUC. d0 stays separate: it is the one axis that does
+// not move with the others. Anything in this list that the export did not
+// write is greyed out by S.avail, so an older dataset still loads.
+const SCORE_COLS = ['mva_tq', 'mva_clean',
+  'mva_d0_prompt', 'mva_d0_displaced',
+  'mva_rz_prompt', 'mva_rz_displaced',
+  'mva_rphi_prompt', 'mva_rphi_displaced'];
+// THE SCORE TABLE FOLLOWS THE SCENARIO. Our scenarios read score.bin; each
+// baseline reads its OWN table (manifest <baseline>.score): the collection's
+// own discriminant for CMSSW, a re-emulated one for the emulation. A score is
+// only ever read against the rows of the table it was computed for -- the old
+// page handed our score table to baseline rows in several panels.
+function activeSC() {
+  const sc = scenario();
+  return BASELINES[sc] ? ((S.SCbase || {})[sc] || null) : S.SC;
+}
+function activeScoreInfo(name) {
+  const sc = scenario(), b = BASELINES[sc] ? S.m[sc] : null;
+  return ((b && b.score && b.score.mva) || S.m.mva || {})[name];
+}
+// score option values across every table, so a rebuild can strip them all
+function allScoreNames() {
+  const out = new Set(SCORE_COLS.concat((S.m.score || {}).cols || []));
+  for (const k of Object.keys(BASELINES))
+    ((S.m[k] || {}).score || {}).cols?.forEach(c => out.add(c));
+  return out;
+}
+function fillScoreMenus() {
+  const SCa = activeSC(), have = SCa ? SCa.cols : [];
+  S.avail = have.slice();
+  const fam = BASELINES[scenario()]
+    ? have.slice()
+    : SCORE_COLS.concat(have.filter(k => !SCORE_COLS.includes(k)));
+  const every = allScoreNames();
+  ['xcol', 'ycol'].forEach(id => {
+    const sel = document.getElementById(id), keep = sel.value;
+    for (let j = sel.options.length - 1; j >= 0; j--)
+      if (every.has(sel.options[j].value)) sel.remove(j);
+    fam.forEach(k => addOpt(sel, k, 'score: ' + k.replace('mva_', ''),
+                            have.includes(k)));
+    if ([...sel.options].some(o => o.value === keep && !o.disabled)) sel.value = keep;
+    else sel.value = id === 'xcol' ? 'eta' : 'pt';
+  });
+  ['mvaA', 'mvaB'].forEach((id, slot) => {
+    const mv = document.getElementById(id);
+    while (mv.options.length) mv.remove(0);
+    mv.add(new Option('off', ''));
+    fam.forEach(k => addOpt(mv, k, k.replace('mva_', ''), have.includes(k)));
+    mv.value = defaultScore(slot);
+  });
+}
+function addOpt(sel, name, label, have) {
+  const o = new Option(have ? label : label + '  (pending)', name);
+  o.disabled = !have;
+  sel.add(o);
+}
+const CUTS = [['pt', 0, 25], ['eta', -1.6, 1.6], ['phi', -3.2, 3.2],
+              ['d0', -0.05, 0.05], ['z0', -20, 20], ['n_layers', 3, 16]];
+const METRICS = {
+  eff_deliv: 'efficiency, delivered [fraction]',
+  eff_seed: 'efficiency, seed-truthful [fraction]',
+  sd0: 'sigma(d0) [um]', sz0: 'sigma(z0) [um]', spt: 'sigma(1/pT) [1/GeV]',
+  sphi0: 'sigma(phi0) [mrad]',
+  scot: 'sigma(cot theta) [1e-3, unitless]',
+  fakefrac: 'fake fraction [fraction of tracks]',
+  fakeev: 'fakes per event [tracks/event]',
+  nwrong: 'mean wrong hits [hits]', count: 'tracks per bin [count]',
+  sd0_wrong: 'sigma(d0) by wrong hits',
+  dist_d0: 'd0 residual, by wrong hits',
+  dist_z0: 'z0 residual, by wrong hits',
+  dist_pt: 'pT residual, by wrong hits',
+  dist_phi: 'phi0 residual, by wrong hits',
+  dist_eta: 'eta residual, by wrong hits',
+  dist_score: 'score, by wrong hits',
+  angle_a: 'cluster alpha residual vs track angle',
+  angle_b: 'cluster beta residual vs track cot(theta)',
+  dist_alpha: 'cluster alpha residual (slope), by cluster assignment',
+  dist_alpha_mrad: 'cluster alpha residual (angle), by cluster assignment',
+  dist_alpha_mrad_layer: 'cluster alpha residual (angle), by layer',
+  dist_beta: 'cluster beta residual, by cluster assignment',
+  dist_alpha_layer: 'cluster alpha residual (slope), by layer',
+  dist_beta_layer: 'cluster beta residual, by layer',
+  angle_a_layer: 'cluster alpha measured (slope), by layer',
+  angle_b_layer: 'cluster beta measured, by layer',
+  funnel: 'loss funnel, selected seeds',
+  lossd0: 'efficiency vs true |d0|, per seed',
+  map_it: 'seed map, inner tracker',
+  map_ot: 'seed map, outer tracker',
+  map_all: 'seed map, IT + OL1-OL3'
+};
+// Layer radii in cm. The barrel values are the tracker's own irmean_/rmean
+// constants (Settings.h:513, r = irmean * 120 / 4096) for the OT and the D121
+// TBPX radii for the IT; a census carries measured r_median per layer, and the
+// map prefers those when the export provides them.
+const GEOM_R = { 1: 2.85, 2: 5.95, 3: 10.33, 4: 14.50,
+                 11: 24.93, 12: 37.18, 13: 52.27,
+                 14: 68.76, 15: 86.02, 16: 108.31 };
+const GEOM_ZHALF = { it: 20.0, ot: 120.0 };
+const MAP_VIEWS = {
+  it:  { layers: [1, 2, 3, 4], zmax: 24, title: 'Inner tracker' },
+  ot:  { layers: [11, 12, 13, 14, 15, 16], zmax: 125, title: 'Outer tracker' },
+  all: { layers: [1, 2, 3, 4, 11, 12, 13], zmax: 125,
+         title: 'Inner tracker + OL1-OL3' }
+};
+// The seeds the real chain forms, for the baseline scenarios, where our seed
+// menu does not apply. seedlayers_ (Settings.h:679-690), barrel entries only:
+// the disk seeds have no place on an r-z map of the barrel.
+const REAL_OT_SEEDS = [
+  { tag: 'L1L2', layers: [11, 12] }, { tag: 'L2L3', layers: [12, 13] },
+  { tag: 'L3L4', layers: [13, 14] }, { tag: 'L5L6', layers: [15, 16] },
+  { tag: 'L2L3L4', layers: [13, 14, 12] },
+  { tag: 'L4L5L6', layers: [15, 16, 14] }
+];
+const SYS_COLOUR = ['#2d7dd2', '#e8710a', '#2e9e4f'];   // IT, OT, mixed
+// one entry per distribution panel: value, display scale, unit, axis range,
+// and how many decimals the width readout needs
+const DIST_SPEC = {
+  dist_d0:    { v: 'd_d0',     k: 1e4, u: 'um',   lim: [-0.05, 0.05], dp: 0 },
+  dist_z0:    { v: 'd_z0',     k: 1e4, u: 'um',   lim: [-0.5, 0.5],   dp: 0 },
+  dist_pt:    { v: 'd_pt_rel', k: 1,   u: '%',    lim: [-60, 60],     dp: 1 },
+  dist_phi:   { v: 'd_phi0',   k: 1e3, u: 'mrad', lim: [-0.05, 0.05], dp: 1 },
+  dist_eta:   { v: 'd_eta',    k: 1,   u: 'unitless', lim: [-0.05, 0.05],
+                dp: 4 },
+  dist_score: { v: null,       k: 1,   u: 'unitless, 0-1', lim: [0, 1],
+                dp: 3 },
+  // THE ANGLES LIVE IN THEIR OWN TABLE, one row per IT cluster rather than per
+  // track, so these read from it instead of the track table -- and they split
+  // on hit_wrong, whether THIS cluster belongs to the track it was attached to.
+  // The track's n_wrong would answer the wrong question for a per-cluster
+  // quantity: a correctly assigned cluster on a track with three wrong hits
+  // still has a good angle residual, and burying it in a ">=3 wrong" class
+  // hides exactly the separation these panels exist to show.
+  //
+  // Limits are measured, not assumed: |res_a| <= 0.025 holds 99.0% of clusters,
+  // while res_b is far more heavy-tailed -- a 0.071 core with 23% beyond 1.0 --
+  // because a wrong cluster's cot(theta) residual is unbounded. The off-scale
+  // fraction is printed per class rather than piled into the edge bins, and the
+  // x-bins control sharpens the core when you need it.
+  dist_alpha: { v: 'res_a', k: 1e3, u: '1e-3 rad/cm', lim: [-0.025, 0.025],
+                dp: 2, src: 'angle', split: 'hit_wrong' },
+  // the same residual as an ANGLE; this is the one to compare between layers
+  dist_alpha_mrad: { v: 'ang_a_rad', k: 1e3, u: 'mrad', lim: [-0.08, 0.08],
+                     dp: 1, src: 'angle', split: 'hit_wrong' },
+  dist_alpha_mrad_layer: { v: 'ang_a_rad', k: 1e3, u: 'mrad',
+                           lim: [-0.08, 0.08], dp: 1, src: 'angle',
+                           split: 'layer' },
+  dist_beta:  { v: 'res_b', k: 1, u: 'unitless, d cot', lim: [-1.0, 1.0],
+                dp: 3, src: 'angle', split: 'hit_wrong' },
+  // Same quantities split per layer instead, and the measured angles
+  // themselves. Ranges are measured: meas_a spans +-0.026 at IL1 and +-0.008
+  // at IL4, meas_b +-5.1 and +-1.5, so a single range has to hold the widest.
+  dist_alpha_layer: { v: 'res_a', k: 1e3, u: '1e-3 rad/cm',
+                      lim: [-0.025, 0.025], dp: 2, src: 'angle',
+                      split: 'layer' },
+  dist_beta_layer:  { v: 'res_b', k: 1, u: 'unitless, d cot',
+                      lim: [-1.0, 1.0], dp: 3, src: 'angle',
+                      split: 'layer' },
+  angle_a_layer:    { v: 'meas_a', k: 1e3, u: '1e-3 rad/cm',
+                      lim: [-0.030, 0.030], dp: 2, src: 'angle',
+                      split: 'layer' },
+  angle_b_layer:    { v: 'meas_b', k: 1, u: 'unitless', lim: [-5.0, 5.0],
+                      dp: 3, src: 'angle', split: 'layer' },
+};
+// |true d0| bands for the loss map, in cm
+const D0_BANDS = [[0, 0.001], [0.001, 0.005], [0.005, 0.02],
+                  [0.02, 0.1], [0.1, 1e9]];
+const D0_BAND_NAMES = ['<10 um', '10-50', '50-200', '200um-1mm', '>1mm'];
+// metric -> [residual column, statistic, scale]. All five fitted parameters, so
+// a score can be plotted against the resolution of any of them.
+const STAT_SPEC = {
+  sd0: ['d_d0', 'sigma', 1e4], sz0: ['d_z0', 'sigma', 1e4],
+  spt: ['d_kappa', 'sigma', 1], sphi0: ['d_phi0', 'sigma', 1e3],
+  scot: ['d_cot', 'sigma', 1e3], nwrong: ['n_wrong', 'mean', 1],
+  count: [null, 'count', 1],
+};
+const DEFAULT_PANELS = ['eff_deliv', 'sd0_wrong', 'dist_d0', 'dist_score'];
+const SCEN = {
+  joint: 'All seeds, including those spanning IT and OT. Seeding, finding and '
+       + 'fitting act on both systems together.',
+  refit: 'IT-only and OT-only seeds. Each system finds independently and the '
+       + 'outputs are combined afterwards, so seeds spanning both are excluded.',
+  baseline: 'The L1TTrack collection CMSSW produced: what the system delivers '
+      + 'today, with per-stub truth joined from L1TOTStub. Seed selection, '
+      + 'duplicate removal and our MVA cuts do not apply -- these are finished '
+      + 'tracks. Efficiency is not comparable with the seed-menu scenarios, '
+      + 'because residuals here are referenced to each track\'s own matched '
+      + 'particle; compare resolutions and contamination.',
+  baseline_emu: 'Our emulation in the same configuration as the baseline: OT '
+      + 'seeds, OT targets, no inner tracker. Its job is to show whether the '
+      + 'emulator reproduces the system given the system\'s inputs -- if it '
+      + 'does not land on the baseline, a gap between the joint scenario and '
+      + 'the baseline cannot be attributed to the inner tracker.',
+};
+
 function prog(frac, text, busy) {
   const f = document.getElementById('progfill');
   f.style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
@@ -121,287 +436,1002 @@ function prog(frac, text, busy) {
   document.getElementById('progtext').textContent = text;
 }
 const MB = (b) => (b / 1048576).toFixed(0) + ' MB';
-// Streamed so bytes can be counted as they arrive. await response.arrayBuffer()
-// gives no visibility at all, which on a 435 MB conflict graph means minutes of
-// apparently nothing happening.
+const yieldFrame = () => new Promise(r => setTimeout(r, 0));
+
 async function bin(url, Type, label, done, total) {
-  const r = await fetch(url);
+  const r = await grab(url);
   if (!r.ok) throw new Error(url + ': ' + r.status);
   const len = +(r.headers.get('content-length') || 0);
-  if (!r.body || !len) {
-    const b = await r.arrayBuffer();
-    return new Type(b);
-  }
-  // PRE-ALLOCATE from Content-Length. Collecting chunks in an array and then
-  // copying into one buffer needs BOTH alive at once -- 3.5 GB of peak for the
-  // 1.77 GB track table, which is enough to kill the tab on a machine that can
-  // comfortably hold the final 2.4 GB. Since the length is known up front there
-  // is no reason to ever hold two copies.
+  if (!r.body || !len) return new Type(await r.arrayBuffer());
   const buf = new Uint8Array(len);
   let got = 0;
   const reader = r.body.getReader();
   for (;;) {
     const { done: fin, value } = await reader.read();
     if (fin) break;
-    buf.set(value, got);
-    got += value.length;
-    prog((done + got) / total, `loading ${label} — ${MB(done + got)} of `
-      + `${MB(total)} (${(100 * (done + got) / total).toFixed(0)}%)`);
+    buf.set(value, got); got += value.length;
+    prog((done + got) / total, `loading ${label} — ${MB(done + got)} of ${MB(total)}`);
   }
   if (got !== len) throw new Error(`${url}: got ${got} of ${len} bytes`);
   return new Type(buf.buffer);
 }
-// yield to the event loop so the browser can actually paint the bar
-const yieldFrame = () => new Promise(r => setTimeout(r, 0));
 async function runJob(job, label, budget) {
   while (!job.done) {
     job.step(budget);
-    prog(job.at / job.total, `${label} — ${(100 * job.at / job.total).toFixed(0)}%`
-      + ` (${job.result.length.toLocaleString()} kept)`, true);
+    prog(job.at / job.total, `${label} — ${(100 * job.at / job.total).toFixed(0)}%`, true);
     await yieldFrame();
   }
   return job.result;
 }
-// TP-side cut ranges; tracks reuse the fitted columns of the same name
-// d0 defaulted to +-1 cm, which at 24 bins is 833 um per bin against a ~50 um
-// resolution -- every prompt track landed in one column. +-0.05 cm still covers
-// the displaced tail that matters (95% of pT>2 TPs sit under 100 um).
-const CUTS = [['pt', 0, 25], ['eta', -1.6, 1.6], ['phi', -3.2, 3.2],
-              ['d0', -0.05, 0.05], ['z0', -20, 20], ['n_layers', 3, 16]];
-const HINTS = {
-  eff: 'Fraction of FINDABLE TrackingParticles reached by at least one enabled seed. Findable = >= minimum layers hit, set opposite. This is a per-PARTICLE fraction, never a per-candidate one.',
-  sd0: 'Robust 68% half-width of fitted minus true d0, on the tracks surviving the current selection.',
-  spt: 'Robust half-width of |kappa| - 1/pT_true. Truth carries no charge, so |kappa| is the comparable quantity.',
-  fakefrac: 'ONLY the two fake metrics respond to the fake-definition selector. Denominator is TRACKS surviving the selection, not particles, and binned in FITTED coordinates. NOTE the fake definition selector: "seed cluster is noise" is only 4.1% of tracks because almost every PU200 cluster belongs to some particle, and quoting that as the fake rate understates the problem ~20x. ">=2 wrong hits" (80% of tracks) is the line where sigma(d0) goes from 50-76 um to 243-289 um.',
-  fakeev: 'Fake tracks per EVENT per bin -- a rate, not a ratio. This is the number a bandwidth budget cares about; the fraction above is the purity one.',
-  nwrong: 'Mean number of hits on the track that belong to a DIFFERENT particle than its seed, averaged over the tracks surviving the current selection (post-DR if enabled). It is per emitted TRACK, not per TP and not per candidate, so 2-3 means a typical surviving track in that bin carries 2-3 foreign hits.',
-  count: 'Raw occupancy, to see where the statistics actually are.'
-};
-async function boot() {
+
+// Every fetch is no-store and time-limited. The page is reloaded constantly
+// while the exporter rewrites these files, so a browser-cached manifest beside
+// a fresh binary would mean columns read at the wrong offsets -- the exact
+// silent-corruption class this page has already been bitten by twice. A hung
+// request now reports instead of leaving the bar on "idle" forever.
+async function grab(url, opt) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), 20000);
   try {
-    S.m = await (await fetch('manifest.json')).json();
-  } catch (e) {
+    return await fetch(url, { cache: 'no-store', signal: ac.signal, ...opt });
+  } finally { clearTimeout(t); }
+}
+
+// NOTHING LOADS UNTIL ASKED. init() is synchronous, runs the instant the
+// script is parsed, and its only job is to prove the script ran and arm the
+// button. Two gigabytes of fetches on page load made every failure look
+// identical -- a blank page and a progress bar reading "idle".
+function init() {
+  document.getElementById('status').textContent =
+    'script ready. Press "Load data" to fetch the tables.';
+  const b = document.getElementById('loadbtn');
+  b.disabled = false;
+  b.textContent = 'Load data';
+  b.onclick = () => {
+    b.disabled = true;
+    b.textContent = 'loading...';
+    document.getElementById('loadinfo').textContent = '';
+    boot().then(() => { b.textContent = 'loaded'; })
+          .catch(e => {
+            prog(0, 'failed');
+            b.disabled = false;
+            b.textContent = 'Retry load';
+            document.getElementById('status').innerHTML =
+              '<span class="err">Load failed: '
+              + (e && e.message ? e.message : e) + '</span>';
+            throw e;
+          });
+  };
+  prog(0, 'idle - press Load data');
+}
+
+// EVERYTHING AFTER THE FETCHES, kept synchronous and separate so it can be
+// exercised without a network: this is where the bugs live (menu population
+// order, column names, listener wiring), while boot() above is just I/O.
+// scratchpad/fullrun.js calls setup() directly against a synthetic dataset.
+function setup() {
+  const m = S.m;
+
+  // the score menus are (re)built by fillScoreMenus, after the axis menus exist
+  const b = document.getElementById('build');
+  Object.keys(m.builds).forEach(k => b.add(new Option(k, k)));
+  b.value = 'AAAA';
+  ['xcol', 'ycol'].forEach((id, i) => {
+    const sel = document.getElementById(id);
+    CUTS.forEach(c => sel.add(new Option(AXLAB[c[0]] || c[0], c[0])));
+    Object.keys(TRACK_ONLY).filter(k => m.track.cols.includes(k))
+      .forEach(k => sel.add(new Option(AXLAB[k] + '  (tracks only)', k)));
+    sel.value = i ? 'pt' : 'eta';
+  });
+  fillScoreMenus();
+  document.getElementById('cuts').innerHTML = CUTS.map(c =>
+    `<label>${AXLAB[c[0]] || c[0]} <input type="number" id="lo_${c[0]}" value="${c[1]}"
+     step="0.01"> &ndash; <input type="number" id="hi_${c[0]}" value="${c[2]}"
+     step="0.01"></label>`).join(' ');
+  const cf = m.conflict;
+  document.getElementById('prov').innerHTML =
+    `<table class="kv"><tr><th>events</th><td>${m.n_events}</td></tr>`
+    + `<tr><th>seeding pT</th><td>&ge; ${(m.ptmin ?? 2).toFixed(1)} GeV</td></tr>`
+    + `<tr><th>TPs</th><td>${m.tp.rows.toLocaleString()}</td></tr>`
+    + `<tr><th>tracks</th><td>${m.track.rows.toLocaleString()}</td></tr>`
+    + (m.angle ? `<tr><th>cluster angles</th><td>`
+        + `${m.angle.rows.toLocaleString()} residuals, 1 track in `
+        + `${m.angle.sample}</td></tr>` : '')
+    + `<tr><th>DR</th><td>${cf ? `${cf.edges.toLocaleString()} conflicts, `
+        + `&ge;${cf.min_shared} shared hits` : 'not available'}</td></tr></table>`;
+  document.getElementById('progtext').textContent +=
+    m.built ? `  |  dataset built ${m.built}` : '';
+  buildSeeds(); layout();
+  document.querySelectorAll('#sidebar select, #sidebar input').forEach(e =>
+    e.addEventListener('change', () => {
+      if (e.id === 'build' || e.name === 'scen') buildSeeds();
+      // a scenario change can swap the whole score table, so both slots and
+      // the score axes are rebuilt from the new one
+      if (e.name === 'scen') fillScoreMenus();
+      if (e.id === 'npanel') layout();
+      draw();
+    }));
+  ['A', 'B'].forEach(k => {
+    const num = document.getElementById('cut' + k);
+    const sl = document.getElementById('slide' + k);
+    sl.addEventListener('change', () => { num.value = sl.value; draw(); });
+    num.addEventListener('change', () => { sl.value = num.value; });
+  });
+  document.getElementById('all').onclick = () => { setAll(true); draw(); };
+  document.getElementById('none').onclick = () => { setAll(false); draw(); };
+}
+
+async function boot() {
+  prog(0, 'starting');
+  try { S.m = await (await grab('manifest.json')).json(); }
+  catch (e) {
     prog(0, 'failed');
-    status('Cannot load manifest.json. This page fetches binary data, which the '
-      + 'browser blocks on file:// &mdash; serve the directory over HTTP, e.g. '
-      + '<code>python3 -m http.server 8742</code>', true);
+    document.getElementById('status').innerHTML =
+      '<span class="err">Cannot load manifest.json. This page fetches binary '
+      + 'data, which browsers block on file:// — serve the directory, e.g. '
+      + '<code>python3 -m http.server 8742</code></span>';
     return;
   }
   const m = S.m;
-  // total bytes up front so the bar is a real fraction of the whole load, not
-  // per-file percentages that each restart at zero
   const files = [[m.tp.file, Float32Array, 'TP table', 'tp'],
                  [m.found.file, Uint32Array, 'seed bitmap', 'found'],
                  [m.found_dr.file, Uint32Array, 'post-DR bitmap', 'foundDr'],
                  [m.track.file, Float32Array, 'track table', 'trk']];
+  if (m.baseline)
+    files.push([m.baseline.file, Float32Array, 'Phase-2 baseline', 'baseline']);
+  if (m.baseline_emu)
+    files.push([m.baseline_emu.file, Float32Array,
+                'Phase-2 baseline (re-emulated)', 'baselineEmu']);
+  if (m.score) files.push([m.score.file, Uint8Array, 'scores', 'score']);
+  const BSC = [['baseline', 'baselineScore', 'Phase-2 baseline scores'],
+               ['baseline_emu', 'baselineEmuScore', 're-emulated baseline scores']];
+  for (const [bk, sk, lab] of BSC)
+    if (m[bk] && m[bk].score) files.push([m[bk].score.file, Uint8Array, lab, sk]);
+  if (m.angle) files.push([m.angle.file, Float32Array, 'cluster angles', 'ang']);
   if (m.conflict) files.push(
     [m.conflict.indptr, Int32Array, 'conflict index', 'indptr'],
     [m.conflict.neighbours, Int32Array, 'conflict edges', 'nbr'],
     [m.conflict.order, Int32Array, 'rank order', 'order']);
   let total = 0;
   for (const f of files) {
-    const h = await fetch(f[0], { method: 'HEAD' });
+    const h = await grab(f[0], { method: 'HEAD' });
     total += +(h.headers.get('content-length') || 0);
   }
-  prog(0, `loading ${MB(total)} across ${files.length} files`);
-  let done = 0;
-  for (const [file, Type, label, key] of files) {
-    S[key] = await bin(file, Type, label, done, total);
-    done += S[key].byteLength;
+  prog(0, `loading ${MB(total)}`);
+  if (total > 1.8e9) {
+    document.getElementById('status').innerHTML =
+      `<span class="err">This dataset is ${MB(total)} in total, and a browser `
+      + `caps a single ArrayBuffer at about 2 GB (less in Safari). If loading `
+      + `stops short, the track table needs fewer columns.</span>`;
   }
-  prog(1, `loaded ${MB(done)}`);
-  // seed index and rank ordering pulled out once as flat arrays: the DR scan
-  // touches them per track per control change and must not stride the wide
-  // float table to do it
+  let done = 0;
+  try {
+    for (const [file, Type, label, key] of files) {
+      S[key] = await bin(file, Type, label, done, total);
+      done += S[key].byteLength;
+    }
+  } catch (e) {
+    // THIS USED TO FAIL SILENTLY. The loop sat outside the only try/catch, so a
+    // RangeError from allocating a 2.7 GB buffer went nowhere and the progress
+    // bar simply read "idle" with no message and no plot.
+    prog(0, 'load failed');
+    document.getElementById('status').innerHTML =
+      `<span class="err">Loading failed after ${MB(done)} of ${MB(total)}: `
+      + `${e.message}</span><br>`
+      + (/range|allocat|buffer|length/i.test(e.message || '')
+         ? 'That is a buffer-size limit, not a missing file: one table exceeds '
+           + "the browser's maximum single allocation. Re-export with fewer "
+           + 'track columns or fewer events.'
+         : 'Check the server is up and every .bin in manifest.json is present.');
+    return;
+  }
+  S.nTp = m.tp.rows; S.nW = m.found.words; S.nTrk = m.track.rows;
+  // scores travel in their own uint8 table; SC is what the core reads them from
+  S.SC = m.score ? { data: S.score, cols: m.score.cols,
+                     scale: m.score.scale || 255 } : null;
+  S.SCbase = {};
+  for (const [bk, sk] of BSC)
+    if (m[bk] && m[bk].score && S[sk])
+      S.SCbase[bk] = { data: S[sk], cols: m[bk].score.cols,
+                       scale: m[bk].score.scale || 255 };
   const nc = m.track.cols.length, js = m.track.cols.indexOf('seed_idx');
   S.seedOf = new Int32Array(m.track.rows);
   for (let i = 0; i < m.track.rows; i++) S.seedOf[i] = S.trk[i * nc + js];
-  S.nTp = m.tp.rows; S.nW = m.found.words; S.nTrk = m.track.rows;
-  const b = document.getElementById('build');
-  Object.keys(m.builds).forEach(k => b.add(new Option(k, k)));
-  b.value = 'AAAA';
-  ['xcol', 'ycol'].forEach((id, i) => {
-    const s = document.getElementById(id);
-    CUTS.forEach(c => s.add(new Option(c[0], c[0])));
-    s.value = i ? 'pt' : 'eta';
-  });
-  document.getElementById('cuts').innerHTML = CUTS.map(c =>
-    `<label>${c[0]} <input type="number" id="lo_${c[0]}" value="${c[1]}" step="0.1">
-     &ndash; <input type="number" id="hi_${c[0]}" value="${c[2]}" step="0.1"></label>`).join(' ');
-  document.getElementById('notes').innerHTML =
-    m.notes.map(n => `<li>${n}</li>`).join('');
-  buildSeeds();
-  document.querySelectorAll('select,input').forEach(e =>
-    e.addEventListener('change', () => { if (e.id === 'build') buildSeeds(); draw(); }));
-  document.getElementById('all').onclick = () => { setAll(true); draw(); };
-  document.getElementById('none').onclick = () => { setAll(false); draw(); };
+  prog(1, `loaded ${MB(done)}`);
+  setup();
   await draw();
+}
+
+function scenario() {
+  return document.querySelector('input[name=scen]:checked').value;
+}
+// Slot A is the real-vs-fake discriminant of the active scenario, slot B the
+// clean-track one; both fall back to whatever the export actually carries.
+function defaultScore(slot) {
+  // slot A judges whether the track is clean, slot B whether its d0 is
+  // accurate: the two are independent (rho 0.05 prompt, -0.17 displaced), so
+  // neither substitutes for the other.
+  const sc = scenario();
+  // A baseline's own table says which of its scores belongs in which slot:
+  // CMSSW has only the prompt track-quality MVA (slot B empty), the
+  // re-emulation has prompt / displaced track-quality variants.
+  if (BASELINES[sc]) {
+    const b = S.m[sc] && S.m[sc].score;
+    return b && b.default ? (b.default[slot] || '') : '';
+  }
+  // Our scenarios lead with mva_clean, which beat every cleanliness variant
+  // in both d0 windows.
+  const want = slot === 0
+    ? ['mva_clean', 'mva_tq']
+    : ['mva_d0_prompt', 'mva_d0_displaced', 'mva_rz_prompt'];
+  for (const w of want) if (S.avail.includes(w)) return w;
+  return S.avail[slot] || '';
+}
+function layout() {
+  const n = +document.getElementById('npanel').value;
+  const g = document.getElementById('grid');
+  g.style.gridTemplateColumns = n === 1 ? '1fr' : '1fr 1fr';
+  g.style.gridTemplateRows = n === 4 ? '1fr 1fr' : '1fr';
+  g.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const sel = Object.entries(METRICS).map(([k, v]) =>
+      `<option value="${k}"${k === DEFAULT_PANELS[i] ? ' selected' : ''}>${v}</option>`
+    ).join('');
+    g.insertAdjacentHTML('beforeend',
+      `<div class="cell"><select class="cellsel" id="pm${i}">${sel}</select>`
+      + `<div class="cellplot" id="pp${i}"></div></div>`);
+  }
+  g.querySelectorAll('.cellsel').forEach(e => e.addEventListener('change', draw));
 }
 function buildSeeds() {
   const m = S.m, allowed = new Set(m.builds[document.getElementById('build').value]);
-  const grp = { 0: [], 1: [], 2: [] };
-  m.seeds.forEach(s => { if (allowed.has(s.tag)) grp[s.sysclass].push(s); });
-  const names = { 0: 'IT only', 1: 'OT only', 2: 'IT + OT' };
-  document.getElementById('seeds').innerHTML = [0, 1, 2].map(g =>
-    grp[g].length ? `<div class="seedgrp"><b>${names[g]}</b><br>` + grp[g].map(s =>
-      `<label><input type="checkbox" class="sd" data-i="${s.idx}" checked>` +
-      `${s.tag}<sub>${s.arity}</sub></label>`).join('') + '</div>' : '').join('');
+  const sc = scenario();
+  document.getElementById('scenhint').textContent = SCEN[sc];
+  // FOUR GROUPS, NOT THREE. A sub-2-GeV recovery seed is IT-only by its layers
+  // but it is a separate menu entry with its own pT floor and its own layer
+  // rule, so it gets its own group -- that group's master toggle IS the switch
+  // between the 2 GeV configuration and the 1 GeV-inclusive one, and burying
+  // those entries among the standard IT seeds would make the pT extension
+  // impossible to turn off without hunting for them one by one.
+  const GRP = [
+    { key: 'it',   name: 'IT only',
+      hint: 'inner-tracker seeds at the standard floor',
+      pick: (s) => s.sysclass === 0 && !s.soft },
+    { key: 'ot',   name: 'OT only',
+      hint: 'outer-tracker seeds, the configuration the real chain runs',
+      pick: (s) => s.sysclass === 1 },
+    { key: 'mix',  name: 'IT + OT',
+      hint: 'seeds spanning both systems',
+      pick: (s) => s.sysclass === 2 },
+    { key: 'soft', name: 'IT sub-2-GeV recovery',
+      hint: 'dedicated low-pT entries; switching this group off leaves exactly '
+            + 'the standard configuration, because these never alter the seeds '
+            + 'above',
+      pick: (s) => !!s.soft },
+  ];
+  const vis = m.seeds.filter(s => {
+    if (!allowed.has(s.tag)) return false;
+    if (sc === 'refit' && s.sysclass === 2) return false;  // no cross-system
+    if (BASELINES[sc]) return false;                       // no menu applies
+    return true;
+  });
+  const html = GRP.map(g => {
+    const list = vis.filter(g.pick);
+    if (!list.length) return '';
+    return `<div class="seedgrp" data-g="${g.key}">`
+      + `<label title="${g.hint}"><input type="checkbox" class="grpsel" `
+      + `data-g="${g.key}" checked><b>${g.name}</b> (${list.length})</label><br>`
+      + list.map(s =>
+          `<label><input type="checkbox" class="sd" data-g="${g.key}" `
+          + `data-i="${s.idx}" checked>${s.tag}<sub>${s.arity}</sub></label>`
+        ).join('')
+      + '</div>';
+  }).join('');
+  document.getElementById('seeds').innerHTML = html
+    || (BASELINES[sc]
+        ? '<i>Finished tracks &mdash; no seed menu applies.</i>'
+        : '<i>no seeds for this build in this scenario</i>');
   document.querySelectorAll('.sd').forEach(e =>
-    e.addEventListener('change', draw));
+    e.addEventListener('change', () => { syncGroups(); draw(); }));
+  document.querySelectorAll('.grpsel').forEach(e =>
+    e.addEventListener('change', () => {
+      document.querySelectorAll(`.sd[data-g="${e.dataset.g}"]`)
+        .forEach(x => { x.checked = e.checked; });
+      draw();
+    }));
 }
-function setAll(v) { document.querySelectorAll('.sd').forEach(e => e.checked = v); }
+function setAll(v) {
+  document.querySelectorAll('.sd').forEach(e => e.checked = v);
+  syncGroups();
+}
+// A group box reflects its members: all on, all off, or indeterminate when the
+// user has picked individual seeds inside it. Without this the master box would
+// keep claiming the whole group is on after one member was unticked.
+function syncGroups() {
+  document.querySelectorAll('.grpsel').forEach(g => {
+    const kids = [...document.querySelectorAll(`.sd[data-g="${g.dataset.g}"]`)];
+    const on = kids.filter(k => k.checked).length;
+    g.checked = on > 0;
+    g.indeterminate = on > 0 && on < kids.length;
+  });
+}
 function enabledSeeds() {
   const idx = [];
   document.querySelectorAll('.sd').forEach(e => { if (e.checked) idx.push(+e.dataset.i); });
   return idx;
 }
+
+// Which table the panels bin. A baseline is a separate collection, not a
+// subset of ours, so it cannot be expressed as a filter on our track table --
+// which an earlier version tried to do, keeping our OT-seeded tracks that
+// happened to attach zero IT hits. That is a biased selection: a track picks
+// up no IT cluster because of where it went and how well it was measured, so
+// the cut correlates with eta, pT and quality.
+const BASELINES = { baseline: 'baseline', baseline_emu: 'baselineEmu' };
+function TBL() {
+  const m = S.m, sc = scenario(), key = BASELINES[sc];
+  if (key && S[key] && m[sc]) {
+    return { t: S[key], cols: m[sc].cols, n: m[sc].rows, isBaseline: true };
+  }
+  return { t: S.trk, cols: m.track.cols, n: m.track.rows, isBaseline: false };
+}
+
 let drawing = false;
 async function draw() {
-  // a control change while a recomputation is in flight would interleave two
-  // jobs over the same arrays; coalesce instead
   if (drawing) { S.again = true; return; }
   drawing = true;
-  try { await drawInner(); } finally {
-    drawing = false;
-    if (S.again) { S.again = false; draw(); }
-  }
+  try { await drawInner(); }
+  catch (e) { document.getElementById('status').innerHTML =
+    '<span class="err">' + e.message + '</span>'; prog(0, 'error'); }
+  finally { drawing = false; if (S.again) { S.again = false; draw(); } }
 }
+
 async function drawInner() {
-  // explorer_core.js exports under node/JXA for tests and declares the same
-  // functions globally in a browser; take whichever exists.
-  const m = S.m, C = CORE, metric = document.getElementById('metric').value;
-  document.getElementById('metrichint').textContent = HINTS[metric];
+  const m = S.m, C = CORE, t0 = performance.now();
   const idx = enabledSeeds();
-  const xName = document.getElementById('xcol').value,
-        yName = document.getElementById('ycol').value;
+  const xName = document.getElementById('xcol').value;
+  const yName = document.getElementById('ycol').value;
   const cuts = {};
   CUTS.forEach(c => cuts[c[0]] = [+document.getElementById('lo_' + c[0]).value,
                                   +document.getElementById('hi_' + c[0]).value]);
-  const xE = C.linEdges(cuts[xName][0], cuts[xName][1], +document.getElementById('xbins').value);
-  const yE = C.linEdges(cuts[yName][0], cuts[yName][1], +document.getElementById('ybins').value);
-  const t0 = performance.now();
-  let z, text, title, nx, ny;
-  if (metric === 'eff') {
-    const mask = C.seedMaskWords(idx, S.nW);
-    const keep = C.tpSelect(S.tp, m.tp.cols, S.nTp, cuts);
-    const useDr = document.getElementById('dr').checked;
-    const r = C.binnedEfficiency(S.tp, m.tp.cols, S.nTp, keep,
-      useDr ? S.foundDr : S.found, S.nW, mask, xName, yName, xE, yE);
-    z = Array.from(r.num, (v, i) => r.den[i] > 0 ? v / r.den[i] : NaN);
-    text = Array.from(r.den, (d, i) => `N=${d}  found=${r.num[i]}`);
-    nx = r.nx; ny = r.ny;
-    title = `efficiency, ${idx.length} seeds` + (useDr ? ' (post-DR ownership)' : ' (standalone reach)');
+  const SCa = activeSC();
+  const rng = (n) => cuts[n] || TRACK_ONLY[n] || [0, 1];
+  const xE = C.linEdges(rng(xName)[0], rng(xName)[1], +document.getElementById('xbins').value);
+  const yE = C.linEdges(rng(yName)[0], rng(yName)[1], +document.getElementById('ybins').value);
+  const useDr = document.getElementById('dr').checked && S.indptr;
+  // A QUANTIZED SCORE SNAPS TO ITS OWN LEVELS. A score that declares `levels`
+  // (the CMSSW 3-bit word: 8 levels, k/7) gets slider and number steps of one
+  // level, any typed value snaps to the nearest level k, and the threshold
+  // APPLIED is half a byte below level k's stored value. Cutting at k/7 itself
+  // would be wrong: scores travel as bytes round(255 k/7), which round DOWN for
+  // some k (level 1 is byte 36 < 36.43), so "score >= 1/7" would drop level 1.
+  const scale = SCa ? (SCa.scale || 255) : 255;
+  const scoreCuts = [['mvaA', 'cutA', 'slideA'], ['mvaB', 'cutB', 'slideB']]
+    .map(([a, b, c]) => {
+      const name = document.getElementById(a).value;
+      const num = document.getElementById(b), sl = document.getElementById(c);
+      const L = ((name && activeScoreInfo(name)) || {}).levels;
+      if (L > 1) {
+        const st = 1 / (L - 1);
+        num.step = sl.step = String(st);
+        const k = Math.round(Math.min(1, Math.max(0, +num.value || 0)) * (L - 1));
+        num.value = (k * st).toFixed(4);
+        sl.value = String(k * st);
+        const thr = k === 0 ? 0 : (Math.round(scale * k * st) - 0.5) / scale;
+        return [name, thr, `level ${k} of ${L - 1}`];
+      }
+      num.step = '0.05';
+      sl.step = '0.01';
+      return [name, +num.value];
+    });
+  const minLay = +document.getElementById('minlay').value;
+  const fd = document.getElementById('fakedef').value;
+  const panels = [...document.querySelectorAll('.cellsel')].map(e => e.value);
+
+  // shared track selection: DR once, then the MVA cut, then every panel bins it
+  const TB = TBL();
+  let rows;
+  if (TB.isBaseline) {
+    // Finished tracks: duplicate removal has already run, there are no seeds
+    // of ours to enable and no discriminant of ours to cut on.
+    if (!S.allRows || S.allRows.length !== TB.n) {
+      S.allRows = new Int32Array(TB.n);
+      for (let i = 0; i < TB.n; i++) S.allRows[i] = i;
+    }
+    rows = S.allRows;
   } else {
     const en = []; idx.forEach(i => en[i] = true);
-    const useDr = document.getElementById('dr').checked && S.indptr;
-    const job = useDr
-      ? C.drJob(S.order, S.seedOf, S.indptr, S.nbr, en)
-      : C.allEnabledJob(S.seedOf, S.nTrk, en);
-    let rows = await runJob(job, useDr ? 'duplicate removal' : 'selecting tracks',
-                            400000);
-    // MVA cut, applied after DR: the score is a per-track quantity, so cutting
-    // first would let a rejected duplicate suppress a survivor it outranked.
-    const mvacut = +document.getElementById('mvacut').value;
-    const jm = m.track.cols.indexOf('mva_score');
-    if (mvacut > 0 && jm >= 0) {
-      const nc2 = m.track.cols.length, before = rows.length;
-      rows = rows.filter(i => S.trk[i * nc2 + jm] >= mvacut);
-      document.getElementById('mvainfo').textContent =
-        `keeps ${(100 * rows.length / Math.max(before, 1)).toFixed(1)}% `
-        + `of ${before.toLocaleString()} tracks`;
-    } else {
-      document.getElementById('mvainfo').textContent =
-        jm < 0 ? 'no mva_score column in this export' : 'no cut';
+    const job = useDr ? C.drJob(S.order, S.seedOf, S.indptr, S.nbr, en)
+                      : C.allEnabledJob(S.seedOf, S.nTrk, en);
+    rows = await runJob(job, useDr ? 'duplicate removal' : 'selecting tracks', 400000);
+  }
+  // THE BASELINE MUST CARRY NO IT HIT. Restricting the seeds is not enough:
+  // an OT-seeded track may attach IT clusters during the follow stage, and
+  // including those would hand the baseline the very information it exists to
+  // exclude. n_it_right + n_it_wrong is the IT hit count on the track.
+  const before = rows.length;
+  // A BASELINE CARRIES NO DISCRIMINANT OF OURS, so both the score TABLE and the
+  // score CUTS have to go. Dropping only the table left the selected cut names
+  // in place, and filterTracks then threw "no score <name>" the moment anyone
+  // switched scenario with a score selected. Leaving the cuts applied against
+  // our score table would have been worse than the throw: the rows of a
+  // baseline are a different collection, so row i there is unrelated to row i
+  // of ours, and the cut would have silently filtered on another track's score.
+  // a selected name the active table does not carry is OFF, never a throw and
+  // never a lookup into another table
+  const scCuts = scoreCuts.map(([n, v, lab]) =>
+    (n && C.scoreCol(SCa, n) >= 0) ? [n, v, lab] : ['', 0]);
+  const geom = C.filterTracks(TB.t, TB.cols, rows, cuts, null, SCa);
+  const solo = C.scoreKept(SCa, geom, scCuts);
+  rows = C.filterTracks(TB.t, TB.cols, geom, {}, scCuts, SCa);
+  const pc = (n, d) => (100 * n / Math.max(d, 1)).toFixed(1) + '%';
+  document.getElementById('mvainfo').innerHTML =
+    `<table class="kv"><tr><th align="left">after cuts</th><td>`
+    + `${geom.length.toLocaleString()} of ${before.toLocaleString()}</td></tr>`
+    + solo.map((r, k) => `<tr><th align="left">${'AB'[k]} alone</th><td>`
+        + `${r.name ? pc(r.n, geom.length) : 'off'}</td></tr>`).join('')
+    + `<tr><th align="left">shown</th><td><b>${rows.length.toLocaleString()}`
+    + `</b> (${pc(rows.length, geom.length)})</td></tr></table>`;
+  // EVERY PIECE OF THIS PANEL FOLLOWS scCuts, NOT scoreCuts. The selector keeps
+  // its value when the scenario changes, so reading the raw selection left the
+  // full description of a discriminant on screen while the cut itself was
+  // inactive -- text that had nothing to do with the tracks being plotted.
+  const mvaOff = !SCa;
+  ['mvaA', 'mvaB', 'cutA', 'cutB', 'slideA', 'slideB'].forEach(id => {
+    const e = document.getElementById(id);
+    if (e) e.disabled = mvaOff;
+  });
+  document.getElementById('mvahint').innerHTML = mvaOff
+    ? 'Inactive: this export carries no score table for this collection.'
+    : TB.isBaseline
+    ? 'This collection\'s OWN scores, computed for its own tracks: '
+      + (scenario() === 'baseline'
+         ? 'the prompt track-quality MVA CMSSW attaches to L1TTrack, as the '
+           + 'delivered 3-bit word and at emulator float precision. L1TTrack '
+           + 'carries no displaced score, so slot B has nothing to offer.'
+         : 'the track-quality MVA\'s six features, retrained on these '
+           + 're-emulated tracks as prompt and displaced variants split on '
+           + 'fitted |d0| at 200 um.')
+    : 'Both thresholds apply at once. The track-quality discriminant mostly '
+      + 'removes fakes; the clean-track one mostly removes tracks with wrong '
+      + 'hits, which is what limits d0 resolution.';
+  ['A', 'B'].forEach((k, i) => {
+    const name = scCuts[i][0], md = activeScoreInfo(name);
+    const el = document.getElementById('mvadef' + k);
+    if (!name) { el.textContent = ''; return; }
+    if (!md) { el.textContent = `${name}: not described in this export`; return; }
+    if (md.what) {
+      el.innerHTML = `${name}: ${md.what}`
+        + (md.levels ? `<br><b>${md.levels} levels</b>: a threshold between two `
+            + `levels selects the same tracks` : '');
+      return;
     }
-    prog(1, `${rows.length.toLocaleString()} tracks selected — binning`, true);
+    const kr = md['keep_rate_at_0.9_clean'] || {};
+    el.innerHTML =
+      `${name}: ${md.features.length} features, trained on `
+      + `${md.population === 'refit' ? 'refit-scenario tracks'
+           : md.population === 'all' ? 'all tracks' : md.population}, `
+      + `target ${md.target}, held-out AUC ${md.auc}`
+      + (md.auc_displaced != null
+          ? `<br>on genuinely displaced tracks (|true d0| &gt; 200 um) `
+            + `AUC ${md.auc_displaced}` : '')
+      + (kr.prompt != null && kr.displaced != null
+          ? `<br><b>clean-track pass rate at score 0.9: prompt `
+            + `${(100 * kr.prompt).toFixed(1)}% vs displaced `
+            + `${(100 * kr.displaced).toFixed(1)}%</b> &mdash; a gap here means `
+            + `the score rejects real displacement, which is a b-tagger's `
+            + `signal` : '');
+  });
+  document.getElementById('cuts').title = '';
+
+  // efficiency accounting, both definitions, always shown
+  const mask = C.seedMaskWords(idx, S.nW);
+  const keep = C.tpSelect(S.tp, m.tp.cols, S.nTp, cuts);
+  const fb = useDr ? S.foundDr : S.found;
+  const owndef = document.getElementById('owndef').value;
+  // A BASELINE HAS NO EFFICIENCY ON THESE AXES, and it is not just that the
+  // delivered one is missing a column. found/found_dr index OUR seeds against
+  // the TP census; a baseline is a different collection whose tracks never
+  // entered those bitmaps, and its residuals are referenced to each track's own
+  // matched particle rather than to that census. Computing eff_seed anyway
+  // would print our emulation's efficiency under a baseline's label, which is
+  // worse than printing nothing. The delivered check is also per TABLE, not
+  // per export: it used to be a single S.canDeliver set once from the
+  // emulation's columns, so it stayed true when a baseline was active and
+  // deliveredMask threw on the missing tp_row.
+  const FM = { eff_seed: TB.isBaseline
+                 ? null : C.bitmapMask(fb, S.nTp, S.nW, mask) };
+  // delivered needs only the owner link, which the baselines now carry too
+  FM.eff_deliv = (TB.cols.includes('tp_row') && TB.cols.includes('n_own'))
+    ? C.deliveredMask(TB.t, TB.cols, rows, S.nTp, owndef) : null;
+  // the prompt/displaced restriction applies to the DENOMINATOR, so the panels
+  // and the pT table below describe only the selected population
+  const split = document.getElementById('tpsplit').value;
+  const keepS = C.tpSplit(S.tp, m.tp.cols, S.nTp, keep, split, D0_SPLIT_CM);
+  const bandR = FM.eff_seed
+    ? C.effByBand(S.tp, m.tp.cols, S.nTp, keepS, FM.eff_seed,
+                  PT_BANDS, minLay, 'pt', false) : null;
+  const bandD = FM.eff_deliv
+    ? C.effByBand(S.tp, m.tp.cols, S.nTp, keepS, FM.eff_deliv, PT_BANDS,
+                  minLay, 'pt', false)
+    : null;
+  // the impact-parameter table always shows BOTH populations, whatever the
+  // selector says, so the displaced number cannot be lost behind a mode
+  const IPB = [[0, D0_SPLIT_CM], [D0_SPLIT_CM, 1e9]];
+  const ipS = FM.eff_seed
+    ? C.effByBand(S.tp, m.tp.cols, S.nTp, keep, FM.eff_seed, IPB,
+                  minLay, 'd0', true) : null;
+  const ipD = FM.eff_deliv
+    ? C.effByBand(S.tp, m.tp.cols, S.nTp, keep, FM.eff_deliv, IPB, minLay,
+                  'd0', true) : null;
+  const NO_EFF = '<p class="hint">This export carries no tp_row for this '
+    + 'collection, so its tracks cannot be linked to the particle census and no '
+    + 'efficiency is defined. Compare resolutions and contamination instead.</p>';
+  // A BASELINE HAS ONLY THE DELIVERED COLUMN: its tracks link to the census
+  // through their majority owner (tp_row), but never entered the seed bitmaps
+  const ipRef = ipS || ipD;
+  document.getElementById('ipbands').innerHTML = !ipRef ? NO_EFF :
+    '<table class="kv"><tr><th align="left">|true d0|</th><th>findable</th>'
+    + (ipS ? '<th>seed</th>' : '') + (ipD ? '<th>delivered</th>' : '') + '</tr>'
+    + [[`&le; ${(D0_SPLIT_CM * 1e4).toFixed(0)} um`, 0],
+       [`&gt; ${(D0_SPLIT_CM * 1e4).toFixed(0)} um`, 1]].map(([lab, i]) => {
+      const pc = (n, d) => d > 0 ? (100 * n / d).toFixed(1) + '%' : '--';
+      return `<tr><td>${lab}</td><td align="right">`
+        + `${ipRef.den[i].toLocaleString()}</td>`
+        + (ipS ? `<td align="right">${pc(ipS.num[i], ipS.den[i])}</td>` : '')
+        + (ipD ? `<td align="right">${pc(ipD.num[i], ipD.den[i])}</td>` : '')
+        + '</tr>';
+    }).join('') + '</table>';
+  const pm = m.ptmin ?? 2;
+  let dt = 0, nt = 0;
+  let dd = 0, nd = 0;
+  const bandRef = bandR || bandD;
+  const brows = !bandRef ? '' : PT_BANDS.map((b, i) => {
+    dt += bandRef.den[i];
+    const pc = (n, d) => d > 0 ? (100 * n / d).toFixed(1) + '%' : '--';
+    const cl = b[1] <= pm ? ' class="soft"' : '';
+    let cells = `<td align="right">${bandRef.den[i].toLocaleString()}</td>`;
+    if (bandR) {
+      nt += bandR.num[i];
+      cells += `<td align="right">${pc(bandR.num[i], bandR.den[i])}</td>`;
+    }
+    if (bandD) {
+      dd += bandD.den[i]; nd += bandD.num[i];
+      cells += `<td align="right">${pc(bandD.num[i], bandD.den[i])}</td>`;
+    }
+    return `<tr${cl}><td>${BAND_NAMES[i]}</td>${cells}</tr>`;
+  }).join('');
+  document.getElementById('bands').innerHTML = !bandRef ? NO_EFF :
+    '<table class="kv"><tr><th align="left">GeV</th><th>findable</th>'
+    + (bandR ? '<th>seed</th>' : '') + (bandD ? '<th>delivered</th>' : '') + '</tr>'
+    + brows + '</table>';
+  document.getElementById('softhint').innerHTML = pm > 1.05
+    ? `Bands at or below ${pm.toFixed(1)} GeV are under this dataset's seeding `
+      + `threshold and measure incidental pickup, not reachable performance.`
+    : `Seeded from pT &ge; ${pm.toFixed(1)} GeV, so every band is at threshold.`;
+  document.getElementById('effdef').innerHTML = !bandRef
+    ? `<p class="hint">${rows.length.toLocaleString()} tracks selected. No `
+      + `efficiency: this collection carries no link to the particle census.</p>`
+    : `<table class="kv"><tr><th align="left">denominator</th><td>`
+    + `${dt.toLocaleString()} TPs, &ge;${minLay} layers`
+    + `${split === 'all' ? '' : ', ' + split + ' only'}</td></tr>`
+    + (bandR ? `<tr><th align="left">seed-truthful</th><td><b>`
+        + `${dt > 0 ? (100 * nt / dt).toFixed(1) : '--'}%</b> `
+        + `(${nt.toLocaleString()})</td></tr>`
+      : `<tr><th align="left">seed-truthful</th><td>undefined: these tracks `
+        + `never entered our seed bitmaps</td></tr>`)
+    + (bandD ? `<tr><th align="left">delivered</th><td><b>`
+        + `${dd > 0 ? (100 * nd / dd).toFixed(1) : '--'}%</b> `
+        + `(${nd.toLocaleString()})</td></tr>` : '')
+    + `</table>`
+    + `<p class="hint">Per TrackingParticle, not per candidate: this selection `
+    + `holds ${dt > 0 ? (rows.length / dt).toFixed(1) : '--'} tracks per `
+    + `findable TP.</p>`;
+  try {
+    const sb = C.sigmaByWrong(TB.t, TB.cols, rows);
+    document.getElementById('sbw').innerHTML =
+      '<table class="kv"><tr><th align="left">wrong</th><th>tracks</th>'
+      + '<th>sigma(d0)</th></tr>'
+      + ['0', '1', '&ge;2'].map((lab, k) =>
+          `<tr><td>${lab}</td><td align="right">${sb[k].n.toLocaleString()}</td>`
+          + `<td align="right">${Number.isFinite(sb[k].sigma_um)
+              ? sb[k].sigma_um.toFixed(0) : '--'}</td></tr>`).join('')
+      + '</table>';
+  } catch (e) { document.getElementById('sbw').textContent = e.message; }
+  // "noise" needs tp_key, which only our census table carries: it is the
+  // (event, TP) key a seed is scored against, and a baseline's tracks were
+  // never scored against that census. Contamination there is reported from the
+  // per-stub counters instead, which both tables do carry.
+  if (TB.cols.includes('tp_key')) {
+    const ff = C.fakeFractions(TB.t, TB.cols, rows);
+    document.getElementById('fakerates').textContent =
+      `in this selection: noise ${(100 * ff.noise).toFixed(1)}%, `
+      + `>=1 wrong ${(100 * ff.dirty).toFixed(1)}%, `
+      + `>=2 wrong ${(100 * ff.unusable).toFixed(1)}%`;
+  } else {
+    const jw = TB.cols.indexOf('n_wrong'), nc = TB.cols.length;
+    let d = 0, u = 0;
+    for (const i of rows) {
+      const w = TB.t[i * nc + jw];
+      if (w >= 1) d++;
+      if (w >= 2) u++;
+    }
+    const n = Math.max(rows.length, 1);
+    document.getElementById('fakerates').textContent =
+      `in this selection: >=1 wrong ${(100 * d / n).toFixed(1)}%, `
+      + `>=2 wrong ${(100 * u / n).toFixed(1)}% `
+      + `(no noise fraction: these tracks are not scored against our census)`;
+  }
+
+  // one pass per panel over the shared selection
+  for (let p = 0; p < panels.length; p++) {
+    prog((p + 1) / panels.length, `binning panel ${p + 1} of ${panels.length}`, true);
     await yieldFrame();
-    // live sigma(d0) by wrong-hit count, replacing the hardcoded caption
-    try {
-      const sb = C.sigmaByWrong(S.trk, m.track.cols, rows);
-      document.getElementById('sbw').innerHTML =
-        '<table style="font-size:11px;width:100%"><tr><th align="left">wrong hits'
-        + '</th><th align="right">tracks</th><th align="right">sigma(d0)</th></tr>'
-        + ['0', '1', '&ge;2'].map((lab, k) =>
-            `<tr><td>${lab}</td><td align="right">${sb[k].n.toLocaleString()}`
-            + `</td><td align="right">${Number.isFinite(sb[k].sigma_um)
-                ? sb[k].sigma_um.toFixed(0) + ' um' : '--'}</td></tr>`).join('')
-        + '</table>';
-    } catch (e) { document.getElementById('sbw').textContent = String(e.message); }
-    if (metric === 'fakefrac' || metric === 'fakeev') {
-      const fd = document.getElementById('fakedef').value;
-      const r = C.binnedFakeRate(S.trk, m.track.cols, rows, xName, yName, xE, yE,
-                                 m.n_events, fd);
+    const metric = panels[p];
+    // THE LOSS FUNNEL. Counted during the census, because the candidates killed
+    // before a fit never become track rows and so cannot be recovered from any
+    // per-track table.
+    if (metric.startsWith('map_')) {
+      const V = MAP_VIEWS[metric.slice(4)];
+      const rOf = (L) => ((m.geometry || {}).r || {})[L] ?? GEOM_R[L];
+      const zh = (L) => L <= 4 ? GEOM_ZHALF.it : GEOM_ZHALF.ot;
+      const inView = (L) => V.layers.includes(L);
+      // A baseline has no menu of ours, so the map shows what the real chain
+      // seeds on instead of going blank -- that is the point of comparing to it.
+      const menu = TB.isBaseline
+        ? REAL_OT_SEEDS.map(s => ({ tag: s.tag, layers: s.layers,
+                                    sysclass: 1, soft: false }))
+        : m.seeds.filter(s => idx.includes(s.idx));
+      const shown = menu.filter(s => s.layers.every(inView));
+      const traces = [];
+      V.layers.forEach(L => {
+        const z = Math.min(zh(L), V.zmax);
+        traces.push({ x: [-z, z], y: [rOf(L), rOf(L)], mode: 'lines',
+                      line: { color: '#bbb', width: L <= 4 ? 6 : 4 },
+                      hoverinfo: 'text', showlegend: false,
+                      text: (L <= 4 ? 'IL' + L : 'OL' + (L - 10))
+                            + ` r=${rOf(L).toFixed(2)} cm` });
+      });
+      // Each seed is drawn at its own z so overlapping menus stay readable;
+      // the z position carries no physics, it is only a spread.
+      const n = Math.max(shown.length, 1);
+      shown.forEach((s, k) => {
+        const zk = V.zmax * (-0.72 + 1.44 * (k + 0.5) / n);
+        const rs = s.layers.map(rOf);
+        traces.push({
+          x: s.layers.map(() => zk), y: rs, mode: 'lines+markers',
+          line: { color: SYS_COLOUR[s.sysclass] || '#888', width: 2,
+                  dash: s.soft ? 'dot' : 'solid' },
+          marker: { size: 9, symbol: s.soft ? 'diamond' : 'circle' },
+          name: s.tag, hovertemplate: s.tag + '<br>r=%{y:.2f} cm<extra></extra>'
+        });
+      });
+      // The caption belongs in the figure: a panel cell is just a <select>
+      // and a plot div, with no element of its own to write text into.
+      const hidden = menu.length - shown.length;
+      const note = shown.length
+        ? 'dotted diamonds are sub-2-GeV recovery seeds'
+          + (hidden ? `; ${hidden} selected seed(s) reach outside this view`
+                    : '')
+        : `none of the ${menu.length} selected seeds fits here `
+          + '\u2014 try the IT + OL1-OL3 map';
+      Plotly.react('pp' + p, traces, {
+        margin: { l: 52, r: 8, t: 30, b: 56 }, showlegend: shown.length <= 14,
+        legend: { font: { size: 9 } },
+        title: { text: `${V.title} \u2014 ${shown.length} of ${menu.length} `
+                       + (TB.isBaseline ? 'real chain seeds' : 'selected seeds'),
+                 font: { size: 12 } },
+        xaxis: { title: 'z [cm]', range: [-V.zmax, V.zmax], zeroline: false },
+        yaxis: { title: 'r [cm]', rangemode: 'tozero' },
+        annotations: [{ text: note, showarrow: false, xref: 'paper',
+                        yref: 'paper', x: 0, y: -0.16, xanchor: 'left',
+                        font: { size: 9, color: '#666' } }]
+      }, { displayModeBar: false });
+      continue;
+    }
+    if (metric === 'funnel') {
+      const st = m.funnel_stages || [];
+      if (!m.counters || !st.length) {
+        document.getElementById('pp' + p).innerHTML =
+          '<p class="hint">This export carries no per-seed counters; the funnel '
+          + 'arrives with the next export.</p>';
+        continue;
+      }
+      const sum = (k) => idx.reduce(
+        (a, i) => a + ((m.counters[String(i)] || {})[k] || 0), 0);
+      const tot = st.map(sum);
+      const per = tot.map(v => v / m.n_events);
+      const lab = m.funnel_labels || {};
+      const txt = st.map((k, i) => i === 0 ? '' :
+        (tot[i - 1] > 0 ? (100 * tot[i] / tot[i - 1]).toFixed(1) + '% of prev' : ''));
+      // the projection cost is a HIT-level count and does not belong in a
+      // track-level chain, so it is quoted rather than plotted as a stage
+      const cost = sum('cand') / m.n_events;
+      Plotly.react('pp' + p, [{
+        type: 'bar', orientation: 'h', x: per,
+        y: st.map(k => lab[k] || k), text: txt,
+        textposition: 'outside', hovertemplate: '%{y}: %{x:.1f}/event<extra></extra>',
+        marker: { color: '#0b5fa5' },
+      }], { margin: { l: 120, r: 60, t: 18, b: 34 },
+            title: { text: `loss funnel, ${idx.length} seeds &mdash; `
+                     + `${cost.toLocaleString(undefined, {maximumFractionDigits: 0})}`
+                     + ` projection matches examined per event`,
+                     font: { size: 11 } },
+            xaxis: { type: 'log', title: { text: 'candidates per event [count]' },
+                     tickfont: { size: 9 } },
+            yaxis: { autorange: 'reversed', tickfont: { size: 9 } }
+          }, { responsive: true, displayModeBar: false });
+      continue;
+    }
+    // Distributions, one series per wrong-hit class. Normalised per class so
+    // shapes stay comparable when populations differ sixfold, with the
+    // out-of-range fraction stated rather than piled into the edge bins. The
+    // measured width and median are overlaid, so a width that misrepresents
+    // its own distribution is visible as such.
+    if (DIST_SPEC[metric]) {
+      const sp = DIST_SPEC[metric];
+      const vname = sp.v || scCuts[0][0];
+      if (!vname) {
+        document.getElementById('pp' + p).innerHTML =
+          '<p class="hint">Pick a score in slot A to see its distribution.</p>';
+        continue;
+      }
+      // An angle panel bins the CLUSTER table, restricted to clusters whose
+      // track is in the current selection, so it follows the cuts and the score
+      // thresholds exactly as the track-level panels do.
+      let dt = TB.t, dcols = TB.cols, drows = rows, dSC = SCa;
+      if (sp.src === 'angle') {
+        if (!S.ang || !m.angle) {
+          document.getElementById('pp' + p).innerHTML =
+            '<p class="hint">This export carries no per-cluster angle table.</p>';
+          continue;
+        }
+        if (TB.isBaseline) {
+          document.getElementById('pp' + p).innerHTML =
+            '<p class="hint">Cluster angles are a SmartPixels measurement; the '
+            + 'baseline collections have no inner-tracker clusters.</p>';
+          continue;
+        }
+        const fl = C.trackFlags(rows, S.nTrk);
+        const anc = m.angle.cols.length;
+        const jt = m.angle.cols.indexOf('track_row');
+        const ar = [];
+        for (let i = 0; i < m.angle.rows; i++) {
+          if (fl[S.ang[i * anc + jt]]) ar.push(i);
+        }
+        dt = S.ang; dcols = m.angle.cols; drows = ar; dSC = null;
+      }
+      const nb = Math.max(10, +document.getElementById('xbins').value * 2);
+      const e = C.linEdges(sp.lim[0], sp.lim[1], nb);
+      const d = C.histByWrong(dt, dcols, drows, vname, e, true, dSC, sp.split);
+      const W = C.classWidths(dt, dcols, drows, vname, dSC, sp.split);
+      const xs = Array.from({ length: d.nb },
+                            (_, i) => 0.5 * (e[i] + e[i + 1]) * sp.k);
+      const COL = sp.split === 'hit_wrong'
+        ? ['#2ca02c', '#d62728']          // correctly assigned, wrongly assigned
+        : ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'];
+      const fmt = (v) => Number.isFinite(v) ? (v * sp.k).toFixed(sp.dp) : null;
+      const traces = d.classes.map((lab, k) => {
+        const off = d.tot[k] > 0
+          ? 100 * (d.under[k] + d.over[k]) / d.tot[k] : 0;
+        const sg = fmt(W[k].sigma), md = fmt(W[k].median);
+        return {
+          type: 'scatter', mode: 'lines',
+          line: { shape: 'hvh', color: COL[k] },
+          name: `${lab} &mdash; width ${sg === null ? 'off scale' : sg + ' ' + sp.u}`
+                + `, median ${md === null ? '?' : md}`
+                + ` (N=${d.tot[k].toLocaleString()}`
+                + `${off > 0.05 ? ', ' + off.toFixed(1) + '% off scale' : ''})`,
+          x: xs,
+          y: Array.from({ length: d.nb }, (_, i) => {
+            const v = d.val[k * d.nb + i];
+            return Number.isFinite(v) && v > 0 ? v : null;
+          }),
+          text: Array.from({ length: d.nb },
+                           (_, i) => `N=${d.raw[k * d.nb + i]}`),
+          hovertemplate: '%{x}: %{y:.2e}<br>%{text}<extra>%{fullData.name}</extra>',
+        };
+      });
+      const shapes = [];
+      W.forEach((w, k) => {
+        if (!Number.isFinite(w.sigma) || !Number.isFinite(w.median)) return;
+        [[w.median, 'solid'], [w.median - w.sigma, 'dot'],
+         [w.median + w.sigma, 'dot']].forEach(([v, dash]) => {
+          shapes.push({ type: 'line', xref: 'x', yref: 'paper',
+                        x0: v * sp.k, x1: v * sp.k, y0: 0, y1: 1,
+                        line: { color: COL[k], width: 1, dash: dash } });
+        });
+      });
+      const ttl = sp.v ? METRICS[metric] : `${vname} score, by wrong hits`;
+      Plotly.react('pp' + p, traces,
+        { margin: { l: 58, r: 6, t: 18, b: 72 }, shapes: shapes,
+          title: { text: `${ttl}  (solid = median, dotted = median +- width)`,
+                   font: { size: 11 } },
+          xaxis: { title: { text: sp.u ? `${ttl.split(',')[0]} [${sp.u}]`
+                                       : ttl.split(',')[0] },
+                   tickfont: { size: 9 } },
+          yaxis: { title: { text: 'fraction of class per bin [unitless]' },
+                   type: 'log',
+                   tickfont: { size: 9 } },
+          legend: { font: { size: 8 }, orientation: 'h', y: -0.3 },
+        }, { responsive: true, displayModeBar: false });
+      continue;
+    }
+    // THE CLUSTER'S OWN ANGLE against the track angle at that sensor. Per
+    // CLUSTER, joined back to the selected tracks through track_row, and split
+    // by whether that individual cluster is the contaminating one.
+    if (metric === 'angle_a' || metric === 'angle_b') {
+      if (!S.ang || !m.angle) {
+        document.getElementById('pp' + p).innerHTML =
+          '<p class="hint">This export carries no per-cluster angle table. It '
+          + 'arrives with the next census build (one emitted track in 12 '
+          + 'contributes its IT cluster residuals).</p>';
+        continue;
+      }
+      const side = metric === 'angle_a' ? 'a' : 'b';
+      const lim = side === 'a' ? [-0.006, 0.006] : [-2.5, 2.5];
+      const xe = C.linEdges(lim[0], lim[1], +document.getElementById('xbins').value);
+      const flags = C.trackFlags(rows, S.nTrk);
+      const g = C.angleProfile(S.ang, m.angle.cols, flags, side, xe, 'sigma');
+      const xs = Array.from({ length: g.nx }, (_, i) => 0.5 * (xe[i] + xe[i + 1]));
+      const traces = g.classes.map((lab, k) => ({
+        type: 'scatter', mode: 'lines+markers', name: lab, x: xs,
+        y: xs.map((_, i) => {
+          const v = g.val[k * g.nx + i];
+          return Number.isFinite(v) ? v : null;
+        }),
+        text: xs.map((_, i) => `N=${g.cnt[k * g.nx + i]}`),
+      }));
+      Plotly.react('pp' + p, traces,
+        { margin: { l: 62, r: 6, t: 18, b: 40 },
+          title: { text: side === 'a'
+                   ? 'spread of (cluster alpha - track alpha) at the sensor'
+                   : 'spread of (cluster cot(theta) - track cot(theta))',
+                   font: { size: 11 } },
+          xaxis: { title: { text: side === 'a'
+                            ? 'track dphi/dr at the sensor [rad/cm]'
+                            : 'track cot(theta) [unitless]' },
+                   tickfont: { size: 9 } },
+          yaxis: { title: { text: side === 'a'
+                            ? 'residual spread [rad/cm]'
+                            : 'residual spread [unitless, d cot]' },
+                   type: 'log', tickfont: { size: 9 } },
+          legend: { font: { size: 9 } },
+        }, { responsive: true, displayModeBar: false });
+      continue;
+    }
+    // RESOLUTION BY CONTAMINATION, as a curve rather than a single number.
+    // One series per wrong-hit class over the chosen x axis, computed from the
+    // SAME selected rows as every other panel, so it moves with the cuts and
+    // the score thresholds: raising a score cut should lift the clean series
+    // very little and the contaminated series a great deal, and the gap
+    // between them is what a downstream user inherits.
+    if (metric === 'sd0_wrong') {
+      const w = C.statByWrong(TB.t, TB.cols, rows, xName, xE,
+                              'd_d0', 'sigma', SCa);
+      const xs = Array.from({ length: w.nx },
+                            (_, i) => 0.5 * (xE[i] + xE[i + 1]));
+      const traces = w.classes.map((lab, k) => ({
+        type: 'scatter', mode: 'lines+markers', name: lab, x: xs,
+        y: xs.map((_, i) => {
+          const v = w.val[k * w.nx + i];
+          return Number.isFinite(v) ? v * 1e4 : null;
+        }),
+        text: xs.map((_, i) => `N=${w.cnt[k * w.nx + i]}`),
+      }));
+      Plotly.react('pp' + p, traces,
+        { margin: { l: 54, r: 6, t: 18, b: 40 },
+          title: { text: 'sigma(d0) by wrong-hit count', font: { size: 11 } },
+          xaxis: { title: { text: AXLAB[xName] || xName }, tickfont: { size: 9 } },
+          yaxis: { title: { text: 'sigma(d0) [um]' }, type: 'log',
+                   tickfont: { size: 9 } },
+          legend: { font: { size: 9 } },
+        }, { responsive: true, displayModeBar: false });
+      continue;
+    }
+    // WHERE DISPLACED PARTICLES ARE LOST, seed by seed.
+    if (metric === 'lossd0') {
+      const sel = idx.slice(0, 12);
+      const g = C.effGridPerSeed(S.tp, m.tp.cols, S.nTp, keep, fb, S.nW, sel,
+                                 D0_BANDS, minLay, 'd0', true);
+      const traces = sel.map((si, k) => ({
+        type: 'scatter', mode: 'lines+markers',
+        name: (m.seeds[si] || {}).tag || ('seed ' + si),
+        x: D0_BAND_NAMES,
+        y: D0_BAND_NAMES.map((_, b) =>
+          g.den[b] > 0 ? g.num[k * g.nb + b] / g.den[b] : null),
+      }));
+      Plotly.react('pp' + p, traces,
+        { margin: { l: 48, r: 6, t: 18, b: 46 },
+          title: { text: 'seed efficiency vs true |d0|', font: { size: 11 } },
+          xaxis: { title: { text: 'true |d0| [cm]' }, tickfont: { size: 9 } },
+          yaxis: { title: { text: 'efficiency [fraction]' }, range: [0, 1],
+                   tickfont: { size: 9 } },
+          showlegend: sel.length <= 8,
+          legend: { font: { size: 8 } },
+        }, { responsive: true, displayModeBar: false });
+      if (idx.length > 12) {
+        document.getElementById('status').textContent +=
+          '  (loss map shows the first 12 selected seeds)';
+      }
+      continue;
+    }
+    let z, text, nx, ny;
+    if (metric === 'eff_seed' && !FM.eff_seed) {
+      document.getElementById('pp' + p).innerHTML =
+        '<p class="hint">Seed-truthful efficiency is not defined for this '
+        + 'collection &mdash; its tracks are not produced by the seed menu and '
+        + 'never entered the seed bitmaps. The delivered efficiency is.</p>';
+      continue;
+    }
+    if (metric === 'eff_deliv' && !FM.eff_deliv) {
+      document.getElementById('pp' + p).innerHTML =
+        '<p class="hint">This export has no tp_row column, so a track cannot be '
+        + 'matched to its particle exactly and the delivered efficiency is '
+        + 'unavailable. (tp_key cannot do it: a 30-bit key does not survive '
+        + 'float32.) Use the seed-truthful efficiency.</p>';
+      continue;
+    }
+    const trkAxis = (n) => TRACK_ONLY[n] || C.scoreCol(SCa, n) >= 0;
+    if (metric.startsWith('eff') && (trkAxis(xName) || trkAxis(yName))) {
+      document.getElementById('pp' + p).innerHTML =
+        '<p class="hint">Efficiency bins TrackingParticles, which carry no '
+        + 'hit-composition columns. Pick pT, eta, phi, d0, z0 or layer count '
+        + 'for both axes, or choose a track quantity for this panel.</p>';
+      continue;
+    }
+    if (metric.startsWith('eff')) {
+      const r = C.binnedEfficiency(S.tp, m.tp.cols, S.nTp, keepS, FM[metric],
+                                   xName, yName, xE, yE);
+      z = Array.from(r.num, (v, i) => r.den[i] > 0 ? v / r.den[i] : NaN);
+      text = Array.from(r.den, (d, i) => `N=${d} found=${r.num[i]}`);
+      nx = r.nx; ny = r.ny;
+    } else if (metric === 'fakefrac' || metric === 'fakeev') {
+      const r = C.binnedFakeRate(TB.t, TB.cols, rows, xName, yName, xE, yE,
+                                 m.n_events, fd, SCa);
       z = Array.from(metric === 'fakefrac' ? r.frac : r.perEv);
-      text = Array.from(r.tot, (t, i) => `tracks=${t}  fake=${r.fake[i]}`);
-      nx = r.nx; ny = r.ny; title = HINTS[metric].split('.')[0];
+      text = Array.from(r.tot, (t, i) => `tracks=${t} fake=${r.fake[i]}`);
+      nx = r.nx; ny = r.ny;
     } else {
-      const spec = { sd0: ['d_d0', 'sigma', 1e4], spt: ['d_kappa', 'sigma', 1],
-                     nwrong: ['n_wrong', 'mean', 1], count: [null, 'count', 1] }[metric];
-      const r = C.binnedStat(S.trk, m.track.cols, rows, xName, yName, xE, yE,
-                             spec[0], spec[1]);
+      const spec = STAT_SPEC[metric];
+      if (spec[0] && !TB.cols.includes(spec[0])) {
+        document.getElementById('pp' + p).innerHTML =
+          `<p class="hint">This export has no <code>${spec[0]}</code> column, so `
+          + `${METRICS[metric]} is unavailable. It arrives with the next census `
+          + `build.</p>`;
+        continue;
+      }
+      const r = C.binnedStat(TB.t, TB.cols, rows, xName, yName, xE, yE,
+                             spec[0], spec[1], SCa);
       z = Array.from(r.val, v => v * spec[2]);
       text = Array.from(r.cnt, c => `N=${c}`);
-      nx = r.nx; ny = r.ny; title = document.getElementById('metric').selectedOptions[0].text;
+      nx = r.nx; ny = r.ny;
     }
+    const zz = [], tt = [];
+    for (let j = 0; j < ny; j++) { zz.push(z.slice(j * nx, (j + 1) * nx));
+                                   tt.push(text.slice(j * nx, (j + 1) * nx)); }
+    Plotly.react('pp' + p, [{
+      type: 'heatmap', z: zz, text: tt, hoverinfo: 'x+y+z+text',
+      x: Array.from({ length: nx }, (_, i) => 0.5 * (xE[i] + xE[i + 1])),
+      y: Array.from({ length: ny }, (_, j) => 0.5 * (yE[j] + yE[j + 1])),
+      colorscale: 'Viridis',
+      colorbar: { thickness: 10, len: 0.9,
+                  title: { text: labUnit(METRICS[metric]), side: 'right',
+                           font: { size: 9 } } }
+    }], { margin: { l: 48, r: 6, t: 18, b: 34 },
+          title: { text: labName(METRICS[metric]), font: { size: 11 } },
+          xaxis: { title: { text: AXLAB[xName] || xName }, tickfont: { size: 9 } },
+          yaxis: { title: { text: AXLAB[yName] || yName }, tickfont: { size: 9 } }
+        }, { responsive: true, displayModeBar: false });
   }
-  const zz = [], tt = [];
-  for (let j = 0; j < ny; j++) { zz.push(z.slice(j * nx, (j + 1) * nx));
-                                 tt.push(text.slice(j * nx, (j + 1) * nx)); }
-  Plotly.react('plot', [{
-    type: 'heatmap', z: zz, text: tt, hoverinfo: 'x+y+z+text',
-    x: Array.from({ length: nx }, (_, i) => 0.5 * (xE[i] + xE[i + 1])),
-    y: Array.from({ length: ny }, (_, j) => 0.5 * (yE[j] + yE[j + 1])),
-    colorscale: 'Viridis', colorbar: { thickness: 12 }
-  }], { margin: { l: 55, r: 10, t: 30, b: 45 }, title: { text: title, font: { size: 13 } },
-        xaxis: { title: { text: AXLAB[xName] || xName } },
-        yaxis: { title: { text: AXLAB[yName] || yName } } }, { responsive: true });
-  // always-on accounting, so no number on this page is an unlabelled ratio
-  if (metric === 'eff') {
-    const mask2 = C.seedMaskWords(idx, S.nW);
-    const keep2 = C.tpSelect(S.tp, m.tp.cols, S.nTp, cuts);
-    const minLay = +document.getElementById('minlay').value;
-    const r2 = C.effByBand(S.tp, m.tp.cols, S.nTp, keep2,
-      document.getElementById('dr').checked ? S.foundDr : S.found,
-      S.nW, mask2, PT_BANDS, minLay);
-    let dt = 0, nt = 0;
-    const rows = PT_BANDS.map((b, i) => {
-      dt += r2.den[i]; nt += r2.num[i];
-      const e = r2.den[i] > 0 ? (100 * r2.num[i] / r2.den[i]).toFixed(1) : '--';
-        const pmw = (m.ptmin === undefined ? 2.0 : m.ptmin);
-      const warn = (b[1] <= pmw) ? ' style="color:#b4590a"' : '';
-      return `<tr${warn}><td>${BAND_NAMES[i]} GeV</td><td align="right">`
-        + `${r2.den[i].toLocaleString()}</td><td align="right">`
-        + `${r2.num[i].toLocaleString()}</td><td align="right">${e}%</td></tr>`;
-    }).join('');
-    document.getElementById('bands').innerHTML =
-      '<table style="font-size:11px;width:100%"><tr><th align="left">band</th>'
-      + '<th align="right">findable</th><th align="right">found</th>'
-      + '<th align="right">eff</th></tr>' + rows + '</table>';
-    // conditional on what this export actually is, not asserted in prose
-    const pm = m.ptmin === undefined ? 2.0 : m.ptmin;
-    document.getElementById('softhint').innerHTML = (pm > 1.05)
-      ? `<b>Bands below ${pm.toFixed(1)} GeV are under this dataset's seeding `
-        + `threshold.</b> Windows, curvature gate and scattering allowance were `
-        + `all sized for pT &ge; ${pm.toFixed(1)}, so those rows measure what a `
-        + `${pm.toFixed(1)} GeV system incidentally picks up &mdash; not what `
-        + `SmartPixels could reach aimed at soft tracks. A ptmin = 1 export `
-        + `exists separately; load that directory to see the real figure.`
-      : `<b>Seeded from pT &ge; ${pm.toFixed(1)}</b>, so every band shown is at `
-        + `or above threshold and the soft rows are a real measurement.`;
-    document.getElementById('effdef').innerHTML =
-      `<b>denominator</b>: TPs with &ge; ${minLay} layers hit and passing the `
-      + `cuts &mdash; <b>${dt.toLocaleString()}</b> `
-      + `(${(dt / m.n_events).toFixed(0)}/event)<br><b>numerator</b>: those `
-      + `reached by &ge;1 enabled seed &mdash; <b>${nt.toLocaleString()}</b>`
-      + `<br><b>efficiency ${dt > 0 ? (100 * nt / dt).toFixed(1) : '--'}%</b>`
-      + `<br><span class="hint">Not to be confused with the fraction of track `
-      + `CANDIDATES kept: there are ~13.7 candidates per TP, so those differ by `
-      + `about fivefold.</span>`;
-  }
-  prog(1, `ready — last update ${(performance.now() - t0).toFixed(0)} ms`);
-  status(`${m.n_events} events, ${S.nTp.toLocaleString()} TPs, `
-    + `${S.nTrk.toLocaleString()} tracks, ${idx.length} seeds &mdash; `
-    + `${(performance.now() - t0).toFixed(0)} ms`);
+  prog(1, `ready — ${(performance.now() - t0).toFixed(0)} ms`);
+  const act = scCuts.filter(c => c[0] && c[1] > 0)
+    .map(c => `${c[0].replace('mva_', '')} ≥ ${c[2] || c[1]}`).join(', ');
+  document.getElementById('status').textContent =
+    `${(S.m[scenario()] || {}).label || scenario()}`
+    + ` scenario, ${idx.length} seeds, `
+    + `${rows.length.toLocaleString()} tracks after ${useDr ? 'DR' : 'no DR'}`
+    + `${act ? ', ' + act : ''}`;
 }
-boot();
+init();
 </script>
