@@ -221,6 +221,70 @@ GLOSSARY = [
      "heavy tail: it DOES NOT CONVERGE and grows with the number of events "
      "processed (AIAI: 54 at 100 events, 550 at 500). Rankings built on it reverse "
      "when events are added. Use p99."),
+    # ---- OT-only projection study (ot_projection.py) ---------------------
+    ("OT-only projection",
+     "The OT track's own helix and fit covariance projected onto the inner-tracker "
+     "barrel with NO Kalman update and NO multiple-scattering term: what a refit "
+     "knows before it has included any IT cluster. Each layer is projected "
+     "independently from the OT fit, so IL1 is not informed by IL4. Computed "
+     "outside the refit (ot_projection.py) and cross-checked against the "
+     "producer's own seed projection (projSeed*) on every shared crossing."),
+    ("layer projection",
+     "One OT track projected to one IT barrel layer. It may span SEVERAL modules: "
+     "the ellipse is evaluated on every module it overlaps, not only on the one the "
+     "helix lands in, which removes the 'module boundary' bias above."),
+    ("4-sigma ellipse",
+     "Mahalanobis distance d < 4 in the module's local (x, y), with the 2x2 "
+     "covariance J C J^T: C is the OT fit's helix covariance (L1TTrack_cov_*), J the "
+     "numerical Jacobian of the local position with respect to (rInv, phi, tanL, "
+     "z0, d0). Evaluated in the frame of the module each cluster is on. The OT "
+     "covariance is OPTIMISTIC (see the pull widths printed with the study), so "
+     "'4 sigma' of the claimed covariance is fewer true sigma."),
+    ("majority-owner TP",
+     "The TrackingParticle owning the most GENUINE stubs of the OT track: the "
+     "particle the track is for. Its IT clusters are the TARGETS of the refit."),
+    ("foreign stub",
+     "A GENUINE stub (both clusters from one TP) whose TP is NOT the majority "
+     "owner: a real piece of another particle on this track."),
+    ("fake stub",
+     "A stub that is not genuine: stub-level combinatoric (its two clusters come "
+     "from different TPs) or unknown (no TP: noise, out-of-time pileup). Its TPs are "
+     "not recorded, so a fake stub cannot name a co-owner. 'Combinatoric' is "
+     "deliberately NOT used as a track class: CMSSW uses it for tracks, L1TOTStub for "
+     "stubs, and they mean different things."),
+    ("track classes  (perfect / foreign-1 / foreign-2+ / fake-1 / fake-2+ / foreign-fake)",
+     "By the stubs the OT track is built from. perfect: every stub genuine and owned "
+     "by the majority TP. foreign-1 / foreign-2+: 1 / 2 or more foreign stubs, no "
+     "fake stub. fake-1 / fake-2+: 1 / 2 or more fake stubs, no foreign stub. "
+     "foreign-fake: at least one of each. NB CMSSW's L1TTrack_genuine is NOT "
+     "'perfect': it can carry ONE fake stub (1,224 of 17,882 genuine-flagged tracks "
+     "on PU200 ttbar)."),
+    ("excluded tracks  (tie / no-owner / unjoined / covariance absent)",
+     "Not in any class, counted and printed with every result. tie: two TPs own the "
+     "same, largest number of genuine stubs, so there is no target. no-owner: no "
+     "genuine stub. unjoined: a stub whose truth could not be joined. covariance "
+     "absent: L1TTrack_cov_* all zero."),
+    ("A  (target)  /  A-in  /  A-out",
+     "A cluster of the majority-owner TP anywhere on the layer. A-in lies inside the "
+     "4-sigma ellipse, A-out outside; A-out residuals are taken on the target's own "
+     "module, so they are frame-consistent too. Containment = fraction of layer "
+     "projections with at least one A-in, among those where an A cluster exists."),
+    ("B1 / B2 / B3  (background inside the ellipse)",
+     "Every other cluster inside the 4-sigma ellipse. B1: owned by a TP that also "
+     "owns a foreign stub of this track (the trap a contaminated track sets for "
+     "itself). B2: owned by any other TP. B3: no TP (unlinked: mostly soft "
+     "sub-0.1 GeV deposits, delta rays, curlers). CAVEAT: in these nanos (no "
+     "noise-angle payload) B3 clusters carry NO angle estimate, so angle-using "
+     "metrics never charge them an angle mismatch. Once angles are attached to "
+     "them (a sensor-ADC angle regressor, or a smart-pixels estimate), B3 is a "
+     "potential contaminant that these purities do not yet represent."),
+    ("residual  (du, dv, dcotAlpha, dcotBeta)",
+     "Cluster minus OT-only projection, in the local frame of the module the "
+     "cluster is on, after projecting the track onto THAT module's plane: du, dv in "
+     "um; dcotAlpha, dcotBeta unitless, cluster = the sensor's angle estimate "
+     "(localCotAlpha/Beta), track = the helix direction taken through the same "
+     "GeomDet::toLocal. Clusters without an angle estimate enter the position "
+     "panels only."),
 ]
 
 
@@ -3506,6 +3570,373 @@ def study_mva_score_correlation(X, K, P, ax_row, out):
     plt.close(f2)
     out["mva_score_correlation"] = {"scores": names, "n_sampled": int(take),
                                     "figure": p2, "per_build": res}
+
+# ---- (19) OT-only projection: targets vs background, per track class --------
+PROJ_TERMS = ["OT-only projection", "layer projection", "4-sigma ellipse",
+              "majority-owner TP", "foreign stub", "fake stub",
+              "track classes  (perfect / foreign-1 / foreign-2+ / fake-1 / fake-2+ / foreign-fake)",
+              "excluded tracks  (tie / no-owner / unjoined / covariance absent)",
+              "A  (target)  /  A-in  /  A-out",
+              "B1 / B2 / B3  (background inside the ellipse)",
+              "residual  (du, dv, dcotAlpha, dcotBeta)"]
+PROJ_CAT_STYLE = {0: dict(color="#111111", ls="-", lw=1.6),     # A-in
+                  1: dict(color="#111111", ls="--", lw=1.1),    # A-out
+                  2: dict(color="#d62728", ls="-", lw=1.2),     # B1
+                  3: dict(color="#1f77b4", ls="-", lw=1.2),     # B2
+                  4: dict(color="#8c8c8c", ls="-", lw=1.2)}     # B3
+PROJ_QTY = [("du", "du  [um]", 1e4), ("dv", "dv  [um]", 1e4),
+            ("d", "Mahalanobis d  [sigma of the OT fit]", 1.0),
+            ("dcotA", "dcotAlpha  [unitless]", 1.0), ("dcotB", "dcotBeta  [unitless]", 1.0)]
+# The cross-check against the producer's own seed projection must hold at nano
+# precision, or every number below is a statement about a bug here. Measured on
+# PU200: |du|,|dv| p99 0.01 um; |dcotAlpha| p99 <= 3e-5, |dcotBeta| <= 4.4e-4;
+# cone width ratio median 1.000 (central vs one-sided differences).
+PROJ_VALIDATION_LIMITS = {"du_p99_cm": 1e-4, "dv_p99_cm": 1e-4, "dcotA_p99": 2e-3,
+                          "dcotB_p99": 5e-3, "sig_ratio_median_tol": 0.02}
+
+
+def _proj_mad_rms(x):
+    x = x[np.isfinite(x)]
+    if len(x) < 5:
+        return {"n": int(len(x)), "median": float("nan"), "mad": float("nan"), "rms": float("nan")}
+    med = float(np.median(x))
+    return {"n": int(len(x)), "median": med, "mad": float(1.4826 * np.median(np.abs(x - med))),
+            "rms": float(np.std(x))}
+
+
+# |other angle residual| kept on the cross-cut page, unitless: comfortably wider
+# than the target's own core (MAD ~0.02-0.03) and far inside B2's (0.1-2.1)
+PROJ_CROSS_CUT = 1.0
+
+
+def _draw_proj_crosscut(R, Ls, nsig, n_events, n_perfect):
+    """Perfect tracks: dcotAlpha with |dcotBeta| <= cut, and the converse, per layer.
+
+    Same common normalisation as the per-layer pages: every category in a panel
+    is divided by the total AFTER the cut, so relative proportions survive.
+    Clusters without an angle estimate (all of B3) cannot enter either panel.
+    """
+    import ot_projection as OPJ
+    cut = PROJ_CROSS_CUT
+    fig = plt.figure(figsize=(14, 3.0 * len(Ls) + 1.6))
+    gs = fig.add_gridspec(len(Ls), 3, width_ratios=[1, 1, 0.8])
+    table = {}
+    for li, L in enumerate(Ls):
+        base = (R["layer"] == L) & (R["cls"] == 0)
+        both = base & np.isfinite(R["dcotA"]) & np.isfinite(R["dcotB"])
+        table[f"IL{L}"] = {}
+        for pi, (q, other, qlab, olab) in enumerate(
+                (("dcotA", "dcotB", "dcotAlpha", "dcotBeta"),
+                 ("dcotB", "dcotA", "dcotBeta", "dcotAlpha"))):
+            ax = fig.add_subplot(gs[li, pi])
+            keep = both & (np.abs(R[other]) <= cut)
+            n_all = int(keep.sum())
+            v = R[q][keep & np.isin(R["cat"], (0, 2, 3, 4))].astype(np.float64)
+            hi = np.nanpercentile(np.abs(v), 99.5) if len(v) else 1.0
+            edges = np.linspace(-hi, hi, 81)
+            rows = {}
+            for c in range(5):
+                m_all = both & (R["cat"] == c)
+                m = keep & (R["cat"] == c)
+                x = R[q][m].astype(np.float64)
+                rows[OPJ.CATEGORIES[c]] = {
+                    "n_with_both_angles": int(m_all.sum()), "n_after_cut": int(m.sum()),
+                    "kept_fraction": float(m.sum() / m_all.sum()) if m_all.any() else float("nan"),
+                    **{k: v_ for k, v_ in _proj_mad_rms(x).items() if k != "n"}}
+                if not len(x):
+                    continue
+                h, _ = np.histogram(np.clip(x, edges[0], edges[-1]), edges)
+                ax.stairs(h / max(n_all, 1), edges, **PROJ_CAT_STYLE[c],
+                          label=f"{OPJ.CATEGORIES[c]} n={len(x):,} "
+                                f"(kept {100 * rows[OPJ.CATEGORIES[c]]['kept_fraction']:.1f}%)")
+            table[f"IL{L}"][f"{qlab} | |{olab}|<={cut:g}"] = rows
+            ax.set_yscale("log")
+            ax.grid(alpha=.25)
+            ax.tick_params(labelsize=7)
+            ax.legend(fontsize=6, loc="upper right")
+            ax.set_xlabel(f"{qlab}  [unitless]   (|{olab}| <= {cut:g}; edge bins hold overflow)",
+                          fontsize=7)
+            if pi == 0:
+                ax.set_ylabel(f"IL{L}\nfraction of all clusters\nin panel / bin", fontsize=8)
+            if li == 0:
+                ax.set_title(f"{qlab}, with |{olab}| <= {cut:g}", fontsize=9)
+    tax = fig.add_subplot(gs[:, -1])
+    tax.axis("off")
+    tax.text(0.0, 1.0,
+             f"PERFECT tracks only ({n_perfect:,} tracks, {n_events:,} events).\n"
+             f"OT-only projection, no KF update between layers,\n"
+             f"{nsig:g}-sigma ellipse as on the per-layer pages.\n\n"
+             f"Each panel: one angle residual, the OTHER\n"
+             f"restricted to |d| <= {cut:g} (unitless) -- a 1D view of\n"
+             f"the 2D (dcotAlpha, dcotBeta) distribution.\n"
+             f"'kept' = fraction of that category's clusters\n"
+             f"(with both angles) surviving the other-angle cut.\n\n"
+             f"Normalised to ALL clusters in the panel after\n"
+             f"the cut, so category proportions are preserved.\n\n"
+             "A-in / A-out = majority-owner TP's cluster inside /\n"
+             "  outside the ellipse; B2 = other TP in ellipse.\n"
+             "B1 is empty by definition (a perfect track has no\n"
+             "  foreign stub); B3 (no TP) carries no angle\n"
+             "  estimate, so it cannot appear here.",
+             fontsize=7, va="top", ha="left", family="monospace", transform=tax.transAxes)
+    fig.suptitle(f"Perfect tracks: each angle residual with the other angle restricted to "
+                 f"|d| <= {cut:g}, per layer", fontsize=12)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    return {"fig": fig, "table": table}
+
+
+def study_ot_projection_targets(X, K, P, ax_row, out):
+    """(19) OT-only projection: what the refit's TARGET clusters and the
+    BACKGROUND clusters inside a 4-sigma ellipse look like, by track class.
+
+    WHY THIS IS SEPARATE FROM THE REST OF THE OMNIBUS. Every other study here
+    reads the refit's per-crossing tables, which keep ONE module per layer and
+    record the seed projection only where the seed and the KF-updated state share
+    a module. This one needs neither restriction, so it projects the OT track
+    itself (ot_projection.py) onto every module its ellipse overlaps, and uses
+    the refit tables only as a cross-check of its helix, frame and Jacobian. It
+    ignores X/K/P and streams its own inputs (--proj-inputs, default -i).
+
+    WHY PER LAYER. There is no Kalman update between layers here, so IL1 and IL4
+    are two independent extrapolations of the same OT fit with different lever
+    arms; pooling them would mix four different cone sizes. The KF-updated
+    version is a later study.
+
+    WHY BY TRACK CLASS. The target is the majority-owner TP's cluster. On a
+    contaminated OT track the projection itself is pulled, and the cluster of a
+    TP that owns a foreign stub (B1) is the trap it sets for itself; separating
+    classes says whether that trap is visible in position or angle.
+    """
+    import ot_projection as OPJ
+
+    def _skip(msg):
+        for a in ax_row:
+            a.axis("off")
+        ax_row[0].text(0.02, 0.5, "OT-only projection study SKIPPED:\n" + msg, fontsize=7,
+                       wrap=True, va="center")
+        out["ot_projection_targets"] = {"skipped": msg}
+        print(f"    SKIPPED: {msg}")
+
+    files = out.get("_proj_inputs") or out["_inputs"]
+    geom = out.get("_geometry")
+    if not geom or not os.path.exists(geom):
+        return _skip("no module geometry JSON (--geometry); produce it with "
+                     "L1Trigger/Phase3SmartPixels/test/dumpModuleGeometry_cfg.py")
+    try:
+        OPJ.check_inputs(files[0], with_refit=True)
+    except SystemExit as e:
+        return _skip(str(e))
+    nsig = 4.0
+    step = [0]
+
+    def _log(msg):
+        step[0] += 1
+        if step[0] % 10 == 0:
+            print(msg)
+    r = OPJ.run(files, geom, nsig=nsig, chunk=out.get("_proj_chunk", 10),
+                nev=out.get("_proj_nev"), validate=True, log=_log)
+    pulls = OPJ.param_pulls(files, nev=out.get("_proj_nev"))
+    R, PR, V = r["rows"], r["proj"], r["validation"]
+    classes = OPJ.TRACK_CLASSES
+    tbc = r["tracks_by_class"]
+
+    # ---- the cross-check gate -------------------------------------------
+    lim = PROJ_VALIDATION_LIMITS
+    val = {"n_refit_seed_crossings": V["n_refit"], "n_compared": V["n_compared"],
+           "du_p99_cm": float(np.percentile(np.abs(V["du"]), 99)),
+           "dv_p99_cm": float(np.percentile(np.abs(V["dv"]), 99)),
+           "dcotA_p99": float(np.percentile(np.abs(V["dcotA"]), 99)),
+           "dcotB_p99": float(np.percentile(np.abs(V["dcotB"]), 99)),
+           "sigU_ratio_median": float(np.median(V["rsu"])),
+           "sigV_ratio_median": float(np.median(V["rsv"])),
+           "sig_ratio_p1_p99": [float(np.percentile(np.r_[V["rsu"], V["rsv"]], q)) for q in (1, 99)]}
+    bad = [k for k in ("du_p99_cm", "dv_p99_cm", "dcotA_p99", "dcotB_p99") if val[k] > lim[k]]
+    bad += [k for k in ("sigU_ratio_median", "sigV_ratio_median")
+            if abs(val[k] - 1.0) > lim["sig_ratio_median_tol"]]
+    if V["n_compared"] < 0.99 * V["n_refit"]:
+        bad.append("n_compared")
+    print(f"    cross-check vs refit projSeed*: {V['n_compared']}/{V['n_refit']} crossings, "
+          f"|du| p99 {val['du_p99_cm'] * 1e4:.3f} um, |dcotB| p99 {val['dcotB_p99']:.2e}, "
+          f"width ratio {val['sigU_ratio_median']:.4f}/{val['sigV_ratio_median']:.4f}")
+    if bad:
+        raise SystemExit(f"OT-only projection DISAGREES with the producer's seed projection on "
+                         f"{bad}: {val}. Do not trust any result of this study.")
+    if r["bound_ratio_max"] > 0.9:
+        print(f"    WARNING: an overlapping module sat at {r['bound_ratio_max']:.2f} of the "
+              f"candidate bound; widen BOUND_* in ot_projection.py")
+
+    # ---- per class x layer tables ---------------------------------------
+    table = {}
+    for ci, cname in enumerate(classes):
+        table[cname] = {}
+        for L in OPJ.IT_LAYERS:
+            m = (PR["cls"] == ci) & (PR["layer"] == L)
+            cv = m & PR["covered"]
+            ae = m & PR["a_exists"]
+            e = {"n_layer_projections": int(m.sum()), "n_covered": int(cv.sum()),
+                 "n_lands": int((m & PR["lands"]).sum()), "n_target_exists": int(ae.sum()),
+                 "n_target_inside": int((ae & PR["a_in"]).sum()),
+                 "n_target_unprojectable": int((ae & PR["a_unprojectable"]).sum()),
+                 "containment": float((ae & PR["a_in"]).sum() / max(ae.sum(), 1))
+                 if ae.any() else float("nan")}
+            for b in ("nB1", "nB2", "nB3"):
+                e[f"mean_{b}_per_covered"] = float(PR[b][cv].mean()) if cv.any() else float("nan")
+            ld = m & PR["lands"]
+            for s_ in ("su", "sv", "sCotA", "sCotB"):
+                e[f"median_{s_}"] = float(np.median(PR[s_][ld])) if ld.any() else float("nan")
+            rm = (R["cls"] == ci) & (R["layer"] == L)
+            e["residuals"] = {OPJ.CATEGORIES[c]: {q: _proj_mad_rms(R[q][rm & (R["cat"] == c)].astype(np.float64))
+                                                  for q, _, _ in PROJ_QTY} for c in range(5)}
+            table[cname][f"IL{L}"] = e
+
+    excl = {k: tbc[k] for k in ("tie", "no-owner", "unjoined", "covariance-absent")}
+    pull_txt = "  ".join(f"{p} {pulls[p]['mad']:.2f}" for p in OPJ.HPAR)
+    excl_txt = ", ".join(f"{k} {v:,}" for k, v in excl.items())
+    cls_txt = "  ".join(f"{c} {tbc[c]:,}" for c in classes)
+
+    # ---- summary row on the omnibus grid ---------------------------------
+    ax = ax_row[0]
+    Ls = list(OPJ.IT_LAYERS)
+    cols_ = plt.cm.tab10(np.arange(len(classes)))
+    for ci, cname in enumerate(classes):
+        y = [table[cname][f"IL{L}"]["containment"] for L in Ls]
+        ax.plot(Ls, y, "o-", color=cols_[ci], label=f"{cname} ({tbc[cname]:,} trk)")
+    ax.set_xticks(Ls, [f"IL{L}" for L in Ls])
+    ax.set_ylabel("target containment  [fraction of layer projections]")
+    ax.set_title("A-in / (A exists): majority-owner cluster\ninside the 4-sigma OT-only ellipse",
+                 fontsize=9)
+    ax.set_ylim(0, 1.02)
+    ax.grid(alpha=.3)
+    ax.legend(fontsize=6, loc="lower left")
+    ax = ax_row[1]
+    for ci, cname in enumerate(classes):
+        tot = [sum(table[cname][f"IL{L}"][f"mean_nB{b}_per_covered"] for b in (1, 2, 3)) for L in Ls]
+        b1 = [table[cname][f"IL{L}"]["mean_nB1_per_covered"] for L in Ls]
+        ax.plot(Ls, tot, "o-", color=cols_[ci], label=cname)
+        if cname.startswith("foreign"):
+            ax.plot(Ls, b1, "s:", color=cols_[ci], ms=4)
+    ax.set_xticks(Ls, [f"IL{L}" for L in Ls])
+    ax.set_yscale("log")
+    ax.set_ylabel("background clusters per covered layer projection  [count]")
+    ax.set_title("B1+B2+B3 inside the ellipse (solid)\nB1 alone, foreign classes (dotted)", fontsize=9)
+    ax.grid(alpha=.3, which="both")
+    ax.legend(fontsize=6)
+    ax = ax_row[2]
+    ax.axis("off")
+    legend_txt = (
+        "DEFINITIONS (full text: spix_glossary.txt)\n"
+        "Track classes, by the OT track's stubs vs its majority-owner TP:\n"
+        + "\n".join(f"  {c}: {OPJ.TRACK_CLASS_DEF[c]}" for c in classes)
+        + "\n  foreign stub = genuine stub of ANOTHER TP;  fake stub = not genuine\n"
+          "  (stub-combinatoric or unknown).  CMSSW L1TTrack_genuine can carry\n"
+          "  ONE fake stub: it is NOT 'perfect'.\n"
+        f"EXCLUDED (no class): {excl_txt}\n"
+        "A = majority-owner TP's cluster on the layer (A-in / A-out of ellipse)\n"
+        "B1 = in ellipse, TP owns a foreign stub of this track\n"
+        "B2 = in ellipse, other TP;  B3 = in ellipse, no TP\n"
+        "Ellipse: d < 4 of J C J^T, OT fit covariance, no MS, no KF update;\n"
+        "  every module it overlaps, residuals in the cluster's module frame.\n"
+        f"OT fit pull widths (MAD; 1 = honest): {pull_txt}\n"
+        f"Cross-check vs refit projSeed*: {V['n_compared']:,} crossings, |du| p99\n"
+        f"  {val['du_p99_cm'] * 1e4:.3f} um, width ratio {val['sigU_ratio_median']:.3f}\n"
+        f"Per-layer residual figures: spix_ot_projection_IL1..4.png / .pdf")
+    ax.text(0.0, 1.0, legend_txt, fontsize=5.6, va="top", ha="left", family="monospace",
+            transform=ax.transAxes)
+
+    # ---- per-layer residual figures --------------------------------------
+    from matplotlib.backends.backend_pdf import PdfPages
+    od = out["_outdir"]
+    pdf_path = os.path.join(od, "spix_ot_projection.pdf")
+    defs = _glossary_text(width=58, terms=PROJ_TERMS)
+    pngs = []
+    with PdfPages(pdf_path) as pdf:
+        for L in Ls:
+            fig = plt.figure(figsize=(26, 3.0 * len(classes) + 1.6))
+            gs = fig.add_gridspec(len(classes), len(PROJ_QTY) + 1,
+                                  width_ratios=[1] * len(PROJ_QTY) + [1.25])
+            inl = (R["layer"] == L) & np.isin(R["cat"], (0, 2, 3, 4))
+            for qi, (q, qlab, sc) in enumerate(PROJ_QTY):
+                v = R[q][inl].astype(np.float64) * sc
+                if q == "d":
+                    edges = np.linspace(0, 10, 81)
+                else:
+                    hi = np.nanpercentile(np.abs(v), 99.5) if np.isfinite(v).any() else 1.0
+                    edges = np.linspace(-hi, hi, 81)
+                for ci, cname in enumerate(classes):
+                    ax = fig.add_subplot(gs[ci, qi])
+                    base = (R["layer"] == L) & (R["cls"] == ci)
+                    # ONE common normalisation for every category in the panel:
+                    # the total of A-in + A-out + B1 + B2 + B3. That keeps the
+                    # relative proportions (how much background per target) and
+                    # makes A-in and A-out -- two halves of one distribution split
+                    # at d = nsig -- join continuously at the ellipse boundary.
+                    # Per-category normalisation made that curve jump ~6x there.
+                    xall = R[q][base].astype(np.float64)
+                    n_all = int(np.isfinite(xall).sum())
+                    for c in range(5):
+                        x = R[q][base & (R["cat"] == c)].astype(np.float64) * sc
+                        x = x[np.isfinite(x)]
+                        if not len(x):
+                            continue
+                        h, _ = np.histogram(np.clip(x, edges[0], edges[-1]), edges)
+                        ax.stairs(h / n_all, edges, **PROJ_CAT_STYLE[c],
+                                  label=f"{OPJ.CATEGORIES[c]} n={len(x):,}")
+                    if q == "d":
+                        ax.axvline(nsig, color="#555", lw=0.8, ls=":")
+                    ax.set_yscale("log")
+                    ax.tick_params(labelsize=6)
+                    ax.grid(alpha=.25)
+                    ax.legend(fontsize=5.2, loc="upper right")
+                    if ci == len(classes) - 1:
+                        ax.set_xlabel(qlab + "   (edge bins hold overflow)", fontsize=7)
+                    if qi == 0:
+                        e = table[cname][f"IL{L}"]
+                        ax.set_ylabel(f"{cname}\nfraction of all clusters\nin panel / bin\n"
+                                      f"containment {e['containment']:.3f}\n"
+                                      f"({e['n_target_inside']:,}/{e['n_target_exists']:,})", fontsize=7)
+                    if ci == 0:
+                        ax.set_title(qlab, fontsize=8)
+            tax = fig.add_subplot(gs[:, -1])
+            tax.axis("off")
+            tax.text(0.0, 1.0,
+                     f"IL{L}: OT-only projection, no KF update between layers\n"
+                     f"{r['n_events']:,} events.  Tracks per class: {cls_txt}\n"
+                     f"EXCLUDED (no class): {excl_txt}\n"
+                     f"OT fit pull widths (MAD): {pull_txt}\n\n" + defs,
+                     fontsize=5.4, va="top", ha="left", family="monospace",
+                     transform=tax.transAxes, wrap=True)
+            fig.suptitle(f"SmartPixels OT-only projection onto IL{L}: target (A) vs background "
+                         f"(B1/B2/B3) clusters inside the {nsig:g}-sigma ellipse, by track class",
+                         fontsize=12)
+            fig.tight_layout(rect=(0, 0, 1, 0.975))
+            p_ = os.path.join(od, f"spix_ot_projection_IL{L}.png")
+            fig.savefig(p_, dpi=110)
+            pdf.savefig(fig)
+            plt.close(fig)
+            pngs.append(p_)
+        # ---- perfect tracks, one angle cut on the other angle -------------
+        # A 1D look at the 2D (dcotAlpha, dcotBeta) distribution: each angle's
+        # residual with the OTHER restricted to |d| <= PROJ_CROSS_CUT, per
+        # layer. Overlaying five categories as surfaces in (alpha, beta,
+        # count) is unreadable; this shows how much of each category survives
+        # the second angle and what its first-angle shape is once it has.
+        crosscut = _draw_proj_crosscut(R, Ls, nsig, r["n_events"], tbc["perfect"])
+        pdf.savefig(crosscut["fig"])
+        p_ = os.path.join(od, "spix_ot_projection_perfect_crosscut.png")
+        crosscut["fig"].savefig(p_, dpi=110)
+        plt.close(crosscut["fig"])
+        pngs.append(p_)
+    for cname in classes:
+        print(f"    {cname:13s} " + "  ".join(
+            f"IL{L} cont {table[cname][f'IL{L}']['containment']:.3f} "
+            f"B/cov {sum(table[cname][f'IL{L}'][f'mean_nB{b}_per_covered'] for b in (1, 2, 3)):.2f}"
+            for L in Ls))
+    out["ot_projection_targets"] = {
+        "n_events": r["n_events"], "nsig": nsig, "tracks_by_class": tbc, "excluded": excl,
+        "ot_fit_pulls": pulls, "validation_vs_refit": val,
+        "candidate_bound_ratio_max": r["bound_ratio_max"], "per_class_layer": table,
+        "perfect_crosscut": crosscut["table"],
+        "figures": pngs + [pdf_path]}
 SECTIONS = [
     ("A. Cluster cones: how much is in reach of a track?",
      "Occupancy and containment around a projected track -- the raw material every"
@@ -3540,6 +3971,12 @@ SECTIONS = [
       ("seed composition", study_seed_composition, 3),
       ("combined IT+OT seeding", study_combined_it_ot, 3),
       ("seed menu per build", study_seed_menu_by_build, 3)]),
+
+    ("E. OT-only projection: what a refit is offered, by track class",
+     "The OT track's own helix and covariance projected onto every IT barrel module"
+     " its 4-sigma ellipse overlaps, with no KF update: the majority-owner TP's"
+     " cluster (target) against every other cluster in reach, per layer.",
+     [("OT-only projection targets vs background", study_ot_projection_targets, 3)]),
 ]
 
 # Flat view, kept because the figure is still one grid and several studies index
@@ -3579,6 +4016,16 @@ def main():
                          "exports every track. This is part of the CACHE KEY, "
                          "so a census built without it cannot be extended with "
                          "it -- set it on the run that is meant to serve both.")
+    ap.add_argument("--geometry", default=None,
+                    help="module geometry JSON from SmartPixelsModuleGeometryDumper, "
+                         "for the OT-only projection study (19)")
+    ap.add_argument("--proj-inputs", default=None,
+                    help="comma-separated files/globs for study 19, which streams "
+                         "its inputs; defaults to -i")
+    ap.add_argument("--proj-nev", type=int, default=None,
+                    help="event cap for study 19 (default: all)")
+    ap.add_argument("--proj-chunk", type=int, default=10,
+                    help="events per chunk for study 19 (~0.35 GB RSS at 10)")
     args = ap.parse_args()
     os.makedirs(args.outdir, exist_ok=True)
 
@@ -3597,7 +4044,11 @@ def main():
            "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
            "_site": args.site,
            "_menu_cache_mode": args.menu_cache_mode,
-           "_menu_export_tracks": args.menu_export_tracks}
+           "_menu_export_tracks": args.menu_export_tracks,
+           "_geometry": args.geometry, "_proj_nev": args.proj_nev,
+           "_proj_chunk": args.proj_chunk,
+           "_proj_inputs": ([f for g in args.proj_inputs.split(",") for f in
+                             (sorted(_glob.glob(g)) or [g])] if args.proj_inputs else None)}
 
     gp = write_glossary(args.outdir)
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
