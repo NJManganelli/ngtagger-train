@@ -239,12 +239,14 @@ def main():
                     lay, S["true_alpha"], S["true_beta"], bly, np.ones(n))
                 lim = float(np.nanpercentile(np.abs(r), 99.5))
                 b = np.linspace(-lim, lim, 90)
+                # MAD and RMS both, as in the combined figure: the gap between
+                # them is the tail the Gaussian payload cannot reproduce.
                 ax.hist(r, bins=b, histtype="step", density=True,
-                        label=f"ML parquet (fitted from), width "
-                              f"{robust(r)[1]:.4f}")
+                        label=f"ML parquet (fitted from): MAD "
+                              f"{robust(r)[1]:.4g}, RMS {np.std(r):.4g}")
                 ax.hist(shift, bins=b, histtype="step", density=True,
-                        label=f"payload as applied, width "
-                              f"{robust(shift)[1]:.4f}")
+                        label=f"payload as applied: MAD "
+                              f"{robust(shift)[1]:.4g}, RMS {np.std(shift):.4g}")
                 ax.set_yscale("log")
                 ax.set_xlabel(f"spec cot{ang} residual, pred - true [unitless]")
                 ax.set_ylabel("density [1/bin]")
