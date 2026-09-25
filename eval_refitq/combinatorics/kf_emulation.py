@@ -39,7 +39,7 @@ FIVE PARAMETERS. The samples are produced with promptHnpar=5, so the prompt
 collection carries a real fitted d0 and a 5x5 covariance; KFbase pins d0 only on
 nHelixPar==4. The model is the one the exact three-point solve also uses:
 
-    phi(r) = phi0 + d0 / r - c * kappa * r        (r-phi, 3 parameters)
+    phi(r) = phi0 - d0 / r - c * kappa * r        (r-phi, 3 parameters)
     z(r)   = z0   + cot * r                       (r-z,   2 parameters)
 
 so the state is (x0, x1, x4 | x2, x3) = (-c*kappa, phi0, d0 | cot, z0) and the
@@ -70,14 +70,52 @@ MULT_SCATT_TERM = 0.00075                   # KalmanMultiScattTerm, rad*GeV
 PS_LAYERS = (1, 2, 3)                       # OT barrel 1-3 are PS, 4-6 are 2S
 
 
-def ot_variances(layer, r, pt):
+# Tilt correction for the z variance of a TILTED PS module, from
+# KFParamsComb::matrixV (TrackFindingTMTT/src/KFParamsComb.cc:105-117):
+#     scaleTilted = approxB(z, r);  vz = b * scaleTilted^2
+# with approxB = bApprox_gradient*|z|/r + bApprox_intercept for a tilted barrel
+# module and 1 for a flat one (TrackFindingTMTT/src/Stub.cc:352-358). The
+# constants are TMTT's fitted defaults (src/Settings.cc:22-23).
+B_APPROX_GRADIENT = 0.886454
+B_APPROX_INTERCEPT = 0.504148
+
+
+def approx_b(z, r):
+    """The tilted-module bend/resolution factor, floored at the flat value.
+
+    WHICH MODULES ARE TILTED IS A MODULE PROPERTY WE DO NOT CARRY. CMSSW gates
+    this on Stub::tiltedBarrel(); our ntuple has only (r, z). Taking
+    max(1, approxB) puts the crossover at |z|/r = 0.559, where the formula
+    itself passes through the flat-module value of 1 -- so the central barrel
+    keeps vz unscaled and the scaling turns on where the tilted region begins.
+    That is an approximation to a discrete geometric fact, not the fact itself.
+
+    MEASURED, sigma(z_stub - z_track) on genuine PS stubs of real tracks with
+    pT > 3, ratio of the highest |z|/r bin to the central one against the
+    predicted max(1, approxB)^2 = 3.98:
+        OT L1  1.66 measured   OT L2  2.07   OT L3  4.71
+    so the form is right and L3 matches, while L1 and L2 are over-predicted by
+    roughly 2x. The measurement is an upper bound -- it contains the track's own
+    extrapolation error, which also grows with |z|/r -- so it cannot settle the
+    discrepancy on its own. We follow CMSSW rather than the measurement here,
+    because the point is to emulate the KF that exists, and record the gap.
+    """
+    return np.maximum(1.0, B_APPROX_GRADIENT * np.abs(z) / np.maximum(r, 1e-3)
+                      + B_APPROX_INTERCEPT)
+
+
+def ot_variances(layer, r, pt, z=None):
     """(vphi, vz) for OT barrel stubs, following KFParamsComb::matrixV."""
     ps = np.isin(layer, PS_LAYERS)
     sigma_perp = np.where(ps, MPA_PITCH, CBC_PITCH) * INV_ROOT12
     sigma_par = np.where(ps, MPA_LENGTH, CBC_LENGTH) * INV_ROOT12
     scat = MULT_SCATT_TERM / np.maximum(np.abs(pt), 1e-3)
-    return ((sigma_perp / np.maximum(r, 1e-3)) ** 2 + scat ** 2,
-            np.broadcast_to(sigma_par ** 2, np.shape(r)).copy())
+    vz = np.broadcast_to(sigma_par ** 2, np.shape(r)).copy()
+    if z is not None:
+        # PS ONLY. The 2S branch of matrixV has no tilt term at all, and the
+        # comment there says the non-radial strip effect is neglected for PS.
+        vz = np.where(ps, vz * approx_b(z, r) ** 2, vz)
+    return ((sigma_perp / np.maximum(r, 1e-3)) ** 2 + scat ** 2, vz)
 
 
 def it_variances(r, sigX, sigY, pt):
@@ -100,11 +138,11 @@ def it_variances(r, sigX, sigY, pt):
 # coherently. That approximation is harmless within one system, whose hits span
 # a short radial range, and is not harmless across r = 3 -> 108 cm.
 #
-# WHERE A KINK LIVES. With phi(r) = phi0 + d0/r - c*kappa*r the basis functions
-# are 1, 1/r and r. A kink of angle delta at radius r_s adds
+# WHERE A KINK LIVES. With phi(r) = phi0 - d0/r - c*kappa*r (TTTrack d0) the
+# basis functions are 1, 1/r and r. A kink of angle delta at radius r_s adds
 #     delta * (r - r_s)/r  =  delta * 1  -  delta * r_s * (1/r)
 # which is EXACTLY a phi0 shift of +delta together with a d0 shift of
-# -delta*r_s, with NO kappa component to first order. So a 1 mrad scatter at
+# +delta*r_s (the 1/r coefficient is -d0), with NO kappa component to first order. So a 1 mrad scatter at
 # r_s = 20 cm is indistinguishable from 200 um of impact parameter. With Q = 0
 # the OT hits pin phi0 and kappa -- 1/r is nearly flat at large radius, so they
 # carry almost no d0 information -- and the IT azimuths must then be explained
@@ -114,7 +152,7 @@ def it_variances(r, sigX, sigY, pt):
 #
 # Q therefore enters in the (phi0, d0) and (cot, z0) planes with the correlation
 # a kink implies, and nothing in kappa:
-#     Q[phi0,phi0] = s^2 , Q[d0,d0] = s^2 r_s^2 , Q[phi0,d0] = -s^2 r_s
+#     Q[phi0,phi0] = s^2 , Q[d0,d0] = s^2 r_s^2 , Q[phi0,d0] = +s^2 r_s
 # MS_SCALE is the per-step scattering angle at 1 GeV, scaling as 1/pT after the
 # PDG small-angle form. There is no material map here, so it is a PARAMETER to
 # be scanned, not a derived number; IT_OT_SCALE multiplies it for the single
@@ -123,18 +161,33 @@ MS_SCALE = 0.0             # rad*GeV per step; 0 reproduces CMSSW exactly
 IT_OT_SCALE = 1.0          # extra factor on the IT -> OT crossing
 
 
+# higher-order helix terms, mirroring the hybrid's own flags
+# d0 IS CMSSW's TTTrack d0 EVERYWHERE HERE: d0 = x0 sin(phi) - y0 cos(phi), the
+# POCA being (d0 sin phi, -d0 cos phi) -- which is MINUS reco::TrackBase::dxy().
+# In that convention a hit at radius r sits at azimuth phi(r) = phi0 - d0/r - c
+# kappa r. (Until 2026-09-23 this file computed in the dxy convention and flipped
+# the sign once at output via D0_SIGN = -1; the rewrite is the same arithmetic
+# with the sign carried inside, bit for bit -- every d0 product flips in pairs --
+# so no seeding, fitting, cache or exported number changed. It was homogenised
+# because a formula derived here in the dxy convention was once carried into the
+# CMSSW producer, which works in TTTrack d0, and got the wrong sign there.)
+# Measured check of the convention: this file's truth d0 against L1TTrack's
+# tp_d0 for the same particles, median difference 0.000 um, robust sigma 0.1 um.
+
+HO_HELIX = True      # kalmanHOhelixExp_ = true  (Settings.cc:60)
+HO_D0 = True         # the (d0/r)^3 term, 5-parameter only (KFbase.cc:610)
 D0_PRIOR_CM = 1.0        # uniform half-range for the d0 prior; see kf_run
 
 
 def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
            has_angle=None, d0_prior_cm=D0_PRIOR_CM, ms_scale=MS_SCALE,
            it_ot_scale=IT_OT_SCALE, pt_for_ms=None, layers=None,
-           reverse=False):
+           reverse=False, ho=None):
     """Vectorised FIVE-parameter KF over ntrack x nlayer arrays, inner to outer.
 
     THE MODEL, and it is the same one the exact three-point solve uses:
 
-        phi(r) = phi0 + d0 / r - c * kappa * r        (r-phi, 3 parameters)
+        phi(r) = phi0 - d0 / r - c * kappa * r        (r-phi, 3 parameters)
         z(r)   = z0   + cot * r                       (r-z,   2 parameters)
 
     so the state is (x0, x1, x4 | x2, x3) = (-c*kappa, phi0, d0 | cot, z0) and
@@ -166,9 +219,9 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     ma/va and mb/vb are the OPTIONAL per-cluster SmartPixels angle measurements.
     An OT stub has neither, which has_angle records.
 
-      alpha measures  x0 - x4 / r^2 , NOT x0 alone. From the same helix model the
-        local direction gives  half = d0/r + c*kappa*r , so the alpha-implied
-        curvature kappa_alpha = half/(c*r) equals kappa + d0/(c*r^2). Treating it
+      alpha measures  x0 + x4 / r^2 , NOT x0 alone. From the same helix model the
+        local direction gives  half = -d0/r + c*kappa*r , so the alpha-implied
+        curvature kappa_alpha = half/(c*r) equals kappa - d0/(c*r^2). Treating it
         as a clean measurement of curvature is exactly the d0-into-kappa
         confusion the 5-parameter fit exists to avoid; written properly it
         constrains a DIFFERENT combination than the positions do, which is where
@@ -289,15 +342,41 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
                 rs_ = np.where(step, r_prev, 0.0)
                 C11 = C11 + q                      # phi0
                 C44 = C44 + q * rs_ * rs_          # d0
-                C14 = C14 - q * rs_                # correlation a kink implies
+                C14 = C14 + q * rs_                # correlation a kink implies (TTTrack d0: +r_s)
                 C22 = C22 + q                      # cot
                 C33 = C33 + q * rs_ * rs_          # z0
                 C23 = C23 - q * rs_
-        g = 1.0 / r
-        pred = x0 * r + x1 + x4 * g
+        g = -1.0 / r                                # d(phi)/d(d0) in TTTrack's d0 convention
+        # THIRD-ORDER CIRCLE EXPANSION, which the real KF applies and we used
+        # not to. KFbase::residual adds (1/6)(r*inv2R)^3 in r-phi, (1/6)(d0/r)^3
+        # for the 5-parameter fit, and -(1/6) r (r*inv2R)^2 * tanL in r-z
+        # (KFbase.cc:603,610,606), active because kalmanHOhelixExp_ is true and
+        # kalmanHOfw_ false in the hybrid Settings DEFAULT constructor
+        # (Settings.cc:60,63) -- NOT the values in TMTrackProducer_Defaults_cfi,
+        # which HybridFit never reads (HybridFit.cc:55-58 default-constructs).
+        #
+        # Leaving them out cost 1151 um of d0 at pT = 2 falling as 1/pT^3. The
+        # r-phi term is ODD in charge, so it broadens symmetrically with no mean
+        # offset; the r-z term is EVEN, so it biases z0. Both are properties of
+        # the helix, not of the outer tracker, so they apply to every fit here.
+        # x0 = -c*kappa, so r*inv2R == -x0*r up to the sign convention.
+        use_ho = HO_HELIX if ho is None else ho
+        ho_rphi = ((1.0 / 6.0) * np.power(x0 * r, 3) if use_ho else 0.0)
+        if use_ho and HO_D0:
+            ho_rphi = ho_rphi + (1.0 / 6.0) * np.power(x4 * g, 3)
+        pred = x0 * r + x1 + x4 * g + ho_rphi
         upd3(r, np.ones(nt), g, np.where(use, m0[:, L] - pred, 0.0), v0[:, L],
              use, chi2_rphi)
-        upd2(r, np.ones(nt), np.where(use, m1[:, L] - (x2 * r + x3), 0.0),
+        # deltaS = (1/6) r (r*inv2R)^2 ; the path-length correction enters r-z
+        # through the dip angle
+        # SIGN, from the code rather than from reasoning: KFbase.cc:632 applies
+        # `delta += correction` where delta is the RESIDUAL, so
+        # `correction[1] -= deltaS*tanL` (line 606) means the PREDICTION gains
+        # +deltaS*tanL. Physically right too: the helix arc length exceeds r, so
+        # z grows faster than cot*r. Getting this backwards made sigma(z0) 37%
+        # worse while d0 improved, which is how it was caught.
+        ho_rz = ((1.0 / 6.0) * r * np.power(x0 * r, 2) * x2 if use_ho else 0.0)
+        upd2(r, np.ones(nt), np.where(use, m1[:, L] - (x2 * r + x3 + ho_rz), 0.0),
              v1[:, L], use, chi2_rz)
         nseen = np.where(use, nseen + 1, nseen)
         r_prev = np.where(use, r, r_prev)
@@ -309,7 +388,7 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
             if not ua.any():
                 continue
             r = np.where(ua, np.maximum(H[:, L], 1e-3), 1.0)
-            h4 = -1.0 / (r * r)
+            h4 = 1.0 / (r * r)                     # alpha term: x0 + d0 / r^2 (TTTrack d0)
             pred = x0 + x4 * h4
             upd3(np.ones(nt), np.zeros(nt), h4,
                  np.where(ua, ma[:, L] - pred, 0.0), va[:, L], ua, chi2_ang)
@@ -328,6 +407,12 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
 def _selftest():
     """Pin the filter against two independent references.
 
+    NOTE ON THE MODEL. Test (1) generates hits from the SAME helix the filter
+    assumes, third-order terms included. Test (2) compares against solve3,
+    which is a first-order closed form, so it generates first-order hits and
+    runs the filter with the higher-order terms disabled -- otherwise the two
+    would disagree by construction rather than by error.
+
     (1) NOISELESS RECOVERY. Hits generated exactly on the model must come back
         with the generating parameters, which catches every sign and algebra
         error at once.
@@ -345,26 +430,55 @@ def _selftest():
     d0 = rng.uniform(-0.2, 0.2, n)
     cot = rng.uniform(-1.5, 1.5, n)
     z0 = rng.uniform(-12.0, 12.0, n)
-    phi = (phi0[:, None] + d0[:, None] / r
-           - M.C_BEND * kap[:, None] * r)
-    z = z0[:, None] + cot[:, None] * r
+    # THE GENERATOR MUST USE THE SAME HELIX THE FIT DOES. It used to be purely
+    # first order, which is precisely why the missing third-order terms went
+    # unnoticed for so long: a first-order generator can never reveal them.
+    x0 = -M.C_BEND * kap[:, None]
+    phi = phi0[:, None] - d0[:, None] / r + x0 * r
+    zz = z0[:, None] + cot[:, None] * r
+    if HO_HELIX:
+        phi = phi + (1.0 / 6.0) * np.power(x0 * r, 3)
+        if HO_D0:
+            phi = phi + (1.0 / 6.0) * np.power(-d0[:, None] / r, 3)
+        zz = zz + (1.0 / 6.0) * r * np.power(x0 * r, 2) * cot[:, None]
+    z = zz
+    # first-order hit set, for the two tests whose reference is first order
+    phi_lin = phi0[:, None] - d0[:, None] / r + x0 * r
+    z_lin = z0[:, None] + cot[:, None] * r
     v0 = np.full_like(r, (20e-4 / 10.0) ** 2)
     v1 = np.full_like(r, 0.02 ** 2)
     valid = np.ones(r.shape, bool)
-    out = kf_run(r, phi, z, v0, v1, valid, d0_prior_cm=5.0)
-    kf_kap, kf_phi0, kf_d0, kf_cot, kf_z0 = out[:5]
-    assert len(out) == 16
+    # (1a) the LINEAR core must be exact: first-order hits, higher-order off.
+    out = kf_run(r, phi_lin, z_lin, v0, v1, valid, d0_prior_cm=5.0, ho=False)
     bad = [f"{nm}: max |err| {np.abs(a - b).max():.3e}"
-           for nm, a, b in (("kappa", kf_kap, kap), ("phi0", kf_phi0, phi0),
-                            ("d0", kf_d0, d0), ("cot", kf_cot, cot),
-                            ("z0", kf_z0, z0))
+           for nm, a, b in (("kappa", out[0], kap), ("phi0", out[1], phi0),
+                            ("d0", out[2], d0), ("cot", out[3], cot),
+                            ("z0", out[4], z0))
            if np.abs(a - b).max() > 1e-6]
-    print("(1) noiseless recovery, 6 layers: " + ("FAIL " + "; ".join(bad)
-                                                  if bad else "exact"))
+    assert len(out) == 16
+    print("(1a) linear core, first-order hits, ho=False: "
+          + ("FAIL " + "; ".join(bad) if bad else "exact"))
+    # (1b) with the third-order terms on BOTH sides the filter is a
+    # linearisation, so recovery is close but not exact. The residual is
+    # dominated by the (d0/r)^3 term at the innermost radius -- verified: with
+    # d0 = 0 it is a flat 1.2e-4 in kappa (the filter's own numerical floor,
+    # independent of kappa), and with kappa = 0 it grows as d0^3, reaching
+    # 13.6 um at d0 = 4 mm against an analytic 12 um. Bounds below are set from
+    # those measurements, not from wishful thinking.
+    outh = kf_run(r, phi, z, v0, v1, valid, d0_prior_cm=5.0, ho=True)
+    lim = {"kappa": 3e-3, "phi0": 1e-3, "d0": 2e-3, "cot": 1e-3, "z0": 5e-3}
+    res = {nm: float(np.abs(a - b).max())
+           for nm, a, b in (("kappa", outh[0], kap), ("phi0", outh[1], phi0),
+                            ("d0", outh[2], d0), ("cot", outh[3], cot),
+                            ("z0", outh[4], z0))}
+    over = [f"{k} {v:.2e} > {lim[k]:.0e}" for k, v in res.items() if v > lim[k]]
+    print("(1b) third-order on both sides, linearisation residual: "
+          + ", ".join(f"{k} {v:.2e}" for k, v in res.items())
+          + ("  -> OVER BOUND: " + "; ".join(over) if over else "  -> within bounds"))
     # (2) three hits against solve3
-    r3, phi3, z3 = r[:, :3], phi[:, :3], z[:, :3]
+    r3, phi3, z3 = r[:, :3], phi_lin[:, :3], z_lin[:, :3]
     out3 = kf_run(r3, phi3, z3, v0[:, :3], v1[:, :3],
-                  np.ones(r3.shape, bool), d0_prior_cm=1e3)
+                  np.ones(r3.shape, bool), d0_prior_cm=1e3, ho=False)
     s_phi0, s_d0, s_kap, s_ok = M.solve3(r3[:, 0], phi3[:, 0], r3[:, 1],
                                          phi3[:, 1], r3[:, 2], phi3[:, 2])
     m = s_ok
@@ -375,14 +489,14 @@ def _selftest():
           f"max |dkappa| {dk:.3e}, |dd0| {dd:.3e} cm, |dphi0| {dp:.3e} rad -> "
           + ("agree" if max(dk, dd, dp) < 1e-6 else "DISAGREE"))
     # (3) angles: alpha on a displaced track must not bias kappa
-    half = d0[:, None] / r + M.C_BEND * kap[:, None] * r
+    half = -d0[:, None] / r + M.C_BEND * kap[:, None] * r
     kap_a = half / (M.C_BEND * r)
     ma = -M.C_BEND * kap_a
     va = np.full_like(r, (M.C_BEND * 0.03) ** 2)
     mb = np.tile(cot[:, None], (1, r.shape[1]))
     vb = np.full_like(r, 0.02 ** 2)
-    oa = kf_run(r, phi, z, v0, v1, valid, ma, va, mb, vb,
-                np.ones(r.shape, bool), d0_prior_cm=5.0)
+    oa = kf_run(r, phi_lin, z_lin, v0, v1, valid, ma, va, mb, vb,
+                np.ones(r.shape, bool), d0_prior_cm=5.0, ho=False)
     e = max(np.abs(oa[0] - kap).max(), np.abs(oa[2] - d0).max())
     print(f"(3) with noiseless alpha/beta, max |err| kappa,d0: {e:.3e} -> "
           + ("exact" if e < 1e-6 else "BIASED"))
@@ -458,14 +572,14 @@ def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
         sg = np.maximum(U["sigY"][sel], 1e-6)
         pt_typ = 1.0 / max(float(np.median(np.abs(kap))), 1e-3)
         if L > 10:
-            w0, _w1 = ot_variances(np.full(len(sel), L - 10), rc, pt_typ)
+            w0, _w1 = ot_variances(np.full(len(sel), L - 10), rc, pt_typ, z=zc)
         else:
             w0, _w1 = it_variances(rc, U["sigX"][sel], U["sigY"][sel], pt_typ)
         sphi = np.sqrt(np.maximum(w0, 1e-12))
         rows = np.flatnonzero(need)
         rmed = float(np.median(rc))
         zpred = z0[rows] + rmed * cot[rows]
-        ppred = M.wrap(phi0[rows] + d0[rows] / rmed - M.C_BEND * kap[rows] * rmed)
+        ppred = M.wrap(phi0[rows] - d0[rows] / rmed - M.C_BEND * kap[rows] * rmed)
         lo = np.searchsorted(key_c, ev[rows])
         hi = np.searchsorted(key_c, ev[rows], side="right")
         best = np.full(len(rows), -1, np.int64)
@@ -477,7 +591,7 @@ def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
             if b <= a:
                 continue
             dz = (zc[a:b] - (z0[rows[t]] + rc[a:b] * cot[rows[t]])) / sg[a:b]
-            dp = M.wrap(pc[a:b] - M.wrap(phi0[rows[t]] + d0[rows[t]] / rc[a:b]
+            dp = M.wrap(pc[a:b] - M.wrap(phi0[rows[t]] - d0[rows[t]] / rc[a:b]
                                          - M.C_BEND * kap[rows[t]] * rc[a:b]))
             # The azimuth tolerance is the layer's OWN uncertainty, not a flat
             # number. A hardcoded 5 mrad accepted ~8 of 10 layers and degraded
@@ -582,7 +696,7 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
         kap0 = np.abs(M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb])
                       / (M.C_BEND * safe))[:, None]
         pt0 = np.broadcast_to(1.0 / np.maximum(kap0, 1e-3), T["R"].shape)
-    o0, o1 = ot_variances(np.where(is_ot, lay - 10, 1), T["R"], pt0)
+    o0, o1 = ot_variances(np.where(is_ot, lay - 10, 1), T["R"], pt0, z=T["Z"])
     i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
     v0 = np.where(is_ot, o0, i0)
     v1 = np.where(is_ot, o1, i1)
@@ -652,7 +766,7 @@ def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
     the OT gives stub bend: bendchi2 is a feature of its quality MVA, not a
     measurement in its KF.
 
-    alpha predicts x0 - x4 / r^2 and beta predicts x2, the same rows the fit
+    alpha predicts x0 + x4 / r^2 and beta predicts x2, the same rows the fit
     would have used. The pull uses the MEASUREMENT variance only and neglects
     the fitted state's own uncertainty, which makes the chi2 conservative -- the
     same simplification bend chi2 makes, and harmless for a discriminant that
@@ -675,12 +789,67 @@ def angle_pulls(T, fit, alpha_scale=1.0, beta_scale=1.0):
     r = np.maximum(T["R"], 1e-3)
     sa, sb = _layer_scales(T["layers"])
     x0 = -M.C_BEND * fit["kappa"][:, None]
-    pred_a = x0 - fit["d0"][:, None] / (r * r)
+    pred_a = x0 + fit["d0"][:, None] / (r * r)
     res_a = (-M.C_BEND * T["KA"]) - pred_a
     sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * sa * alpha_scale
     res_b = T["CT"] - fit["cot"][:, None]
     sig_b = np.maximum(T["SCT"], 1e-9) * sb * beta_scale
     return res_a / sig_a, res_b / sig_b
+
+
+ANGLE_COLS = ("track_row", "layer", "res_a", "pred_a", "res_b", "pred_b",
+              "sig_a", "sig_b", "hit_wrong", "n_wrong")
+
+
+def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
+    """Per-CLUSTER angle residuals for the IT hits of selected tracks.
+
+    THE RESIDUAL, NOT THE PULL. angle_pulls divides by sigma immediately, which
+    is what a chi2 wants but hides the two things a sensor study needs: how big
+    the disagreement is in angle, and what the track angle AT THAT SENSOR was.
+    A cluster's direction is a local measurement, so plotting the residual
+    against the local track angle is what shows whether the cluster's angle
+    reconstruction is biased where the track is steep.
+
+    `hit_wrong` is per HIT -- this cluster belongs to a TP other than the
+    track's majority owner -- which is a sharper split than the track's total
+    wrong-hit count, because it separates the contaminating hit from its
+    innocent neighbours on the same track.
+
+    One row per (track, IT layer with a cluster). Returns float32, ordered by
+    track then layer.
+    """
+    r = np.maximum(T["R"], 1e-3)
+    lay = np.asarray(T["layers"])[None, :]
+    use = T["VALID"] & T["ANG"] & (lay <= 4)
+    sa, sb = _layer_scales(T["layers"])
+    x0 = -M.C_BEND * fit["kappa"][:, None]
+    pred_a = x0 + fit["d0"][:, None] / (r * r)
+    res_a = (-M.C_BEND * T["KA"]) - pred_a
+    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * sa * alpha_scale
+    pred_b = np.broadcast_to(fit["cot"][:, None], T["CT"].shape)
+    res_b = T["CT"] - pred_b
+    sig_b = np.maximum(T["SCT"], 1e-9) * sb * beta_scale
+    # ownership, per hit, against the same majority owner the residuals use
+    G = T["GIDX"]
+    on = G >= 0
+    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
+    own, _ = majority_owner(tp_of, on)
+    wrong = on & (tp_of != own[:, None]) | (own[:, None] < 0)
+    n_wrong = (on & ~((tp_of == own[:, None]) & (own[:, None] >= 0))).sum(axis=1)
+    ti, li = np.nonzero(use)
+    if not len(ti):
+        return np.zeros((0, len(ANGLE_COLS)), np.float32)
+    cols = {
+        "track_row": keep_idx[ti].astype(np.float64),
+        "layer": np.asarray(T["layers"])[li].astype(np.float64),
+        "res_a": res_a[ti, li], "pred_a": pred_a[ti, li],
+        "res_b": res_b[ti, li], "pred_b": pred_b[ti, li],
+        "sig_a": sig_a[ti, li], "sig_b": sig_b[ti, li],
+        "hit_wrong": wrong[ti, li].astype(np.float64),
+        "n_wrong": n_wrong[ti].astype(np.float64),
+    }
+    return np.stack([cols[c] for c in ANGLE_COLS], axis=1).astype(np.float32)
 
 
 # ---- acceptance, mirroring KFParamsComb::isGoodState ---------------------
@@ -739,34 +908,65 @@ def truth_residuals(U, trip, fit, TP):
         z = np.zeros(0)
         return z, z, z, z, real
     q = p[real]
-    # |kappa|, NOT kappa: the nano carries no TrackingParticle charge, so truth
-    # is 1/pT and unsigned. Comparing a signed fit against it gives a residual of
-    # -2/pT for every negative track, which reads as sigma(kappa) = 0.45 on a
-    # sample whose kappa only spans +-0.5 -- i.e. as a total loss of curvature
-    # resolution, when the fit is in fact fine.
+    # |kappa| against the unsigned truth 1/pT: a signed residual is -2/pT for
+    # every wrong-charge fit, which would swamp sigma(kappa) with charge
+    # misassignment rather than measure curvature resolution.
     return (np.abs(fit["kappa"][real]) - TP["kappa"][q],
             fit["d0"][real] - TP["d0"][q],
             fit["cot"][real] - TP["cot"][q],
             fit["z0"][real] - TP["z0"][q], real)
 
 
+def majority_owner(tp, valid):
+    """Per track: the TP holding the most attached hits, and how many.
+
+    tp < 0 (a cluster belonging to no TrackingParticle) never wins, so a track
+    built entirely from unassociated clusters correctly gets no owner rather
+    than being called clean.
+
+    WHY THE OWNER AND NOT THE SEED. Truth used to be read off the seed's inner
+    cluster. Measured over 200 events, 45.8% of accepted tracks have a majority
+    owner that is NOT the seed's TP, and referencing the residual to the seed
+    reports sigma(d0) = 1440 um where the owner-referenced value is 372 um in
+    the 2-wrong-hit population: the residual was being taken against a particle
+    that owns a minority of the hits.
+    """
+    v = np.where(valid & (tp >= 0), tp, -1)
+    S = np.sort(v, axis=1)[:, ::-1]          # real values first, -1 trailing
+    cur_v = S[:, 0].copy()
+    cur_n = (S[:, 0] >= 0).astype(np.int64)
+    best_v, best_n = cur_v.copy(), cur_n.copy()
+    for j in range(1, S.shape[1]):
+        col = S[:, j]
+        real = col >= 0
+        same = real & (col == cur_v)
+        cur_n = np.where(same, cur_n + 1, np.where(real, 1, 0))
+        cur_v = np.where(same, cur_v, col)
+        take = cur_n > best_n
+        best_n = np.where(take, cur_n, best_n)
+        best_v = np.where(take, cur_v, best_v)
+    return best_v, best_n
+
+
 def tp_truth_table(U):
     """Per-TrackingParticle truth helix, keyed and sorted for searchsorted.
 
-    Built from IT cluster rows only: an OT stub row carries no tpEta/tpPhi/tpV*,
-    so reading truth off the inner hit gives nonsense for every OT-only seed.
+    One entry per TP with a hit in U and an L1TTP row (charged, pT >= 1 GeV),
+    read from the per-hit L1TTP join (M.attach_tp_truth) and so the same for IT
+    and OT hits. phi0, d0 [cm], z0 [cm] and cot = tanL are at the POCA to the
+    beamline, the perigee this fit's phi(r) = phi0 - d0/r - c*kappa*r uses.
+    kappa is UNSIGNED 1/pT [1/GeV]: every consumer compares it with |fitted
+    kappa|, so a fit with the wrong charge is scored on curvature magnitude only.
     """
-    m = (U["layer"] <= 4) & (U["tpIdx"] >= 0)
+    m = (U["tpIdx"] >= 0) & np.isfinite(U["tp_pt"])
     k = M.tp_key(U["event"][m], U["tpIdx"][m])
     o = np.argsort(k, kind="stable")
     k = k[o]
     f = np.r_[True, k[1:] != k[:-1]] if len(k) else np.zeros(0, bool)
     sel = np.flatnonzero(m)[o][f]
-    ph = U["tpPhi"][sel]
-    return {"key": k[f],
-            "kappa": 1.0 / np.maximum(U["tpPt"][sel], 1e-6),
-            "d0": -U["tpVx"][sel] * np.sin(ph) + U["tpVy"][sel] * np.cos(ph),
-            "cot": np.sinh(U["tpEta"][sel]), "z0": U["tpVz"][sel]}
+    return {"key": k[f], "kappa": 1.0 / U["tp_pt"][sel],
+            "d0": U["tp_d0"][sel], "phi0": U["tp_phi0"][sel],
+            "cot": U["tp_tanL"][sel], "z0": U["tp_z0"][sel]}
 
 
 def rs(x):
@@ -879,17 +1079,54 @@ TRACK_COLS = (
     "second_angle_pull", "max_pos_pull", "chi2_rphi_it", "chi2_rphi_ot",
     "d0_over_sigma", "rank_score",
     # --- truth ---
-    "n_wrong", "is_clean", "tp_pt", "tp_eta", "tp_d0", "tp_z0",
-    "d_kappa", "d_d0", "d_cot", "d_z0",
+    "n_wrong", "n_own", "n_it_right", "n_it_wrong", "n_ot_right",
+    "n_ot_wrong", "n_ot_combinatoric", "n_ot_unknown",
+    "own_is_seed", "own_tpidx", "sig_kf_d0", "is_clean",
+    "tp_pt", "tp_eta", "tp_d0", "tp_z0", "tp_phi0",
+    # residuals for all FIVE fitted parameters; phi0 had none until now, so a
+    # per-parameter quality study could not include it
+    "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0",
 )
 N_TRACK_COLS = len(TRACK_COLS)
 # columns the quality MVA trains on; the rest are identity, fitted kinematics or
 # truth and must not be fed to it
 MVA_FEATURES = tuple(c for c in TRACK_COLS if c not in (
     "seed_idx", "arity", "sysclass", "event", "tp_key", "phi0", "eta",
-    "n_wrong", "is_clean", "tp_pt", "tp_eta", "tp_d0", "tp_z0",
-    "d_kappa", "d_d0", "d_cot", "d_z0"))
+    "n_wrong", "n_own", "n_it_right", "n_it_wrong", "n_ot_right",
+    "n_ot_wrong", "n_ot_combinatoric", "n_ot_unknown",
+    "own_is_seed", "own_tpidx", "is_clean", "tp_pt", "tp_eta",
+    "tp_d0",
+    "tp_z0", "tp_phi0",
+    "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0"))
 SYS_IT, SYS_OT, SYS_MIX = 0, 1, 2
+
+
+def numerics_key():
+    """Every knob that changes the NUMBERS without changing a column or a config.
+
+    THE CACHE KEY NEEDS THIS. It hashes format, inputs, config and TRACK_COLS --
+    and none of those move when a KF coefficient or an OT match window changes.
+    So a census re-run after the third-order helix terms were added RESUMED the
+    pre-correction cache, exited in seconds and looked successful, and the site
+    shipped residuals from the uncorrected fit for a day. The two HO caches even
+    hashed IDENTICALLY (452a0529f3828a76) and were only kept apart by living in
+    different directories.
+
+    Add a knob here rather than remembering to bump FORMAT_VERSION: forgetting
+    this dict costs a silently wrong dataset, forgetting a version bump costs
+    the same, but this one is checked by the self-test below.
+    """
+    return {"b_approx": [float(B_APPROX_GRADIENT), float(B_APPROX_INTERCEPT)],
+            "ho_helix": bool(HO_HELIX), "ho_d0": bool(HO_D0),
+            "ms_scale": float(MS_SCALE), "it_ot_scale": float(IT_OT_SCALE),
+            "mult_scatt_term": float(MULT_SCATT_TERM),
+            "chi2_rphi_scale": float(CHI2_RPHI_SCALE),
+            "kf_pt_toler": [float(x) for x in KF_PT_TOLER],
+            "alpha_pull": {str(k): float(v)
+                           for k, v in sorted(ALPHA_PULL_SCALE.items())},
+            "beta_pull": {str(k): float(v)
+                          for k, v in sorted(BETA_PULL_SCALE.items())},
+            "ot": M.ot_numerics_key()}
 
 
 def sysclass_of(layers):
@@ -927,17 +1164,28 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     n_miss = (span & ~use).sum(axis=1).astype(np.float64)
     c2a, nang = angle_chi2(T, fit, alpha_scale, beta_scale)
     chi2s = fit["chi2_rphi"] / CHI2_RPHI_SCALE + fit["chi2_rz"]
-    # truth
+    # ---- truth, referenced to the MAJORITY OWNER of the hits -------------
     ga = trip[0]
     G = T["GIDX"]
     on = G >= 0
-    want = U["tpIdx"][ga][:, None]
-    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -2)
-    n_wrong = (on & (tp_of != want)).sum(axis=1).astype(np.float64)
-    seed_real = U["tpIdx"][ga] >= 0
-    kk = M.tp_key(U["event"][ga], np.maximum(U["tpIdx"][ga], 0))
+    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
+    own, n_own = majority_owner(tp_of, on)
+    right = on & (tp_of == own[:, None]) & (own[:, None] >= 0)
+    n_wrong = (on & ~right).sum(axis=1).astype(np.float64)
+    # A WRONG OT STUB IS NOT ONE THING. flg is 1 genuine / 2 combinatoric /
+    # 3 unknown from the CMS per-stub flags (see tp_findability._unify), so the
+    # three failure modes separate: a genuine stub owned by another particle is
+    # a mis-association, a combinatoric stub is this particle's cluster merged
+    # with another's and still carries usable position, and an unknown stub is
+    # noise. The four counters below partition n_ot exactly, and their non-right
+    # members plus n_it_wrong reproduce n_wrong -- asserted below on real data.
+    flg = np.where(on, U["ot_flag"][np.clip(G, 0, None)], 0)
+    ot_gen = is_ot & (flg == 1)
+    kk = M.tp_key(U["event"][ga], np.maximum(own, 0))
     p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
-    hit = (len(TP["key"]) > 0) & (TP["key"][p] == kk) & seed_real
+    # an owner outside L1TTP (neutral or pT < 1 GeV) has no truth helix and
+    # gets no residual
+    hit = (len(TP["key"]) > 0) & (TP["key"][p] == kk) & (own >= 0)
     nan = np.full(len(ga), np.nan)
     cols = {
         "seed_idx": np.full(len(ga), float(seed_idx)),
@@ -964,16 +1212,66 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
         "d0_over_sigma": np.abs(fit["d0"]) / np.sqrt(np.maximum(fit["var_d0"], 1e-12)),
         "rank_score": np.asarray(rank, float),
         "n_wrong": n_wrong,
-        "is_clean": (seed_real & (n_wrong == 0)).astype(np.float64),
+        "n_own": n_own.astype(np.float64),
+        # the same contamination split by system, because d0 is bought by
+        # correct IT hits and curvature by correct OT hits: a single count
+        # explains 44% of the variance of log sigma(d0) where the four
+        # per-system counts explain 80%
+        "n_it_right": (is_it & right).sum(axis=1).astype(np.float64),
+        "n_it_wrong": (is_it & ~right).sum(axis=1).astype(np.float64),
+        "n_ot_right": (ot_gen & right).sum(axis=1).astype(np.float64),
+        "n_ot_wrong": (ot_gen & ~right).sum(axis=1).astype(np.float64),
+        "n_ot_combinatoric": (is_ot & (flg == 2)).sum(axis=1).astype(np.float64),
+        "n_ot_unknown": (is_ot & (flg == 3)).sum(axis=1).astype(np.float64),
+        # 0 when the seed cluster belongs to a TP other than the owner, which
+        # is what the seed-referenced convention used to hide
+        "own_is_seed": (own == U["tpIdx"][ga]).astype(np.float64),
+        # THE EXACT OWNER IDENTITY, and the reason it is stored as a bare tpIdx
+        # rather than read off tp_key: the packed (event << 20) | tpIdx needs 30
+        # bits, these rows are float32, and at event 999 keys 128 apart collapse
+        # onto one value. tpIdx alone is < 2**20 and survives exactly, and the
+        # event is already a column, so the exporter can rebuild the key in
+        # int64 and match each track to its TrackingParticle's row. That link is
+        # what the DELIVERED efficiency needs.
+        "own_tpidx": own.astype(np.float64),
+        # the fit's CLAIMED error, not a resolution: the covariance never sees
+        # the residuals, and is measured 1.6-3.4x optimistic on clean tracks
+        "sig_kf_d0": np.sqrt(np.maximum(fit["var_d0"], 1e-30)),
+        "is_clean": ((own >= 0) & (n_wrong == 0)).astype(np.float64),
         "tp_pt": np.where(hit, 1.0 / np.maximum(TP["kappa"][p], 1e-6), nan),
         "tp_eta": np.where(hit, np.arcsinh(np.clip(TP["cot"][p], -30, 30)), nan),
         "tp_d0": np.where(hit, TP["d0"][p], nan),
         "tp_z0": np.where(hit, TP["z0"][p], nan),
+        "tp_phi0": np.where(hit, TP["phi0"][p], nan),
+        # wrapped into [-pi, pi): an unwrapped azimuth difference puts a 2pi
+        # jump in the middle of the residual distribution
+        "d_phi0": np.where(hit, np.arctan2(
+            np.sin(fit["phi0"] - TP["phi0"][p]),
+            np.cos(fit["phi0"] - TP["phi0"][p])), nan),
         "d_kappa": np.where(hit, np.abs(fit["kappa"]) - TP["kappa"][p], nan),
         "d_d0": np.where(hit, fit["d0"] - TP["d0"][p], nan),
         "d_cot": np.where(hit, fit["cot"] - TP["cot"][p], nan),
         "d_z0": np.where(hit, fit["z0"] - TP["z0"][p], nan),
     }
+    # THE OT PARTITION MUST BE EXACT, and this is the cheapest place to know it.
+    # Every valid OT hit has to land in exactly one of right / wrong /
+    # combinatoric / unknown, and every non-right hit in the whole track has to
+    # add up to n_wrong. A silent failure here would mean ot_flag and VALID
+    # disagree -- a gather bug -- and would show up only as a slightly wrong
+    # contamination axis on the page, which is undetectable by eye.
+    bad = np.abs(cols["n_it_wrong"] + cols["n_ot_wrong"]
+                 + cols["n_ot_combinatoric"] + cols["n_ot_unknown"] - n_wrong)
+    if bad.size and bad.max() > 0:
+        raise AssertionError(
+            f"OT truth partition broken on {int((bad > 0).sum())} of {bad.size} "
+            f"tracks (max discrepancy {bad.max():.0f} hits): ot_flag does not "
+            f"cover every valid OT hit")
+    n_ot_parts = (cols["n_ot_right"] + cols["n_ot_wrong"]
+                  + cols["n_ot_combinatoric"] + cols["n_ot_unknown"])
+    bad2 = np.abs(n_ot_parts - cols["n_ot"])
+    if bad2.size and bad2.max() > 0:
+        raise AssertionError(
+            f"OT counters do not sum to n_ot on {int((bad2 > 0).sum())} tracks")
     return np.stack([cols[c] for c in TRACK_COLS], axis=1).astype(np.float32)
 
 

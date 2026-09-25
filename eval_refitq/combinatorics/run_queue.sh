@@ -12,8 +12,8 @@ PY=${PY:-.pixi/envs/default/bin/python}
 S=eval_refitq/combinatorics
 R=$S/results
 D=../cmssw/work/otstub_arm
-TT="$D/itot_truth_100ev.root"
-ALL="$D/itot_truth_100ev.root,$D/itot_ttbar_f*_100ev.root"
+TT="$D/itot_tp_f01_100ev.root"
+ALL="$D/itot_tp_f*_100ev.root"
 WAIT_PID=${WAIT_PID:-}
 mkdir -p "$R"
 

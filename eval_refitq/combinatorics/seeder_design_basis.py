@@ -188,7 +188,6 @@ def study_firmware_rom(a):
     D, nev, _ = T3.load(a.input, a.nev), None, None
     D = D[0] if isinstance(D, tuple) else D
     sel = D["tpPt"] >= a.ptmin
-    d0t_all = (-D["tpVx"] * np.sin(D["tpPhi"]) + D["tpVy"] * np.cos(D["tpPhi"]))
     print(f"=== firmware-rom   pT > {a.ptmin} GeV\n")
     print(f"{'config':<9}{'radii used':<24}{'sigma(d0) core':>15}{'sigma(kappa)':>14}")
     out = {}
@@ -198,7 +197,7 @@ def study_firmware_rom(a):
             continue
         R = [D["globalR"][g] for g in (gA, gB, gC)]
         P = [D["globalPhi"][g] for g in (gA, gB, gC)]
-        d0t, kt = d0t_all[gA], 1.0 / D["tpPt"][gA]
+        d0t, kt = D["tp_d0"][gA], 1.0 / D["tpPt"][gA]
         variants = {"per-cluster actual": R,
                     "layer medians": [np.full_like(R[0], np.median(x)) for x in R]}
         q = []

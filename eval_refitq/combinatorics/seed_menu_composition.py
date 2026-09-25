@@ -38,33 +38,23 @@ CODE = {v: k for k, v in NAME.items()}
 
 def build(src, nev, ptmin):
     I, n, _ = M.load_flat(src, M.IT_TABLE, list(M.IT_COLS), nev)
-    O, on, _ = M.load_ot(src, nev)
+    O, on, _ = M.load_ot(src, nev, tp=("tp_z0", "tp_tanL"))
     bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
     nO = int(bar.sum())
-    # OT stub z resolution, measured per layer, used as the z-search target sigma
-    mi = I["tpIdx"] >= 0
-    k = M.tp_key(I["event"][mi], I["tpIdx"][mi])
-    o = np.argsort(k, kind="stable")
-    KV, VZ, ET = k[o], I["tpVz"][mi][o], I["tpEta"][mi][o]
-    f = np.r_[True, KV[1:] != KV[:-1]]
-    KV, VZ, ET = KV[f], VZ[f], ET[f]
+    # OT stub z resolution, measured per layer against the stub's L1TTP helix
+    # z0 + r*tanL, used as the z-search target sigma
+    ob = {c: O[c][bar] for c in ("layer", "tpIdx", "tpPt", "z", "r", "tp_z0", "tp_tanL")}
 
     def rs(x):
         q = np.percentile(x, [15.865, 84.135])
         return float(0.5 * (q[1] - q[0]))
     sig = np.full(nO, 0.2)
     for L in range(1, 7):
-        m = (O["layer"][bar] == L)
-        mt = m & (O["tpIdx"][bar] >= 0) & (O["tpPt"][bar] >= ptmin)
-        if mt.sum() < 200:
-            continue
-        kk = M.tp_key(O["event"][bar][mt], O["tpIdx"][bar][mt])
-        p = np.clip(np.searchsorted(KV, kk), 0, len(KV) - 1)
-        g = KV[p] == kk
+        m = ob["layer"] == L
+        g = m & (ob["tpIdx"] >= 0) & (ob["tpPt"] >= ptmin) & np.isfinite(ob["tp_z0"])
         if g.sum() < 200:
             continue
-        sig[m] = rs(O["z"][bar][mt][g]
-                    - (VZ[p[g]] + O["r"][bar][mt][g] * np.sinh(ET[p[g]])))
+        sig[m] = rs(ob["z"][g] - (ob["tp_z0"][g] + ob["r"][g] * ob["tp_tanL"][g]))
     U = {"layer": np.r_[I["layer"], O["layer"][bar] + 10],
          "globalR": np.r_[I["globalR"], O["r"][bar]],
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
@@ -73,8 +63,6 @@ def build(src, nev, ptmin):
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
-    for c in ("tpVx", "tpVy", "tpPhi", "tpEta", "tpVz"):
-        U[c] = np.r_[I[c], np.full(nO, -999.0)]
     QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, None)
     # an OT stub carries no alpha/beta: huge sigmas make every angle gate pass,
     # and the joint (z0,phi) pairing then treats it as a wildcard on phi alone.

@@ -32,6 +32,7 @@ WHAT THIS STILL CANNOT SAY
 """
 from __future__ import annotations
 import argparse, json, os, resource
+from pathlib import Path
 import sys as _sys
 import awkward as ak
 import numpy as np
@@ -135,6 +136,415 @@ OT_Z_CUT = np.array([
     [3.0, 3.0, 0.0, 7.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
     [3.0, 3.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.5, 0.0, 0.0, 0.0],
     [4.0, 0.0, 9.5, 0.0, 0.0, 0.0, 0.0, 0.0, 4.5, 0.0, 0.0, 0.0]])
+
+def ot_numerics_key():
+    """OT-side numbers that move a hit assignment without moving a column.
+
+    Hashed into the census cache key by KF.numerics_key; see the note there for
+    why a table of match windows has to participate in cache identity.
+    """
+    return {"policy_version": int(OT_POLICY_VERSION),
+            "nsig": float(NSIG), "z_lumi": float(Z_LUMI),
+            "theta_ms_mrad": float(THETA_MS_MRAD), "c_bend": float(C_BEND),
+            "triplet_d0_max_cm": float(TRIPLET_D0_MAX_CM),
+            "d0_displaced_cm": float(D0_DISPLACED_CM),
+            "rphi_cut": OT_RPHI_CUT.tolist(), "z_cut": OT_Z_CUT.tolist(),
+            "seed_order": list(OT_SEED_ORDER),
+            "it_widen": float(OT_IT_SEED_WIDEN),
+            "it_proj_z_widen": float(OT_IT_PROJ_Z_WIDEN),
+            "bend_te": {k: list(v) for k, v in sorted(OT_BEND_CUT_TE.items())},
+            "fe_bend_cut": float(FE_BEND_CUT),
+            "bend_lut": ot_luts() is not None,
+            "vmr_z": {k: [float(x) for x in v]
+                      for k, v in sorted(OT_VMR_Z.items())}}
+
+
+# ---- window policy for stubs attached to a track AFTER seeding ---------------
+# The real finder matches a projected stub inside rphimatchcut_/zmatchcut_ above,
+# tabulated per (projection layer, seed) for a 2 GeV seed. Two departures are
+# deliberate and are the whole reason this is a named policy rather than a bare
+# table lookup:
+#
+# 1. AN IT SEED MAY CARRY A 1 GeV FLOOR. Its projection into the OT therefore
+#    has to cover the extra sagitta and the extra multiple scattering that a
+#    2 GeV-tuned window was never sized for. The widening is DERIVED, not
+#    guessed: the sagitta term scales as 1/pT, and the scattering term is the
+#    difference of the MS angle at 1 and 2 GeV, which together come to 2.5x the
+#    tabulated cut. It is NOT the 8-10x a naive "open it until nothing is lost"
+#    scan would pick, and the difference is a factor ~16 in candidate pairs.
+#
+# 2. AN OT SEED KEEPS THE REAL WINDOW. An OT seed has a 2 GeV floor by
+#    construction, so widening it would hand the OT baseline combinatorics it
+#    does not actually suffer -- overstating the value of the IT angles by
+#    handicapping the system they are meant to improve on.
+OT_IT_SEED_WIDEN = 2.5
+
+# ---- the IT -> OT z road, DERIVED because no table can supply it ------------
+# rphimatchcut_/zmatchcut_ are indexed by OT seed, and an IT seed's lever arm
+# into the OT matches no OT seed's: it extrapolates from r ~ 3-15 cm to
+# r ~ 23-108 cm. So the road was measured instead -- z_stub - z_projected for
+# true IT-pair-to-genuine-OT-stub associations, on seeds that would actually be
+# formed (unique cluster per layer, |z0| <= Z_LUMI), 150 events.
+#
+# WHAT THE MEASUREMENT SAID. Above 2 GeV the existing derived road already
+# contains 95-99% on every layer, so nothing needed widening there -- the
+# assumption that it was "overly generous" was wrong for z. The deficit is all
+# at the 1 GeV floor with the SHORT-LEVER IL1+IL2 seed, and most of it was not
+# the road at all but the straight-line projection, now fixed (see the arc
+# length note in it_project). After that fix, containment at 1-1.5 GeV is
+#     OL1 90.1%   OL3 90.9%   OL4 67.7%   OL6 61.1%
+# against 87.8 / 76.7 / 66.8 / 54.2% before.
+#
+# SET TO 1.0 BECAUSE WIDENING WAS MEASURED TO BE NET NEGATIVE, which is not
+# what the containment study on its own predicted. Trying 1.5x at the 1 GeV
+# floor: candidate counts IDENTICAL (the z road here gates the final match, not
+# the candidate generation, which has its own road), TPs found DOWN 0.5-1%
+# (IL2+IL3 1451 -> 1438, IL1+IL4 1242 -> 1229) and fake fractions UP 1-3%
+# relative on every seed.
+#
+# WHY CONTAINMENT DID NOT TRANSLATE. Hit attachment keeps the BEST match per
+# layer, not every match in the road. A correct stub just outside the old road
+# was usually already losing the arbitration to a wrong stub inside it, so
+# admitting it changes little; what the wider road really adds is a wrong stub
+# on layers that previously got NO hit -- and an extra wrong hit costs more at
+# the KF chi2 acceptance than the occasional recovered correct one gains.
+#
+# So the road is NOT the limitation above 2 GeV (95-99% contained already), and
+# at the 1 GeV floor the limitation is the projection bias, now fixed by the arc
+# length, plus scattering tails on OL4-OL6 that no affordable road reaches
+# (sigma 4.5 cm over a 100 cm extrapolation; 99% would need ~13 cm). That is a
+# physics limit on projecting a 1 GeV IT doublet to the outer OT, and it argues
+# for pointing soft projections at OL1-OL3 -- which is what the soft arms do.
+#
+# Left as a named knob rather than deleted: the measurement above is the reason
+# it is 1.0, and someone who changes the attachment rule to keep more than the
+# best match per layer would have to re-run it.
+OT_IT_PROJ_Z_WIDEN = 1.0
+
+# BUMP THIS WHEN THE WINDOW *LOGIC* CHANGES, not just the numbers in the tables.
+# numerics_key hashes constants, so it catches a retuned cut but NOT a rewritten
+# ot_match_window -- and enforcing the tabulated window for the first time
+# changed every OT track while leaving every constant identical. A hash cannot
+# see that; a hand-maintained integer can.
+OT_POLICY_VERSION = 8
+
+# VMRouter cuts on the INNER stub of a PROMPT DOUBLET seed. Read off the code
+# (VMRouterCM.cc:238-283), not the comments, because two of the comments are
+# wrong about their own direction: VMROUTERCUTZL1 says "Max z" and is used as a
+# minimum, and VMROUTERCUTZL2 says "Min L2 z" and is one.
+#
+#   VMROUTERCUTZL2     = 50  MINIMUM on |z| of the L2 stub of L2L3
+#   VMROUTERCUTZL1L3L5 = 95  MAXIMUM on |z| of the inner barrel stub otherwise
+#   VMROUTERCUTZL1     = 70  MINIMUM, but only for the L1D1 overlap memories
+#   VMROUTERCUTRD1D3   = 55  MAXIMUM on r of an inner disk stub
+#
+# L2L3 IS A FORWARD SEED BY DESIGN, and that is the surprise here: its L2 stub
+# is required to be at |z| >= 50, tightened to 52 by a separate hardcoded
+# zcutL2L3 in the LUT generator (TrackletLUT.cc:1195-1201) which is the binding
+# one. Reading VMROUTERCUTZL2 as a ceiling would have inverted the seed's whole
+# purpose -- it exists to cover the barrel-endcap transition, not the core.
+#
+# SCOPE. These live in the allinnerstubs_ loop, whose memory is read only by
+# TrackletProcessor -- so prompt doublets only, inner stub only. The triplet
+# path (TrackletProcessorDisplaced) reads plain AllStubs and sees NONE of them.
+# The L1 >= 70 and the disk r cuts are for L1D1/L2D1/D1D2/D3D4, which need disk
+# surfaces this barrel-only study does not have, so they are recorded and unused.
+#
+# Values are the INTEGER-QUANTISED thresholds, not the nominal cm: absz is an
+# int in units of kz(layer) and the threshold is a double, so L2 rejects 853 and
+# accepts 854. L5 carries only 8 z bits (kz = 0.9375) so its "95" is really
+# 94.69.
+OT_VMR_Z = {
+    "L1L2": (0.0, 94.99),    # inner L1, memtype A/B/C/D -> the 95 ceiling
+    "L2L3": (52.0, 1e9),     # inner L2, the 52 floor binds over the 50
+    "L3L4": (0.0, 94.99),    # inner L3
+    "L5L6": (0.0, 94.69),    # inner L5, 8 z bits
+}
+
+
+# ---- bend consistency, PROMPT DOUBLETS ONLY ---------------------------------
+# The stub bend measures the local track angle across the two sensors of a
+# module, so it is an independent curvature estimate that the pair's own
+# two-point kappa can be checked against. TrackletEngineUnit::step does exactly
+# this for both stubs of a prompt seed pair (via pttableinner/outer LUTs).
+#
+# THE TRIPLET SEEDS GET NOTHING, and that is not an omission. In 20_1 there is
+# no bend cut anywhere on the displaced path: VMStubsTEMemory short-circuits to
+# pass=true when extended() and its bend table is empty, the table setter is
+# never called, TripletEngineUnit tests only r/z bins, and bendcutTE_ has rows
+# only for the prompt seeds. Adding one would make our purity look BETTER than
+# the emulator and our efficiency worse -- inventing a rejection the system
+# does not have, on the very seeds the comparison is about.
+FE_BEND_CUT = (1.0 / 6.0) ** 0.5     # FEbendcut, Settings.h:812
+# bendcutTE_ (inner, outer) in units of FEbendcut, Settings.h:814-821
+OT_BEND_CUT_TE = {"L1L2": (2.2, 2.5), "L2L3": (2.0, 2.0),
+                  "L3L4": (2.0, 2.6), "L5L6": (2.4, 2.4)}
+SENSOR_SPACING_2S = 0.18             # sensorSpacing_2S_, Settings.h:1035
+STRIP_PITCH_PS, STRIP_PITCH_2S = 0.01, 0.009      # Settings.h:1017-1018
+R_CRIT = 55.0                        # rcrit_, Settings.h:504
+
+
+def strip_pitch(r):
+    """Util.h bendstrip uses the r-thresholded NOMINAL pitch, not the module's."""
+    return np.where(np.asarray(r) < R_CRIT, STRIP_PITCH_PS, STRIP_PITCH_2S)
+
+
+# bend -> kappa slope per OT layer, filled once per run by calibrate_ot_bend
+# from REAL on-track stubs against L1TTrack_rInv. Deliberately not a constant:
+# see bend_expected.
+OT_BEND_CAL = None
+
+
+def set_ot_bend_cal(cal):
+    global OT_BEND_CAL
+    OT_BEND_CAL = dict(cal) if cal else None
+
+
+def bend_expected(layer, kap):
+    """Bend in full strips a track of curvature kap leaves in OT barrel `layer`.
+
+    USES THE MEASURED PER-LAYER SLOPE, not the nominal geometric formula. The
+    analytic version, bendstrip with the nominal 1.8 mm spacing and the
+    r-thresholded pitch, agrees with the measured slope to 1.3-3.5% on L2-L6 but
+    is 29% off on L1, where module tilt (the CF = |sinTilt|*z/r + cosTilt factor
+    that only enters the emulator inside getBendCut) matters most. Calibrating
+    against L1TTrack_rInv absorbs tilt, the true pitch and the true sensor
+    separation without assuming any of them.
+
+    THE SIGN IS MEASURED TWICE, INDEPENDENTLY, and it is opposite to the naive
+    geometric one. (a) Against a signed kappa built from two same-particle stub
+    azimuths, the L1TOTStub bend branch agrees with -bendstrip on 93-99% of
+    genuine barrel stubs per layer. (b) The slope fitted here against real track
+    rInv is negative on all six layers (-0.302 to -0.078 per strip). Without the
+    minus the gate would reject essentially every CORRECT pair, and it would
+    have presented as "the bend cut is too tight" rather than as a sign error.
+    Magnitudes confirm the branch is in FULL strips (half-strip steps).
+    """
+    if OT_BEND_CAL is None:
+        raise RuntimeError(
+            "bend gate requested with no calibration loaded: call "
+            "set_ot_bend_cal(calibrate_ot_bend(...)) first. Refusing to fall "
+            "back to the nominal geometric slope, which is 29% wrong on L1.")
+    lay = np.asarray(layer, dtype=np.int64)
+    s = np.array([OT_BEND_CAL.get(int(L), (np.nan,))[0] for L in range(0, 8)])
+    return np.asarray(kap) / s[lay]
+
+
+def ot_bend_cut(seed_layers):
+    """(inner, outer) bend tolerance in full strips, or None if no cut applies."""
+    if len(seed_layers) != 2:
+        return None
+    t = OT_BEND_CUT_TE.get(ot_seed_name(seed_layers))
+    return None if t is None else (t[0] * FE_BEND_CUT, t[1] * FE_BEND_CUT)
+
+
+# ---- the REAL seed-pair acceptance, read from the firmware LUTs -------------
+# TP_<seed>_stubpt{inner,outer}cut is a one-bit accept map over (dphi, bend) per
+# stub, dumped from CMSSW (see luts/PROVENANCE.md). It supersedes the analytic
+# bend gate above and also SUBSUMES the pT cut: a band of dphi bins rejects
+# every bend, which is passptcut, so this is one lookup instead of two cuts.
+#
+# MEASURED, 60 events, genuine same-particle barrel pairs with tpPt >= 2 against
+# random same-event pairs of different particles:
+#     L1L2 98.4% signal / 200x background rejection
+#     L2L3 97.5% / 192x      L3L4 97.2% / 426x      L5L6 95.6% / 565x
+# The analytic gate it replaces kept 77-93% of the same signal and needed a
+# separate pT bound.
+#
+# THREE CONVENTIONS HAD TO BE PINNED, and guessing any of them wrong silently
+# rejects almost everything (the naive choice gave 2-25% signal). A scan over
+# all eight sign combinations has exactly two maxima, mirror images of each
+# other; the one adopted here is the physically coherent one:
+#   bend  : L1TOTStub_bend is MINUS the firmware's decoded bend. Independently
+#           established earlier from the bend-vs-curvature correlation, so this
+#           is a second, agreeing measurement rather than a fitted fudge.
+#   corr  : phicorr = phi - correction, as Stub::setPhiCorr does.
+#   dphi  : idphi = finephi(outer) - finephi(inner), as TrackletEngineUnit does.
+#
+# THE BEND ENCODING IS RECOVERED, NOT ASSUMED. The tables are indexed by the
+# ENCODED bend word, but the ntuple carries the pre-degradation FE bend (9/13/17
+# distinct values on PS layers, where the code is only 3 bits). getphiCorrValue
+# is linear in each code's decoded bend, so inverting VMPhiCorrL<n> recovers the
+# code -> bend map to within 0.8 counts. That map is per LAYER, because
+# getBendCut averages over a layer's sensor modules, whereas degradeBend is per
+# MODULE -- so a stub whose raw bend falls between two code midpoints may be
+# assigned differently than the firmware would. That is the residual
+# approximation here, and it is why the signal efficiency is 96-98% and not 100%.
+OT_LUT_DIR = Path(__file__).resolve().parent / "luts"
+_OT_LUT = None
+
+_LUT_RMAXDISK, _LUT_DELTARZ = 120.0, 32.0
+_LUT_IRMEAN = (851, 1269, 1784, 2347, 2936, 3697)
+_LUT_NPHIBITS = (14, 14, 14, 17, 17, 17)
+_LUT_NBEND = (3, 3, 3, 4, 4, 4)          # N_BENDBITS_PS / _2S
+
+
+def _lut_tab(p):
+    t = open(p).read().strip().strip("{};")
+    return np.array([int(x) for x in t.replace("\n", "").split(",") if x.strip()])
+
+
+def ot_luts():
+    """Load and invert the firmware tables once. None if they are not present."""
+    global _OT_LUT
+    if _OT_LUT is not None:
+        return _OT_LUT or None
+    d = Path(OT_LUT_DIR)
+    if not d.is_dir() or not list(d.glob("TP_*_stubptinnercut.dat")):
+        _OT_LUT = {}
+        return None
+    drmax = _LUT_RMAXDISK / _LUT_DELTARZ
+    rinvmax = 0.01 * 0.299792458 * 3.8112 / 2.0
+    dphi_hg = 2 * np.pi / 9 + rinvmax * max(55.0 - 21.8, 112.7 - 55.0)
+    mid, corr = {}, {}
+    for L in range(1, 7):
+        nb = _LUT_NBEND[L - 1]
+        g = _lut_tab(d / f"VMPhiCorrL{L}.tab").reshape(1 << nb, 8)
+        rmean = _LUT_IRMEAN[L - 1] * _LUT_RMAXDISK / 4096
+        pitch = STRIP_PITCH_PS if L <= 3 else STRIP_PITCH_2S
+        kphi = dphi_hg / (1 << _LUT_NPHIBITS[L - 1])
+        delta = ((np.arange(8) + 0.5) * (2.0 * drmax / 8)) - drmax
+        coef = -(delta / 0.18) * pitch / rmean / kphi
+        mid[L] = np.array([np.dot(g[b], coef) / np.dot(coef, coef)
+                           for b in range(1 << nb)])
+        corr[L] = g
+    tab = {}
+    for nm in ("L1L2", "L2L3", "L3L4", "L5L6"):
+        fi = sorted(d.glob(f"TP_{nm}?_stubptinnercut.dat"))
+        fo = sorted(d.glob(f"TP_{nm}?_stubptoutercut.dat"))
+        if not fi or not fo:
+            continue
+        # every TP instance of a seed is byte-identical (verified), so one each
+        ti = np.loadtxt(fi[0], dtype=np.int64)
+        to = np.loadtxt(fo[0], dtype=np.int64)
+        la = int(nm[1]); lb = int(nm[3])
+        nbd = int(round(np.log2(len(ti) >> _LUT_NBEND[la - 1])))
+        tab[nm] = (ti, to, nbd)
+    _OT_LUT = {"mid": mid, "corr": corr, "tab": tab, "dphi_hg": dphi_hg,
+               "kfine": dphi_hg / 256.0, "drmax": drmax}
+    return _OT_LUT
+
+
+def _lut_fine(Lk, phi_rel, bend, r, K):
+    """(fine phi bin, bend code) for one stub, in the firmware's encoding."""
+    nb = _LUT_NBEND[Lk - 1]
+    kphi = K["dphi_hg"] / (1 << _LUT_NPHIBITS[Lk - 1])
+    rmean = _LUT_IRMEAN[Lk - 1] * _LUT_RMAXDISK / 4096
+    rbin = np.clip(((r - rmean + K["drmax"])
+                    / (2 * K["drmax"] / 8)).astype(np.int64), 0, 7)
+    m = K["mid"][Lk]
+    cand = np.arange(1 << nb)
+    cand = cand[cand != (1 << (nb - 1))]      # duplicates code 0; never emitted
+    code = cand[np.argmin(np.abs(-np.asarray(bend)[:, None] - m[None, cand]),
+                          axis=1)]
+    c = K["corr"][Lk][code, rbin]
+    return np.floor((phi_rel - c * kphi) / K["kfine"]).astype(np.int64), code
+
+
+def ot_lut_accept(la, lb, phiA, rA, bA, phiB, rB, bB):
+    """Firmware accept/reject for a prompt OT seed pair. None if no LUTs."""
+    K = ot_luts()
+    if K is None:
+        return None
+    nm = ot_seed_name((la, lb))
+    if nm not in K["tab"]:
+        return None
+    ti, to, nbd = K["tab"][nm]
+    ka, kb = la - 10, lb - 10
+    # A COMMON ORIGIN IS ENOUGH: only the DIFFERENCE of the two fine-phi words
+    # is indexed, so the nonant's absolute lower edge cancels. Both stubs of a
+    # pair are in one sector by construction, so both use the inner stub's.
+    n = np.floor((phiA + np.pi) / (2 * np.pi / 9))
+    o = n * (2 * np.pi / 9) - np.pi - (K["dphi_hg"] - 2 * np.pi / 9) / 2
+    fa, ca = _lut_fine(ka, phiA - o, bA, rA, K)
+    fb, cb = _lut_fine(kb, phiB - o, bB, rB, K)
+    d = fb - fa
+    # inrange is PART OF THE CUT, not a guard: the mask below would alias an
+    # out-of-range dphi onto a valid-looking index (TrackletEngineUnit.cc:82).
+    inr = (d < (1 << (nbd - 1))) & (d >= -(1 << (nbd - 1)))
+    d = d & ((1 << nbd) - 1)
+    ii = (d << _LUT_NBEND[ka - 1]) + ca
+    io = (d << _LUT_NBEND[kb - 1]) + cb
+    ok = inr & (ii < len(ti)) & (io < len(to))
+    out = np.zeros(len(d), bool)
+    out[ok] = (ti[ii[ok]] > 0) & (to[io[ok]] > 0)
+    return out
+
+
+def ot_seed_name(seed_layers):
+    """'L1L2' / 'L2L3L4' for an all-OT seed, else None.
+
+    Accepts layers in CONSTRUCTION order (pair first) and sorts for the name,
+    which is how CMSSW labels them too: the enum is Seed::L2L3L4 while the
+    module is TPD_L3L4L2.
+    """
+    ls = [int(L) - 10 for L in seed_layers]
+    if not ls or any(L < 1 or L > 6 for L in ls):
+        return None
+    nm = "".join(f"L{L}" for L in sorted(ls))
+    return nm if nm in OT_SEED_ORDER else None
+
+
+def ot_vmr_inner_z(seed_layers):
+    """(|z|min, |z|max) for the inner stub of a prompt OT doublet, else None.
+
+    None for triplets on purpose: TrackletProcessorDisplaced never reads the
+    AllInnerStubs memory these cuts gate, so applying them to a triplet would
+    delete acceptance the emulator keeps.
+    """
+    if len(seed_layers) != 2:
+        return None
+    return OT_VMR_Z.get(ot_seed_name(seed_layers))
+
+
+# Sentinels, because "no window configured" and "no cap wanted" are OPPOSITE
+# instructions and returning None for both silently turned a forbidden
+# projection into an unrestricted one.
+OT_PROJ_FORBIDDEN = "forbidden"
+
+
+def ot_match_window(proj_layer, seed_layers):
+    """Match window for attaching a stub in OT barrel layer 1-6 to a track.
+
+    Returns
+      (rphi_cm, z_cm)      cap the match at this window
+      OT_PROJ_FORBIDDEN    an OT seed that the real menu does not let project
+                           to this layer at all -- attach nothing
+      None                 no cap (layer outside the tabulated range)
+
+    AN OT SEED USES ITS OWN COLUMN, which is the point: rphimatchcut_ is indexed
+    [layer][seed] precisely because the window depends on the extrapolation
+    distance, and a zero entry means projlayers_ does not contain that layer for
+    that seed. Honouring the zero is what restricts an OT seed to the standard
+    OT projection menu instead of letting it follow a track into layers the
+    firmware never looks in.
+
+    AN IT OR JOINT SEED HAS NO COLUMN. Its lever arm into the OT differs from
+    every OT seed's, so there is no honest table entry to borrow; it gets the
+    most generous configured window for the layer, widened by the 1 GeV policy
+    factor, purely as a CEILING against runaway following. In z that ceiling
+    lands beyond the luminous region and is therefore inert -- stated here
+    rather than hidden, because it means the IT->OT z window is still the
+    derived one and is an open question, not a solved one.
+    """
+    i = int(proj_layer) - 1
+    if not 0 <= i < OT_RPHI_CUT.shape[0]:
+        return None
+    name = ot_seed_name(seed_layers)
+    if name is not None:
+        # A TRIPLET HAS ITS OWN COLUMN and it is not its pair's. L2L3L4 projects
+        # to L1, L5, L6 where the L3L4 doublet it is built from projects to
+        # L1, L2, L5, L6 -- borrowing the pair's column would let the triplet
+        # follow tracks into L2, which its own row forbids.
+        si = OT_SEED_ORDER.index(name)
+        wr, wz = float(OT_RPHI_CUT[i][si]), float(OT_Z_CUT[i][si])
+        return (wr, wz) if (wr > 0 and wz > 0) else OT_PROJ_FORBIDDEN
+    r_vals = OT_RPHI_CUT[i][OT_RPHI_CUT[i] > 0]
+    z_vals = OT_Z_CUT[i][OT_Z_CUT[i] > 0]
+    if not len(r_vals) or not len(z_vals):
+        return None
+    return (float(r_vals.max()) * OT_IT_SEED_WIDEN,
+            float(z_vals.max()) * OT_IT_SEED_WIDEN)
 
 # ---- sensor word quantization benchmarks -------------------------------------
 # Reserve 3 codes: two SIGNED overflow (sign carries charge for alpha, and
@@ -346,32 +756,118 @@ def expand_inputs(spec):
     return out
 
 
-def load_flat(spec, table, cols, nev=None):
+# ---- TrackingParticle truth: the L1TTP table ---------------------------------
+# One row per charged TP with pT >= 1 GeV (L1TrackingParticleTableProducer).
+# phi0/d0/z0 are at the POCA to the beamline, curvature-aware, in the TTTrack
+# convention (d0 = x0 sin(phi0) - y0 cos(phi0), as L1TTrack_d0); phi is the
+# momentum azimuth at PRODUCTION and vx/vy the production vertex. The per-cluster
+# tpPhi/tpVx/tpVy/tpVz columns are production quantities too, and a helix built
+# from them is wrong for any TP produced off its POCA, so TP truth is read here
+# and nowhere else.
+TP_TABLE = "L1TTP"
+TP_COLS = ["idx", "pt", "eta", "phi", "phi0", "charge", "vx", "vy", "d0", "z0"]
+TP_REGEN = "/Users/nmangane/smartpixels/cmssw/work/otstub_arm/itot_tp_f*_100ev.root"
+# per-object truth column -> column of the per-TP table built by tp_table
+TP_TRUTH = {"tp_pt": "pt", "tp_eta": "eta", "tp_tanL": "tanL",
+            "tp_phi0": "phi0", "tp_phi_prod": "phi", "tp_charge": "charge",
+            "tp_vx": "vx", "tp_vy": "vy", "tp_d0": "d0", "tp_z0": "z0"}
+
+
+def require_tp_table(paths):
+    """SystemExit naming the first input without the complete L1TTP table."""
+    for p in paths:
+        keys = set(uproot.open(f"{p}:Events").keys())
+        miss = [f"{TP_TABLE}_{c}" for c in TP_COLS if f"{TP_TABLE}_{c}" not in keys]
+        if miss:
+            raise SystemExit(
+                f"{p} has no {TP_TABLE} TrackingParticle table (missing "
+                f"{', '.join(miss)}). TP truth comes only from {TP_TABLE}; use "
+                f"the regenerated nanos {TP_REGEN}.")
+
+
+def tp_branches():
+    return [f"{TP_TABLE}_{c}" for c in TP_COLS]
+
+
+def tp_table(A, ev):
+    """Per-TP truth of one uproot batch `A`, sorted by tp_key.
+
+    `ev` is the event number of each entry of `A` and must be the numbering the
+    object tables of the same batch get, or the join pairs TPs of different
+    events.
+    """
+    n = ak.to_numpy(ak.num(A[f"{TP_TABLE}_idx"]))
+    T = {c: ak.to_numpy(ak.flatten(A[f"{TP_TABLE}_{c}"])) for c in TP_COLS}
+    idx = T.pop("idx")
+    if len(idx) and idx.max() >= (1 << TP_KEY_SHIFT):
+        raise SystemExit(f"L1TTP_idx exceeds 2^{TP_KEY_SHIFT}; widen TP_KEY_SHIFT")
+    k = tp_key(np.repeat(np.asarray(ev), n), idx)
+    o = np.argsort(k, kind="stable")
+    T = {c: v[o] for c, v in T.items()}
+    T["key"] = k[o]
+    if len(k) and not (T["key"][1:] > T["key"][:-1]).all():
+        raise SystemExit("duplicate (event, L1TTP_idx) in the TP table")
+    T["tanL"] = np.sinh(T["eta"])
+    return T
+
+
+def attach_tp_truth(D, TP, names=None):
+    """Add to object table D (clusters or stubs) the L1TTP truth of each
+    object's TP, joined exactly on tp_key(event, tpIdx). NaN where the object has
+    no TP (tpIdx < 0) or its TP is not in L1TTP (neutral, or pT < 1 GeV).
+    `names` selects from TP_TRUTH; default all."""
+    names = list(TP_TRUTH) if names is None else list(names)
+    nan = np.float32(np.nan)
+    if not len(TP["key"]):
+        for nm in names:
+            D[nm] = np.full(len(D["tpIdx"]), nan)
+        return D
+    k = tp_key(D["event"], np.maximum(D["tpIdx"], 0))
+    p = np.clip(np.searchsorted(TP["key"], k), 0, len(TP["key"]) - 1)
+    hit = (D["tpIdx"] >= 0) & (TP["key"][p] == k)
+    for nm in names:
+        D[nm] = np.where(hit, TP[TP_TRUTH[nm]][p], nan)
+    return D
+
+
+def load_flat(spec, table, cols, nev=None, tp=()):
     """Flatten `cols` of `table` across every input file into one dict.
 
     Stops once nev events have been read. Streams rather than concatenating
     whole files, so the footprint stays bounded on the full ttbar set.
+    `tp` names TP_TRUTH columns to join from L1TTP, read from the same entries
+    as the objects so both sides share one event numbering.
     """
     paths = expand_inputs(spec)
+    tp = list(tp)
+    if tp:
+        if "tpIdx" not in cols:
+            raise ValueError("joining TP truth needs tpIdx among cols")
+        require_tp_table(paths)
     keys = [f"{table}_{c}" for c in cols]
     parts, counts, seen = [], [], 0
-    for A in uproot.iterate([f"{p}:Events" for p in paths], keys, step_size=200):
+    for A in uproot.iterate([f"{p}:Events" for p in paths],
+                            keys + (tp_branches() if tp else []), step_size=200):
         n = ak.to_numpy(ak.num(A[keys[0]]))
         if nev is not None and seen + len(n) > nev:
             keep = nev - seen
             if keep <= 0:
                 break
             A, n = A[:keep], n[:keep]
-        parts.append({c: ak.to_numpy(ak.flatten(A[f"{table}_{c}"])) for c in cols})
+        ev = np.arange(seen, seen + len(n))
+        P = {c: ak.to_numpy(ak.flatten(A[f"{table}_{c}"])) for c in cols}
+        P["event"] = np.repeat(ev, n)
+        if tp:
+            attach_tp_truth(P, tp_table(A, ev), tp)
+        parts.append(P)
         counts.append(n)
         seen += len(n)
         if nev is not None and seen >= nev:
             break
     if not parts:
         raise SystemExit("inputs contained no events")
-    D = {c: np.concatenate([p[c] for p in parts]) for c in cols}
+    D = {c: np.concatenate([p[c] for p in parts]) for c in parts[0]}
     nall = np.concatenate(counts)
-    D["event"] = np.repeat(np.arange(len(nall)), nall)
     return D, len(nall), nall
 
 
@@ -379,11 +875,12 @@ IT_COLS = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
            "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
            # sigX is the r-phi CPE sigma; the KF emulation needs it for the
            # position variance and sigY alone (the z sigma) is not a substitute.
-           "sigX", "sigY", "tpIdx", "tpPt", "tpVx", "tpVy", "tpVz", "tpPhi", "tpEta"]
+           "sigX", "sigY", "tpIdx", "tpPt"]
 
 
 def it_chunks(path, nev, step=16):
-    """Stream the cluster table in chunks, yielding one flat dict per chunk.
+    """Stream the cluster table in chunks, yielding one flat dict per chunk,
+    with every TP_TRUTH column joined from L1TTP.
 
     THE BATCH SIZE IS THE MEMORY CONTROL. The stages are vectorised across every
     THE CHUNK SIZE IS NOT THE MEMORY CONTROL -- see --pair-budget-gb. An earlier
@@ -394,8 +891,10 @@ def it_chunks(path, nev, step=16):
     I/O calls against the per-cluster arrays, which are small.
     """
     seen = 0
-    srcs = [f"{p}:Events" for p in expand_inputs(path)]
-    for A in uproot.iterate(srcs, [f"{IT_TABLE}_{c}" for c in IT_COLS],
+    paths = expand_inputs(path)
+    require_tp_table(paths)
+    srcs = [f"{p}:Events" for p in paths]
+    for A in uproot.iterate(srcs, [f"{IT_TABLE}_{c}" for c in IT_COLS] + tp_branches(),
                             step_size=step):
         n = ak.to_numpy(ak.num(A[f"{IT_TABLE}_layer"]))
         # ENFORCE THE EVENT LIMIT HERE. uproot.iterate ignores entry_stop when it
@@ -407,20 +906,24 @@ def it_chunks(path, nev, step=16):
                 return
             if seen + len(n) > nev:
                 A, n = A[:nev - seen], n[:nev - seen]
+        ev = np.arange(seen, seen + len(n))
         D = {c: ak.to_numpy(ak.flatten(A[f"{IT_TABLE}_{c}"])) for c in IT_COLS}
-        D["event"] = np.repeat(np.arange(seen, seen + len(n)), n)
-        D["_events"] = np.arange(seen, seen + len(n))
+        D["event"] = np.repeat(ev, n)
+        D["_events"] = ev
+        attach_tp_truth(D, tp_table(A, ev))
         seen += len(n)
         yield D
         del A, D
 
 
-def load_ot(path, nev):
+def load_ot(path, nev, tp=()):
+    """The OT stub table; `tp` as for load_flat."""
     paths = expand_inputs(path)
     t = uproot.open(f"{paths[0]}:Events")
-    cols = ["layer", "isBarrel", "r", "phi", "z", "bend", "tpIdx", "tpPt"]
+    cols = ["layer", "isBarrel", "r", "phi", "z", "bend", "tpIdx", "tpPt",
+            "tpGenuine", "tpCombinatoric", "tpUnknown"]
     have = [c for c in cols if f"{OT_TABLE}_{c}" in t.keys()]
-    D, nev_read, n = load_flat(path, OT_TABLE, have, nev)
+    D, nev_read, n = load_flat(path, OT_TABLE, have, nev, tp)
     D["eta"] = np.abs(np.arcsinh(D["z"] / np.maximum(D["r"], 1e-6)))
     return D, nev_read, have
 
@@ -474,7 +977,9 @@ def solve3(r1, p1, r2, p2, r3, p3):
     det = np.where(ok, det, 1.0)
     A = (d2 * v3 - d3 * v2) / det
     B = (u2 * d3 - u3 * d2) / det
-    return wrap(p1 - A / r1 - B * r1), A, -B / C_BEND, ok
+    # phi(r) = phi0 + A/r + B r fitted; in TTTrack's d0 convention phi(r) =
+    # phi0 - d0/r - c kappa r, so d0 = -A and kappa = -B/c
+    return wrap(p1 - A / r1 - B * r1), -A, -B / C_BEND, ok
 
 
 def it_prepare(D, bench):
@@ -784,7 +1289,7 @@ def alpha_veto(D, Q, idxL, kmax, displaced):
 
 
 def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
-             d0_cm=0.0, kap_min=0.0):
+             d0_cm=0.0, kap_min=0.0, z_inner=None, bend_cut=None):
     """STAGE 1 ONLY: the surviving cluster pairs, over an ENTIRE CHUNK.
 
     Split out of it_pair_seed so that a DOUBLET seed (which projects to every
@@ -799,6 +1304,11 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
     alpha-vetoed cluster index sets for la and lb.
     """
     idx = {L: ev_idx[D["layer"][ev_idx] == L] for L in (la, lb)}
+    if z_inner is not None:
+        # The VMRouter gate on the seed's inner stub. la is the inner layer
+        # because seed layers are built inner-first for every doublet.
+        az = np.abs(D["globalZ"][idx[la]])
+        idx[la] = idx[la][(az >= z_inner[0]) & (az <= z_inner[1])]
     out = {"in_A": len(idx[la]), "in_B": len(idx[lb])}
     none = (out, None, None, None, None, None, idx)
     if min(len(v) for v in idx.values()) < 2:
@@ -833,7 +1343,7 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
     # Only the SURVIVING cluster pairs are retained; the full expansion of
     # layer-A x layer-B never exists at once.
     keepA, keepB, keepK, keepC, keepZ = [], [], [], [], []
-    n_phi = n_kap = n_z0l = n_aok = n_zok = 0
+    n_phi = n_kap = n_z0l = n_aok = n_zok = n_bok = 0
     Bx = (build_phi_z0_index(Q["z0"][idx[lb]], D["globalPhi"][idx[lb]],
                              Q["s_z0"][idx[lb]], D["event"][idx[lb]])
           if _JOINT_PAIRING else None)
@@ -872,6 +1382,33 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
         if not displaced:                      # beamspot / luminous-region gate
             ok &= np.abs(z0p) <= Z_LUMI
             n_z0l += int(ok.sum())
+        if bend_cut is not None and ot_luts() is not None:
+            lut = ot_lut_accept(la, lb,
+                                D["globalPhi"][gA], D["globalR"][gA], D["bend"][gA],
+                                D["globalPhi"][gB], D["globalR"][gB], D["bend"][gB])
+            if lut is not None:
+                ok &= lut
+                n_bok += int(ok.sum())
+        elif bend_cut is not None:
+            # APPROXIMATION, AND A KNOWN ONE. The emulator's live test is a
+            # window OVERLAP -- mid +- cut against the whole range of bends the
+            # (dphi, r) cell can produce, with (mid, cut) derived at build time
+            # from each sensor module's stub window and tilt -- not the
+            # point residual below, and useCalcBendCuts = true makes the
+            # tabulated benddecode_/bendcut_ in Settings.h dead code. Matching
+            # it properly means dumping TP_*_stubpt*cut.tab from a real run and
+            # loading the LUTs. This gets the right magnitude and the right
+            # per-seed tolerance; it will disagree on borderline stubs.
+            # FIRMWARE TOLERANCE, MEASURED CONVERSION. The window is
+            # bendcutTE_ in full strips, which is the emulator's own number; the
+            # strips-per-kappa that turns the pair's curvature into a predicted
+            # bend is calibrated from data. Mixing them this way keeps the cut
+            # as tight as the real one without inheriting a geometric
+            # approximation the real one does not make.
+            for g_, tol in ((gA, bend_cut[0]), (gB, bend_cut[1])):
+                ok &= np.abs(D["bend"][g_]
+                             - bend_expected(D["layer"][g_] - 10, kap)) <= tol
+            n_bok += int(ok.sum())
         if use_angles:
             # OVERFLOW SEMANTICS, and they are opposite for the two targets. The
             # code ranges are set AT the physics boundary (+-0.17 in cot alpha is
@@ -901,6 +1438,7 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
     if not displaced:
         out["pairs_z0lumi"] = n_z0l
     if use_angles:
+        out["pairs_bend_ok"] = n_bok
         out["pairs_alpha_ok"] = n_aok
         out["pairs_z0_ok"] = n_zok
     out["tracklets"] = int(sum(len(x) for x in keepA))
@@ -916,7 +1454,7 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
 
 def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                displaced=False, d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM,
-               use_angles=True, d0_meas=None):
+               use_angles=True, d0_meas=None, seed_layers=None):
     """STAGE 2: project a set of cluster pairs to ONE target layer.
 
     Called once by a triplet seed (for its required third layer) and once per
@@ -950,7 +1488,7 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     # assumption its window must then pay for; a triplet passes the solve3 value
     # and projects along the real trajectory instead of a prompt approximation.
     dm = np.zeros(len(gA)) if d0_meas is None else d0_meas
-    phi0 = wrap(D["globalPhi"][gA] - dm / D["globalR"][gA]
+    phi0 = wrap(D["globalPhi"][gA] + dm / D["globalR"][gA]
                 + C_BEND * D["globalR"][gA] * kap)
     # PROJECT TO EACH CANDIDATE'S OWN RADIUS, not the layer median. Comparing a
     # median-radius projection against a candidate's actual z carries an error
@@ -961,6 +1499,31 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     # measurement showed the window contains 93.4% of correct triples -- i.e. the
     # entire "core efficiency loss" was this bug, not physics.
     rCmed = float(np.median(rC))
+    # AN OT TARGET GETS THE REAL TABULATED WINDOW, AS A CEILING.
+    # Everything below derives a window from resolution + scattering + a d0
+    # allowance, which is the right thing for an IT layer read by a pixel CPE
+    # but is far wider than the fixed rphimatchcut_/zmatchcut_ the OT actually
+    # applies. Left alone it hands us OT track-following the real system does
+    # not have, which would overstate what the SmartPixels angles add by
+    # comparing them against a straw-man OT. Imposed as min(derived, tabulated)
+    # so it can only ever TIGHTEN: if physics already says the window is
+    # narrower than the firmware's, physics wins and we do not widen to match.
+    ot_cap = (ot_match_window(lc - 10, seed_layers or (la, lb))
+              if lc > 10 else None)
+    # widen the z road only for an IT/joint seed reaching into the OT
+    z_widen = (OT_IT_PROJ_Z_WIDEN
+               if (lc > 10 and ot_seed_name(seed_layers or (la, lb)) is None)
+               else 1.0)
+    if ot_cap is OT_PROJ_FORBIDDEN:
+        # Not in this seed's projlayers_. Report the layer as looked-at-and-empty
+        # rather than returning early, so the cost counters still show that the
+        # real menu declines to pay for it.
+        out["match_cand"] = 0
+        out["match_cand_z"] = 0
+        out["tracks_to_fit"] = 0
+        return out
+    cap_phi = None if ot_cap is None else ot_cap[0] / max(rCmed, 1e-6)
+    cap_z = None if ot_cap is None else ot_cap[1]
     skap = np.sqrt(2.0) * 1e-3 / (C_BEND * max(dr, 0.1))
     sph = np.hypot(5e-4, C_BEND * rCmed * skap) + ms + d0_allow
     # sigma(cot theta) from the pair's two z measurements, using the MEASURED
@@ -979,11 +1542,28 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
         rss_check()
         n_cand += len(ja)
         rc_i = D["globalR"][gC]
-        zC_i = z0p[ja] + rc_i * cot[ja]
+        # PROJECT ALONG THE ARC, NOT THE RADIUS. z advances with PATH LENGTH,
+        # and for a curved track the path to radius r exceeds r:
+        #     s = 2R asin(r/2R) ~ r (1 + (r/2R)^2/6)
+        # This is the same deltaS the KF already applies (KFbase.cc:632, and
+        # ho_rz in kf_emulation); the projection was still using the straight
+        # line, which is a pure bias that grows as (r*kappa)^2 and therefore
+        # bites exactly where the soft-track study lives.
+        #
+        # MEASURED on true IT-pair-to-OT-stub projections, IL1+IL2 at 1-1.5 GeV:
+        #     OL3  sigma 0.552 -> 0.254 cm (2.2x), containment 76.7% -> 90.9%
+        #     OL6  sigma 7.90  -> 4.50  cm (1.8x), containment 54.2% -> 61.1%
+        # and nothing at all above 3 GeV, where (r*kappa)^2 is negligible. Those
+        # figures use the TRUE curvature; a doublet seed only has its own pair
+        # kappa, so it realises less of the gain than a triplet does.
+        s_arc = rc_i * (1.0 + np.square(rc_i * C_BEND * kap[ja]) / 6.0)
+        zC_i = z0p[ja] + s_arc * cot[ja]
         szp_i = np.hypot(np.maximum(D["sigY"][gC], 1e-6), rc_i * sct[ja]) + rc_i * ms
-        phiC_i = wrap(phi0[ja] + dm[ja] / rc_i - C_BEND * rc_i * kap[ja])
+        phiC_i = wrap(phi0[ja] - dm[ja] / rc_i - C_BEND * rc_i * kap[ja])   # TTTrack d0
         dphi = np.abs(wrap(D["globalPhi"][gC] - phiC_i))
-        good = np.abs(D["globalZ"][gC] - zC_i) <= NSIG * szp_i
+        zwin = NSIG * szp_i * z_widen
+        zwin = zwin if cap_z is None else np.minimum(zwin, cap_z)
+        good = np.abs(D["globalZ"][gC] - zC_i) <= zwin
         if displaced:
             # THE EXACT THREE-POINT SOLVE IS THE DISCRIMINANT HERE, not a phi
             # window. With three azimuths in hand, (phi0, d0, kappa) are
@@ -999,7 +1579,8 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                 rc_i, D["globalPhi"][gC])
             good &= ok3 & (np.abs(kap_3) <= kmax) & (np.abs(d0_3) <= d0_max)
         else:
-            good &= dphi <= NSIG * sph
+            pwin = NSIG * sph if cap_phi is None else min(NSIG * sph, cap_phi)
+            good &= dphi <= pwin
         if not good.any():
             continue
         sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(dphi[good])
@@ -1174,29 +1755,6 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
     return out
 
 
-def measure_d0_core(D, ptmin=2.0):
-    """Robust sigma of the TP transverse impact parameter above ptmin, MEASURED
-    from this file rather than assumed. One row per (event, TP).
-
-    Reported alongside quantiles because the distribution is NOT Gaussian: a
-    beamspot-sized core plus a real displaced tail. Sizing a prompt window on a
-    quantile of the whole thing gives millimetres and is wrong; size it on the
-    core and give the tail to the displaced path.
-    """
-    m = (D["tpIdx"] >= 0) & (D["tpPt"] > ptmin)
-    key = D["event"][m].astype(np.int64) * (1 << 20) + D["tpIdx"][m].astype(np.int64)
-    _, first = np.unique(key, return_index=True)
-    vx, vy, ph = D["tpVx"][m][first], D["tpVy"][m][first], D["tpPhi"][m][first]
-    d0 = -vx * np.sin(ph) + vy * np.cos(ph)
-    core = 1.4826 * np.median(np.abs(d0 - np.median(d0)))
-    q = np.percentile(np.abs(d0), [50, 68.3, 95.4, 99.73, 99.994])
-    return {"n_tp": int(len(d0)), "core_sigma_cm": float(core),
-            "q50_cm": float(q[0]), "q68_cm": float(q[1]), "q95_cm": float(q[2]),
-            "q99p73_cm": float(q[3]), "q99p994_cm": float(q[4]),
-            "frac_within_100um": float((np.abs(d0) < 100e-4).mean()),
-            "frac_within_200um": float((np.abs(d0) < 200e-4).mean())}
-
-
 # ==========================================================================
 # Truth bookkeeping -- ARRAY BASED
 # ==========================================================================
@@ -1222,8 +1780,12 @@ def tp_key(event, tpidx):
 def build_tp_index(D):
     """One row per (event, TP): sorted key array plus aligned |d0| and pT.
 
-    Sorted, so every later lookup is a searchsorted rather than a hash.
+    Sorted, so every later lookup is a searchsorted rather than a hash. |d0| is
+    L1TTP's POCA d0 [cm] (D needs attach_tp_truth), NaN for TPs not in L1TTP.
     """
+    if "tp_d0" not in D:
+        raise SystemExit("build_tp_index needs the L1TTP truth: build D with "
+                         "it_chunks or join it with attach_tp_truth")
     m = D["tpIdx"] >= 0
     if m.sum() and D["tpIdx"][m].max() >= (1 << TP_KEY_SHIFT):
         raise SystemExit(f"tpIdx exceeds 2^{TP_KEY_SHIFT}; widen TP_KEY_SHIFT")
@@ -1233,9 +1795,7 @@ def build_tp_index(D):
     first = np.r_[True, k[1:] != k[:-1]]
     uk = k[first]
     sel = np.flatnonzero(m)[order][first]
-    d0 = np.abs(-D["tpVx"][sel] * np.sin(D["tpPhi"][sel])
-                + D["tpVy"][sel] * np.cos(D["tpPhi"][sel]))
-    return {"key": uk, "d0": d0, "pt": D["tpPt"][sel]}
+    return {"key": uk, "d0": np.abs(D["tp_d0"][sel]), "pt": D["tpPt"][sel]}
 
 
 def findable_keys(D, la, lb, lc, ptmin):

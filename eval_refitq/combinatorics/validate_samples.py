@@ -4,7 +4,9 @@ Three checks that were each done ad hoc and each caught something real:
 
   COLUMN COMPLETENESS. A study that silently loses a column reads as a physics
   result. The IT cost model needs every entry of IT_COLS, and a missing sigY once
-  aborted a run only after the loader had already been patched twice.
+  aborted a run only after the loader had already been patched twice. The TP
+  truth needs the L1TTP table, reported as "L1TTP" when any of its columns is
+  absent.
 
   EVENT DISTINCTNESS. Two samples that look like 40 and 60 events can be 60 total
   rather than 100, if one is a subset of the other -- which is exactly what the
@@ -36,12 +38,14 @@ def main():
     paths = M.expand_inputs(a.input)
 
     print(f"{'file':<34}{'events':>7}{'clusters/ev':>13}{'stubs/ev':>10}"
-          f"{'OT truth':>9}{'missing IT cols':>18}")
+          f"{'OT truth':>9}{'missing cols':>18}")
     ids, occ, bad = {}, {}, []
     for p in paths:
         t = uproot.open(f"{p}:Events")
         keys = set(t.keys())
         miss = [c for c in M.IT_COLS if f"{M.IT_TABLE}_{c}" not in keys]
+        if any(f"{M.TP_TABLE}_{c}" not in keys for c in M.TP_COLS):
+            miss.append(M.TP_TABLE)
         want = [f"{M.IT_TABLE}_layer"]
         if f"{M.OT_TABLE}_layer" in keys:
             want.append(f"{M.OT_TABLE}_layer")
@@ -91,7 +95,8 @@ def main():
                   " different processes/PU (expected) or one file does not belong."
                   " Re-run per dataset to tell the two apart.")
     if bad:
-        print(f"\n{len(bad)} file(s) MISSING IT columns -- studies will fail on them")
+        print(f"\n{len(bad)} file(s) MISSING IT or L1TTP columns -- studies will "
+              f"fail on them; the regenerated nanos are {M.TP_REGEN}")
         raise SystemExit(1)
 
 

@@ -56,10 +56,10 @@ Q_CORE, N_SIGMA_ANALYTIC = 68.27, 3.0
 
 
 def build(src, nev):
-    """One unified hit table plus a per-TP truth table."""
+    """One unified hit table."""
     I, n, _ = M.load_flat(src, M.IT_TABLE,
                           ["layer", "globalR", "globalZ", "globalPhi", "sigY",
-                           "tpIdx", "tpPt", "tpVz", "tpEta"], nev)
+                           "tpIdx", "tpPt"], nev)
     O, on, _ = M.load_ot(src, nev)
     bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
     U = {"layer": np.r_[I["layer"], O["layer"][bar] + 10],
@@ -69,12 +69,7 @@ def build(src, nev):
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
-    mi = I["tpIdx"] >= 0
-    k = M.tp_key(I["event"][mi], I["tpIdx"][mi])
-    o = np.argsort(k, kind="stable")
-    k, vz, et = k[o], I["tpVz"][mi][o], I["tpEta"][mi][o]
-    f = np.r_[True, k[1:] != k[:-1]]
-    return U, {"key": k[f], "vz": vz[f], "eta": et[f]}, n, on
+    return U, n, on
 
 
 def first_per_tp(U, L, ptmin):
@@ -100,7 +95,7 @@ def main():
                                           "spix_seed_settings.py")
     a = ap.parse_args()
 
-    U, TP, nev, onev = build(a.input, a.nev)
+    U, nev, onev = build(a.input, a.nev)
     FP = {L: first_per_tp(U, L, a.ptmin) for L in ALL_LAYERS}
     occ = {L: float((U["layer"] == L).sum()) / nev for L in ALL_LAYERS}
     zspan = {L: float(np.ptp(U["z"][U["layer"] == L])) for L in ALL_LAYERS}

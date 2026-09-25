@@ -17,7 +17,7 @@ mkdir -p "$OUT"
 
 declare -a NAMES=(ttbar_pu200 htt_pu200 ttbar_nopu)
 declare -a INPUTS=(
-  "$D/itot_truth_100ev.root,$D/itot_ttbar_f*_100ev.root"
+  "$D/itot_tp_f*_100ev.root"
   "$D/itot_htt_100ev.root"
   "$D/itot_nopu_100ev.root"
 )

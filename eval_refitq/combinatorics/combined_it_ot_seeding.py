@@ -14,8 +14,8 @@ TWO THINGS AN OT STUB DOES NOT HAVE, and how they are handled:
   workaround: a stub has no per-hit z0 estimate to contribute.
 
   A POSITION SIGMA COMPARABLE TO A PIXEL. The z search needs the target hit's own
-  resolution, so it is MEASURED here per OT layer against each TP's helix
-  z = vz + r*sinh(eta) rather than assumed: ~0.8-1.9 mm for the PS layers (L1-L3)
+  resolution, so it is MEASURED here per OT layer against each TP's L1TTP helix
+  z = z0 + r*tanL rather than assumed: ~0.8-1.9 mm for the PS layers (L1-L3)
   and ~1.8 cm for the 2S layers (L4-L6), against 12.5 um for an IT cluster.
 
 WHAT IT SHOWS. Mixed IT+OT seeds reach 0.902-0.924 efficiency against 0.860-0.862
@@ -31,30 +31,23 @@ import sys; sys.path.insert(0,"eval_refitq/combinatorics")
 import numpy as np, json
 import tracklet_topology_cost as M
 
-D="../cmssw/work/otstub_arm/"
-files=[D+"itot_truth_100ev.root"]+[D+f"itot_ttbar_f{n:02d}_100ev.root" for n in range(2,11)]
-src=",".join(files); PT=2.0
+# argv: [n_events] [input spec, default the regenerated PU200 ttbar set]
 NEV=int(sys.argv[1]) if len(sys.argv)>1 else None
+src=sys.argv[2] if len(sys.argv)>2 else M.TP_REGEN; PT=2.0
 
 I,nev,_=M.load_flat(src, M.IT_TABLE, list(M.IT_COLS), NEV)
-O,onev,_=M.load_ot(src, NEV)
+O,onev,_=M.load_ot(src, NEV, tp=("tp_z0","tp_tanL"))
 bar=(O["isBarrel"]>0)&(O["eta"]<=M.ETA_MATCHED)
 nI=len(I["layer"]); nO=int(bar.sum())
 
 # per-OT-layer z resolution, measured (used as the target sigma in the z search)
-mi=I["tpIdx"]>=0
-kv=M.tp_key(I["event"][mi],I["tpIdx"][mi]); o=np.argsort(kv,kind="stable")
-KV=kv[o]; VZ=I["tpVz"][mi][o]; ET=I["tpEta"][mi][o]
-f=np.r_[True,KV[1:]!=KV[:-1]]; KV,VZ,ET=KV[f],VZ[f],ET[f]
 def rs(x):
     q=np.percentile(x,[15.865,84.135]); return float(0.5*(q[1]-q[0]))
 otsig={}
 for L in range(1,7):
-    m=bar&(O["layer"]==L)&(O["tpIdx"]>=0)&(O["tpPt"]>=PT)
-    if m.sum()<200: continue
-    k=M.tp_key(O["event"][m],O["tpIdx"][m]); p=np.clip(np.searchsorted(KV,k),0,len(KV)-1)
-    g=KV[p]==k
-    otsig[L]=rs(O["z"][m][g]-(VZ[p[g]]+O["r"][m][g]*np.sinh(ET[p[g]])))
+    g=bar&(O["layer"]==L)&(O["tpIdx"]>=0)&(O["tpPt"]>=PT)&np.isfinite(O["tp_z0"])
+    if g.sum()<200: continue
+    otsig[L]=rs(O["z"][g]-(O["tp_z0"][g]+O["r"][g]*O["tp_tanL"][g]))
 
 # ---- unified hit table: IT layers 1-4, OT barrel layers 11-16 --------------
 sigY_ot=np.array([otsig.get(int(L),0.2) for L in O["layer"][bar]])
@@ -66,8 +59,6 @@ U={"layer":np.r_[I["layer"], O["layer"][bar]+10],
    "tpIdx":np.r_[I["tpIdx"], O["tpIdx"][bar]],
    "tpPt":np.r_[I["tpPt"], O["tpPt"][bar]],
    "event":np.r_[I["event"], O["event"][bar]]}
-for c in ("tpVx","tpVy","tpPhi","tpEta"):
-    U[c]=np.r_[I[c], np.full(nO,-999.0)]
 # angles: IT from the model; OT stubs carry NONE, so their sigmas are made huge
 # and every consistency gate passes trivially. The joint (z0,phi) pairing then
 # classes them as wildcards and searches them on phi alone, which is correct --

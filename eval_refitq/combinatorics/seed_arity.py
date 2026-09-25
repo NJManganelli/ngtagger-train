@@ -56,22 +56,42 @@ IL = (1, 2, 3, 4)
 OT_BARREL = (11, 12, 13, 14, 15, 16)
 # L1L2, L2L3, L3L4, L5L6 -- Settings.h:679. There is deliberately no L4L5.
 OT_DOUBLETS = ((11, 12), (12, 13), (13, 14), (15, 16))
-# L2L3L4 and L4L5L6 -- the design's only barrel triplet seeds.
-OT_TRIPLETS = ((12, 13, 14), (14, 15, 16))
+# L2L3L4 and L4L5L6 -- the design's only barrel triplet seeds, IN CONSTRUCTION
+# ORDER: the pair first, the attached third layer last.
+#
+# THE NAME IS SORTED, THE CONSTRUCTION IS NOT. seedlayers_[8] = {2,3,1} and
+# [9] = {4,5,3} (Settings.h:679-690, 0-indexed layers), and ProcessBase.cc:142
+# reads them as (layerdisk1, layerdisk2, layerdisk3) = (pair, pair, third). So
+# L2L3L4 is the L3L4 pair with an L2 stub attached, and L4L5L6 is the L5L6 pair
+# with an L4 stub attached -- CMSSW's own module names say so, TPD_L3L4L2 and
+# TPD_L5L6L4. Listing these ascending made the pair L2L3 and L4L5, and L4L5 is
+# not a seed at all, so once the real projection menu was enforced the second
+# triplet found exactly zero tracks. An ascending tuple is not a harmless
+# relabelling here; it builds a different combinatorial set.
+OT_TRIPLETS = ((13, 14, 12), (15, 16, 14))
 MIN_LAYERS = 4
 
 
 class Seed:
-    __slots__ = ("arity", "layers", "tag", "note")
+    __slots__ = ("arity", "layers", "tag", "note", "soft")
 
-    def __init__(self, layers, note=""):
+    def __init__(self, layers, note="", soft=False):
         self.layers = tuple(layers)
         self.arity = len(self.layers)
-        self.tag = "+".join(NAME[L] for L in self.layers)
+        self.tag = "+".join(NAME[L] for L in self.layers) + (" soft" if soft else "")
         self.note = note
+        # A DEDICATED SUB-2-GeV RECOVERY SEED, not the same seed run lower.
+        # It carries its own pT floor and its own layer rule, and it is a
+        # SEPARATE entry in the menu, so the standard seeds are untouched: a
+        # 2 GeV track confirmed by two OT hits and no extra IT hit still
+        # passes on the standard entry, which it would not if the 3xIT rule
+        # had been imposed on the existing seeds. It also makes the soft
+        # extension something you switch on and off in the seed list.
+        self.soft = bool(soft)
 
     def __repr__(self):
-        return f"<{'doublet' if self.arity == 2 else 'triplet'} {self.tag}>"
+        kind = 'doublet' if self.arity == 2 else 'triplet'
+        return f"<{'soft ' if self.soft else ''}{kind} {self.tag}>"
 
     def min_proj(self, strict_cmssw=False):
         """Confirmed projections still required to reach a 4-layer track."""
@@ -80,6 +100,19 @@ class Seed:
 
 NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
         11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
+
+
+def soft_seeds(seeds):
+    """Dedicated sub-2-GeV recovery entries: the IT-only seeds, duplicated.
+
+    Only IT-only seeds: the recovery rule is "3xIT, optionally + 1xOT", so a
+    seed that already spends a layer in the OT cannot satisfy it, and the OT
+    cannot seed below its stub threshold at all (measured: 4.4% of 1-2 GeV TPs
+    reach the >= 4 OT layers an OT track needs, against 42.3% just above it).
+    """
+    return [Seed(s.layers, note=(s.note + " sub-2GeV recovery").strip(),
+                 soft=True)
+            for s in seeds if all(L <= 4 for L in s.layers)]
 
 
 def enumerate_seeds(il_instrumented, ot=OT_BARREL):
@@ -129,7 +162,8 @@ def enumerate_seeds(il_instrumented, ot=OT_BARREL):
 
 
 def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
-             strict_cmssw=False, d0_cm=0.0, min_layers=None):
+             strict_cmssw=False, d0_cm=0.0, min_layers=None,
+             min_it_layers=None, min_ot_conf=0):
     """Run one seed and follow it to EVERY target layer.
 
     A doublet projects to all of them with a d0 = 0 helix. A triplet first
@@ -144,15 +178,27 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
     allidx = np.arange(len(U["layer"]))
     la, lb = seed.layers[0], seed.layers[1]
     out, gA, gB, kap, cot, z0p, idx = M.it_pairs(
-        U, Q, allidx, la, lb, ptmin, use_angles, False, d0_cm, 0.0)
+        U, Q, allidx, la, lb, ptmin, use_angles, False, d0_cm, 0.0,
+        z_inner=M.ot_vmr_inner_z(seed.layers),
+        bend_cut=M.ot_bend_cut(seed.layers))
     if gA is None:
         return None
     d0m = None
     used = [la, lb]
     if seed.arity == 3:
         lc = seed.layers[2]
+        # seed_layers is DELIBERATELY NOT PASSED HERE. Attaching the third
+        # stub is seed formation, not a projection: the real finder locates it
+        # through innerThirdTable_, a middle->third r/z-bin LUT, while
+        # rphimatchcut_/zmatchcut_ describe projections to layers the seed does
+        # NOT occupy. Handing the projection menu this call asked whether
+        # L2L3L4 may project into L2 -- its own third layer -- which its row
+        # forbids, so both barrel triplets found exactly zero tracks. The
+        # third-stub window therefore stays the derived one; we do not have
+        # innerThirdTable_ and will not fake it with the wrong table.
         o3 = M.it_project(U, Q, dict(out), gA, gB, kap, cot, z0p, idx,
-                          la, lb, lc, ptmin, False, d0_cm, use_angles=use_angles)
+                          la, lb, lc, ptmin, False, d0_cm,
+                          use_angles=use_angles)
         if "_trip" not in o3:
             return None
         ta, tb, tc = o3["_trip"]
@@ -177,6 +223,8 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
         return None
     # ---- follow to every remaining layer --------------------------------
     nconf = np.zeros(len(gA), np.int32)
+    nconf_it = np.zeros(len(gA), np.int32)
+    nconf_ot = np.zeros(len(gA), np.int32)
     hits = {}
     cand_tot = 0
     for L in targets:
@@ -184,12 +232,13 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
             continue
         oj = M.it_project(U, Q, {}, gA, gB, kap, cot, z0p, idx, la, lb, L,
                           ptmin, False, d0_cm, use_angles=use_angles,
-                          d0_meas=d0m)
+                          d0_meas=d0m, seed_layers=seed.layers)
         cand_tot += int(oj.get("match_cand", 0))
         if "_pairidx" not in oj:
             continue
         pi = oj["_pairidx"]
         nconf[pi] += 1
+        (nconf_ot if L > 10 else nconf_it)[pi] += 1
         hits[L] = (pi, oj["_trip"][2])
     out["cand_all_targets"] = cand_tot
     out["targets_followed"] = len([L for L in targets if L not in used])
@@ -198,12 +247,35 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
     # defined against six OT barrel layers, and a soft IT-only configuration may
     # have only three layers in total, where demanding four means demanding a
     # confirmation the geometry cannot supply.
-    if min_layers is None:
+    # A LAYER COUNT THAT DOES NOT CARE WHICH SYSTEM SUPPLIED THE LAYER IS WRONG
+    # HERE. With a flat "3 layers" rule and the OT among the targets, an IT
+    # DOUBLET completes on a single OT stub -- 2xIT + 1xOT -- which is not a
+    # soft-track candidate at all: the IT pair alone cannot constrain d0 and the
+    # OT stub sits at 5-10x the radius. MEASURED cost of allowing it, 200
+    # events at 1 GeV: the fake fraction rises with the IT lever arm, IL3+IL4
+    # 0.034 -> 0.067 but IL1+IL4 0.202 -> 0.557, while every arity-3 seed --
+    # already 3xIT, so its OT hit really is optional -- shows no penalty at all
+    # (0.029 -> 0.029). The entire effect was the doublets.
+    #
+    # So the requirement is stated per system: the IT must supply min_it_layers
+    # by itself, and OT confirmations are counted separately. min_ot_conf = 0
+    # makes the OT hit optional ("3xIT or 3xIT + 1xOT"), 1 makes it mandatory.
+    if min_it_layers is not None:
+        n_it_seed = sum(1 for L in seed.layers if L <= 4)
+        keep = (n_it_seed + nconf_it >= min_it_layers) & (nconf_ot >= min_ot_conf)
+        need = max(min_it_layers - n_it_seed, 0)
+    elif min_layers is None:
         need = seed.min_proj(strict_cmssw)
+        keep = nconf >= need
     else:
         need = max(min_layers - seed.arity, 0)
-    keep = nconf >= need
-    out["min_proj"] = need
+        keep = nconf >= need
+    # SUMS ONLY. Per-chunk counters are added together by acc_add, so a mean or
+    # a constant stored here would come back multiplied by the chunk count; the
+    # report divides these by n_pairs_rule instead.
+    out["conf_it_sum"] = int(nconf_it.sum())
+    out["conf_ot_sum"] = int(nconf_ot.sum())
+    out["n_pairs_rule"] = int(len(gA))
     out["tracks_before_minlayers"] = int(len(gA))
     out["tracks_to_fit"] = int(keep.sum())
     if not keep.any():

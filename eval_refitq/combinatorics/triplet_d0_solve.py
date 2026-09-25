@@ -60,8 +60,7 @@ import tracklet_topology_cost as M  # noqa: E402
 IT_TABLE = "L1TSmartPixelsCluster"
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
 TP_KEY_SHIFT = 20
-COLS = ["layer", "globalR", "globalZ", "globalPhi", "tpIdx", "tpPt",
-        "tpVx", "tpVy", "tpPhi", "tpEta"]
+COLS = ["layer", "globalR", "globalZ", "globalPhi", "tpIdx", "tpPt"]
 D0_EDGES_CM = [0.0, 0.005, 0.01, 0.05, 0.1, 0.5, 1e9]
 
 
@@ -77,8 +76,9 @@ def robust_sigma(x):
 
 
 def load(path, nev):
-    """One or many input files; see tracklet_topology_cost.expand_inputs."""
-    return M.load_flat(path, IT_TABLE, COLS, nev)[:2]
+    """One or many input files; see tracklet_topology_cost.expand_inputs.
+    tp_d0 is the TP's L1TTP d0 at the POCA [cm], TTTrack sign convention."""
+    return M.load_flat(path, IT_TABLE, COLS, nev, tp=("tp_d0",))[:2]
 
 
 def first_cluster_per_tp(D, layer, sel):
@@ -125,9 +125,7 @@ def main():
     D, nev = load(a.input, a.nev)
     print(f"{len(D['layer'])/nev:.0f} clusters/event over {nev} events, "
           f"pT > {a.ptmin} GeV\n")
-    sel = D["tpPt"] >= a.ptmin
-    d0_true_all = (-D["tpVx"] * np.sin(D["tpPhi"])
-                   + D["tpVy"] * np.cos(D["tpPhi"]))
+    sel = (D["tpPt"] >= a.ptmin) & np.isfinite(D["tp_d0"])   # L1TTP holds charged TPs >= 1 GeV only
 
     for (la, lb, lc) in ((1, 2, 3), (2, 3, 4)):
         gA, gB, gC = correct_triples(D, la, lb, lc, sel)
@@ -137,7 +135,7 @@ def main():
         p = [D["globalPhi"][g] for g in (gA, gB, gC)]
         phi0, A, B, ok = solve_triplet(r[0], p[0], r[1], p[1], r[2], p[2])
         d0_fit, kap_fit = A, -B / C_BEND
-        d0_tp = d0_true_all[gA]
+        d0_tp = D["tp_d0"][gA]
         # pair-derived kappa for comparison: assumes d0 = 0
         drp = r[1] - r[0]
         kap_pair = wrap(p[0] - p[1]) / (C_BEND * drp)

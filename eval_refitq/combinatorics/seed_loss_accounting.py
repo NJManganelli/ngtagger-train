@@ -20,10 +20,12 @@ because it is a different failure -- the gates were fine, the choice was not.
 Nothing here is a rate measurement. It is a census of survival for the correct
 combination, which is what an efficiency loss actually is.
 """
-import argparse, json
-import awkward as ak
+import argparse, json, sys
+from pathlib import Path
 import numpy as np
-import uproot
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import tracklet_topology_cost as M   # noqa: E402
 
 T = "L1TSmartPixelsCluster"
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
@@ -41,15 +43,11 @@ def wrap(a):
 
 
 def load(path, nev):
-    t = uproot.open(f"{path}:Events")
+    """Clusters with their TP's L1TTP d0 at the POCA [cm] joined as tp_d0."""
     cols = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
             "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
-            "sigY", "tpIdx", "tpPt", "tpVx", "tpVy", "tpPhi"]
-    A = t.arrays([f"{T}_{c}" for c in cols], entry_stop=nev)
-    n = ak.to_numpy(ak.num(A[f"{T}_layer"]))
-    D = {c: ak.to_numpy(ak.flatten(A[f"{T}_{c}"])) for c in cols}
-    D["event"] = np.repeat(np.arange(len(n)), n)
-    return D, len(n)
+            "sigY", "tpIdx", "tpPt"]
+    return M.load_flat(path, T, cols, nev, tp=("tp_d0",))[:2]
 
 
 def trace_one(D, ia, ib, ic, ptmin, d0_cm, rA, rB, dr):
@@ -135,9 +133,8 @@ def main():
         m = D["event"] == e
         idx = np.flatnonzero(m)
         tp, ly, pt = D["tpIdx"][idx], D["layer"][idx], D["tpPt"][idx]
-        d0 = np.abs(-D["tpVx"][idx] * np.sin(D["tpPhi"][idx])
-                    + D["tpVy"][idx] * np.cos(D["tpPhi"][idx]))
-        ok = (tp >= 0) & (pt >= a.ptmin)
+        d0 = np.abs(D["tp_d0"][idx])
+        ok = (tp >= 0) & (pt >= a.ptmin) & np.isfinite(d0)
         if a.d0max > 0:
             ok &= d0 < a.d0max
         if not ok.any():

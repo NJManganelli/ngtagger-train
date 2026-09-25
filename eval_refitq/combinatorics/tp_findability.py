@@ -5,8 +5,8 @@ SmartPixels cluster or OT stub -- 9.52 million of them in the 1000-event PU200
 ttbar set, 9,515 per event -- carrying
 
     key            (event << 20) | tpIdx, globally unique across the input set
-    pt eta phi     TP truth kinematics
-    d0 z0 vr       transverse impact parameter, longitudinal vertex, production radius
+    pt eta phi     TP truth kinematics; phi [rad] is the azimuth at PRODUCTION
+    d0 z0 vr       L1TTP d0 and z0 [cm] at the POCA to the beamline, production radius [cm]
     hit_it hit_ot  bitmasks of which IL1-IL4 / OL1-OL6 the TP actually hit
     found          BITMAP over every candidate seed: did that seed recover this TP
 
@@ -30,12 +30,13 @@ sigma) and the per-layer median radius (which picks each doublet's adjacent
 target layers). Both are measured ONCE on a calibration pass and written into
 the cache manifest, so every chunk and every later run sees the same numbers.
 
-KINEMATICS ARE MISSING FOR OT-ONLY TPs -- 1.87M of the 9.52M. The nano stores
-tpEta/tpPhi/tpVx/tpVy/tpVz on the SmartPixels cluster table only; the OT stub
-table carries tpIdx and tpPt and nothing else. A TP with stubs but no IT cluster
-therefore has pT and hit pattern but no direction or vertex, and its kinematic
-columns are NaN with has_kin = False. That is a producer limitation, not a
-choice made here: adding those five branches to the OT stub table would close it.
+TRUTH KINEMATICS COME FROM THE L1TTP TABLE, joined on (event, tpIdx) for IT
+clusters and OT stubs alike. L1TTP holds charged TPs with pT >= 1 GeV only, so a
+TP below 1 GeV has pT (the hit's own tpPt) and hit pattern but NaN kinematics. So
+does a NEUTRAL TP: the cluster producer credits a cluster to the PARENT of its
+dominant contributor, which for a Geant4 secondary without its own TP (e.g. a
+conversion electron) can be a photon; ~1.8% of the >= 1 GeV TPs with an IT
+cluster in the 5-event PU200 test file are of that kind.
 """
 from __future__ import annotations
 import argparse, hashlib, json, os, sys, time
@@ -53,15 +54,64 @@ NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
         11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
 CODE = {v: k for k, v in NAME.items()}
 ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
-OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt"]
+# tpGenuine/tpCombinatoric/tpUnknown are the per-stub CMS truth flags, needed
+# because tpIdx = -1 cannot distinguish a merged cluster from noise. bend is the
+# stub's own curvature estimate, which the seed and projection gates want and
+# could not use while it was not loaded at all.
+OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
+           "tpGenuine", "tpCombinatoric", "tpUnknown", "bend"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 15
+FORMAT_VERSION = 19   # TP truth (census d0/z0/eta/phi/vr, qual_* and track-row
+                      # residuals, OT sigma z) from L1TTP at the POCA
+
+# ---- THE OUTPUT CEILING OF THE REAL OT TRACK FINDER ------------------------
+# THE TARGET TO DESIGN AGAINST, stated once here so it does not get re-derived
+# wrongly a third time:
+#
+#     9 phi nonants x 2 eta sectors x 104 tracks = 1872 tracks per event
+#
+# 104 per region is the tuned OUTPUT ceiling, sized on ttbar PU200 at roughly a
+# 5-sigma upward fluctuation in track multiplicity.
+#
+# WHAT I GOT WRONG BEFORE, recorded so it is not repeated. I read
+# maxstep_["DR"] = 108 (Settings.h:849-860) together with
+#     if (inputtracklets_.size() >= settings_.maxStep("DR")) continue;
+# (PurgeDuplicate.cc:156) as "108 fitted tracks per NONANT may enter duplicate
+# removal", and concluded our menu overruns the cap by 8.4x. That reading
+# cannot be right: a 108-per-nonant INPUT cap would make a 104-per-region
+# OUTPUT unreachable, so the system could never exercise its own ceiling. The
+# header says what 108 is in its own first line --
+#     "Number of processing steps for one event (108=18TM*240MHz/40MHz)"
+# -- a CLOCK BUDGET: 18 time-multiplexed regions x (240/40) cycles. And 18 is
+# exactly 9 nonants x 2 eta sectors. So maxstep_ counts processing steps per
+# module instance, not tracks per nonant, and the DR comment's "per bin" means
+# one of those 18 regions (optionally subdivided by rinvBins x phiBins, which
+# default to a single bin each).
+#
+# STILL TRUE, AND STILL THE POINT: wherever the ceiling bites, it is ARBITRARY
+# WITH RESPECT TO QUALITY -- no ranking is applied where the cut happens -- so a
+# good displaced track is as likely to be dropped as a fake. That is why a
+# menu's per-region load belongs next to its efficiency.
+#
+# NOT MEASURABLE FROM THESE NTUPLES: L1TTrack_etaSector is 99 for every track in
+# every file we have, so the eta boundary below is an ASSUMPTION, not a
+# measurement. Splitting at eta = 0 (the +z / -z halves) pending confirmation;
+# changing ETA_SECTOR_EDGES only redistributes load between two bins and cannot
+# change the total.
+N_NONANT = 9
+N_ETA_SECTOR = 2
+ETA_SECTOR_EDGES = (0.0,)          # ASSUMED; see the note above
+TRACKS_PER_REGION = 104            # tuned output ceiling, ttbar PU200 + 5 sigma
+N_REGION = N_NONANT * N_ETA_SECTOR
+DR_MAX_TRACKS = TRACKS_PER_REGION
 # Residuals kept per seed PER CHUNK for the robust spreads. Fixed per chunk, not
 # derived from the requested event count, so the same shard serves a 100-event
 # and a 1000-event request identically.
 QUAL_PER_CHUNK = 400
+# one emitted track in this many contributes per-cluster angle rows
+ANGLE_SAMPLE = 12
 
 
 # ==========================================================================
@@ -92,8 +142,24 @@ def input_manifest(spec, hash_content=False):
 
 
 def cache_key(manifest, cfg):
+    """Identity of a census: format, inputs, config, columns AND the numerics.
+
+    TRACK_COLS BELONGS IN THE KEY. The shards store bare arrays whose names come
+    from KF.TRACK_COLS at load time, so adding a column changes what every shard
+    means -- but it changes neither the inputs nor the config, and a census
+    re-run therefore RESUMED a complete cache and exited in seconds while
+    appearing to succeed. Hashing the column list makes that impossible instead
+    of relying on remembering to bump FORMAT_VERSION.
+
+    KF.numerics_key() closes the same hole for VALUES rather than columns. The
+    third-order helix terms changed every residual in the table while leaving
+    the format, the inputs, the config and the column list identical, so the
+    cache stayed "valid" and the exported site kept serving the uncorrected fit.
+    """
     payload = json.dumps({"format": FORMAT_VERSION, "inputs": manifest,
-                          "config": cfg}, sort_keys=True).encode()
+                          "config": cfg, "track_cols": list(KF.TRACK_COLS),
+                          "numerics": KF.numerics_key()},
+                         sort_keys=True).encode()
     return hashlib.sha256(payload).hexdigest()[:16]
 
 
@@ -103,19 +169,14 @@ def cache_key(manifest, cfg):
 def calibrate(spec, nev, ptmin):
     """Per-layer OT stub z resolution and per-layer median radius, measured once.
 
-    The stub z resolution is the spread of (stub z) - (z0 + r*sinh(eta)) taken
-    from the TP the stub belongs to, so it is the real pointing resolution the
-    projection has to open its window to, not a nominal strip pitch.
+    The stub z resolution is the spread of (stub z) - (z0 + r*tanL) with the
+    L1TTP helix of the TP the stub belongs to, so it is the real pointing
+    resolution the projection has to open its window to, not a nominal strip
+    pitch.
     """
-    I, nI, _ = M.load_flat(spec, M.IT_TABLE, list(M.IT_COLS), nev)
-    O, _, _ = M.load_ot(spec, nev)
+    I, nI, _ = M.load_flat(spec, M.IT_TABLE, ["layer", "globalR"], nev)
+    O, _, _ = M.load_ot(spec, nev, tp=("tp_z0", "tp_tanL"))
     bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
-    mi = I["tpIdx"] >= 0
-    k = M.tp_key(I["event"][mi], I["tpIdx"][mi])
-    o = np.argsort(k, kind="stable")
-    KV, VZ, ET = k[o], I["tpVz"][mi][o], I["tpEta"][mi][o]
-    f = np.r_[True, KV[1:] != KV[:-1]] if len(KV) else np.zeros(0, bool)
-    KV, VZ, ET = KV[f], VZ[f], ET[f]
 
     def rs(x):
         q = np.percentile(x, [15.865, 84.135])
@@ -123,15 +184,9 @@ def calibrate(spec, nev, ptmin):
 
     sigz = {}
     for L in range(1, 7):
-        m = bar & (O["layer"] == L)
-        mt = m & (O["tpIdx"] >= 0) & (O["tpPt"] >= ptmin)
-        if mt.sum() < 200 or not len(KV):
-            sigz[L] = 0.2
-            continue
-        kk = M.tp_key(O["event"][mt], O["tpIdx"][mt])
-        p = np.clip(np.searchsorted(KV, kk), 0, len(KV) - 1)
-        g = KV[p] == kk
-        sigz[L] = rs(O["z"][mt][g] - (VZ[p[g]] + O["r"][mt][g] * np.sinh(ET[p[g]]))) \
+        g = (bar & (O["layer"] == L) & (O["tpIdx"] >= 0) & (O["tpPt"] >= ptmin)
+             & np.isfinite(O["tp_z0"]))
+        sigz[L] = rs(O["z"][g] - (O["tp_z0"][g] + O["r"][g] * O["tp_tanL"][g])) \
             if g.sum() >= 200 else 0.2
     rmed = {}
     for L in ALL_LAYERS:
@@ -166,9 +221,18 @@ def seed_universe_over_builds(rmed, masks, seed_classes=None):
     for mask in masks:
         il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
         for sd in SA.enumerate_seeds(il):
-            if sd.layers not in seen:
-                seen[sd.layers] = sd
-                out.append(sd)
+            if sd.layers in seen:
+                continue
+            # THE FILTER WAS ACCEPTED AND IGNORED. seed_classes arrived as a
+            # parameter and was never read, so --seed-classes has been a silent
+            # no-op: every run got all 30 seeds while claiming otherwise, and
+            # the only visible difference was the cache key. Any conclusion
+            # drawn from it describes the full menu, not the requested classes.
+            if seed_classes is not None \
+                    and KF.sysclass_of(sd.layers) not in seed_classes:
+                continue
+            seen[sd.layers] = sd
+            out.append(sd)
     return sorted(out, key=lambda sd: (sd.arity,) + tuple(rmed.get(L, 0.0)
                                                           for L in sd.layers))
 
@@ -180,17 +244,25 @@ def seed_tag(s):
 # ==========================================================================
 # chunked unified IT+OT table
 # ==========================================================================
-def unified_chunks(spec, nev, step, sigz_ot):
+def unified_chunks(spec, nev, step, sigz_ot, bench=None):
     """Yield one unified IT+OT hit table per chunk of `step` events.
+
+    `bench` is (alpha_bits, beta_bits) for M.it_prepare, or None for full float.
+    It is applied HERE rather than at fit time because the quantised angle feeds
+    the seeding and projection windows through kap_a/s_kap as well as the KF
+    update, so a bit width changes which candidates exist, not merely how well
+    they are fitted.
 
     Event numbering carries a running offset across chunks AND across files, so
     (event, tpIdx) stays globally unique and chunk censuses concatenate.
     """
-    srcs = [f"{p}:Events" for p in M.expand_inputs(spec)]
+    paths = M.expand_inputs(spec)
+    M.require_tp_table(paths)
+    srcs = [f"{p}:Events" for p in paths]
     itk = [f"{M.IT_TABLE}_{c}" for c in M.IT_COLS]
     otk = [f"{M.OT_TABLE}_{c}" for c in OT_COLS]
     seen = 0
-    for A in uproot.iterate(srcs, itk + otk, step_size=step):
+    for A in uproot.iterate(srcs, itk + otk + M.tp_branches(), step_size=step):
         # uproot.iterate IGNORES entry_stop when handed a list of files, so the
         # event limit has to be enforced here or -n 8 reads all 1000.
         if nev is not None:
@@ -206,11 +278,13 @@ def unified_chunks(spec, nev, step, sigz_ot):
         O = {c: ak.to_numpy(ak.flatten(A[f"{M.OT_TABLE}_{c}"])) for c in OT_COLS}
         O["event"] = np.repeat(ev, nO)
         seen += len(nI)
-        yield _unify(I, O, sigz_ot), ev
-        del A, I, O
+        U, Q = _unify(I, O, sigz_ot, bench)
+        M.attach_tp_truth(U, M.tp_table(A, ev))
+        yield (U, Q), ev
+        del A, I, O, U, Q
 
 
-def _unify(I, O, sigz_ot):
+def _unify(I, O, sigz_ot, bench=None):
     eta = np.abs(np.arcsinh(O["z"] / np.maximum(O["r"], 1e-6)))
     bar = (O["isBarrel"] > 0) & (eta <= M.ETA_MATCHED)
     n = int(bar.sum())
@@ -218,6 +292,24 @@ def _unify(I, O, sigz_ot):
     ol = O["layer"][bar]
     for L in range(1, 7):
         sig[ol == L] = sigz_ot.get(L, sigz_ot.get(str(L), 0.2))
+    # PER-STUB TRUTH IS THREE-VALUED AND tpIdx ALONE CANNOT EXPRESS IT.
+    # An OT stub carries tpIdx >= 0 only when the producer called it GENUINE.
+    # A COMBINATORIC stub is a real merge of this particle's cluster with
+    # another particle's, and an UNKNOWN stub is not linked to any particle;
+    # both carry tpIdx = -1 and so were indistinguishable, which made every
+    # "wrong OT hit" look like noise when a quarter of them still carry this
+    # track's position. Required, not inferred: guessing the split from the
+    # sign of tpIdx would reproduce exactly the miscount being removed.
+    need = ("tpGenuine", "tpCombinatoric", "tpUnknown")
+    miss = [c for c in need if c not in O]
+    if miss:
+        raise SystemExit(
+            f"L1TOTStub is missing {miss}: the OT truth counters need the "
+            f"per-stub CMS flags, and inferring them from tpIdx would silently "
+            f"merge combinatoric stubs into noise. Re-make the ntuple with "
+            f"these branches.")
+    ot_flag = np.where(O["tpGenuine"][bar] > 0, 1,
+                       np.where(O["tpCombinatoric"][bar] > 0, 2, 3)).astype(np.int8)
     U = {"layer": np.r_[I["layer"], ol + 10],
          "globalR": np.r_[I["globalR"], O["r"][bar]],
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
@@ -231,10 +323,14 @@ def _unify(I, O, sigz_ot):
                                            np.full(n, 1e9)],
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
+         # 0 on every IT cluster: the code is only defined for an OT stub, and
+         # track_rows gates on is_ot before reading it
+         "ot_flag": np.r_[np.zeros(len(I["layer"]), np.int8), ot_flag],
+         # likewise bend: a pixel cluster has none, and the bend gate runs only
+         # for OT doublet seeds, so the IT zeros are never compared
+         "bend": np.r_[np.zeros(len(I["layer"])), O["bend"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
-    for c in ("tpVx", "tpVy", "tpPhi", "tpEta", "tpVz"):
-        U[c] = np.r_[I[c], np.full(n, np.nan)]
-    QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, None)
+    QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, bench)
     # An OT stub carries no alpha/beta. Huge sigmas make every angle gate pass,
     # and the joint (z0,phi) pairing then treats the stub as a phi-only wildcard.
     Q = {"kap_a": np.r_[QI["kap_a"], np.zeros(n)],
@@ -252,8 +348,8 @@ def _unify(I, O, sigz_ot):
 def chunk_census(U):
     """One entry per TP with >= 1 hit in this chunk, plus its hit pattern.
 
-    The IT row wins when a TP has both, because tpEta/tpPhi/tpV* live only on the
-    cluster table and an OT stub row carries NaN for all of them.
+    Kinematics are the L1TTP truth every hit of the TP carries identically
+    (M.attach_tp_truth); NaN for TPs not in L1TTP (neutral or below 1 GeV).
     """
     m = U["tpIdx"] >= 0
     if not m.any():
@@ -266,8 +362,7 @@ def chunk_census(U):
     gi = np.flatnonzero(m)
     key = M.tp_key(U["event"][gi], U["tpIdx"][gi])
     lay = U["layer"][gi]
-    is_ot = (lay > 4).astype(np.int8)
-    order = np.lexsort((is_ot, key))          # IT rows first within a key
+    order = np.argsort(key, kind="stable")
     key_s, gi_s = key[order], gi[order]
     first = np.r_[True, key_s[1:] != key_s[:-1]]
     uk = key_s[first]
@@ -279,21 +374,21 @@ def chunk_census(U):
     it = ls <= 4
     np.bitwise_or.at(hit_it, pos[it], (1 << (ls[it] - 1)).astype(np.uint8))
     np.bitwise_or.at(hit_ot, pos[~it], (1 << (ls[~it] - 11)).astype(np.uint8))
-    vx, vy, ph = U["tpVx"][rep], U["tpVy"][rep], U["tpPhi"][rep]
     return {"key": uk.astype(np.int64),
             "event": (uk >> M.TP_KEY_SHIFT).astype(np.int32),
             "pt": U["tpPt"][rep].astype(np.float32),
-            "eta": U["tpEta"][rep].astype(np.float32),
-            "phi": ph.astype(np.float32),
-            "d0": (-vx * np.sin(ph) + vy * np.cos(ph)).astype(np.float32),
-            "z0": U["tpVz"][rep].astype(np.float32),
-            "vr": np.hypot(vx, vy).astype(np.float32),
+            "eta": U["tp_eta"][rep].astype(np.float32),
+            "phi": U["tp_phi_prod"][rep].astype(np.float32),
+            "d0": U["tp_d0"][rep].astype(np.float32),
+            "z0": U["tp_z0"][rep].astype(np.float32),
+            "vr": np.hypot(U["tp_vx"][rep], U["tp_vy"][rep]).astype(np.float32),
             "hit_it": hit_it, "hit_ot": hit_ot}
 
 
 def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
                   export_tracks=0, do_dr=True, targets=None,
-                  min_layers=SA.MIN_LAYERS):
+                  min_layers=SA.MIN_LAYERS, d0_window_cm=0.0, it_ptmin=None,
+                  min_it_layers=None, min_ot_conf=0):
     """Run every seed over one chunk and reduce to census + bitmap + counters.
 
     TWO PASSES, because duplicate removal is inherently cross-seed. The first
@@ -306,6 +401,41 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     training sample describe the tracks a real system would actually emit.
     """
     kf_opts = kf_opts or {}
+    # THE pT FLOOR IS PER SEED, not global. The OT stub algorithm's own bend
+    # windows are built for pT >~ 2, so below that a particle usually makes no
+    # stub at all (0.87 OT layers below 2 GeV against 2.46 above) and an OT or
+    # mixed seed cannot exist. An IT-only seed has no such limit, so it can run
+    # at a lower floor and cover 1-2 GeV INCLUSIVELY, keeping the >= 2 GeV
+    # tracks it already found. A lower floor widens that seed's windows
+    # (kmax = 1/ptmin), which is why it must not be applied to seeds that
+    # cannot benefit.
+    def _ptmin_for(sd):
+        # Only a dedicated recovery seed runs low. The standard entries keep
+        # their floor, so nothing they used to find can be lost to the soft
+        # configuration.
+        return it_ptmin if (sd.soft and it_ptmin is not None) else ptmin
+
+    def _rule_for(sd):
+        """The layer rule for one seed: per system only where the floor moved.
+
+        THE RULE HAS TO BE SCOPED THE WAY THE pT FLOOR IS. min_it_layers says
+        "the IT must supply this many layers by itself", which is the right
+        requirement for a soft IT seed and nonsense for an OT one: an OT seed
+        has no IT layers, so min_it_layers = 3 demands it find THREE IT
+        clusters. Measured on an 8-event probe with the rule applied globally,
+        OL2+OL3 fell to 22 found and 3.1 fits per event -- the OT menu gutted by
+        a rule written for the IT.
+
+        So when --it-ptmin moves only the IT-only seeds, the rule follows only
+        those seeds, and everything else keeps the standard layer count. When
+        there is no --it-ptmin every seed is at one floor and the rule applies
+        globally, which is what the IT-only soft arms use.
+        """
+        if min_it_layers is None:
+            return None, 0
+        if it_ptmin is None:
+            return min_it_layers, min_ot_conf   # one floor: rule applies to all
+        return (min_it_layers, min_ot_conf) if sd.soft else (None, 0)
     d0_opt = {k: v for k, v in kf_opts.items() if k == "d0_prior_cm"}
     cen = chunk_census(U)
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
@@ -321,14 +451,18 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
     targets = list(targets) if targets else list(SA.IL) + list(SA.OT_BARREL)
-    counters, qual, trk, hits = {}, {}, {}, {}
+    counters, qual, trk, hits, ang = {}, {}, {}, {}, {}
 
     # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
     TP = KF.tp_truth_table(U)
     held = {}
     for s_i, sd in enumerate(seeds):
         try:
-            o = SA.run_seed(U, Q, sd, ptmin, targets, min_layers=min_layers)
+            pt_s = _ptmin_for(sd)
+            mil, moc = _rule_for(sd)
+            o = SA.run_seed(U, Q, sd, pt_s, targets, min_layers=min_layers,
+                            d0_cm=d0_window_cm, min_it_layers=mil,
+                            min_ot_conf=moc)
         except M.TooWide as e:
             counters[s_i] = {"infeasible": 1.0, "n": float(e.n)}
             continue
@@ -341,7 +475,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         trip0 = (o["_gA"], o["_gB"], gc0 if gc0 is not None else o["_gB"])
         fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, use_angles=False,
                              **d0_opt)
-        keep, chi2s = KF.good_state(fit0, ptmin)
+        keep, chi2s = KF.good_state(fit0, pt_s)
         base = {"arity": float(sd.arity), "before_chi2": float(n_pre),
                 "seed_objects": float(o.get("seed_objects", 0)),
                 "pairs": float(o.get("tracklets", 0)),
@@ -393,6 +527,11 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
             fq = KF.fit_tracks(U, Q, tq, gidx=gk[idx], use_angles=False,
                                **d0_opt)
             dk, dd, dc, dz, rm = KF.truth_residuals(U, tq, fq, TP)
+            # dd is a TTTrack-convention d0 residual. Shards written before
+            # 2026-09-23 hold it with the OPPOSITE sign (the KF then computed in
+            # dxy); every consumer uses only its width (robust_sigma), which a
+            # global sign flip leaves unchanged -- verified: a rebuilt shard
+            # matches the old one bit for bit except this column's sign.
             qual[s_i] = (np.stack([dk, dd, dc, dz,
                                    fq["nhit"][rm].astype(np.float64)],
                                   axis=1).astype(np.float32)
@@ -417,11 +556,47 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
             # affordable, and it keeps min_shared (and the criterion itself)
             # changeable without re-running the seeding.
             hits[s_i] = gk[ks].astype(np.int32)
+            # PER-CLUSTER ANGLE RESIDUALS, on a sample. Four IT hits per track
+            # over 12.5M tracks would be a 50M-row table; one track in
+            # ANGLE_SAMPLE keeps it to ~100 MB, which is ample for a residual
+            # distribution and is stated on the page.
+            asel = np.arange(0, len(ks), ANGLE_SAMPLE)
+            if len(asel):
+                ta = tuple(x[ks][asel] for x in tripk)
+                Ta = KF.gather_hits(U, Q, gk[ks][asel], KF.LAYER_ORDER)
+                fa = KF.fit_tracks(U, Q, ta, gidx=gk[ks][asel],
+                                   use_angles=False, **d0_opt)
+                ang[s_i] = KF.angle_rows(U, Ta, fa, ta, asel.astype(np.int64))
         held[s_i] = {"o": o_keep, "sd": sd, "score": h_score}
         del o, fit0
 
-    # ---- duplicate removal, once, across every seed ---------------------
+    # ---- phi-nonant occupancy, on the collection that ENTERS DR ---------
+    # Binned on the INNER SEED CLUSTER's azimuth, because a tracklet is
+    # processed in the sector its seeding stub falls in -- not on the fitted
+    # phi0, which is a property of the track rather than of where the hardware
+    # handled it. Stored as counts per (event, nonant) rather than as a
+    # pass/fail at 108, so the cap can be varied afterwards without re-running.
     keys = sorted(held)
+    ev0 = int(U["event"].min()) if len(U["event"]) else 0
+    nev_c = int(U["event"].max()) - ev0 + 1 if len(U["event"]) else 0
+    nonant = np.zeros(max(nev_c, 0) * N_REGION, np.int32)
+    if keys and nev_c > 0:
+        gA = [held[i]["o"]["_gA"] for i in keys]
+        ev_all = np.concatenate([U["event"][g] for g in gA])
+        ph_all = np.concatenate([U["globalPhi"][g] for g in gA])
+        # eta of the seed's inner cluster, the same object the phi bin uses
+        et_all = np.concatenate([np.arcsinh(U["globalZ"][g]
+                                            / np.maximum(U["globalR"][g], 1e-6))
+                                 for g in gA])
+        nz = np.clip(((ph_all + np.pi) % (2 * np.pi))
+                     / (2 * np.pi / N_NONANT), 0, N_NONANT - 1e-9).astype(np.int64)
+        es = np.searchsorted(np.asarray(ETA_SECTOR_EDGES), et_all)
+        es = np.clip(es, 0, N_ETA_SECTOR - 1).astype(np.int64)
+        loc = ev_all - ev0                   # chunk-local event index
+        ok_ = (loc >= 0) & (loc < nev_c)
+        nonant = np.bincount(((loc[ok_] * N_NONANT + nz[ok_]) * N_ETA_SECTOR
+                              + es[ok_]),
+                             minlength=nev_c * N_REGION).astype(np.int32)
     if keys and do_dr:
         G = np.concatenate([KF.hits_from_seed(U, held[i]["o"]) for i in keys])
         SC = np.concatenate([held[i]["score"] for i in keys])
@@ -448,7 +623,37 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         if len(rkeys):
             p = np.searchsorted(cen["key"], rkeys)
             found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-    return cen, found, found_dr, counters, qual, trk, hits
+    return cen, found, found_dr, counters, qual, trk, hits, ang, nonant
+
+
+def truncation_table(C, cap=TRACKS_PER_REGION):
+    """What the per-region output ceiling would cost this menu.
+
+    Returns None when the census predates the occupancy record rather than
+    reporting zeros, which would read as "no truncation" instead of "not
+    measured".
+    """
+    occ = C.get("nonant")
+    if occ is None or not len(occ):
+        return None
+    occ = np.asarray(occ, np.int64)
+    over = np.maximum(occ - cap, 0)
+    n_tracks = int(occ.sum())
+    nev = max(len(occ) // N_REGION, 1)
+    return {"cap": int(cap), "n_bins": int(len(occ)),
+            "n_tracks": n_tracks,
+            "per_event": n_tracks / nev,
+            "per_region": n_tracks / max(len(occ), 1),
+            "budget_per_event": N_REGION * cap,
+            "frac_of_budget": n_tracks / nev / (N_REGION * cap),
+            "max_occ": int(occ.max()),
+            "n_over_bins": int((occ > cap).sum()),
+            "frac_bins_over": float((occ > cap).mean()),
+            "n_dropped": int(over.sum()),
+            "frac_dropped": float(over.sum() / max(n_tracks, 1)),
+            "pct": {p: float(np.percentile(occ, p)) for p in (50, 90, 99, 100)},
+            "scan": {c: float(np.maximum(occ - c, 0).sum() / max(n_tracks, 1))
+                     for c in (52, 104, 208, 416)}}
 
 
 def _shard_path(d, i):
@@ -459,7 +664,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           hash_content=False, calib_events=100, verbose=True,
           budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None,
           export_tracks=0, seed_classes=None, targets=None,
-          min_layers=SA.MIN_LAYERS):
+          min_layers=SA.MIN_LAYERS, bench=None, d0_window_cm=0.0,
+          it_ptmin=None, min_it_layers=None, min_ot_conf=0):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
     The cache is a DIRECTORY OF PER-CHUNK SHARDS, not one file, so a run that
@@ -483,7 +689,20 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
            "export_tracks": export_tracks,
            "seed_classes": sorted(seed_classes) if seed_classes else None,
            "targets": sorted(targets) if targets else None,
-           "min_layers": min_layers}
+           "min_layers": min_layers,
+           # PART OF THE IDENTITY. The per-system rule changes which tracks
+           # exist, so a cache built with one must never be extended by a run
+           # using another.
+           "min_it_layers": min_it_layers,
+           "min_ot_conf": int(min_ot_conf),
+           # part of the identity: a bit width changes the candidates themselves
+           "bench": list(bench) if bench else None,
+           # the impact-parameter allowance the projection windows carry. A
+           # doublet assumes d0 = 0, so at r = 3 cm a real 1 mm displacement
+           # throws the azimuth by 33 mrad and falls outside the window: this is
+           # the knob that tests whether that is where displaced tracks are lost
+           "d0_window_cm": float(d0_window_cm),
+           "it_ptmin": None if it_ptmin is None else float(it_ptmin)}
     kh = cache_key(man, cfg)
     d = os.path.join(cache_dir, f"tpcensus_{kh}")
     mpath = os.path.join(d, "manifest.json")
@@ -502,17 +721,37 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
         cal = calibrate(spec, calib_events, ptmin)
         seeds = (seed_universe_over_builds(cal["r_median"], masks, seed_classes)
                  if masks else SA.enumerate_seeds(list(SA.IL)))
+        # DEDICATED ENTRIES, APPENDED. The standard seeds above are left exactly
+        # as they are; --it-ptmin adds a parallel set that runs at the lower
+        # floor under the per-system rule. Switching the extension on and off is
+        # then a seed selection, and the 2 GeV numbers cannot move.
+        if it_ptmin is not None:
+            seeds = list(seeds) + SA.soft_seeds(seeds)
         if not seeds:
             raise SystemExit("no seeds after filtering; check --seed-classes")
+        # bend -> kappa per OT layer, measured from real on-track stubs. Stored
+        # in meta so a resumed run gates pairs with the SAME slopes the earlier
+        # chunks used; recomputing it per resume would make shards inconsistent.
         meta = {"cache_key": kh, "format": FORMAT_VERSION, "inputs": man,
                 "config": cfg, "calibration": cal,
+                "ot_bend_cal": {str(k): list(v) for k, v in
+                                M.calibrate_ot_bend(spec, calib_events).items()},
                 "seeds": [list(sd.layers) for sd in seeds],
+                "seed_soft": [bool(sd.soft) for sd in seeds],
                 "seed_notes": [sd.note for sd in seeds],
                 "seed_tags": [sd.tag for sd in seeds],
                 "chunks_done": 0, "n_events": 0}
         json.dump(meta, open(mpath, "w"), indent=1, default=float)
-    seeds = [SA.Seed(tuple(x)) for x in meta["seeds"]]
+    _soft = meta.get("seed_soft") or [False] * len(meta["seeds"])
+    seeds = [SA.Seed(tuple(x), soft=bool(s))
+             for x, s in zip(meta["seeds"], _soft)]
     sigz = {int(k): float(v) for k, v in meta["calibration"]["sigz_ot"].items()}
+    # Set on BOTH paths -- fresh build and cache resume -- because the OT bend
+    # gate raises rather than silently falling back to the nominal slope, and a
+    # resume that skipped this would fail at the first OT doublet.
+    obc = meta.get("ot_bend_cal")
+    if obc:
+        M.set_ot_bend_cal({int(k): tuple(v) for k, v in obc.items()})
     if verbose:
         print(f"cache {d}\n  {len(seeds)} seeds, chunk = {chunk} events, "
               f"{meta['chunks_done']} chunk(s) already done", flush=True)
@@ -526,13 +765,16 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
         M.set_limits(M.triplets_for_budget(budget_gb),
                      min(rss_gb, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
         want = None if nev is None else nev
-        for ci, ((U, Q), ev) in enumerate(unified_chunks(spec, want, chunk, sigz)):
+        for ci, ((U, Q), ev) in enumerate(
+                unified_chunks(spec, want, chunk, sigz, bench)):
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, found_dr, counters, qual, trk, hits = process_chunk(
+            cen, found, found_dr, counters, qual, trk, hits, ang, nonant = process_chunk(
                 U, Q, seeds, ptmin, rng, QUAL_PER_CHUNK, kf_opts,
-                export_tracks, targets=targets, min_layers=min_layers)
+                export_tracks, targets=targets, min_layers=min_layers,
+                d0_window_cm=d0_window_cm, it_ptmin=it_ptmin,
+                min_it_layers=min_it_layers, min_ot_conf=min_ot_conf)
             np.savez_compressed(
                 _shard_path(d, ci), found=found, found_dr=found_dr,
                 n_events=len(ev),
@@ -542,9 +784,10 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 # n_clusters lets load() offset the chunk-local cluster indices
                 # into a global space; chunks are written independently and
                 # resumably, so the offset cannot be baked in at write time
-                n_clusters=len(U["layer"]),
+                n_clusters=len(U["layer"]), nonant=nonant,
                 **{f"trk_{k}": v for k, v in trk.items()},
-                **{f"hit_{k}": v for k, v in hits.items()})
+                **{f"hit_{k}": v for k, v in hits.items()},
+                **{f"ang_{k}": v for k, v in ang.items()})
             done, nev_seen = ci + 1, nev_seen + len(ev)
             meta["chunks_done"], meta["n_events"] = done, nev_seen
             json.dump(meta, open(mpath, "w"), indent=1, default=float)
@@ -563,7 +806,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
         raise SystemExit(f"{d} has no shards")
     cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "hit_it", "hit_ot"]
     parts = {c: [] for c in cols}
-    fnd, fdr, cnt, qs, fts, hts, nread = [], [], {}, {}, {}, {}, 0
+    fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
+    non = []
     cl_tot = cl_off = 0
     for sh in shards:
         if nev is not None and nread >= nev:
@@ -576,6 +820,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
         cl_off = cl_tot
         cl_tot += int(z["n_clusters"]) if "n_clusters" in z.files else 0
         nread += int(z["n_events"])
+        if "nonant" in z.files:
+            non.append(z["nonant"])
         for k, v in json.loads(str(z["counters"])).items():
             a = cnt.setdefault(int(k), {})
             for kk, vv in v.items():
@@ -585,6 +831,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
                 qs.setdefault(int(f[5:]), []).append(z[f])
             elif with_tracks and f.startswith("trk_"):
                 fts.setdefault(int(f[4:]), []).append(z[f])
+            elif with_tracks and f.startswith("ang_"):
+                ags.setdefault(int(f[4:]), []).append(z[f])
             elif with_tracks and f.startswith("hit_"):
                 h = z[f]
                 hts.setdefault(int(f[4:]), []).append(
@@ -593,19 +841,43 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["found"] = np.concatenate(fnd, axis=0)
     C["found_dr"] = np.concatenate(fdr, axis=0)
     C["n_events"] = nread
-    C["seeds"] = [SA.Seed(tuple(x)) for x in meta["seeds"]]
+    C["nonant"] = np.concatenate(non) if non else np.zeros(0, np.int32)
+    # the soft flag has to survive the reload too, or the report describes the
+    # recovery entries under the standard floor and the standard rule
+    _sf = meta.get("seed_soft") or [False] * len(meta["seeds"])
+    C["seeds"] = [SA.Seed(tuple(x), soft=bool(f))
+                  for x, f in zip(meta["seeds"], _sf)]
     C["seed_tags"] = meta["seed_tags"]
     C["seed_notes"] = meta.get("seed_notes", [""] * len(meta["seeds"]))
     C["calibration"] = meta["calibration"]
     C["ptmin"] = float(meta["config"].get("ptmin", 2.0))
     C["min_layers"] = int(meta["config"].get("min_layers", SA.MIN_LAYERS))
+    mil = meta["config"].get("min_it_layers")
+    C["min_it_layers"] = None if mil is None else int(mil)
+    C["min_ot_conf"] = int(meta["config"].get("min_ot_conf", 0) or 0)
+    ipm = meta["config"].get("it_ptmin")
+    C["it_ptmin"] = None if ipm is None else float(ipm)
     C["counters"] = {i: cnt.get(i, {}) for i in range(len(C["seeds"]))}
     C["qual"] = {i: (np.concatenate(v) if v else np.zeros((0, 5), np.float32))
                  for i, v in qs.items()}
     # tracks are NOT concatenated unless asked: the full table is ~6M rows and
     # the menu study has no use for it
     C["tracks"] = {i: np.concatenate(v) for i, v in fts.items()}
+    # A CACHE BUILT UNDER A DIFFERENT COLUMN LIST MUST NOT BE READ. The shards
+    # store bare arrays and the names come from KF.TRACK_COLS at load time, so a
+    # width mismatch would map every name onto the wrong column -- plausible
+    # numbers, silently wrong plots. FORMAT_VERSION is in the cache key to stop
+    # this, and this check catches a cache reached by any other route.
+    for i, v in C["tracks"].items():
+        if v.shape[1] != len(KF.TRACK_COLS):
+            raise SystemExit(
+                f"{d}: seed {i} track rows are {v.shape[1]} columns but "
+                f"KF.TRACK_COLS has {len(KF.TRACK_COLS)}. This cache was built "
+                f"by a different version; rebuild it or check out the matching "
+                f"code.")
     C["hits"] = {i: np.concatenate(v) for i, v in hts.items()}
+    C["angles"] = {i: np.concatenate(v) for i, v in ags.items()}
+    C["angle_cols"] = list(KF.ANGLE_COLS)
     C["track_cols"] = list(KF.TRACK_COLS)
     C["cache_dir"] = d
     if verbose:
@@ -645,6 +917,17 @@ def robust_sigma(x):
 
 def seed_table(C):
     """Per seed: TPs found, cost per event, fake fraction, seed-level resolutions."""
+    def _need_for(C, sd):
+        """Confirmations this seed had to find, under whichever rule was set."""
+        mil = C.get("min_it_layers")
+        if mil is not None and C.get("it_ptmin") is not None and not sd.soft:
+            mil = None          # the per-system rule applies to recovery seeds
+        if mil is not None:
+            return float(max(int(mil) - sum(1 for L in sd.layers if L <= 4), 0))
+        ml = C.get("min_layers")
+        return float(max(int(ml) - sd.arity, 0)) if ml is not None \
+            else float(sd.min_proj())
+
     nev = max(C["n_events"], 1)
     rows = []
     for i, tag in enumerate(C["seed_tags"]):
@@ -658,7 +941,20 @@ def seed_table(C):
             "seed": tag, "arity": sd.arity, "note": C["seed_notes"][i],
             "n_found": int(seed_mask(C, i).sum()),
             "n_found_dr": int(seed_mask(C, i, after_dr=True).sum()),
-            "min_proj": sd.min_proj(),
+            # THE RULE THE SEED ACTUALLY RAN UNDER, derived from the stored
+            # config. This called sd.min_proj(), which recomputes the hardcoded
+            # 4-layer rule and ignores --min-layers / --min-it-layers entirely,
+            # so every arm of a layer-rule scan reported an identical number
+            # and the scan looked like it had never been applied. It had been;
+            # only the label was wrong, which is worse than either, because it
+            # sent me looking for a bug in the physics.
+            "soft": bool(sd.soft),
+            "ptmin": (C.get("it_ptmin") if sd.soft and C.get("it_ptmin")
+                      else C.get("ptmin")),
+            "min_proj": _need_for(C, sd),
+            "min_ot_conf": float(C.get("min_ot_conf") or 0),
+            "conf_it": c.get("conf_it_sum", 0.0) / max(c.get("n_pairs_rule", 1.0), 1.0),
+            "conf_ot": c.get("conf_ot_sum", 0.0) / max(c.get("n_pairs_rule", 1.0), 1.0),
             "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
             "pass_frac": c.get("fit", 0.0) / max(c.get("before_minlayers", 1.0), 1.0),
             "chi2_pass": c.get("fit", 0.0) / max(c.get("before_chi2", 1.0), 1.0),
@@ -694,6 +990,15 @@ def main():
                          "(measured 14.5/25.3/13.4%% at 1.0-1.5 GeV, then ~2%% "
                          "on OL4-OL6), so following the outer three buys "
                          "combinatorics and no acceptance.")
+    ap.add_argument("--min-it-layers", type=int, default=None,
+                    help="layers the IT must supply BY ITSELF. Overrides "
+                         "--min-layers. Use with --min-ot-conf to say whether "
+                         "an OT confirmation is optional (0) or required (1); "
+                         "a flat --min-layers lets an IT doublet complete on a "
+                         "single OT stub, which is not a track worth having.")
+    ap.add_argument("--min-ot-conf", type=int, default=0,
+                    help="OT confirmations required, counted separately from "
+                         "the IT. Only meaningful with --min-it-layers.")
     ap.add_argument("--min-layers", type=int, default=SA.MIN_LAYERS,
                     help="layers required on a track. The OT's 4 is defined "
                          "against six barrel layers; a 3-layer IT-only build "
@@ -718,6 +1023,26 @@ def main():
                     help="write per-track rows for the interactive page and the "
                          "quality MVA; bare flag exports EVERY track, a number "
                          "caps per seed per chunk, 0 disables")
+    ap.add_argument("--it-ptmin", type=float, default=None,
+                    help="add DEDICATED sub-2-GeV recovery seeds at this floor. "
+                         "They duplicate the IT-only seeds as separate menu "
+                         "entries running at the lower floor under "
+                         "--min-it-layers; every existing seed keeps its own "
+                         "floor and rule, so the higher-pT result is unchanged "
+                         "and the extension can be switched on and off by "
+                         "selecting seeds. Only IT seeds are duplicated: the OT "
+                         "cannot seed below its stub threshold.")
+    ap.add_argument("--d0-window-cm", type=float, default=0.0,
+                    help="impact-parameter allowance in the projection windows "
+                         "(cm). Widens the phi road by d0/r, which is what a "
+                         "doublet seed cannot otherwise afford.")
+    ap.add_argument("--alpha-bits", type=int, default=None,
+                    help="quantise cot(alpha) to this many bits over "
+                         "ALPHA_RANGE before seeding, projection and fitting; "
+                         "omit for full float")
+    ap.add_argument("--beta-bits", type=int, default=None,
+                    help="same for the beta-derived per-cluster z0 over "
+                         "Z0_RANGE. Both must be given together.")
     ap.add_argument("--d0-prior-cm", type=float, default=KF.D0_PRIOR_CM)
     ap.add_argument("--kf-angles", default="on", choices=["on", "off"],
                     help="use the SmartPixels alpha/beta in the KF updates")
@@ -728,6 +1053,9 @@ def main():
                     help="digest file contents instead of trusting size+mtime")
     ap.add_argument("-o", "--out", default=None, help="write the seed table as JSON")
     a = ap.parse_args()
+    if (a.alpha_bits is None) != (a.beta_bits is None):
+        raise SystemExit("--alpha-bits and --beta-bits must be given together: "
+                         "the quantiser takes both or neither")
     layers = [CODE[x.strip()] for x in a.layers.split(",") if x.strip()]
     masks = None if a.masks.strip().lower() == "none" else \
         [m.strip() for m in a.masks.split(",") if m.strip()]
@@ -742,12 +1070,16 @@ def main():
                        "alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
                        "d0_prior_cm": a.d0_prior_cm},
               export_tracks=a.export_tracks, seed_classes=scl, targets=tgt,
-              min_layers=a.min_layers)
+              min_layers=a.min_layers, min_it_layers=a.min_it_layers,
+              min_ot_conf=a.min_ot_conf,
+              bench=((a.alpha_bits, a.beta_bits)
+                     if a.alpha_bits and a.beta_bits else None),
+              d0_window_cm=a.d0_window_cm, it_ptmin=a.it_ptmin)
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "
-          f"({len(C['key']) / nev:,.0f}/event); {int((~kin).sum()):,} are OT-only "
-          f"and carry no truth kinematics")
+          f"({len(C['key']) / nev:,.0f}/event); {int((~kin).sum()):,} are not in "
+          f"L1TTP (neutral or pT < 1 GeV) and carry no truth kinematics")
     for c in (0.5, 1.0, 2.0, 5.0):
         m = C["pt"] >= c
         print(f"    pT >= {c:>3} GeV: {int(m.sum()):>9,}")
@@ -763,10 +1095,34 @@ def main():
               f"{r['chi2_angle_per_cl']:>8.1f}{r['nlayer']:>6.1f}"
               f"{r['fake']:>7.3f}{r['sig_kappa']:>9.4f}{1e4 * r['sig_d0_cm']:>9.0f}"
               f"{r['sig_cot']:>9.4f}{1e4 * r['sig_z0_cm']:>9.0f}")
+    trunc = truncation_table(C)
+    if trunc:
+        print(f"\n=== per-region load, against the tuned ceiling of "
+              f"{TRACKS_PER_REGION} tracks per region per event "
+              f"({N_NONANT} nonants x {N_ETA_SECTOR} eta sectors = "
+              f"{N_REGION * TRACKS_PER_REGION}/event) ===")
+        print(f"  fitted tracks           {trunc['n_tracks']:12,d}"
+              f"   ({trunc['per_event']:.0f}/event, {trunc['per_region']:.1f}/region)")
+        print(f"  fraction of the budget  {100 * trunc['frac_of_budget']:12.1f}%")
+        print(f"  busiest region seen     {trunc['max_occ']:12,d}")
+        print(f"  region-events over cap  {trunc['n_over_bins']:12,d}"
+              f"   of {trunc['n_bins']:,} ({100 * trunc['frac_bins_over']:.2f}%)")
+        print(f"  TRACKS DROPPED          {trunc['n_dropped']:12,d}"
+              f"   ({100 * trunc['frac_dropped']:.2f}% of all fitted tracks)")
+        print("  occupancy percentiles   "
+              + "  ".join(f"p{p}={v:.0f}" for p, v in trunc["pct"].items()))
+        print("  dropped at other caps:  "
+              + "  ".join(f"{c}:{100 * f:.2f}%" for c, f in trunc["scan"].items()))
+        print("  NOTE: the cut is arbitrary with respect to quality -- there is "
+              "no ranking where it is applied, so a good displaced track is as "
+              "likely to go as a fake. The eta-sector boundary is ASSUMED at "
+              "eta = 0 (L1TTrack_etaSector is unfilled in these ntuples); that "
+              "redistributes load between two bins but cannot change the total.")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "n_tp": int(len(C["key"])),
                    "pt_min": a.ptmin, "cache_dir": C["cache_dir"],
+                   "truncation": trunc,
                    "seeds": seed_table(C)}, open(a.out, "w"), indent=1)
         print(f"\nwrote {a.out}")
 

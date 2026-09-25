@@ -19,39 +19,61 @@
 # matters most in the 3-layer build that is likelier to be built.
 #
 # So: run A requires 3 layers and follows the IT only; run B requires 4 and may
-# take a confirmation from OL1-OL3. The difference is what the OT buys.
+# take a confirmation from OL1-OL3; run C allows the OT confirmation but still
+# only requires 3, which separates "the OT hit is available" from "the OT hit is
+# mandatory". The A/B difference is what the OT buys; the B/C difference is what
+# the four-layer rule costs in this regime.
+#
+# THE SEPTEMBER 16 RESULTS FROM THIS SCRIPT ARE NOT QUOTABLE. --seed-classes was
+# a silent no-op, so every arm ran the full menu including OT and mixed seeds --
+# visible in the old cache manifests, whose seed_tags list OL1+OL2, OL2+OL3 and
+# IL4+OL1 under seed_classes [0]. An "IT-only" arm that contained OT seeds
+# cannot answer whether the IT alone reaches soft tracks. Outputs are written
+# under *_v2 so the retracted files stay on disk rather than being overwritten
+# by numbers that look like a correction but share a filename.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
 PY=${PY:-.pixi/envs/default/bin/python}
 S=eval_refitq/combinatorics
 R=$S/results
 D=../cmssw/work/otstub_arm
-ALL="$D/itot_truth_100ev.root,$D/itot_ttbar_f*_100ev.root"
+ALL="$D/itot_tp_f*_100ev.root"
 NEV=${NEV:-200}
 MASKS=${MASKS:-AAAA,AAAI,AAIA,AIAA,IAAA}
 mkdir -p "$R"
 
-run () {                      # run <tag> <targets> <minlayers>
-  local tag=$1 tgt=$2 ml=$3
-  echo "[soft] === $tag  targets=$tgt  min_layers=$ml"
+run () {                      # run <tag> <targets> <min_it_layers> <min_ot_conf>
+  local tag=$1 tgt=$2 mil=$3 moc=$4
+  echo "[soft] === $tag  targets=$tgt  min_it_layers=$mil  min_ot_conf=$moc"
   local t0=$SECONDS
   $PY -u $S/tp_findability.py -i "$ALL" -n "$NEV" --chunk 4 --ptmin 1.0 \
-      --seed-classes it --targets "$tgt" --min-layers "$ml" \
+      --seed-classes it --targets "$tgt" \
+      --min-it-layers "$mil" --min-ot-conf "$moc" \
       --masks "$MASKS" --export-tracks \
-      --cache-dir "$S/cache_soft_$tag" -o "$R/soft_$tag.json" \
-      > "$R/soft_$tag.log" 2>&1 \
-    && echo "[soft]     ok in $((SECONDS-t0))s -> $R/soft_$tag.log" \
-    || { echo "[soft]     FAILED in $((SECONDS-t0))s"; tail -5 "$R/soft_$tag.log"; }
+      --cache-dir "$S/cache_soft3_$tag" -o "$R/soft_${tag}_v3.json" \
+      > "$R/soft_${tag}_v3.log" 2>&1 \
+    && echo "[soft]     ok in $((SECONDS-t0))s -> $R/soft_${tag}_v3.log" \
+    || { echo "[soft]     FAILED in $((SECONDS-t0))s"; tail -5 "$R/soft_${tag}_v3.log"; }
 }
 
-# A: IT only. In a 3-layer build a triplet consumes every layer, so there is no
-#    fourth hit available and min_layers must be 3 -- demanding 4 would reject
-#    every soft track by geometry rather than by quality.
-run itonly IL1,IL2,IL3,IL4 3
-# B: the same seeds, allowed one confirmation from the inner OT.
-run withot IL1,IL2,IL3,IL4,OL1,OL2,OL3 4
+# THE RULE IS PER SYSTEM: 3xIT, or 3xIT + 1xOT. Never 2xIT + 1xOT -- an IT
+# doublet completed by one distant OT stub cannot constrain d0 and is not a
+# candidate worth forming. The v2 arms used a flat --min-layers and therefore
+# allowed exactly that; their fake fractions rose with the IT lever arm
+# (IL3+IL4 0.034 -> 0.067, IL1+IL4 0.202 -> 0.557) while every arity-3 seed was
+# untouched (0.029 -> 0.029), which is the signature of the doublets being the
+# whole effect. v2 is superseded, not corrected in place.
+#
+# A: 3xIT, IT targets only.
+run itonly IL1,IL2,IL3,IL4 3 0
+# B: 3xIT + 1xOT, the OT confirmation REQUIRED.
+run withot IL1,IL2,IL3,IL4,OL1,OL2,OL3 3 1
+# C: 3xIT with the OT confirmation OPTIONAL -- "3xIT or 3xIT + 1xOT". By
+#    construction this accepts a superset of both A and B at the seeding stage,
+#    so any efficiency it LOSES is the fit or the chi2 gate, not the rule.
+run opportunistic IL1,IL2,IL3,IL4,OL1,OL2,OL3 3 0
 
 echo "[soft] done at $(date)"
-for t in itonly withot; do
-  printf "  %-10s %s\n" "$t" "$(grep -m1 'TPs with' "$R/soft_$t.log" 2>/dev/null | cut -c1-80)"
+for t in itonly withot opportunistic; do
+  printf "  %-14s %s\n" "$t" "$(grep -m1 'TPs with' "$R/soft_${t}_v3.log" 2>/dev/null | cut -c1-80)"
 done

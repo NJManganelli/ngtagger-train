@@ -34,8 +34,7 @@ import tracklet_topology_cost as M  # noqa: E402
 IT_TABLE = "L1TSmartPixelsCluster"
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
 TP_KEY_SHIFT = 20
-COLS = ["layer", "globalR", "globalZ", "globalPhi", "tpIdx", "tpPt",
-        "tpVx", "tpVy", "tpPhi"]
+COLS = ["layer", "globalR", "globalZ", "globalPhi", "tpIdx", "tpPt"]
 D0_EDGES_CM = [0.0, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 1e9]
 
 
@@ -51,8 +50,9 @@ def robust_sigma(x):
 
 
 def load(path, nev):
-    """One or many input files; see tracklet_topology_cost.expand_inputs."""
-    return M.load_flat(path, IT_TABLE, COLS, nev)[:2]
+    """One or many input files; see tracklet_topology_cost.expand_inputs.
+    tp_d0 is the TP's L1TTP d0 at the POCA [cm]."""
+    return M.load_flat(path, IT_TABLE, COLS, nev, tp=("tp_d0",))[:2]
 
 
 def first_cluster_per_tp(D, layer, sel):
@@ -106,7 +106,7 @@ def main():
     print(f"{len(D['layer'])/nev:.0f} clusters/event over {nev} events, "
           f"pT > {a.ptmin} GeV\n")
     sel = D["tpPt"] >= a.ptmin
-    d0_all = np.abs(-D["tpVx"] * np.sin(D["tpPhi"]) + D["tpVy"] * np.cos(D["tpPhi"]))
+    d0_all = np.abs(D["tp_d0"])
 
     for (la, lb, lc) in ((1, 2, 3), (2, 3, 4)):
         gA, gB, gC = correct_triples(D, la, lb, lc, sel)

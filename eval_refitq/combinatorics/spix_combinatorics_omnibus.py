@@ -301,6 +301,15 @@ def _discover(path):
     return hit, chosen, need_hit
 
 
+def _ttc():
+    """tracklet_topology_cost, loaded by path (the studies below do the same)."""
+    import importlib.util as _ilu
+    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tracklet_topology_cost.py")
+    _sp = _ilu.spec_from_file_location("_ttc", _p)
+    M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
+    return M
+
+
 def load(paths):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     hit, cfg, need_hit = _discover(files[0])
@@ -314,9 +323,6 @@ def load(paths):
                 # estimate of the track DIRECTION there (gClPhi/gClCotTheta), with
                 # rotated uncertainties. Study (7); absent in older files.
                 "globalR": "globalR", "globalZ": "globalZ", "globalPhi": "globalPhi",
-                # TP production vertex and azimuth: the ONLY way to get a
-                # per-TrackingParticle d0, which study (12) facets on.
-                "tpVx": "tpVx", "tpVy": "tpVy", "tpPhi": "tpPhi",
                 "globalClusterPhi": "gClPhi",
                 "globalClusterCotTheta": "gClCotTheta",
                 "sigGlobalClusterPhi": "gSigPhi",
@@ -366,6 +372,12 @@ def load(paths):
             K[optional[c]] = ak.to_numpy(ak.flatten(O[f"{CLUSTER_TABLE}_{c}"]))
     K["event"] = ev_c
     K["_evt_base"] = np.concatenate([[0], np.cumsum(ncl)])
+    # per-cluster TP truth at the POCA (tp_d0, tp_z0, ...) from the L1TTP table;
+    # study (12) facets on tp_d0 and skips without it
+    M = _ttc()
+    if all(b in avail for b in M.tp_branches()):
+        TPA = uproot.concatenate([f"{f}:Events" for f in files], filter_name=M.tp_branches())
+        M.attach_tp_truth(K, M.tp_table(TPA, np.arange(len(ncl))))
 
     print(f"files={len(files)} config={cfg} events={n_ev} "
           f"crossings={len(X['layer'])} clusters={len(K['layer'])}")
@@ -2364,14 +2376,10 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
     matrix despite different notions of findable (IT: a cluster on all three
     layers; OT: a stub on both seed layers and one projection layer).
     """
-    import importlib.util as _ilu
-    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                      "tracklet_topology_cost.py")
-    _sp = _ilu.spec_from_file_location("_ttc", _p)
-    M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
+    M = _ttc()
 
     need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
-            "gSigPhi", "gSigCotTheta", "sigY", "tpIdx", "tpPt", "tpVx", "tpVy", "tpPhi")
+            "gSigPhi", "gSigCotTheta", "sigY", "tpIdx", "tpPt", "tp_d0")
     if any(c not in K for c in need):
         for a in ax_row:
             a.axis("off")
@@ -2386,8 +2394,7 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
          "globalClusterCotTheta": K["gClCotTheta"],
          "sigGlobalClusterPhi": K["gSigPhi"],
          "sigGlobalClusterCotTheta": K["gSigCotTheta"], "sigY": K["sigY"],
-         "tpIdx": K["tpIdx"], "tpPt": K["tpPt"], "tpVx": K["tpVx"],
-         "tpVy": K["tpVy"], "tpPhi": K["tpPhi"], "event": K["event"]}
+         "tpIdx": K["tpIdx"], "tpPt": K["tpPt"], "tp_d0": K["tp_d0"], "event": K["event"]}
     M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
                  min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     PTMIN = 2.0
@@ -3029,11 +3036,7 @@ def study_combined_it_ot(X, K, P, ax_row, out):
     that survives the joint phi-and-z window. The real hit is present by
     construction, so the second number is fakes per projection, not track length.
     """
-    import importlib.util as _ilu
-    _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                      "tracklet_topology_cost.py")
-    _sp = _ilu.spec_from_file_location("_ttc3", _p)
-    M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
+    M = _ttc()
     srcs = out.get("_inputs") or []
     need = ("globalR", "globalZ", "globalPhi", "tpIdx", "tpPt")
     if not srcs or any(c not in K for c in need):
@@ -3046,7 +3049,7 @@ def study_combined_it_ot(X, K, P, ax_row, out):
     try:
         I, nev, _ = M.load_flat(src, M.IT_TABLE,
                                 ["layer", "globalR", "globalZ", "globalPhi",
-                                 "tpIdx", "tpPt", "tpVz", "tpEta"], None)
+                                 "tpIdx", "tpPt"], None, tp=("tp_z0", "tp_tanL"))
         O, onev, _ = M.load_ot(src, None)
     except Exception as exc:
         for a in ax_row:
@@ -3060,12 +3063,12 @@ def study_combined_it_ot(X, K, P, ax_row, out):
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
-    mi = I["tpIdx"] >= 0
+    mi = (I["tpIdx"] >= 0) & np.isfinite(I["tp_z0"])
     kv = M.tp_key(I["event"][mi], I["tpIdx"][mi])
     o = np.argsort(kv, kind="stable")
-    kv, vz, et = kv[o], I["tpVz"][mi][o], I["tpEta"][mi][o]
+    kv, z0t, tlt = kv[o], I["tp_z0"][mi][o], I["tp_tanL"][mi][o]
     f = np.r_[True, kv[1:] != kv[:-1]]
-    KV, VZ, ET = kv[f], vz[f], et[f]
+    KV, Z0T, TLT = kv[f], z0t[f], tlt[f]
 
     def firstpertp(L):
         m = (U["layer"] == L) & (U["tpIdx"] >= 0) & (U["tpPt"] >= PT)
@@ -3102,16 +3105,16 @@ def study_combined_it_ot(X, K, P, ax_row, out):
         kap = M.wrap(U["phi"][ga] - U["phi"][gb]) / (M.C_BEND * np.where(ok, dr, 1e9))
         cot = (U["z"][gb] - U["z"][ga]) / np.where(ok, dr, 1e9)
         z0 = U["z"][ga] - U["r"][ga] * cot
-        g = ok & (np.abs(kap) < 2) & (np.abs(z0 - VZ[p]) < 30)
+        g = ok & (np.abs(kap) < 2) & (np.abs(z0 - Z0T[p]) < 30)
         if g.sum() < 500:
             continue
         qual[nm] = {"dr_cm": float(np.median(dr)),
                     "sig_kappa": rs(np.abs(kap[g]) - 1.0 / U["tpPt"][ga][g]),
-                    "sig_z0_cm": rs(z0[g] - VZ[p][g]),
-                    "sig_cot": rs(cot[g] - np.sinh(ET[p][g])),
+                    "sig_z0_cm": rs(z0[g] - Z0T[p][g]),
+                    "sig_cot": rs(cot[g] - TLT[p][g]),
                     "n": int(g.sum())}
     # TARGET-LAYER z RESOLUTION, measured against each TP's own helix
-    # z = vz + r*sinh(eta). This MUST enter the z road: an earlier revision used
+    # z = z0 + r*tanL (L1TTP, at the POCA). This MUST enter the z road: an earlier revision used
     # only the seed's z uncertainty and understated IT-seed projection work by
     # 2.9x, because OT 2S modules resolve z to ~1.8 cm and completely dominate
     # the window there.
@@ -3121,7 +3124,7 @@ def study_combined_it_ot(X, K, P, ax_row, out):
         g = KV[p] == k
         if g.sum() < 200:
             return 0.0
-        return rs(zz[g] - (VZ[p[g]] + rr[g] * np.sinh(ET[p[g]])))
+        return rs(zz[g] - (Z0T[p[g]] + rr[g] * TLT[p[g]]))
     layers = {}
     for L in (1, 2, 3, 4):
         m = (I["layer"] == L)
