@@ -1,19 +1,27 @@
 """Shared model/feature definitions for train.py and evaluate.py."""
 import numpy as np, pandas as pd, torch, torch.nn as nn, torch.nn.functional as F
 
-# digitizer tan(theta_L,x) per layer (ntuple tanLAx: 0 on L1 = 3D sensors, 0.202 on L2-L4)
+# digitizer tan(theta_L,x) per layer (ntuple tanLAx: 0 on L1 = 3D sensors, 0.202 on L2-L4);
+# index 0 = discs (layer 0), where the Lorentz angle is 0 (B along the sensor normal)
 C_LAYER = np.array([0, 0.0, 0.202, 0.202, 0.202], np.float32)
+NDISK = 12  # pxfDisk: 1-8 TFPX, 9-12 TEPX
 # 2-bit quantisation of the 4-bit digi ADC (ADC 0 = 1750 e, 1 = 3250 e, ... 5 = 9250 e):
 # 0 empty | 1: ADC 0-1 (< 4000 e) | 2: ADC 2-4 | 3: ADC >= 5 (> 8500 e)
 Q2_EDGES = (2, 5)
 
 BASE_COLS = ["layer", "sizeX", "sizeY", "size", "charge", "adcSum", "truncX", "truncY", "nPxLost"]
 VAR_COLS = {"base": [], "small": [], "bla": ["bLocalX", "bLocalY", "bLocalZ", "bMag", "tanLAx", "tanLAy"],
-            "pos": ["localX", "localY", "zOutward", "globalR", "globalZ"]}
+            "pos": ["localX", "localY", "zOutward", "globalR", "globalZ"], "disc": [], "unified": []}
 
 
 def scalars(m, variant):
-    cols = {"l1": (m.layer == 1), "l2": (m.layer == 2), "l3": (m.layer == 3), "l4": (m.layer == 4)}
+    """Model scalars. disc: disk one-hot instead of the layer one-hot; unified: both
+    (all-zero layer one-hot = disc, all-zero disk one-hot = barrel)."""
+    cols = {}
+    if variant != "disc":
+        cols.update({f"l{l}": (m.layer == l) for l in range(1, 5)})
+    if variant in ("disc", "unified"):
+        cols.update({f"d{d}": (m.disk == d) for d in range(1, NDISK + 1)})
     if variant != "small":
         cols.update({"sizeX": m.sizeX, "sizeY": m.sizeY, "size": m["size"], "logq": np.log(m.charge.clip(lower=1)),
                      "adcSum": m.adcSum, "truncX": m.truncX, "truncY": m.truncY, "nPxLost": m.nPxLost})

@@ -13,13 +13,17 @@ Variants (--variant):
   bla  : base + local B (x,y,z), |B|, tan(theta_L) x/y      (sensor-local calibration)
   pos  : base + localX/localY/zOutward + global r/z          (NOT sensor-local: prompt prior)
   small: on-sensor-limited Conv1D net (models_def.SmallNet), 2-bit map + layer only
+  disc : base with the disk one-hot instead of the layer one-hot (TFPX/TEPX clusters)
+  unified: base + disk one-hot, barrel and disc clusters in one model
 --clean : train only on tpChargeFrac >= 0.9
+--subdet: 1 barrel, 2 discs, 0 both (then half of --ntrain from each)
 """
-import argparse, os, time, json, numpy as np, pandas as pd, torch, torch.nn.functional as F
+import argparse, os, time, json, numpy as np, pandas as pd, pyarrow.parquet as pq, torch, torch.nn.functional as F
 from models_def import C_LAYER, BASE_COLS, VAR_COLS, scalars, make
 
 p = argparse.ArgumentParser()
-p.add_argument("--variant", default="base", choices=["base", "bla", "pos", "small"])
+p.add_argument("--variant", default="base", choices=["base", "bla", "pos", "small", "disc", "unified"])
+p.add_argument("--subdet", type=int, default=1, choices=[0, 1, 2])
 p.add_argument("--clean", action="store_true")
 p.add_argument("--data", default="data")
 p.add_argument("--epochs", type=int, default=6)
@@ -39,8 +43,13 @@ OUT = os.path.join(HERE, "models", tag); os.makedirs(OUT, exist_ok=True)  # mode
 D = os.path.join(HERE, a.data)
 
 NEED = sorted(set(BASE_COLS + sum(VAR_COLS.values(), []) + ["linkClass", "tpPt", "tpCharge", "tpLocalCotAlpha",
-        "tpLocalCotBeta", "hxOk", "hxDist", "tpChargeFrac", "split", "tx_hx", "ty_hx"]))
-meta = pd.read_parquet(os.path.join(D, "meta.parquet"), columns=NEED)
+        "tpLocalCotBeta", "hxOk", "hxDist", "tpChargeFrac", "split", "tx_hx", "ty_hx", "subdet", "disk", "row"]))
+have = set(pq.ParquetFile(os.path.join(D, "meta.parquet")).schema.names)
+filt = [("linkClass", "==", 2), ("tpPt", ">=", 0.25), ("split", "in", [0, 1])] + (
+    [("subdet", "==", a.subdet)] if a.subdet and "subdet" in have else [])
+meta = pd.read_parquet(os.path.join(D, "meta.parquet"), columns=[c for c in NEED if c in have], filters=filt)
+if "subdet" not in meta:  # a barrel-only ntuple from before the disc extension
+    meta["subdet"], meta["disk"] = 1, 0
 imgs = np.load(os.path.join(D, "images.npy"), mmap_mode="r")
 WX, WY = imgs.shape[1:]
 
@@ -57,10 +66,18 @@ if a.clean:
     good &= meta.tpChargeFrac >= 0.9
 tr_idx = np.where(good & (meta.split == 0))[0]
 va_idx = np.where(good & (meta.split == 1))[0]
-if len(tr_idx) > a.ntrain:
+if a.subdet == 0:
+    tr_idx = np.sort(np.concatenate([np.random.choice(g, min(len(g), a.ntrain // 2), replace=False)
+                                     for g in (tr_idx[meta.subdet.values[tr_idx] == sd] for sd in (1, 2))]))
+elif len(tr_idx) > a.ntrain:
     tr_idx = np.sort(np.random.choice(tr_idx, a.ntrain, replace=False))
 va_idx = np.sort(np.random.choice(va_idx, min(len(va_idx), 200_000), replace=False))
 print(f"train {len(tr_idx)} val {len(va_idx)}", flush=True)
+# keep only the sampled rows (the disc dataset is ~30M clusters; memory, not speed)
+keep = np.r_[tr_idx, va_idx]
+meta = meta.iloc[keep].reset_index(drop=True)
+tr_idx, va_idx = np.arange(len(tr_idx)), np.arange(len(tr_idx), len(keep))
+ROW = meta.row.values  # image index of each kept meta row; from prep.py
 
 S_tr = scalars(meta.iloc[tr_idx], a.variant)
 mu, sd = S_tr.mean(), S_tr.std().replace(0, 1).fillna(1)
@@ -69,7 +86,7 @@ json.dump(norm, open(os.path.join(OUT, "norm.json"), "w"))
 
 def tensors(idx):
     m = meta.iloc[idx]
-    X = torch.from_numpy(np.ascontiguousarray(imgs[idx]))  # uint8
+    X = torch.from_numpy(np.ascontiguousarray(imgs[ROW[idx]]))  # uint8
     S = torch.from_numpy(((scalars(m, a.variant) - mu) / sd).values.astype(np.float32))
     Y = torch.from_numpy(targets(m))
     M = torch.from_numpy(((m.hxDist < 0.1) & (m.hxOk == 1)).values.astype(np.float32))  # position-label mask
