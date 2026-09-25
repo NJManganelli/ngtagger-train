@@ -53,13 +53,14 @@ import json
 import awkward as ak
 import numpy as np
 import uproot
+from ngtagger.truth_helix import tp_phi0
 
 SENTINEL = -900.0
 REF = "L1TTrack"
 PT_BINS = [(2, 3), (3, 4), (4, 6), (6, 10), (10, 1e9)]
 PARAMS = [("d0", "d0", "tp_d0", 1e4, "um"),
           ("z0", "z0", "tp_z0", 1e4, "um"),
-          ("phi", "phi", "tp_phi", 1e3, "mrad"),
+          ("phi", "phi", "tp_phi0", 1e3, "mrad"),   # derived in load(): tp_phi is at production
           ("tanL", "tanL", "tp_tanL", 1e3, "1e-3"),
           ("pt", "pt", "tp_pt", 1.0, "GeV")]
 
@@ -110,8 +111,8 @@ def load(paths, label):
     HIT = f"L1TSmartPixelsRefitHitDigiRefit{cfg}"
     VAR = f"L1TSmartPixelsTrackDigiRefit{cfg}"
 
-    ref_cols = ["pt", "genuine", "tpFromHardInteraction"] + \
-               [c for _, c, _, _, _ in PARAMS] + [t for _, _, t, _, _ in PARAMS]
+    ref_cols = ["pt", "genuine", "tpFromHardInteraction", "tp_phi", "tp_charge", "tp_vx", "tp_vy"] + \
+               [c for _, c, _, _, _ in PARAMS] + [t for _, _, t, _, _ in PARAMS if t != "tp_phi0"]
     ref_cols = sorted(set(ref_cols))
     var_cols = [c for _, c, _, _, _ in PARAMS] + ["spixRefitPerformed", "spixNAcceptedHits"]
     hit_cols = ["trackIdx", "layer", "hitAccepted", "selHitClass", "windowMult",
@@ -138,6 +139,7 @@ def load(paths, label):
     counts = ak.to_numpy(ak.num(ref[f"{REF}_pt"]))
     off = np.concatenate([[0], np.cumsum(counts)])
     R = {c: ak.to_numpy(ak.flatten(ref[f"{REF}_{c}"])) for c in ref_cols}
+    R["tp_phi0"] = tp_phi0(R)
     V = {c: ak.to_numpy(ak.flatten(var[f"{VAR}_{c}"])) for c in var_cols}
     H = {c: ak.to_numpy(ak.flatten(hits[f"{HIT}_{c}"])) for c in hit_cols}
 

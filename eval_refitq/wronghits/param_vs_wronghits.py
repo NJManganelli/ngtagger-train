@@ -32,6 +32,7 @@ import json
 import awkward as ak
 import numpy as np
 import uproot
+from ngtagger.truth_helix import tp_phi0
 
 REF, VAR = "L1TTrack", "L1TSmartPixelsTrackDigiRefitAAAA"
 HIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
@@ -40,10 +41,11 @@ HIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
 PARAMS = [
     ("d0", "d0", "tp_d0", 1e4, "um"),
     ("z0", "z0", "tp_z0", 1e4, "um"),
-    ("phi", "phi", "tp_phi", 1e3, "mrad"),
+    ("phi", "phi", "tp_phi0", 1e3, "mrad"),   # derived below: tp_phi is at production
     ("tanL", "tanL", "tp_tanL", 1e3, "1e-3"),
     ("pt", "pt", "tp_pt", 1.0, "GeV"),
 ]
+PHI0_INPUTS = ("tp_phi", "tp_pt", "tp_charge", "tp_vx", "tp_vy")
 
 
 def main():
@@ -58,8 +60,8 @@ def main():
     files = [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])]
     print(f"files: {len(files)}")
 
-    ref_cols = [c for _, c, _, _, _ in PARAMS] + [t for _, _, t, _, _ in PARAMS] + \
-               [args.label, "tpFromHardInteraction"]
+    ref_cols = sorted({c for _, c, _, _, _ in PARAMS} | {t for _, _, t, _, _ in PARAMS if t != "tp_phi0"}
+                      | set(PHI0_INPUTS) | {args.label, "tpFromHardInteraction"})
     var_cols = [c for _, c, _, _, _ in PARAMS] + ["spixRefitPerformed", "spixNAcceptedHits"]
     hit_cols = ["trackIdx", "selHitClass", "hitAccepted"]
 
@@ -74,6 +76,7 @@ def main():
     n_tracks = int(off[-1])
 
     R = {c: ak.to_numpy(ak.flatten(v)) for c, v in ref.items()}
+    R["tp_phi0"] = tp_phi0(R)
     V = {c: ak.to_numpy(ak.flatten(v)) for c, v in var.items()}
 
     ti = ak.to_numpy(ak.flatten(hits["trackIdx"])).astype(np.int64)
