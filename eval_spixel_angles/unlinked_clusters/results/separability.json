@@ -1,0 +1,271 @@
+{
+ "single_feature_auc": {
+  "layer": [
+   "1",
+   "2",
+   "3",
+   "4",
+   "all"
+  ],
+  "size": [
+   0.5321905187117774,
+   0.6024419922400756,
+   0.6611524017930188,
+   0.6440078473113314,
+   0.5992885951572972
+  ],
+  "sizeX": [
+   0.6504141242009942,
+   0.6856712656674127,
+   0.7036341343317546,
+   0.6623846470358923,
+   0.6736954670236803
+  ],
+  "sizeY": [
+   0.4215195590271815,
+   0.437625735650527,
+   0.47120026507934065,
+   0.5001953001424249,
+   0.44679239896626777
+  ],
+  "charge": [
+   0.5202664413639564,
+   0.5423216284856207,
+   0.571360580550369,
+   0.5658536684494153,
+   0.5412626901760289
+  ],
+  "qPerPix": [
+   0.48434227593345847,
+   0.4367671136977655,
+   0.4026427398146962,
+   0.3937552149693844,
+   0.43189025870141967
+  ],
+  "absZ": [
+   0.5981296110396416,
+   0.5620305633621943,
+   0.5324852323150028,
+   0.5196528123296521,
+   0.5601723801174225
+  ],
+  "noAngle (no noiseSet)": [
+   0.9983497600386227,
+   0.9977354023315371,
+   0.9968392708500988,
+   0.995917472991436,
+   0.9974117255904376
+  ],
+  "noBeta (noise v6)": [
+   0.4961946493030108,
+   0.493983838680766,
+   0.49133342088451043,
+   0.4901077876794547,
+   0.49344042141162653
+  ]
+ },
+ "hgb": {
+  "model": [
+   "HGB non-angle",
+   "HGB + angles (SYNTHETIC)",
+   "HGB + angles + origin-compat (SYNTHETIC)"
+  ],
+  "n_iter": [
+   400,
+   400,
+   400
+  ],
+  "fit_s": [
+   38.3,
+   49.7,
+   46.4
+  ],
+  "AUC L1": [
+   0.8180371507999755,
+   0.9749674806850066,
+   0.9808765858107058
+  ],
+  "AUC L2": [
+   0.8115799317076384,
+   0.9657522967430352,
+   0.9735154980116967
+  ],
+  "AUC L3": [
+   0.787451191327401,
+   0.9637137168027483,
+   0.9709699404322504
+  ],
+  "AUC L4": [
+   0.7363127857357376,
+   0.9660968839792287,
+   0.9717654069228204
+  ],
+  "AUC Lall": [
+   0.7981985950166485,
+   0.9684745811572371,
+   0.975134725706636
+  ]
+ },
+ "hgb_subgroups": {
+  "all linked": {
+   "HGB non-angle": 0.7981985950166485,
+   "HGB + angles (SYNTHETIC)": 0.9684745811572371,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.975134725706636
+  },
+  "linked pT>=2": {
+   "HGB non-angle": 0.8584042004235081,
+   "HGB + angles (SYNTHETIC)": 0.9756753488453853,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.983003872251681
+  },
+  "linked pT<0.3": {
+   "HGB non-angle": 0.7474403838356654,
+   "HGB + angles (SYNTHETIC)": 0.960168270313423,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.9653663183629283
+  },
+  "linked secondary vr>1cm": {
+   "HGB non-angle": 0.6556388331333702,
+   "HGB + angles (SYNTHETIC)": 0.9413740126018837,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.9470306744425137
+  },
+  "linked shared frac<0.9": {
+   "HGB non-angle": 0.5695609142697461,
+   "HGB + angles (SYNTHETIC)": 0.9153416457088177,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.9405721131690248
+  }
+ },
+ "hgb_working_points": {
+  "linked kept (1-FPR) at 50% unlinked rejected": {
+   "HGB non-angle": 0.8798337869228903,
+   "HGB + angles (SYNTHETIC)": 0.9941113105028208,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.9967512974214672
+  },
+  "linked kept (1-FPR) at 80% unlinked rejected": {
+   "HGB non-angle": 0.6452377673324815,
+   "HGB + angles (SYNTHETIC)": 0.9606078169409354,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.9748662427431565
+  },
+  "linked kept (1-FPR) at 90% unlinked rejected": {
+   "HGB non-angle": 0.4609908126790937,
+   "HGB + angles (SYNTHETIC)": 0.9110089326838702,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.9367871879292059
+  },
+  "unlinked rejected at 1% linked loss": {
+   "HGB non-angle": 0.0882024938010891,
+   "HGB + angles (SYNTHETIC)": 0.5889232284165193,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.6708052058987531
+  },
+  "unlinked rejected at 5% linked loss": {
+   "HGB non-angle": 0.2891836419936172,
+   "HGB + angles (SYNTHETIC)": 0.8322705216576303,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.8780267887861999
+  },
+  "unlinked rejected at 1% loss of pT>=2 linked": {
+   "HGB non-angle": 0.12892548256593386,
+   "HGB + angles (SYNTHETIC)": 0.6152137289563289,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.7403249534340187
+  },
+  "unlinked rejected at 5% loss of pT>=2 linked": {
+   "HGB non-angle": 0.3999513578284236,
+   "HGB + angles (SYNTHETIC)": 0.8698910889914461,
+   "HGB + angles + origin-compat (SYNTHETIC)": 0.9198264304950824
+  }
+ },
+ "hgb_importance": {
+  "HGB non-angle": {
+   "absZ": 0.06469380047252837,
+   "charge": 0.020997981199673405,
+   "dphiNorm": NaN,
+   "globalR": 0.12223652003411138,
+   "hasAlpha": NaN,
+   "hasBeta": NaN,
+   "layer": 0.04405748815615133,
+   "localCotAlpha": NaN,
+   "localCotBeta": NaN,
+   "localX": 0.01088136099844561,
+   "localY": 8.55753512338427e-05,
+   "qPerPix": 0.018278508449565134,
+   "sigAlpha": NaN,
+   "sigBeta": NaN,
+   "sigX": 0.015897312655238527,
+   "sigY": 0.004292073001598211,
+   "size": 0.008841172964880148,
+   "sizeX": 0.1278421998788419,
+   "sizeY": 0.10016894328660038,
+   "z0imp": NaN
+  },
+  "HGB + angles (SYNTHETIC)": {
+   "absZ": 0.0172169981691432,
+   "charge": 0.00302843117453074,
+   "dphiNorm": NaN,
+   "globalR": 0.08694682276867487,
+   "hasAlpha": 0.00015822900261749004,
+   "hasBeta": 0.006721699233309009,
+   "layer": 0.06721421725041081,
+   "localCotAlpha": 0.18859504700621918,
+   "localCotBeta": 0.11538435020403608,
+   "localX": 0.021793522105502117,
+   "localY": 9.919671850955325e-05,
+   "qPerPix": 0.0030055568954632608,
+   "sigAlpha": 0.001063409400018367,
+   "sigBeta": 0.010953017820595434,
+   "sigX": 0.003106366619506473,
+   "sigY": 0.009449446224514676,
+   "size": 0.0020403333365670573,
+   "sizeX": 0.07093296591965714,
+   "sizeY": 0.05775130796917168,
+   "z0imp": NaN
+  },
+  "HGB + angles + origin-compat (SYNTHETIC)": {
+   "absZ": 0.001211229067647257,
+   "charge": 0.0022136983402314034,
+   "dphiNorm": 0.0456688662545904,
+   "globalR": 0.012884869545632283,
+   "hasAlpha": 8.931150105610335e-05,
+   "hasBeta": 0.0036968116968652356,
+   "layer": 0.019024065799234508,
+   "localCotAlpha": 0.09996555921698125,
+   "localCotBeta": 0.07329116780014582,
+   "localX": 4.8039655905052214e-05,
+   "localY": -2.5943297682351485e-06,
+   "qPerPix": 0.0018827147869278082,
+   "sigAlpha": 0.0006549180899723858,
+   "sigBeta": 0.002367378897564073,
+   "sigX": 0.0028190241584822306,
+   "sigY": 0.006306921322473347,
+   "size": 0.0009995177034714715,
+   "sizeX": 0.0364549823842093,
+   "sizeY": 0.04278880030166554,
+   "z0imp": 0.06545086407517893
+  }
+ },
+ "autoencoder": {
+  "epochs_loss": [
+   0.26573901643308,
+   0.14757122069676717,
+   0.13381479680760702,
+   0.125552502459685,
+   0.11995699899880091,
+   0.11588877677424748,
+   0.11316489084148407,
+   0.111399025876681
+  ],
+  "bottleneck": 4,
+  "n_train_linked": 1500000,
+  "AUC L1": 0.6387200481686579,
+  "AUC L2": 0.5831511315763435,
+  "AUC L3": 0.5787567721553312,
+  "AUC L4": 0.5703235847389382,
+  "AUC Lall": 0.5983526475637231,
+  "vs subgroups": {
+   "all linked": 0.5983526475637231,
+   "linked pT>=2": 0.6404973736048981,
+   "linked pT<0.3": 0.5636047110196674,
+   "linked secondary vr>1cm": 0.5330056181060993,
+   "linked shared frac<0.9": 0.3908096263188827
+  },
+  "median err linked": 0.07270339131355286,
+  "median err unlinked": 0.09847483038902283,
+  "frac unlinked above linked q95": 0.09349381295305437,
+  "frac unlinked above linked q99": 0.018851807471912112
+ }
+}
