@@ -488,7 +488,7 @@ def study_cone_occupancy(X, K, P, ax_row, out):
     tot = np.bincount(P["xi"], minlength=len(xlay)).astype(float)
     ax.plot(LAYERS, [tot[xlay == L].mean() for L in LAYERS], marker="s", ls="--",
             color="k", label="all on module")
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer"); ax.set_ylabel("clusters / crossing")
+    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel("clusters per crossing [count]")
     ax.set_title("(1) candidates per crossing"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     res["all_on_module_per_layer"] = [float(tot[xlay == L].mean()) for L in LAYERS]
 
@@ -504,7 +504,7 @@ def study_cone_occupancy(X, K, P, ax_row, out):
             ax.plot(ctr, ys, marker="o", label=cname)
             res.setdefault(f"vs_{var}", {})[cname] = {
                 "bin_centres": [float(c) for c in ctr], "mean": [float(y) for y in ys]}
-        ax.set_xlabel(lab); ax.set_ylabel("clusters in cone / crossing")
+        ax.set_xlabel(lab); ax.set_ylabel("clusters in cone per crossing [count]")
         ax.set_title(f"(1) cone occupancy vs {lab}"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     out["cone_occupancy"] = res
 
@@ -541,7 +541,7 @@ def study_cone_containment(X, K, P, ax_row, out):
         ax.axhline(ideal, color=c, ls=":", lw=1)
         ax.text(4.05, ideal, f" ideal {ideal:.3f}", fontsize=6, va="center", color=c)
         res.setdefault("ideal_box_containment", {})[f"k={k:.2f}"] = float(ideal)
-    ax.set_xlabel("TBPX layer"); ax.set_ylabel("containment efficiency")
+    ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel("containment efficiency [fraction]")
     ax.set_title("(2) correct hit inside the seed cone"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     ax.set_ylim(0, 1.05)
 
@@ -551,7 +551,7 @@ def study_cone_containment(X, K, P, ax_row, out):
         v = [np.median(X[key][(X["layer"] == L) & (X[key] > 0)]) * 1e4 for L in LAYERS]
         ax.plot(LAYERS, v, marker="o", label=nm)
         res.setdefault("cone_sigma_um", {})[key] = [float(x) for x in v]
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer"); ax.set_ylabel(r"median cone $\sigma$ [$\mu$m]")
+    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel(r"median cone $\sigma$ [$\mu$m]")
     ax.set_title("(2) seed cone size"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     out["cone_containment"] = res
 
@@ -575,7 +575,7 @@ def study_angle_discrimination(X, K, P, ax_row, out):
         for arr, lab in ((a_bkg, "other clusters in cone"), (a_sig, "the track's own cluster")):
             if len(arr) > 10:
                 ax.hist(arr, bins=bins, histtype="step", density=True, label=f"{lab} (n={len(arr)})")
-        ax.set_xlabel(nm); ax.set_ylabel("density"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+        ax.set_xlabel(nm); ax.set_ylabel("density [1/bin]"); ax.legend(fontsize=7); ax.grid(alpha=.3)
         ax.set_title(f"(3) {nm} vs track expectation")
         if len(a_sig) > 10 and len(a_bkg) > 10:
             for q in (0.68, 0.95):
@@ -608,8 +608,8 @@ def study_charge_gate(X, K, P, ax_row, out):
     if len(r) > 10:
         maxr = int(np.quantile(r, 0.99)) + 1
         ax.hist(r, bins=np.arange(0, max(maxr, 8) + 1) - 0.5, histtype="stepfilled", alpha=.7)
-        ax.set_xlabel("charge rank within module (0 = highest)")
-        ax.set_ylabel("truth-correct hits")
+        ax.set_xlabel("charge rank within module [index, 0 = highest]")
+        ax.set_ylabel("truth-correct hits [count]")
         ax.set_title("(4) where the needed cluster sits in charge order")
         ax.grid(alpha=.3)
         keep = {N: float(np.mean(r < N)) for N in (1, 2, 4, 8, 16, 32)}
@@ -617,8 +617,8 @@ def study_charge_gate(X, K, P, ax_row, out):
         ax2 = ax_row[1]
         Ns = sorted(keep)
         ax2.plot(Ns, [keep[N] for N in Ns], marker="o")
-        ax2.set_xscale("log", base=2); ax2.set_xlabel("read out top-N by charge per module")
-        ax2.set_ylabel("fraction of needed clusters kept")
+        ax2.set_xscale("log", base=2); ax2.set_xlabel("clusters read out per module, top-N by charge [count]")
+        ax2.set_ylabel("needed clusters kept [fraction]")
         ax2.set_title("(4) readout gate efficiency"); ax2.grid(alpha=.3); ax2.set_ylim(0, 1.05)
     out["charge_gate"] = res
 
@@ -657,7 +657,7 @@ def study_true_containment(X, K, P, ax_row, out):
         if cname in bc:
             ax.plot(LAYERS, bc[cname]["per_layer_eff"], marker="s", ls="--", alpha=.6,
                     label=f"{cname} (window-conditioned)")
-    ax.set_xlabel("TBPX layer"); ax.set_ylabel("containment efficiency")
+    ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel("containment efficiency [fraction]")
     ax.set_title("(5) TRUE containment vs window-conditioned")
     ax.legend(fontsize=6); ax.grid(alpha=.3); ax.set_ylim(0, 1.05)
 
@@ -672,7 +672,7 @@ def study_true_containment(X, K, P, ax_row, out):
         float(n_true[X["layer"] == L].mean()) if (X["layer"] == L).any() else float("nan")
         for L in LAYERS]
     ax.plot(LAYERS, res["mean_true_clusters_on_module"], color="C0")
-    ax.set_xlabel("TBPX layer"); ax.set_ylabel("true clusters on crossed module")
+    ax.set_xlabel("TBPX layer"); ax.set_ylabel("true clusters on crossed module [count]")
     ax.set_title("(5) how many are there to find"); ax.grid(alpha=.3)
     out["true_containment"] = res
 
@@ -868,8 +868,8 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
                 label=rf"$w_{{rz}}$={wz}")
     ax.axhline(base, color="k", ls=":", label="baseline (1,1,1,1)")
     ax.set_xscale("symlog", linthresh=0.1)
-    ax.set_xlabel(r"$w_\alpha$   ($w_{r\phi}\equiv1$, $w_\beta=0$)")
-    ax.set_ylabel("hit-selection purity")
+    ax.set_xlabel(r"$w_\alpha$ [unitless]   ($w_{r\phi}\equiv1$, $w_\beta=0$)")
+    ax.set_ylabel("hit-selection purity [fraction]")
     ax.set_title("(6) 3D scan: position terms NOT frozen")
     ax.legend(fontsize=6, ncol=2); ax.grid(alpha=.3)
 
@@ -878,7 +878,7 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     im2 = ax.imshow(M2, origin="lower", aspect="auto", cmap="viridis")
     ax.set_xticks(range(len(wgrid))); ax.set_xticklabels(wgrid, rotation=45, fontsize=7)
     ax.set_yticks(range(len(wgrid))); ax.set_yticklabels(wgrid, fontsize=7)
-    ax.set_xlabel(r"$w_\beta$"); ax.set_ylabel(r"$w_\alpha$")
+    ax.set_xlabel(r"$w_\beta$ [unitless]"); ax.set_ylabel(r"$w_\alpha$ [unitless]")
     ax.set_title("(6) angle-weight scan (1D = bottom row)"); plt.colorbar(im2, ax=ax)
 
 
@@ -923,8 +923,8 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
     tot = np.bincount(P["xi"], minlength=len(xlay)).astype(float)
     ax.plot(LAYERS, [tot[xlay == L].mean() for L in LAYERS], marker="^", ls=":",
             color="k", label="all on module")
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer")
-    ax.set_ylabel("candidates / crossing")
+    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]")
+    ax.set_ylabel("candidates per crossing [count]")
     ax.set_title("(9) seed cone vs refit-order cone")
     ax.legend(fontsize=7); ax.grid(alpha=.3)
 
@@ -938,7 +938,7 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
         hr.append(float(np.median(b[b > 0]) * 1e4) if (b > 0).any() else np.nan)
     ax.plot(LAYERS, hs, marker="o", ls="--", label="seed sigma_x")
     ax.plot(LAYERS, hr, marker="s", label="refit-order sigma_x")
-    ax.set_xlabel("TBPX layer"); ax.set_ylabel(r"median projected $\sigma_x$ [$\mu$m]")
+    ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel(r"median projected $\sigma_x$ [$\mu$m]")
     ax.set_title("(9) projection cone half-width"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     res["median_sigma_x_um"] = {"seed": hs, "refit": hr}
 
@@ -962,7 +962,7 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
         res.setdefault("reduction_vs_pt", {})[cname] = {
             "bin_centres": [float(c) for c in ctr], "ratio": ratio}
     ax.axhline(1.0, color="k", lw=.8, ls=":")
-    ax.set_xlabel(r"track $p_T$ [GeV]"); ax.set_ylabel("seed / refit-order candidates")
+    ax.set_xlabel(r"track $p_T$ [GeV]"); ax.set_ylabel("seed / refit-order candidates [ratio, unitless]")
     ax.set_title("(9) combinatorics reduction vs $p_T$"); ax.legend(fontsize=7); ax.grid(alpha=.3)
 
     print("\n=== (9) refit-order cone vs naive seed cone ===")
@@ -1161,7 +1161,7 @@ def study_z0_resolution(X, K, P, ax_row, out):
         ax.plot(LAYERS, ys, marker="o", label=rf"$|\eta|$ {k_eta}")
     ax.axhline(Zspan / 120.0 * 1e4, color="k", ls=":", lw=1)
     ax.text(4.05, Zspan / 120.0 * 1e4, " 30 slices", fontsize=6, va="center")
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer")
+    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]")
     ax.set_ylabel(r"robust $\sigma(z_0)$ [$\mu$m]")
     ax.set_title(r"(7) per-cluster $z_0$ resolution"); ax.legend(fontsize=6); ax.grid(alpha=.3)
 
@@ -1173,7 +1173,7 @@ def study_z0_resolution(X, K, P, ax_row, out):
     rng = np.nanpercentile(np.abs(d[ok]), 99) if ok.any() else 1.0
     ax.hist(np.clip(d[ok] / max(rng, 1e-9), -5, 5), bins=80, histtype="step", density=True,
             label=r"$\Delta\cot\theta$ / q99")
-    ax.set_xlabel("normalized residual"); ax.set_ylabel("density")
+    ax.set_xlabel("normalised residual [unitless, pull]"); ax.set_ylabel("density [1/bin]")
     ax.set_title(r"(7) $\cot\theta$ residual and pull"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     out["z0_resolution"] = res
 
@@ -1671,8 +1671,8 @@ def study_combination_sweep(X, K, P, ax_row, out):
         a.set_xticklabels([f"{int(q * 100)}" for q in SWEEP_Q], fontsize=7)
         a.set_title(f"activeSP {s}  ({s.count('A')} SP layer"
                     f"{'s' if s.count('A') != 1 else ''})", fontsize=9)
-        a.set_xlabel("cone quantile qX", fontsize=8)
-        a.set_ylabel("combinations / track", fontsize=8)
+        a.set_xlabel("cone quantile qX [unitless]", fontsize=8)
+        a.set_ylabel("combinations per track [count]", fontsize=8)
         f2.colorbar(mesh, ax=a, label="tracks")
     spare = [(i // ncol, i % ncol) for i in range(len(sfx), nrow * ncol)]
     for r_, c_ in spare:
@@ -1702,8 +1702,8 @@ def study_combination_sweep(X, K, P, ax_row, out):
         for i, s in enumerate(order):
             a.plot([q * 100 for q in SWEEP_Q], res[s][stat], marker="o", ms=3,
                    color=cmap(i / max(len(order) - 1, 1)), label=s)
-        a.set_yscale("log"); a.set_xlabel("cone quantile qX")
-        a.set_ylabel(f"{lab} combinations / track")
+        a.set_yscale("log"); a.set_xlabel("cone quantile qX [unitless]")
+        a.set_ylabel(f"{lab} combinations per track [count]")
         a.set_title(f"(10) {lab} search space vs cone")
         a.grid(alpha=.3)
         a.legend(fontsize=5, ncol=3)
@@ -1713,7 +1713,7 @@ def study_combination_sweep(X, K, P, ax_row, out):
         a.plot(xs, [res[s]["frac_tracks_with_hits"][f"ge{j}"] for s in order],
                marker=mk, ms=4, label=f"$\\geq${j} hits")
     a.set_xticks(xs); a.set_xticklabels(order, rotation=90, fontsize=6)
-    a.set_ylabel("fraction of tracks"); a.set_ylim(0, 1.02)
+    a.set_ylabel("tracks [fraction]"); a.set_ylim(0, 1.02)
     a.set_title("(10) can this build even refit?")
     a.grid(alpha=.3); a.legend(fontsize=7)
     _write_sweep_table(res, sfx, out, out.get("n_events", -1))
@@ -2022,7 +2022,7 @@ def study_sector_binning(X, K, P, ax_row, out):
                         label=f"{gname} ({rows[0]['n_grids']}x store, {rows[0]['bins_read']} read)")
             a_.set_yscale("log")
             a_.set_xlabel("containment of the desired cluster [%]")
-            a_.set_ylabel("combinations / track refit")
+            a_.set_ylabel("combinations per track refit [count]")
             a_.set_title(f"(11) {lab}")
             a_.grid(alpha=.3)
             a_.legend(fontsize=6)
@@ -2293,7 +2293,7 @@ def study_hough_examples(X, K, P, ax_row, out):
                     a.axhline(truth["z0"], color="k", lw=0.8, ls="--")
                     a.plot(truth["cot"], truth["z0"], "k*", ms=11, zorder=5)
                     a.set_ylim(truth["z0"] - 15, truth["z0"] + 15)
-                    a.set_xlabel(r"$\cot\theta$"); a.set_ylabel(r"$z_0$ [cm]")
+                    a.set_xlabel(r"$\cot\theta$ [unitless]"); a.set_ylabel(r"$z_0$ [cm]")
                     a.set_title(f"{nm}: r-z plane ({int(sel.sum())} clusters)", fontsize=9)
 
                     for col, (s, lab) in enumerate(((sel, "all"),
@@ -2348,7 +2348,7 @@ def study_hough_examples(X, K, P, ax_row, out):
             _draw_hough(a, s, K, -kmax, kmax, "rphi", truth, rast)
             a.plot(truth["kap"], 0.0, "k*", ms=10, zorder=5)
             a.set_ylim(-0.30, 0.30); a.grid(alpha=.25)
-            a.set_xlabel(r"$q/p_T$ [GeV$^{-1}$]"); a.set_ylabel(r"$\phi_0-\phi_0^{\rm true}$")
+            a.set_xlabel(r"$q/p_T$ [GeV$^{-1}$]"); a.set_ylabel(r"$\phi_0-\phi_0^{\rm true}$ [rad]")
             a.set_title(f"(8) {shown} {lab} ({int(s.sum())})", fontsize=9)
     else:
         for a in ax_row:
@@ -2525,8 +2525,8 @@ def _draw_confusion(ax, frac, short, title, nmax):
                 continue
             ax.text(j, i, f"{frac[i,j]:.2f}".lstrip("0"), ha="center", va="center",
                     fontsize=5.4, color=("#fcfcfb" if frac[i, j] > 0.62 else "#0b0b0b"))
-    ax.set_xlabel("found by column mode", fontsize=7)
-    ax.set_ylabel("also found by row mode", fontsize=7)
+    ax.set_xlabel("found by column mode [TPs]", fontsize=7)
+    ax.set_ylabel("also found by row mode [TPs]", fontsize=7)
 
 
 def _confusion_side_artifacts(out, labels, mats, res):
@@ -2668,7 +2668,7 @@ def _draw_composition(ax_row, res):
                             xytext=(3, -9), textcoords="offset points", color=INK2)
         ax.axhline(e["eff_triplet"], color=C[ci], lw=0.9, ls=":")
     ax.set_xlabel("doublet candidate triplets per event  [thousands]", fontsize=8)
-    ax.set_ylabel("union efficiency (triplet + doublets)", fontsize=8)
+    ax.set_ylabel("union efficiency, triplet + doublets [fraction]", fontsize=8)
     ax.set_title("cost bought back by the |kappa| gate\n(dotted = triplet alone; "
                  "labels = |kappa| min)", fontsize=9)
     ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=7)
@@ -2682,8 +2682,8 @@ def _draw_composition(ax_row, res):
                 [r["eff_union"] / base["eff_union"] for r in e["scan"]],
                 "-o", color=C[ci], ms=5, lw=2, label=cn, zorder=3)
     ax.axhline(1.0, color=INK2, lw=0.8, ls="--")
-    ax.set_xlabel("doublet cost, relative to no gate", fontsize=8)
-    ax.set_ylabel("union efficiency, relative to no gate", fontsize=8)
+    ax.set_xlabel("doublet cost relative to no gate [ratio, unitless]", fontsize=8)
+    ax.set_ylabel("union efficiency relative to no gate [ratio, unitless]", fontsize=8)
     ax.set_title("what the gate keeps per unit saved", fontsize=9)
     ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=7)
     ax.tick_params(labelsize=7, colors=INK2)
@@ -2697,8 +2697,8 @@ def _draw_composition(ax_row, res):
     ax.set_xticks(xs + w / 2)
     ax.set_xticklabels([("none" if r["kap_min"] == 0 else f"{r['kap_min']:.2f}")
                         for r in res[names[0]]["scan"]], fontsize=7)
-    ax.set_xlabel("doublet |kappa| lower gate", fontsize=8)
-    ax.set_ylabel("TPs recovered BEYOND the triplet", fontsize=8)
+    ax.set_xlabel("doublet |kappa| lower gate [GeV$^{-1}$]", fontsize=8)
+    ax.set_ylabel("TPs recovered beyond the triplet [count]", fontsize=8)
     ax.set_title("non-redundant recovery retained", fontsize=9)
     ax.grid(alpha=0.25, axis="y", lw=0.6); ax.legend(fontsize=7)
     ax.tick_params(labelsize=7, colors=INK2)
@@ -2924,8 +2924,8 @@ def _draw_menu_by_build(ax_row, builds):
         ax.plot(range(1, len(y) + 1), y, "-o", ms=3.5, lw=1.6,
                 color=C[b["n_it_layers"]], alpha=0.85,
                 label=k if b["n_it_layers"] in (1, 4) else None)
-    ax.set_xlabel("seeds in the menu", fontsize=8)
-    ax.set_ylabel("cumulative efficiency", fontsize=8)
+    ax.set_xlabel("seeds in the menu [count]", fontsize=8)
+    ax.set_ylabel("cumulative efficiency [fraction]", fontsize=8)
     ax.set_title("what each build's menu reaches\n(colour = instrumented IT layers)",
                  fontsize=9)
     ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=6); ax.tick_params(labelsize=7)
@@ -2934,7 +2934,7 @@ def _draw_menu_by_build(ax_row, builds):
     ax.bar(xs, [ok[k]["eff_3"] for k in order],
            color=[C[ok[k]["n_it_layers"]] for k in order])
     ax.set_xticks(xs); ax.set_xticklabels(order, rotation=90, fontsize=6.5)
-    ax.set_ylabel("efficiency of the best THREE seeds", fontsize=8)
+    ax.set_ylabel("efficiency of the best three seeds [fraction]", fontsize=8)
     ax.set_title("three-seed menu, per build", fontsize=9)
     ax.grid(alpha=0.25, axis="y", lw=0.6); ax.tick_params(labelsize=7)
     ax = ax_row[2]
@@ -2945,8 +2945,8 @@ def _draw_menu_by_build(ax_row, builds):
         ax.annotate(k, (b["cand_3"], b["eff_3"]), fontsize=5.5,
                     xytext=(4, 3), textcoords="offset points", color="#52514e")
     ax.set_xscale("log")
-    ax.set_xlabel("candidate triplets/event, best three seeds", fontsize=8)
-    ax.set_ylabel("efficiency of those three", fontsize=8)
+    ax.set_xlabel("candidate triplets per event, best three seeds [count]", fontsize=8)
+    ax.set_ylabel("efficiency of those three [fraction]", fontsize=8)
     ax.set_title("what each build costs for what it reaches", fontsize=9)
     ax.grid(alpha=0.25, lw=0.6); ax.tick_params(labelsize=7)
 
@@ -3202,7 +3202,7 @@ def _draw_combined(ax_row, qual, layers, cost):
                 color=C[i % len(C)], ms=4, lw=1.8, label=nm)
     ax.set_yscale("log")
     ax.set_xticks(range(len(tn))); ax.set_xticklabels(tn, rotation=90, fontsize=6.5)
-    ax.set_ylabel("objects scanned in the z road, per projection", fontsize=8)
+    ax.set_ylabel("objects scanned in the z road per projection [count]", fontsize=8)
     ax.set_title("projection WORK, per seed per target layer", fontsize=9)
     ax.grid(alpha=0.25, lw=0.6); ax.legend(fontsize=6); ax.tick_params(labelsize=7, colors=INK2)
 
@@ -3216,7 +3216,7 @@ def _draw_combined(ax_row, qual, layers, cost):
            color="#e8833a", label="best per layer")
     ax.set_xticks(xs); ax.set_xticklabels(names, rotation=20, fontsize=6.5)
     ax.set_yscale("log")
-    ax.set_ylabel("summed over all ten IT+OT layers", fontsize=8)
+    ax.set_ylabel("objects scanned, summed over all ten IT+OT layers [count]", fontsize=8)
     ax.set_title("total projection cost of one seed\n(real hit excluded: it is there "
                  "by construction)", fontsize=9)
     ax.grid(alpha=0.25, axis="y", lw=0.6); ax.legend(fontsize=6.5)
