@@ -158,7 +158,8 @@ def cache_key(manifest, cfg):
     """
     payload = json.dumps({"format": FORMAT_VERSION, "inputs": manifest,
                           "config": cfg, "track_cols": list(KF.TRACK_COLS),
-                          "numerics": KF.numerics_key()},
+                          "numerics": KF.numerics_key(),
+                          "seed_menu": SA.menu_fingerprint()},
                          sort_keys=True).encode()
     return hashlib.sha256(payload).hexdigest()[:16]
 

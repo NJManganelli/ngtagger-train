@@ -73,10 +73,14 @@ MIN_LAYERS = 4
 
 
 class Seed:
-    __slots__ = ("arity", "layers", "tag", "note", "soft")
+    __slots__ = ("arity", "layers", "tag", "note", "soft", "category")
 
-    def __init__(self, layers, note="", soft=False):
+    def __init__(self, layers, note="", soft=False, category="default"):
         self.layers = tuple(layers)
+        # MENU CATEGORY (see enumerate_seeds): "default" seeds make up the menu;
+        # "long-lever" and "nonconforming" seeds stay enumerable for studies
+        # (widen DEFAULT_CATEGORIES) but are not in the default menu.
+        self.category = category
         self.arity = len(self.layers)
         self.tag = "+".join(NAME[L] for L in self.layers) + (" soft" if soft else "")
         self.note = note
@@ -115,36 +119,72 @@ def soft_seeds(seeds):
             for s in seeds if all(L <= 4 for L in s.layers)]
 
 
-def enumerate_seeds(il_instrumented, ot=OT_BARREL):
+# Menu categories enumerate_seeds returns when not told otherwise. A study that
+# wants the special seeds widens this, e.g. SA.DEFAULT_CATEGORIES = SEED_CATEGORIES,
+# and the census cache key follows automatically (menu_fingerprint).
+SEED_CATEGORIES = ("default", "skip", "long-lever")
+DEFAULT_CATEGORIES = ("default",)
+
+
+def adjacent_in(a, b, surfaces):
+    """True when a and b are consecutive among the BUILD's surfaces (its instrumented
+    IT layers, then the OT layers). Adjacency is a property of the build, not of the
+    full detector: in an *AIA build IL3 does not exist, so IL2+IL4 IS the adjacent
+    pair there, and in a build without IL4, IL3 -> OL1 is the adjacent step."""
+    return abs(surfaces.index(a) - surfaces.index(b)) == 1
+
+
+def enumerate_seeds(il_instrumented, ot=OT_BARREL, categories=None):
     """Every doublet and triplet a given SmartPixels build can form.
 
     IT-only and OT-only follow their own rules: all IT combinations, because
     that space is the point of the study and has no incumbent design; only the
     shipped OT seeds, because that one does.
 
-    MIXED seeds obey a LOCALITY RULE -- the outermost instrumented IT layers meet
-    the innermost OT layers, never IL1+IL2+OL6. Geometrically that is the right
-    cut: IL4 -> OL1 is a 1.4x radius step and OL1 -> OL2 is 1.5x, so IL3+IL4+OL1
-    and IL4+OL1+OL2 are as radially sensible as the OT's own seeds.
+    ADJACENCY IS PER BUILD (adjacent_in): consecutive among the build's own
+    surfaces. The target configurations are most likely THREE ADJACENT IT layers
+    (AAAI or IAAA -- these studies decide whether IL1 or IL4 is worth more), AAAA
+    if funding allows; a seed that skips a layer in one build is the adjacent seed
+    of another (IL2+IL4 in *AIA), so nothing is labelled bad globally.
 
-    DEGENERATE CASES ARE KEPT AND LABELLED, not excluded. In a build with only
-    IL1 the rule still permits IL1+OL1+OL2, a 7.7x jump from r ~ 3 to r ~ 23, and
-    those long-lever seeds measure at ~4e6 candidates/event and 98.8% fake. They
-    are left in so the cost and quality columns can condemn them rather than a
-    hand-applied filter deciding in advance.
+    TRIPLETS FOLLOW THE OT PATTERN: an ADJACENT pair, then a third layer INWARD of
+    it, written in construction order (pair first) exactly as the OT's OL3+OL4+OL2
+    (the L3L4 pair with an L2 stub attached, CMSSW's TPD_L3L4L2). For an IT triple
+    x < y < z that is the pair y+z with x attached: IL3+IL4+IL2, not IL2+IL3+IL4
+    (which was the IL2+IL3 pair projecting OUTWARD to IL4 -- a different
+    combinatorial set, not a relabelling).
+
+    MIXED seeds obey a LOCALITY RULE -- the outermost instrumented IT layer (far)
+    meets the innermost OT layers: far+OL1, far+OL1 with the next instrumented IT
+    layer attached inward, and OL1+OL2 with far attached.
+
+    CATEGORIES, relative to THIS build:
+      default     every surface step adjacent in the build (the menu)
+      skip        an IT doublet, or a triplet's pair, that skips an instrumented
+                  layer of this build (e.g. IL1+IL3 in AAAA)
+      long-lever  a mixed doublet x+OL1 with x not the outermost instrumented IT
+                  layer: it jumps over instrumented layers into the OT. Measured on
+                  the joint census in AAAA (|eta| < 1.1): IL1/IL2/IL3+OL1 cost
+                  366-2828 fitted tracks/event at 74-95% fakes and add <= 0.02%
+                  efficiency no other seed finds.
+    Non-default seeds stay enumerable (categories=...) for studies, and every one of
+    them is the default seed of some reduced build, so the census universe over
+    builds (union of defaults) still runs and measures them.
     """
+    cats = DEFAULT_CATEGORIES if categories is None else tuple(categories)
     il = sorted(il_instrumented)
+    surf = list(il) + list(ot)
     seeds = []
     for i, a in enumerate(il):                       # IT doublets: all pairs
         for b in il[i + 1:]:
-            seeds.append(Seed((a, b)))
+            seeds.append(Seed((a, b), category="default" if adjacent_in(a, b, surf) else "skip"))
     for a, b in OT_DOUBLETS:                         # OT doublets: design only
         if a in ot and b in ot:
             seeds.append(Seed((a, b)))
-    for i, a in enumerate(il):                       # IT triplets: all triples
-        for j, b in enumerate(il[i + 1:], i + 1):
-            for c in il[j + 1:]:
-                seeds.append(Seed((a, b, c)))
+    for i, x in enumerate(il):                       # IT triplets: pair = outer two
+        for j, y in enumerate(il[i + 1:], i + 1):
+            for z in il[j + 1:]:
+                seeds.append(Seed((y, z, x), category="default" if adjacent_in(y, z, surf) else "skip"))
     for t in OT_TRIPLETS:                            # OT triplets: design only
         if all(x in ot for x in t):
             seeds.append(Seed(t))
@@ -152,13 +192,29 @@ def enumerate_seeds(il_instrumented, ot=OT_BARREL):
     if il and ot:
         o1, o2 = ot[0], (ot[1] if len(ot) > 1 else None)
         far = il[-1]
-        deg = " DEGENERATE: long lever arm" if far <= 2 else ""
-        seeds.append(Seed((far, o1), "mixed doublet" + deg))
+        seeds.append(Seed((far, o1), "mixed doublet"))
         if len(il) > 1:
-            seeds.append(Seed((il[-2], far, o1), "mixed triplet" + deg))
+            seeds.append(Seed((far, o1, il[-2]), "mixed triplet"))
         if o2 is not None:
-            seeds.append(Seed((far, o1, o2), "mixed triplet" + deg))
-    return seeds
+            seeds.append(Seed((o1, o2, far), "mixed triplet"))
+        for x in il[:-1]:                            # long-lever doublets, for studies
+            seeds.append(Seed((x, o1), "mixed doublet LONG LEVER", category="long-lever"))
+    return [sd for sd in seeds if sd.category in cats]
+
+
+def menu_fingerprint():
+    """The seed rules' OUTPUT for every build, as the census cache key needs it.
+
+    The seed menu is generated by code, not configuration, so a rule change (a
+    renamed triplet, a re-categorised seed) leaves the config untouched; without
+    this in the key a census would RESUME an old cache and serve the old menu
+    under the new names.
+    """
+    out = []
+    for m in range(1, 16):
+        il = [L for k, L in enumerate(IL) if m >> k & 1]
+        out.append([[list(sd.layers), sd.category] for sd in enumerate_seeds(il)])
+    return {"active": list(DEFAULT_CATEGORIES), "builds": out}
 
 
 def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
