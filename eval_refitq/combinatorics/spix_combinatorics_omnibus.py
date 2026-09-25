@@ -3937,6 +3937,362 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
         "candidate_bound_ratio_max": r["bound_ratio_max"], "per_class_layer": table,
         "perfect_crosscut": crosscut["table"],
         "figures": pngs + [pdf_path]}
+
+
+# ---- (20) refit-update projection: A vs B under the projection a refit uses --
+REFIT_VAR_STYLE = {"none": dict(color="#8c8c8c", ls="-", lw=1.4),
+                   "innovation": dict(color="#1f77b4", ls="-", lw=1.4),
+                   "producer": dict(color="#d62728", ls="-", lw=1.2),
+                   "tuned": dict(color="#9467bd", ls="--", lw=1.2),
+                   "oracle": dict(color="#111111", ls=":", lw=1.6)}
+# The replay must reproduce the producer's running projection to this level, or
+# the update here is not the refit's. Measured (PU200 ttbar, 50 events): IL4
+# exact; IL3-IL1 position median 0.07-0.29 um, p99 8-21 um; width ratio median
+# 1.0000; BOTH widths within 2% on 94.9-96.2% of crossings, the rest a bounded
+# float-level drift (ratio down to ~0.85 on ~1%) not traced to any logic
+# difference -- every alpha-update decision and selected module matches. A real
+# regression (wrong Q, gain, Jacobian) moves the MEDIANS by orders of magnitude,
+# which is what these limits are set to catch.
+# RE-BASELINED 2026-09-24 on the FIXED-Q nanos (itot_tp, 100 events): IL3 87.6%, IL2
+# 94.5%, IL1 94.6% within 2%, width-ratio q01/q99 0.972/1.030 at IL3, medians and
+# positions unchanged. The smaller (correct) Q no longer masks the float-level drift
+# after the IL4 update; the drift's source is still to be traced (work-queue TODO).
+REFIT_REPLAY_LIMITS = {"du_p50_cm": 2e-4, "dv_p50_cm": 5e-4, "du_p99_cm": 1e-2,
+                       "dv_p99_cm": 1e-2, "sig_ratio_median_tol": 0.01,
+                       "sig_ratio_within_2pct_min": 0.85}
+
+
+def _refit_tables(res, classes):
+    """per variant x class x layer: containment, widths, background, selection."""
+    tab = {}
+    for v, d in res["variants"].items():
+        P, S = d["proj"], d["sel"]
+        tab[v] = {}
+        for ci, cname in enumerate(classes):
+            tab[v][cname] = {}
+            for L in res["layers"]:
+                m = (P["cls"] == ci) & (P["layer"] == L)
+                ae, cv, ld = m & P["a_exists"], m & P["covered"], m & P["lands"]
+                ms = (S["cls"] == ci) & (S["layer"] == L)
+                sa = ms & S["a_in"]
+                sn = ms & ~S["a_in"]
+                e = {"n_layer_projections": int(m.sum()),
+                     "containment": float((ae & P["a_in"]).sum() / ae.sum()) if ae.any() else float("nan"),
+                     "median_su_um": float(np.median(P["su"][ld]) * 1e4) if ld.any() else float("nan"),
+                     "median_sv_um": float(np.median(P["sv"][ld]) * 1e4) if ld.any() else float("nan"),
+                     "B_per_covered": float((P["nB1"] + P["nB2"] + P["nB3"])[cv].mean()) if cv.any() else float("nan"),
+                     "n_A_in_exists": int(sa.sum())}
+                if v != "none":
+                    for lab, code in (("A-in", 0), ("B1", 2), ("B2", 3), ("B3", 4), ("none", -1)):
+                        e[f"chosen_{lab}_given_A_in"] = float((S["chosen"][sa] == code).mean()) if sa.any() else float("nan")
+                    e["update_without_target"] = float((S["chosen"][sn] >= 0).mean()) if sn.any() else float("nan")
+                tab[v][cname][f"IL{L}"] = e
+    return tab
+
+
+def _refit_explain_page(res, rep_val, mask, nsig):
+    import ot_refit_projection as RPJ
+    fig = plt.figure(figsize=(11, 14))
+    fig.text(0.04, 0.975, f"Refit-update projection ({mask}): what the A / B populations look like\n"
+             f"under the projection a refit actually uses", fontsize=13, fontweight="bold", va="top")
+    txt = (
+        "WHAT IS DONE\n"
+        f"Every OT track (L1TTrack helix + fit covariance) visits the active layers OUTERMOST FIRST: "
+        f"{' -> '.join('IL%d' % L for L in res['layers'])}. At each layer the track is projected onto "
+        f"every module its {nsig:g}-sigma ellipse overlaps (the same code as study 19), every cluster is "
+        "labelled A-in / A-out / B1 / B2 / B3, the variant's metric picks the best in-ellipse cluster, "
+        "and the track is UPDATED on it before the next layer is projected. The first layer has had no "
+        "update, so it is identical for every variant and to study 19.\n\n"
+        "UPDATE (mirrors the digiRefit producer term for term)\n"
+        "Sequential scalar Kalman updates in local x, y, then cotAlpha, cotBeta, linearised about the "
+        "pre-update state (the projection, and so the Jacobian, is recomputed at every layer); a scalar "
+        "with r^2/S > 2e6 is skipped; Jacobian columns with |H| > 1e4 are zeroed; no update where the "
+        "predicted |cot| > 12. Angles used here: " + res["use_angles"] + ".\n"
+        + ("COVARIANCE MODEL: CALIBRATED (" + os.path.basename(res["calibration"]) + "). Seed = each "
+           "track's reported covariance + a correlated deficit per (OT-track group, stub count, pT bin) "
+           "measured against truth (the reported one is too small and its rInv-phi0 correlation "
+           "near-degenerate). Scattering: Highland, full momentum and path length, on the tkLayout "
+           "Phase-2 planes x1 (validated against the physical IT scattering and the CMSSW D121 scan), "
+           "every plane crossed charged, updated or not. Cluster errors: the size/angle R lookup. A "
+           "~1.37x scattering-variance excess the innovation likelihood prefers is NOT modelled; "
+           "containment is measured, not assumed.\n\n"
+           if res.get("calibration") else
+           "COVARIANCE MODEL: the PRODUCER'S. The cluster's own errors (CPE sigX/sigY, sensor "
+           "sigAlpha/sigBeta); before each later layer, process noise Q = theta0^2 n_layers "
+           "(J_T J_T^T + J_L J_L^T), theta0 = 0.00075 / pT, kink at the last constrained radius; the "
+           "OT->IT gap is never charged and the seed is the reported covariance.\n\n")
+        + "THE FOUR RANKING METRICS, and the baseline\n"
+        "  none        no update at all: study 19's OT-only projection to every layer.\n"
+        "  innovation  d^2 = r^T (J C J^T + R)^-1 r over (du, dv, dcotAlpha, dcotBeta) -- the track's\n"
+        "              projected uncertainty PLUS the cluster's errors, all correlations kept. Nothing is\n"
+        "              tuned. A missing angle is dropped from the form and replaced by its mean, 1.\n"
+        "  producer    digiRefit's selection today: (du/sigX)^2 + (dv/sigY)^2 + (dcotA/sigA)^2 +\n"
+        "              (dcotB/sigB)^2, each term over the CLUSTER'S error only, unit weights; a missing\n"
+        "              angle adds 0, as in the producer. The track's own uncertainty never enters.\n"
+        "  tuned       the same terms weighted (1, 2, 16384, 16384) as omnibus study 6's chi2 scan found\n"
+        "              best (purity 0.982 vs 0.915 unit weights) -- STALE: fitted through the pre-Q\n"
+        "              covariance. The huge angle weight mostly undoes dividing a ~100 um projection\n"
+        "              residual by a ~3 um CPE error, i.e. it approximates the innovation chi2.\n"
+        "  oracle      truth: the majority-owner TP's cluster when one is inside the ellipse, else no\n"
+        "              update. Not deployable; the ceiling the others are measured against.\n"
+        "All variants choose among the SAME candidates: every cluster inside the ellipse on every\n"
+        "overlapping module.\n\n"
+        "B3 CAVEAT: unlinked (no-TP) clusters carry NO angle in these nanos, so innovation/tuned score\n"
+        "their missing angle terms as 1 and producer as 0, never as a mismatch. Selection purity\n"
+        "against B3 is therefore NOT representative: once B3 clusters get angle estimates they become a\n"
+        "potential contaminant. Containment and window widths are unaffected (they do not use B3).\n\n"
+        "HOW THIS DIFFERS FROM THE PRODUCTION REFIT IN THESE FILES\n"
+        "  * production ran useAngles = 'alpha' (cotBeta never selected or updated on); this study uses\n"
+        f"    '{res['use_angles']}'.\n"
+        "  * production's candidates are a static per-layer box on ONE module, first 8 in readout order;\n"
+        "    here the ellipse on every overlapping module.\n"
+        "  * Jacobian: central differences with the perturbed Newton solve started at the converged\n"
+        "    nominal crossing. The producer's is one-sided and restarts each perturbed solve from the\n"
+        "    cylinder, stopping at 1 um -- against a ~1.3 um rInv-step signal at IL4, so its rInv column is\n"
+        "    Newton-noise-limited (projected width differs by up to ~5% at p99).\n\n"
+        "VALIDATION: REPLAY AGAINST CMSSW\n"
+        "The update was fed exactly the clusters the producer selected, with its alpha-only setting and its\n"
+        "own Newton/Jacobian scheme; it must reproduce the producer's recorded running projection\n"
+        "(projLocalX/Y, projSigX/Y, projCot*) at every layer:\n")
+    for L, e in rep_val["per_layer"].items():
+        txt += (f"  {L}: {e['n']:,} crossings, |du| p50 {e['du_p50_um']:.2f} / p99 {e['du_p99_um']:.1f} um, "
+                f"|dv| p50 {e['dv_p50_um']:.2f} / p99 {e['dv_p99_um']:.1f} um, width ratio median "
+                f"{e['sigu_ratio_median']:.4f}, within 2%: {100 * e['within_2pct']:.1f}%\n")
+    txt += (f"  cluster/module mismatches in the producer's selections: {rep_val['n_bad_det']}\n\n"
+            "EXCLUDED TRACKS are as in study 19 (tie / no-owner / unjoined / covariance absent); track\n"
+            "classes, A and B categories are defined on the study-19 pages and in spix_glossary.txt.")
+    fig.text(0.04, 0.93, txt, fontsize=8.2, va="top", family="monospace", wrap=True)
+    return fig
+
+
+def _refit_summary_page(tab, res, classes, variants):
+    Ls = res["layers"]
+    qs = [("containment", "target containment  [fraction]", False),
+          ("median_su_um", "median projected sigma_u  [um]", True),
+          ("B_per_covered", "background clusters per covered projection  [count]", True),
+          ("chosen_A-in_given_A_in", "P(chosen = A-in | A-in exists)  [fraction]", False)]
+    fig, axs = plt.subplots(len(classes), len(qs), figsize=(19, 3.0 * len(classes) + 1.2), squeeze=False)
+    for ci, cname in enumerate(classes):
+        for qi, (key, lab, logy) in enumerate(qs):
+            ax = axs[ci][qi]
+            for v in variants:
+                if key.startswith("chosen") and v == "none":
+                    continue
+                y = [tab[v][cname][f"IL{L}"].get(key, np.nan) for L in Ls]
+                ax.plot(range(len(Ls)), y, "o-", ms=3, label=v, **REFIT_VAR_STYLE[v])
+            ax.set_xticks(range(len(Ls)), [f"IL{L}" for L in Ls])
+            ax.grid(alpha=.3, which="both")
+            ax.tick_params(labelsize=7)
+            if logy:
+                ax.set_yscale("log")
+            if ci == 0:
+                ax.set_title(lab, fontsize=9)
+            if qi == 0:
+                ax.set_ylabel(f"{cname}\n(visit order ->)", fontsize=8)
+            if ci == 0 and qi == 0:
+                ax.legend(fontsize=7)
+    fig.suptitle("Refit-update projection, per track class, layers in VISIT order: containment, window "
+                 "width, background in reach, and how often the metric chose the target", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    return fig
+
+
+def _refit_layer_page(res, L, cls_sel, title, variants, nsig):
+    import ot_projection as OPJ
+    fig, axs = plt.subplots(len(variants), len(PROJ_QTY), figsize=(24, 2.8 * len(variants) + 1.2),
+                            squeeze=False)
+    ref = res["variants"]["none"]["rows"]
+    inl = (ref["layer"] == L) & np.isin(ref["cls"], cls_sel) & np.isin(ref["cat"], (0, 2, 3, 4))
+    for qi, (q, qlab, sc) in enumerate(PROJ_QTY):
+        vv = ref[q][inl].astype(np.float64) * sc
+        if q == "d":
+            edges = np.linspace(0, 10, 81)
+        else:
+            hi = np.nanpercentile(np.abs(vv), 99.5) if np.isfinite(vv).any() else 1.0
+            edges = np.linspace(-hi, hi, 81)
+        for vi, v in enumerate(variants):
+            ax = axs[vi][qi]
+            R = res["variants"][v]["rows"]
+            base = (R["layer"] == L) & np.isin(R["cls"], cls_sel)
+            n_all = int(np.isfinite(R[q][base].astype(np.float64)).sum())
+            for c in range(5):
+                x = R[q][base & (R["cat"] == c)].astype(np.float64) * sc
+                x = x[np.isfinite(x)]
+                if not len(x):
+                    continue
+                h, _ = np.histogram(np.clip(x, edges[0], edges[-1]), edges)
+                ax.stairs(h / max(n_all, 1), edges, **PROJ_CAT_STYLE[c],
+                          label=f"{OPJ.CATEGORIES[c]} n={len(x):,}")
+            if q == "d":
+                ax.axvline(nsig, color="#555", lw=0.8, ls=":")
+            ax.set_yscale("log")
+            ax.grid(alpha=.25)
+            ax.tick_params(labelsize=6)
+            ax.legend(fontsize=5.2, loc="upper right")
+            if vi == 0:
+                ax.set_title(qlab, fontsize=8)
+            if qi == 0:
+                ax.set_ylabel(f"{v}\nfraction of all\nclusters in panel / bin", fontsize=7)
+            if vi == len(variants) - 1:
+                ax.set_xlabel(qlab + "   (edge bins hold overflow)", fontsize=7)
+    fig.suptitle(f"IL{L}, {title}: A / B residuals against the projection each variant makes here "
+                 f"(IL{res['layers'][0]} is visited first and is identical for all)", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    return fig
+
+
+def study_ot_refit_projection(X, K, P, ax_row, out):
+    """(20) Refit-update projection: the A vs B picture under the projection a
+    refit actually uses -- outside-in, choosing and updating at each layer --
+    for four ranking metrics plus the no-update baseline. See ot_refit_projection.
+
+    WHY FOUR METRICS. Which cluster a refit updates on decides everything after
+    it: a wrong choice pulls the state, and the next layer's window is centred
+    on the pulled state. The producer's metric never uses the track's own
+    uncertainty; the innovation chi2 does; the tuned weights are an empirical
+    approximation of it; the oracle is the ceiling. Running all four on the same
+    candidates shows how much of the gap to the ceiling each closes.
+
+    WHY THE REPLAY GATE. The update is a reimplementation; replaying the
+    producer's own selections must reproduce its recorded running projection,
+    or the study measures a different refit (REFIT_REPLAY_LIMITS).
+    """
+    import ot_refit_projection as RPJ
+    import ot_projection as OPJ
+
+    def _skip(msg):
+        for a in ax_row:
+            a.axis("off")
+        ax_row[0].text(0.02, 0.5, "refit-update projection SKIPPED:\n" + msg, fontsize=7,
+                       wrap=True, va="center")
+        out["ot_refit_projection"] = {"skipped": msg}
+        print(f"    SKIPPED: {msg}")
+
+    files = out.get("_proj_inputs") or out["_inputs"]
+    geom = out.get("_geometry")
+    if not geom or not os.path.exists(geom):
+        return _skip("no module geometry JSON (--geometry)")
+    try:
+        OPJ.check_inputs(files[0], with_refit=True)
+    except SystemExit as e:
+        return _skip(str(e))
+    mask = out.get("_refit_mask", "AAAA")
+    nsig = 4.0
+    step = [0]
+
+    def _log(msg):
+        step[0] += 1
+        if step[0] % 10 == 0:
+            print(msg)
+    res = RPJ.run(files, geom, mask=mask, use_angles="alphaBeta", nsig=nsig,
+                  chunk=out.get("_proj_chunk", 10), nev=out.get("_proj_nev"), replay=True, log=_log,
+                  producer_q=out.get("_producer_q", "natural"), calibration=out.get("_refit_calibration"))
+    variants = list(res["variants"])
+    classes = OPJ.TRACK_CLASSES
+
+    # ---- replay gate --------------------------------------------------------
+    V = res["replay"]
+    lim = REFIT_REPLAY_LIMITS
+    rep = {"n_bad_det": int(V["n_bad_det"]), "per_layer": {}}
+    bad = []
+    for L in (4, 3, 2, 1):
+        m = V["layer"] == L
+        if not m.any():
+            continue
+        e = {"n": int(m.sum()),
+             "du_p50_um": float(np.median(np.abs(V["du"][m])) * 1e4),
+             "du_p99_um": float(np.percentile(np.abs(V["du"][m]), 99) * 1e4),
+             "dv_p50_um": float(np.median(np.abs(V["dv"][m])) * 1e4),
+             "dv_p99_um": float(np.percentile(np.abs(V["dv"][m]), 99) * 1e4),
+             "sigu_ratio_median": float(np.median(V["rsu"][m])),
+             "sigv_ratio_median": float(np.median(V["rsv"][m])),
+             "within_2pct": float(np.mean((np.abs(V["rsu"][m] - 1) < 0.02) & (np.abs(V["rsv"][m] - 1) < 0.02)))}
+        rep["per_layer"][f"IL{L}"] = e
+        if e["du_p50_um"] > lim["du_p50_cm"] * 1e4 or e["dv_p50_um"] > lim["dv_p50_cm"] * 1e4 \
+                or e["du_p99_um"] > lim["du_p99_cm"] * 1e4 or e["dv_p99_um"] > lim["dv_p99_cm"] * 1e4 \
+                or abs(e["sigu_ratio_median"] - 1) > lim["sig_ratio_median_tol"] \
+                or e["within_2pct"] < lim["sig_ratio_within_2pct_min"]:
+            bad.append(f"IL{L}")
+    for L, e in rep["per_layer"].items():
+        print(f"    replay {L}: |du| p50 {e['du_p50_um']:.2f} p99 {e['du_p99_um']:.1f} um, |dv| p50 "
+              f"{e['dv_p50_um']:.2f} p99 {e['dv_p99_um']:.1f} um, width ratio {e['sigu_ratio_median']:.4f}, "
+              f"within 2% {100 * e['within_2pct']:.1f}%")
+    if bad or rep["n_bad_det"]:
+        raise SystemExit(f"refit replay DISAGREES with the producer on {bad} "
+                         f"(bad-det {rep['n_bad_det']}): {rep}. Do not trust study 20.")
+
+    tab = _refit_tables(res, classes)
+    tbc = res["tracks_by_class"]
+
+    # ---- summary row on the omnibus grid -------------------------------------
+    Ls = res["layers"]
+    for ai, (key, lab, logy) in enumerate((
+            ("containment", "target containment, perfect tracks  [fraction]", False),
+            ("median_su_um", "median projected sigma_u, perfect  [um]", True),
+            ("chosen_A-in_given_A_in", "P(chosen = A-in | A-in exists), perfect", False))):
+        ax = ax_row[ai]
+        for v in variants:
+            if key.startswith("chosen") and v == "none":
+                continue
+            y = [tab[v]["perfect"][f"IL{L}"].get(key, np.nan) for L in Ls]
+            ax.plot(range(len(Ls)), y, "o-", label=v, **REFIT_VAR_STYLE[v])
+        ax.set_xticks(range(len(Ls)), [f"IL{L}" for L in Ls])
+        ax.set_title(lab + f"\n{mask}, visit order ->", fontsize=9)
+        ax.grid(alpha=.3, which="both")
+        if logy:
+            ax.set_yscale("log")
+        if ai == 0:
+            ax.legend(fontsize=7)
+    if len(ax_row) > 3:
+        ax = ax_row[3]
+        ax.axis("off")
+        ax.text(0.0, 1.0, "VARIANTS (full text: page 1 of spix_ot_refit_projection_" + mask + ".pdf)\n"
+                + "\n".join(f"  {v}: {RPJ.VARIANT_DEF[v]}" for v in variants)
+                + f"\nUpdate: sequential x, y, cotA, cotB (angles: {res['use_angles']}),"
+                  "\n  Q = 0.00075/pT, candidates = the 4-sigma ellipse, all modules."
+                  "\nReplay vs CMSSW (producer's own selections, alpha-only):\n"
+                + "\n".join(f"  {L}: |du| p50 {e['du_p50_um']:.2f} um, width {e['sigu_ratio_median']:.3f}"
+                            for L, e in rep["per_layer"].items()),
+                fontsize=5.8, va="top", family="monospace", transform=ax.transAxes)
+
+    # ---- the PDF ---------------------------------------------------------------
+    from matplotlib.backends.backend_pdf import PdfPages
+    od = out["_outdir"]
+    pdf_path = os.path.join(od, f"spix_ot_refit_projection_{mask}.pdf")
+    pngs = []
+    contaminated = [ci for ci, c in enumerate(classes) if c != "perfect"]
+    with PdfPages(pdf_path) as pdf:
+        for fig, name in ((_refit_explain_page(res, rep, mask, nsig), "explain"),
+                          (_refit_summary_page(tab, res, classes, variants), "summary")):
+            pdf.savefig(fig)
+            p_ = os.path.join(od, f"spix_ot_refit_projection_{mask}_{name}.png")
+            fig.savefig(p_, dpi=110)
+            plt.close(fig)
+            pngs.append(p_)
+        for L in Ls:
+            for sel_cls, title, tag in (([0], "perfect tracks", "perfect"),
+                                        (contaminated, "contaminated tracks (all non-perfect classes)",
+                                         "contaminated")):
+                fig = _refit_layer_page(res, L, sel_cls, title, variants, nsig)
+                pdf.savefig(fig)
+                p_ = os.path.join(od, f"spix_ot_refit_projection_{mask}_IL{L}_{tag}.png")
+                fig.savefig(p_, dpi=100)
+                plt.close(fig)
+                pngs.append(p_)
+    for v in variants:
+        print(f"    {v:10s} " + "  ".join(
+            f"IL{L} cont {tab[v]['perfect'][f'IL{L}']['containment']:.3f} "
+            f"su {tab[v]['perfect'][f'IL{L}']['median_su_um']:.0f}um"
+            + (f" pur {tab[v]['perfect'][f'IL{L}']['chosen_A-in_given_A_in']:.3f}" if v != "none" else "")
+            for L in Ls))
+    out["ot_refit_projection"] = {
+        "mask": mask, "layers": Ls, "use_angles": res["use_angles"], "n_events": res["n_events"],
+        "nsig": nsig, "tracks_by_class": tbc, "replay_vs_cmssw": rep,
+        "gated_scalar_updates": {v: res["variants"][v]["gated"] for v in variants},
+        "variant_definitions": RPJ.VARIANT_DEF, "per_variant_class_layer": tab,
+        "figures": pngs + [pdf_path]}
+
+
 SECTIONS = [
     ("A. Cluster cones: how much is in reach of a track?",
      "Occupancy and containment around a projected track -- the raw material every"
@@ -3976,7 +4332,8 @@ SECTIONS = [
      "The OT track's own helix and covariance projected onto every IT barrel module"
      " its 4-sigma ellipse overlaps, with no KF update: the majority-owner TP's"
      " cluster (target) against every other cluster in reach, per layer.",
-     [("OT-only projection targets vs background", study_ot_projection_targets, 3)]),
+     [("OT-only projection targets vs background", study_ot_projection_targets, 3),
+      ("OT refit-update projection", study_ot_refit_projection, 4)]),
 ]
 
 # Flat view, kept because the figure is still one grid and several studies index
@@ -4024,6 +4381,16 @@ def main():
                          "its inputs; defaults to -i")
     ap.add_argument("--proj-nev", type=int, default=None,
                     help="event cap for study 19 (default: all)")
+    ap.add_argument("--refit-mask", default="AAAA",
+                    help="activeSP mask for study 20's refit-update projection "
+                         "(character i = layer i+1; visited outermost first)")
+    ap.add_argument("--refit-calibration", default=None,
+                    help="v3 refit calibration JSON (refit_calibration_fit.export_refit_calibration) "
+                         "for study 20; default: the producer's covariance model")
+    ap.add_argument("--producer-q", default="natural", choices=("natural", "f629627"),
+                    help="which producer Q wrote the refit tables study 20 replays: "
+                         "'natural' for itot_tp_* (fixed producer), 'f629627' for refit nanos "
+                         "produced before 2026-09-24")
     ap.add_argument("--proj-chunk", type=int, default=10,
                     help="events per chunk for study 19 (~0.35 GB RSS at 10)")
     args = ap.parse_args()
@@ -4046,7 +4413,8 @@ def main():
            "_menu_cache_mode": args.menu_cache_mode,
            "_menu_export_tracks": args.menu_export_tracks,
            "_geometry": args.geometry, "_proj_nev": args.proj_nev,
-           "_proj_chunk": args.proj_chunk,
+           "_proj_chunk": args.proj_chunk, "_refit_mask": args.refit_mask,
+           "_producer_q": args.producer_q, "_refit_calibration": args.refit_calibration,
            "_proj_inputs": ([f for g in args.proj_inputs.split(",") for f in
                              (sorted(_glob.glob(g)) or [g])] if args.proj_inputs else None)}
 
