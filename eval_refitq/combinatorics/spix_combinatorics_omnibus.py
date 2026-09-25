@@ -3223,6 +3223,289 @@ def _draw_combined(ax_row, qual, layers, cost):
     ax.tick_params(labelsize=7, colors=INK2)
 
 
+
+def study_cluster_angles_by_layer(X, K, P, ax_row, out):
+    """(17) per-layer cluster alpha/beta, and the residual against the track.
+
+    WHY PER LAYER. A cluster's incidence angle is set by where it sits: at IL1's
+    radius a track crosses at a much steeper angle than at IL4, so a pooled
+    alpha distribution is a mixture of four different things and its width means
+    nothing. MEASURED, 1 to 99 percentile of the cluster's own alpha term:
+    IL1 +-0.026, IL2 +-0.014, IL3 +-0.010, IL4 +-0.008.
+
+    WHY TWO BREAKDOWNS ON THE RESIDUAL. Whether the cluster belongs to the track
+    it was attached to is the cluster-level question, and it is not the same as
+    whether the TRACK is clean: a correctly assigned cluster on a track carrying
+    three wrong hits still has a good angle residual, and its own residual is
+    what a per-cluster gate would cut on. Both splits are applied at once --
+    assignment as line style, the track's wrong-hit count as colour -- so
+    neither hides the other.
+
+    Reads the angle rows from the menu census rather than re-fitting: they are
+    produced there by KF.angle_rows for one emitted track in ANGLE_SAMPLE, and
+    re-deriving them here would be a second implementation of the same thing.
+    """
+    import importlib.util as _ilu
+    _here = os.path.dirname(os.path.abspath(__file__))
+
+    def _mod(name):
+        sp = _ilu.spec_from_file_location("_" + name,
+                                          os.path.join(_here, name + ".py"))
+        m = _ilu.module_from_spec(sp)
+        sp.loader.exec_module(m)
+        return m
+
+    def _skip(msg):
+        for a in ax_row:
+            a.axis("off")
+        ax_row[0].text(0.02, 0.5, msg, fontsize=7, wrap=True, va="center")
+        out["cluster_angles_by_layer"] = {"skipped": msg}
+
+    TF = _mod("tp_findability")
+    KF = TF.KF
+    cdir = out.get("_menu_cache") or os.path.join(_here, "cache")
+    ds = sorted(_glob.glob(os.path.join(cdir, "tpcensus_*")))
+    if not ds:
+        return _skip("no census under %s; run the menu study first, or point "
+                     "--menu-cache at one" % cdir)
+    C = TF.load(ds[-1], with_tracks=True)
+    per_seed = [v for v in C.get("angles", {}).values() if len(v)]
+    if not per_seed:
+        return _skip("that census carries no angle rows; re-run it with "
+                     "--menu-export-tracks so KF.angle_rows is stored")
+    A = np.concatenate(per_seed, axis=0)
+    ci = {n: i for i, n in enumerate(KF.ANGLE_COLS)}
+    lay = A[:, ci["layer"]].astype(int)
+    res = {"a": A[:, ci["res_a"]].astype(float),
+           "b": A[:, ci["res_b"]].astype(float)}
+    meas = {"a": res["a"] + A[:, ci["pred_a"]].astype(float),
+            "b": res["b"] + A[:, ci["pred_b"]].astype(float)}
+    wrong_cluster = A[:, ci["hit_wrong"]].astype(float) > 0
+    nwc = np.clip(A[:, ci["n_wrong"]].astype(float), 0, 3).astype(int)
+    LAYERS = [1, 2, 3, 4]
+    NWLAB = ["0 wrong", "1 wrong", "2 wrong", r"$\geq$3 wrong"]
+    COLS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728"]
+
+    summary = {"n_clusters": int(len(A)), "per_layer": {}}
+    for ax, side, nm in ((ax_row[0], "a",
+                          r"cluster $d\phi/dr$ [rad/cm]"),
+                         (ax_row[1], "b",
+                          r"cluster $\cot\theta$ [unitless]")):
+        v = meas[side]
+        rng = float(np.nanpercentile(np.abs(v), 99)) if len(v) else 1.0
+        bins = np.linspace(-rng, rng, 90)
+        for L in LAYERS:
+            s = lay == L
+            if s.sum() < 20:
+                continue
+            ax.hist(v[s], bins=bins, histtype="step", density=True,
+                    color=COLS[L - 1], label="IL%d (n=%s)" % (L, f"{int(s.sum()):,}"))
+            summary["per_layer"].setdefault("IL%d" % L, {})["meas_%s_p1_p99" % side] = \
+                [float(np.percentile(v[s], 1)), float(np.percentile(v[s], 99))]
+        ax.set_yscale("log")
+        ax.set_xlabel(nm)
+        ax.set_ylabel("density [1/bin]")
+        ax.legend(fontsize=6)
+        ax.grid(alpha=.3)
+        ax.set_title("(17) %s per layer" % nm)
+
+    f2, axs = plt.subplots(2, len(LAYERS), figsize=(4.3 * len(LAYERS), 7.4),
+                           squeeze=False)
+    for r, side in enumerate(("a", "b")):
+        v = res[side]
+        rng = float(np.nanpercentile(np.abs(v), 99)) if len(v) else 1.0
+        bins = np.linspace(-rng, rng, 70)
+        for c, L in enumerate(LAYERS):
+            ax = axs[r][c]
+            base = lay == L
+            for k in range(4):
+                for wrongc, style in ((False, "-"), (True, "--")):
+                    s = base & (nwc == k) & (wrong_cluster == wrongc)
+                    if s.sum() < 30:
+                        continue
+                    ax.hist(v[s], bins=bins, histtype="step", density=True,
+                            color=COLS[k], linestyle=style, lw=1.1,
+                            label="%s, %s (n=%s)" % (
+                                NWLAB[k], "other TP" if wrongc else "same TP",
+                                f"{int(s.sum()):,}"))
+                    # robust_sigma returns (mad, half 16-84) and the two
+                    # disagree exactly where it matters here: a wrongly
+                    # assigned cluster's residual is tail-heavy, so keep both
+                    mad, q68 = robust_sigma(v[s])
+                    summary.setdefault("residual_sigma", {})[
+                        "%s:IL%d/%sTP/%dwrong" % (
+                            side, L, "other" if wrongc else "same", k)] = \
+                        {"mad": mad, "q68": q68, "n": int(s.sum())}
+            ax.set_yscale("log")
+            ax.set_xlabel(r"$\Delta(d\phi/dr)$ [rad/cm]" if side == "a"
+                          else r"$\Delta\cot\theta$ [unitless]")
+            if c == 0:
+                ax.set_ylabel("density [1/bin]")
+            ax.grid(alpha=.3)
+            ax.legend(fontsize=5)
+            ax.set_title("IL%d: %s residual" % (L, "alpha" if side == "a"
+                                                else "beta"), fontsize=9)
+    f2.suptitle("(17) cluster angle residual per layer -- colour is the TRACK's "
+                "wrong-hit count, dashed is a cluster from a different "
+                "TrackingParticle", fontsize=10)
+    f2.tight_layout(rect=(0, 0, 1, 0.96))
+    p2 = os.path.join(out["_outdir"], "spix_cluster_angles_by_layer.png")
+    f2.savefig(p2, dpi=130, bbox_inches="tight")
+    plt.close(f2)
+    summary["figure"] = p2
+    out["cluster_angles_by_layer"] = summary
+
+
+def study_mva_score_correlation(X, K, P, ax_row, out):
+    """(18) rank correlation between the shipped discriminants, per activeSP build.
+
+    WHY PER BUILD. The scores are trained ONCE on the whole census, so their
+    correlation structure is not guaranteed to be the same in every
+    configuration: a build with fewer instrumented IT layers forms different
+    seeds, and its tracks are a different population. If two scores are
+    redundant in AAAA but separate in IAAA, keeping both is justified by the
+    build that needs them, and a single pooled matrix would hide that.
+
+    SPEARMAN, NOT PEARSON. These are selection scores used by thresholding, so
+    what matters is whether they ORDER tracks the same way; a monotone
+    re-scaling of one score would move Pearson and not change any cut.
+
+    Reads the exported site rather than retraining: the scores are produced by
+    export_site (one model per discriminant, trained on event-disjoint folds),
+    and retraining here would be a second implementation whose numbers could
+    drift from the ones the page actually shows.
+    """
+    od = out.get("_outdir", ".")
+    site = out.get("_site") or os.path.join(od, "site")
+    mpath = os.path.join(site, "manifest.json")
+
+    def _skip(msg):
+        for a in ax_row:
+            a.axis("off")
+        ax_row[0].text(0.02, 0.5, msg, fontsize=7, wrap=True, va="center")
+        out["mva_score_correlation"] = {"skipped": msg}
+
+    if not os.path.exists(mpath):
+        return _skip("no exported site at %s; run export_site first or pass "
+                     "--site" % site)
+    m = json.load(open(mpath))
+    if "score" not in m or "track" not in m:
+        return _skip("that site carries no score table")
+    SC, TR = m["score"], m["track"]
+    names = SC["cols"]
+    nsc, ntc = len(names), len(TR["cols"])
+    N = TR["rows"]
+    S = np.memmap(os.path.join(site, SC["file"]), dtype=np.uint8,
+                  mode="r").reshape(N, nsc)
+    T = np.memmap(os.path.join(site, TR["file"]), dtype=np.float32,
+                  mode="r").reshape(N, ntc)
+    j_seed = TR["cols"].index("seed_idx")
+    tag_of = {s["idx"]: s["tag"] for s in m["seeds"]}
+
+    rng = np.random.default_rng(0)
+    take = min(N, 1_500_000)
+    sub = np.sort(rng.choice(N, take, replace=False))
+    seed_idx = np.asarray(T[sub, j_seed], np.int64)
+    SS = np.asarray(S[sub, :], np.float64)
+
+    def rank(v):
+        o = np.argsort(v, kind="stable")
+        r = np.empty(len(v))
+        r[o] = np.arange(len(v))
+        return r
+
+    builds = list(m["builds"])
+    res, mats = {}, {}
+    for b in builds:
+        allowed = set(m["builds"][b])
+        keep = np.fromiter((tag_of.get(i) in allowed for i in seed_idx),
+                           bool, len(seed_idx))
+        n = int(keep.sum())
+        if n < 5000:
+            res[b] = {"n": n, "skipped": "too few tracks"}
+            continue
+        R = np.column_stack([rank(SS[keep, k]) for k in range(nsc)])
+        Cm = np.corrcoef(R, rowvar=False)
+        mats[b] = Cm
+        iu = np.triu_indices(nsc, 1)
+        off = np.abs(Cm[iu])
+        res[b] = {"n": n, "max_abs_offdiag": float(off.max()),
+                  "mean_abs_offdiag": float(off.mean()),
+                  "most_correlated": [names[iu[0][off.argmax()]],
+                                      names[iu[1][off.argmax()]]],
+                  "matrix": {names[i]: {names[j]: float(Cm[i, j])
+                                        for j in range(nsc)}
+                             for i in range(nsc)}}
+
+    # main row: how redundant the set is, build by build
+    ax = ax_row[0]
+    ok = [b for b in builds if b in mats]
+    ax.plot(range(len(ok)), [res[b]["max_abs_offdiag"] for b in ok],
+            marker="o", ms=4, label="most correlated pair")
+    ax.plot(range(len(ok)), [res[b]["mean_abs_offdiag"] for b in ok],
+            marker="s", ms=4, label="mean over pairs")
+    ax.set_xticks(range(len(ok)))
+    ax.set_xticklabels(ok, rotation=90, fontsize=6)
+    ax.set_ylabel(r"$|\rho_{\rm Spearman}|$ [unitless]")
+    ax.set_ylim(0, 1)
+    ax.axhline(0.95, color="crimson", ls=":", lw=1)
+    ax.legend(fontsize=6)
+    ax.grid(alpha=.3)
+    ax.set_title("(18) score redundancy per activeSP build", fontsize=9)
+
+    # and the spread of each pair across builds: a pair that is redundant
+    # everywhere is a drop candidate, one that varies is not
+    ax = ax_row[1]
+    iu = np.triu_indices(nsc, 1)
+    pair_lab, pair_lo, pair_hi = [], [], []
+    for a_, b_ in zip(*iu):
+        v = [abs(mats[b][a_, b_]) for b in ok]
+        pair_lab.append(f"{names[a_].replace('mva_', '')}/"
+                        f"{names[b_].replace('mva_', '')}")
+        pair_lo.append(min(v))
+        pair_hi.append(max(v))
+    order = np.argsort(pair_hi)[::-1][:14]
+    y = np.arange(len(order))
+    ax.hlines(y, [pair_lo[i] for i in order], [pair_hi[i] for i in order],
+              lw=3, alpha=.6)
+    ax.plot([pair_hi[i] for i in order], y, "o", ms=3)
+    ax.set_yticks(y)
+    ax.set_yticklabels([pair_lab[i] for i in order], fontsize=5)
+    ax.set_xlabel(r"$|\rho_{\rm Spearman}|$ range over builds [unitless]")
+    ax.set_xlim(0, 1)
+    ax.axvline(0.95, color="crimson", ls=":", lw=1)
+    ax.grid(alpha=.3)
+    ax.set_title("(18) most correlated pairs, min-max over builds", fontsize=9)
+
+    # extra figure: the full matrix for every build
+    nb = len(ok)
+    nc = 4
+    nr = int(np.ceil(nb / nc))
+    f2, axs = plt.subplots(nr, nc, figsize=(3.5 * nc, 3.3 * nr), squeeze=False)
+    short = [n.replace("mva_", "") for n in names]
+    for i, b in enumerate(ok):
+        a = axs[i // nc][i % nc]
+        im = a.imshow(mats[b], vmin=-1, vmax=1, cmap="RdBu_r")
+        a.set_xticks(range(nsc)); a.set_yticks(range(nsc))
+        a.set_xticklabels(short, rotation=90, fontsize=5)
+        a.set_yticklabels(short, fontsize=5)
+        a.set_title(f"{b}  (n={res[b]['n']:,})", fontsize=8)
+        for p in range(nsc):
+            for q in range(nsc):
+                a.text(q, p, f"{mats[b][p, q]:.2f}", ha="center", va="center",
+                       fontsize=3.6,
+                       color="white" if abs(mats[b][p, q]) > 0.6 else "black")
+    for i in range(nb, nr * nc):
+        axs[i // nc][i % nc].axis("off")
+    f2.colorbar(im, ax=axs, shrink=0.5,
+                label=r"$\rho_{\rm Spearman}$ [unitless]")
+    f2.suptitle("(18) full rank-correlation matrix of the shipped "
+                "discriminants, per activeSP build", fontsize=10)
+    p2 = os.path.join(od, "spix_mva_score_correlation.png")
+    f2.savefig(p2, dpi=130, bbox_inches="tight")
+    plt.close(f2)
+    out["mva_score_correlation"] = {"scores": names, "n_sampled": int(take),
+                                    "figure": p2, "per_build": res}
 SECTIONS = [
     ("A. Cluster cones: how much is in reach of a track?",
      "Occupancy and containment around a projected track -- the raw material every"
@@ -3237,7 +3520,9 @@ SECTIONS = [
      [("angle discrimination", study_angle_discrimination, 2),
       ("charge readout gate", study_charge_gate, 2),
       ("unbiased containment", study_true_containment, 2),
-      ("z0 resolution (seeding)", study_z0_resolution, 2)]),
+      ("z0 resolution (seeding)", study_z0_resolution, 2),
+      ("cluster angles per layer", study_cluster_angles_by_layer, 2),
+      ("MVA score correlation per build", study_mva_score_correlation, 2)]),
 
     ("C. Fitting and cluster-combination choices",
      "How hits should be weighted in the refit, and which activeSP combinations"
@@ -3279,6 +3564,9 @@ def main():
                          "is FASTER (measured 27.8 vs 62.9 s/event at 4 vs 16)")
     ap.add_argument("--menu-budget-gb", type=float, default=0.4)
     ap.add_argument("--menu-rss-gb", type=float, default=8.0)
+    ap.add_argument("--site", default=None,
+                    help="exported site directory, for the MVA score "
+                         "correlation study; defaults to <outdir>/site")
     ap.add_argument("--menu-cache",
                     default=os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                          "cache"))
@@ -3307,6 +3595,7 @@ def main():
            "_menu_inputs": args.menu_inputs, "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
            "_menu_budget_gb": args.menu_budget_gb,
            "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
+           "_site": args.site,
            "_menu_cache_mode": args.menu_cache_mode,
            "_menu_export_tracks": args.menu_export_tracks}
 
