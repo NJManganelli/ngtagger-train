@@ -77,6 +77,11 @@ def main(argv=None):
     p_tq.add_argument("-i", "--inputs", nargs="+", required=True, help="withGen L1TrkNano files")
     p_tq.add_argument("-o", "--output", required=True)
     p_tq.add_argument("--track-table", default="L1TTrack", help="L1TTrack or L1TExtTrack")
+    # A binary truth flag orders tracks by existence, not by how much a tagger
+    # should trust their d0. docs/track-resolution-quality-study.md measures the
+    # alternative -- a per-track conditional WIDTH of the truth residual, which
+    # needs majority-owner matching and per-system correct/wrong hit counts that
+    # the associator flags cannot supply -- and lists what to add here.
     p_tq.add_argument("--label", default="genuine", choices=["genuine", "looselyGenuine"])
     p_tq.add_argument("--max-events", type=int, default=None)
     p_tq.add_argument("--conifer", action="store_true", help="export conifer model json (+cpp project)")
