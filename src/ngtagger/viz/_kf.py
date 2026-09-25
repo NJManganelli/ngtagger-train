@@ -18,13 +18,9 @@ def _helix_global(a, R):
     SmartPixelsHelixProjector::crossLayer's analytic step. a=(rInv,phi0,tanL,z0,d0);
     POCA x0=d0*sin(phi0), y0=-d0*cos(phi0). Returns (pos[3], dir[3], s) or None."""
     rInv, phi0, tanL, z0, d0 = a
-    # Mirror the CMSSW producer's SIGN FIX (SmartPixelsHelixProjector::crossLayer):
-    # the stored rInv follows the CMSSW TTTrack convention, which curls opposite to
-    # this (sin(phi0+psi))/rInv parametrization. The producer negates the signed
-    # curvature at crossLayer entry so the IT crossing lands on the correct (real-
-    # digi) side; this replay must negate identically to stay faithful to it (and to
-    # match the OT stubs / drawn helix). z0/tanL and arc length are unaffected.
-    rInv = -rInv
+    # TTTrack conventions as they are (as SmartPixelsHelixProjector::crossLayer):
+    # rInv > 0 turns CLOCKWISE, phi(s) = phi0 - rInv s; centre at
+    # (x0 + sin(phi0)/rInv, y0 - cos(phi0)/rInv).
     x0 = d0 * np.sin(phi0); y0 = -d0 * np.cos(phi0)
     c0 = np.cos(phi0); s0 = np.sin(phi0)
     if abs(rInv) < 1e-6:
@@ -35,16 +31,15 @@ def _helix_global(a, R):
         gx = x0 + s * c0; gy = y0 + s * s0
         dirx = c0; diry = s0
     else:
-        Rr = 1.0 / rInv; cx = x0 - Rr * s0; cy = y0 + Rr * c0
+        Rr = 1.0 / rInv; cx = x0 + Rr * s0; cy = y0 - Rr * c0
         dcen = np.hypot(cx, cy); absR = abs(Rr)
         if R > dcen + absR or R < abs(dcen - absR): return None
         cosArg = (absR * absR + dcen * dcen - R * R) / (2.0 * absR * dcen)
         if cosArg < -1.0 or cosArg > 1.0: return None
         delta = np.arccos(max(-1.0, min(1.0, cosArg)))
-        dpsi = delta if rInv > 0 else -delta
-        s = abs(dpsi) * absR; psi = rInv * s
-        gx = x0 + (np.sin(phi0 + psi) - s0) / rInv
-        gy = y0 - (np.cos(phi0 + psi) - c0) / rInv
+        s = delta * absR; psi = -rInv * s
+        gx = x0 - (np.sin(phi0 + psi) - s0) / rInv
+        gy = y0 + (np.cos(phi0 + psi) - c0) / rInv
         dirx = np.cos(phi0 + psi); diry = np.sin(phi0 + psi)
     gz = z0 + tanL * s
     return np.array([gx, gy, gz]), np.array([dirx, diry, tanL]), s
@@ -177,16 +172,15 @@ def _cyl_residuals(a, sx, sy_, sz, r_surf):
     if cr is not None:
         g, _, _ = cr
         return (r_surf * _wrap_phi(np.arctan2(g[1], g[0]) - phi_p), g[2] - sz)
-    # fallback: transverse closest approach on the (sign-fixed) helix circle
-    rf = -rInv
+    # fallback: transverse closest approach on the helix circle (TTTrack convention)
     x0 = d0 * np.sin(phi0); y0 = -d0 * np.cos(phi0)
-    if abs(rf) < 1e-6:          # straight line: project the point onto the line
+    if abs(rInv) < 1e-6:        # straight line: project the point onto the line
         dx, dy = np.cos(phi0), np.sin(phi0)
         s = (sx - x0) * dx + (sy_ - y0) * dy
         perp = (sx - x0) * (-dy) + (sy_ - y0) * dx
         return perp, z0 + tanL * max(s, 0.0) - sz
-    R = 1.0 / rf
-    cx = x0 - R * np.sin(phi0); cy = y0 + R * np.cos(phi0)
+    R = 1.0 / rInv
+    cx = x0 + R * np.sin(phi0); cy = y0 - R * np.cos(phi0)
     dist = max(np.hypot(sx - cx, sy_ - cy), 1e-9)
     res_perp = dist - abs(R)                           # distance to the circle
     ang_p = np.arctan2(sy_ - cy, sx - cx)
