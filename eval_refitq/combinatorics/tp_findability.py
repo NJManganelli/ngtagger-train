@@ -4,7 +4,7 @@ WHAT THIS PRODUCES. One entry for EVERY TrackingParticle that left at least one
 SmartPixels cluster or OT stub -- 9.52 million of them in the 1000-event PU200
 ttbar set, 9,515 per event -- carrying
 
-    key            (event << 20) | tpIdx, globally unique across the input set
+    key            (event << 20) | tpKey, globally unique across the input set
     pt eta phi     TP truth kinematics; phi [rad] is the azimuth at PRODUCTION
     d0 z0 vr       L1TTP d0 and z0 [cm] at the POCA to the beamline, production radius [cm]
     hit_it hit_ot  bitmasks of which IL1-IL4 / OL1-OL6 the TP actually hit
@@ -30,7 +30,7 @@ sigma) and the per-layer median radius (which picks each doublet's adjacent
 target layers). Both are measured ONCE on a calibration pass and written into
 the cache manifest, so every chunk and every later run sees the same numbers.
 
-TRUTH KINEMATICS COME FROM THE L1TTP TABLE, joined on (event, tpIdx) for IT
+TRUTH KINEMATICS COME FROM THE L1TTP TABLE, joined on (event, tpKey) for IT
 clusters and OT stubs alike. L1TTP holds charged TPs with pT >= 1 GeV only, so a
 TP below 1 GeV has pT (the hit's own tpPt) and hit pattern but NaN kinematics. So
 does a NEUTRAL TP: the cluster producer credits a cluster to the PARENT of its
@@ -55,10 +55,10 @@ NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
 CODE = {v: k for k, v in NAME.items()}
 ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
 # tpGenuine/tpCombinatoric/tpUnknown are the per-stub CMS truth flags, needed
-# because tpIdx = -1 cannot distinguish a merged cluster from noise. bend is the
+# because tpKey = -1 cannot distinguish a merged cluster from noise. bend is the
 # stub's own curvature estimate, which the seed and projection gates want and
 # could not use while it was not loaded at all.
-OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
+OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpKey", "tpPt",
            "tpGenuine", "tpCombinatoric", "tpUnknown", "bend"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
@@ -185,7 +185,7 @@ def calibrate(spec, nev, ptmin):
 
     sigz = {}
     for L in range(1, 7):
-        g = (bar & (O["layer"] == L) & (O["tpIdx"] >= 0) & (O["tpPt"] >= ptmin)
+        g = (bar & (O["layer"] == L) & (O["tpKey"] >= 0) & (O["tpPt"] >= ptmin)
              & np.isfinite(O["tp_z0"]))
         sigz[L] = rs(O["z"][g] - (O["tp_z0"][g] + O["r"][g] * O["tp_tanL"][g])) \
             if g.sum() >= 200 else 0.2
@@ -255,7 +255,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
     they are fitted.
 
     Event numbering carries a running offset across chunks AND across files, so
-    (event, tpIdx) stays globally unique and chunk censuses concatenate.
+    (event, tpKey) stays globally unique and chunk censuses concatenate.
     """
     paths = M.expand_inputs(spec)
     M.require_tp_table(paths)
@@ -263,7 +263,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
     itk = M.table_branches(paths[0], M.IT_TABLE, M.IT_COLS)
     otk = M.table_branches(paths[0], M.OT_TABLE, OT_COLS)
     seen = 0
-    for A in uproot.iterate(srcs, itk + otk + M.tp_branches(), step_size=step):
+    for A in uproot.iterate(srcs, itk + otk + M.tp_branches(paths[0]), step_size=step):
         # uproot.iterate IGNORES entry_stop when handed a list of files, so the
         # event limit has to be enforced here or -n 8 reads all 1000.
         if nev is not None:
@@ -295,20 +295,20 @@ def _unify(I, O, sigz_ot, bench=None):
     ol = O["layer"][bar]
     for L in range(1, 7):
         sig[ol == L] = sigz_ot.get(L, sigz_ot.get(str(L), 0.2))
-    # PER-STUB TRUTH IS THREE-VALUED AND tpIdx ALONE CANNOT EXPRESS IT.
-    # An OT stub carries tpIdx >= 0 only when the producer called it GENUINE.
+    # PER-STUB TRUTH IS THREE-VALUED AND tpKey ALONE CANNOT EXPRESS IT.
+    # An OT stub carries tpKey >= 0 only when the producer called it GENUINE.
     # A COMBINATORIC stub is a real merge of this particle's cluster with
     # another particle's, and an UNKNOWN stub is not linked to any particle;
-    # both carry tpIdx = -1 and so were indistinguishable, which made every
+    # both carry tpKey = -1 and so were indistinguishable, which made every
     # "wrong OT hit" look like noise when a quarter of them still carry this
     # track's position. Required, not inferred: guessing the split from the
-    # sign of tpIdx would reproduce exactly the miscount being removed.
+    # sign of tpKey would reproduce exactly the miscount being removed.
     need = ("tpGenuine", "tpCombinatoric", "tpUnknown")
     miss = [c for c in need if c not in O]
     if miss:
         raise SystemExit(
             f"L1TOTStub is missing {miss}: the OT truth counters need the "
-            f"per-stub CMS flags, and inferring them from tpIdx would silently "
+            f"per-stub CMS flags, and inferring them from tpKey would silently "
             f"merge combinatoric stubs into noise. Re-make the ntuple with "
             f"these branches.")
     ot_flag = np.where(O["tpGenuine"][bar] > 0, 1,
@@ -324,7 +324,7 @@ def _unify(I, O, sigz_ot, bench=None):
          "globalClusterCotTheta": np.r_[I["globalClusterCotTheta"], np.zeros(n)],
          "sigGlobalClusterCotTheta": np.r_[I["sigGlobalClusterCotTheta"],
                                            np.full(n, 1e9)],
-         "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
+         "tpKey": np.r_[I["tpKey"], O["tpKey"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          # 0 on every IT cluster: the code is only defined for an OT stub, and
          # track_rows gates on is_ot before reading it
@@ -354,7 +354,7 @@ def chunk_census(U):
     Kinematics are the L1TTP truth every hit of the TP carries identically
     (M.attach_tp_truth); NaN for TPs not in L1TTP (neutral or below 1 GeV).
     """
-    m = U["tpIdx"] >= 0
+    m = U["tpKey"] >= 0
     if not m.any():
         z = np.zeros(0)
         return {"key": z.astype(np.int64), "event": z.astype(np.int32),
@@ -363,7 +363,7 @@ def chunk_census(U):
                 "z0": z.astype(np.float32), "vr": z.astype(np.float32),
                 "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8)}
     gi = np.flatnonzero(m)
-    key = M.tp_key(U["event"][gi], U["tpIdx"][gi])
+    key = M.tp_key(U["event"][gi], U["tpKey"][gi])
     lay = U["layer"][gi]
     order = np.argsort(key, kind="stable")
     key_s, gi_s = key[order], gi[order]
@@ -507,10 +507,10 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         gck = o_keep.get("_gC")
         tripk = (o_keep["_gA"], o_keep["_gB"],
                  gck if gck is not None else o_keep["_gB"])
-        ta = U["tpIdx"][o_keep["_gA"]]
-        real = (ta >= 0) & (ta == U["tpIdx"][o_keep["_gB"]])
+        ta = U["tpKey"][o_keep["_gA"]]
+        real = (ta >= 0) & (ta == U["tpKey"][o_keep["_gB"]])
         if gck is not None:
-            real &= ta == U["tpIdx"][gck]
+            real &= ta == U["tpKey"][gck]
         base.update({
             "fit": float(o_keep["tracks_to_fit"]),
             "found_standalone": float(len(rk0)),

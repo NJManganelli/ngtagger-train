@@ -291,7 +291,7 @@ where the disks do the work.
   does. `matchport_` drives the wiring and the zero cut corroborates it, but
   the conflict is unresolved.
 - Per-stub truth on OT stubs is only populated for GENUINE stubs: of 294k OT
-  stubs, 49.2% genuine (tpIdx set), 26.3% combinatoric and 24.6% unknown (both
-  tpIdx = -1). So "wrong hit" on an OT stub means "not provably from the
+  stubs, 49.2% genuine (tpKey set; tpIdx on older nanos), 26.3% combinatoric and 24.6% unknown (both
+  tpKey = -1). So "wrong hit" on an OT stub means "not provably from the
   owner". New counters `n_ot_right/wrong/comb/unknown` are being added; the IT
-  side cannot be split the same way because clusters carry only `tpIdx`.
+  side cannot be split the same way because clusters carry only `tpKey`.

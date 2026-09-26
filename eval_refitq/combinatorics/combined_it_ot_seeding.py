@@ -45,7 +45,7 @@ def rs(x):
     q=np.percentile(x,[15.865,84.135]); return float(0.5*(q[1]-q[0]))
 otsig={}
 for L in range(1,7):
-    g=bar&(O["layer"]==L)&(O["tpIdx"]>=0)&(O["tpPt"]>=PT)&np.isfinite(O["tp_z0"])
+    g=bar&(O["layer"]==L)&(O["tpKey"]>=0)&(O["tpPt"]>=PT)&np.isfinite(O["tp_z0"])
     if g.sum()<200: continue
     otsig[L]=rs(O["z"][g]-(O["tp_z0"][g]+O["r"][g]*O["tp_tanL"][g]))
 
@@ -56,7 +56,7 @@ U={"layer":np.r_[M.it_barrel_codes(I["layer"], "combined_it_ot_seeding"), O["lay
    "globalZ":np.r_[I["globalZ"], O["z"][bar]],
    "globalPhi":np.r_[I["globalPhi"], O["phi"][bar]],
    "sigY":np.r_[I["sigY"], sigY_ot],
-   "tpIdx":np.r_[I["tpIdx"], O["tpIdx"][bar]],
+   "tpKey":np.r_[I["tpKey"], O["tpKey"][bar]],
    "tpPt":np.r_[I["tpPt"], O["tpPt"][bar]],
    "event":np.r_[I["event"], O["event"][bar]]}
 # angles: IT from the model; OT stubs carry NONE, so their sigmas are made huge

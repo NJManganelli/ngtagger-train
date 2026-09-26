@@ -53,7 +53,7 @@ def rows_for_tracks(U, Q, TP, gk, trip, fit, seed_idx, arity, sysclass, rank,
     base = KF.track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank)
     col = {n: i for i, n in enumerate(KF.TRACK_COLS)}
     G, valid = T["GIDX"], T["VALID"]
-    tp = np.where(valid, U["tpIdx"][np.clip(G, 0, None)], -1)
+    tp = np.where(valid, U["tpKey"][np.clip(G, 0, None)], -1)
     nhit = np.maximum(valid.sum(axis=1), 1)
     sk = {k: np.maximum(base[:, col[f"sig_kf_{k}"]], 1e-30) if f"sig_kf_{k}" in col
           else np.sqrt(np.maximum(fit[f"var_{k}"], 1e-30))

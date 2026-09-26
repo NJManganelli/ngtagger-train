@@ -72,7 +72,7 @@ def build_tp_table(C):
             "n_layers": nlay.astype(np.float32)}
     A = np.stack([np.asarray(cols[c], np.float32)[keep] for c in TP_COLS], axis=1)
     # the int64 keys of the SURVIVING rows, for the exact track -> TP row link.
-    # The float32 "key" column cannot do this: (event << 20) | tpIdx needs 30
+    # The float32 "key" column cannot do this: (event << 20) | tpKey needs 30
     # bits and float32 holds 24, so at event 999 neighbouring keys 128 apart
     # collapse onto the same value.
     return A, C["found"][keep], C["found_dr"][keep], np.asarray(C["key"])[keep]
@@ -126,7 +126,7 @@ def build_track_table(C, tp_keys=None):
     # ---- exact link from a track to its owner's row in the TP table -------
     # This is what the DELIVERED efficiency needs: mark a TP as found when a
     # surviving track is majority-owned by it. Done on int64 keys rebuilt from
-    # the event and the owner's tpIdx, both small enough to survive float32,
+    # the event and the owner's tpKey, both small enough to survive float32,
     # because the packed tp_key column does not.
     if tp_keys is not None and "own_tpidx" in col:
         import export_baseline as EB       # the one definition of the link

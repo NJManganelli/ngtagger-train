@@ -58,7 +58,9 @@ ANGLE = ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "ha
 def _read_file(path: Path, nev: int, with_tp: bool) -> pd.DataFrame:
     t = uproot.open(path)["Events"]
     # every cluster column, TBPX only (the study is per barrel layer)
+    # under their current names (tpIdx on older files is read as tpKey)
     cols = [k[len(CL) + 1:] for k in t.keys() if k.startswith(CL + "_")]
+    cols = ["tpKey" if c == "tpIdx" else c for c in cols]
     a = t.arrays(SPN.cluster_branches(t.keys(), cols, surfaces=SPN.BARREL) + ["event"],
                  entry_stop=nev)
     J = SPN.cluster_columns(a, cols, surfaces=SPN.BARREL)
@@ -66,23 +68,24 @@ def _read_file(path: Path, nev: int, with_tp: bool) -> pd.DataFrame:
     df = pd.DataFrame({c: ak.flatten(J[c]).to_numpy() for c in cols})
     df["event"] = np.repeat(a["event"].to_numpy(), counts)
     df["ientry"] = np.repeat(np.arange(len(counts)), counts)
-    if with_tp and "L1TTP_idx" in t.keys():
-        tk = ["L1TTP_idx", "L1TTP_bx", "L1TTP_evt", "L1TTP_pdgId", "L1TTP_pt"]
-        b = t.arrays(tk, entry_stop=nev)
-        nt = ak.num(b["L1TTP_idx"]).to_numpy()
-        tp = pd.DataFrame({k[6:]: ak.flatten(b[k]).to_numpy() for k in tk})
+    if with_tp and SPN.has_column(t.keys(), "L1TTP", "key"):
+        tk = ["key", "bx", "evt", "pdgId", "pt"]
+        b = SPN.table_columns(t.arrays(SPN.branch_names(t.keys(), "L1TTP", tk), entry_stop=nev),
+                              "L1TTP", tk)
+        nt = ak.num(b["key"]).to_numpy()
+        tp = pd.DataFrame({k: ak.flatten(b[k]).to_numpy() for k in tk})
         tp["ientry"] = np.repeat(np.arange(len(nt)), nt)
-        tp = tp.rename(columns={"idx": "tpIdx", "bx": "tpBx", "evt": "tpEvt", "pdgId": "tpPdgId",
+        tp = tp.rename(columns={"key": "tpKey", "bx": "tpBx", "evt": "tpEvt", "pdgId": "tpPdgId",
                                 "pt": "tpPtTab"})
-        df = df.merge(tp, on=["ientry", "tpIdx"], how="left")
+        df = df.merge(tp, on=["ientry", "tpKey"], how="left")
     return df
 
 
 def _load_raw(sample: str) -> pd.DataFrame:
     CACHE.mkdir(parents=True, exist_ok=True)
     cpath = CACHE / f"raw_{sample}.parquet"
-    if cpath.exists():
-        return pd.read_parquet(cpath)
+    if cpath.exists():   # caches written before the tpIdx -> tpKey rename
+        return pd.read_parquet(cpath).rename(columns={"tpIdx": "tpKey"})
     parts = []
     for i, (p, nev) in enumerate(SAMPLES[sample]):
         d = _read_file(p, nev, with_tp=(sample == "T"))
@@ -103,7 +106,7 @@ def load() -> pd.DataFrame:
     """Combined frame = what the CURRENT producer emits with noiseSet=smarthit_noise_v6.
 
     T and N hold the SAME 200 events and the SAME 5.4M clusters (verified: outer join on
-    (event, detId, localX, localY, charge) matches every row, tpIdx agrees 100%), in a
+    (event, detId, localX, localY, charge) matches every row, tpKey agrees 100%), in a
     different row order. TP-linked angles are bit-identical between them; only sigAlpha/
     sigBeta differ for ~19% of linked clusters, because the Sep-5 producer (N) looked the
     sigma up at the TRUE angle and the current one (T) at the RECO angle. So: every column
@@ -113,12 +116,12 @@ def load() -> pd.DataFrame:
     """
     cpath = CACHE / "combined.parquet"
     if cpath.exists():
-        return pd.read_parquet(cpath)
+        return pd.read_parquet(cpath).rename(columns={"tpIdx": "tpKey"})
     T = _load_raw("T")
     N = _load_raw("N")
     df = T.merge(N[KEY + ANGLE_COLS], on=KEY, how="left", suffixes=("", "_N"), validate="one_to_one")
     assert df["localCotAlpha_N"].notna().all()
-    u = df["tpIdx"].to_numpy() < 0
+    u = df["tpKey"].to_numpy() < 0
     for k in ANGLE_COLS:
         df[k + "_T"] = df[k]
         df.loc[u, k] = df.loc[u, k + "_N"].to_numpy()
@@ -130,10 +133,10 @@ def load() -> pd.DataFrame:
 
 
 def derive(df: pd.DataFrame) -> pd.DataFrame:
-    df["unlinked"] = (df["tpIdx"] < 0).astype(np.int8)
+    df["unlinked"] = (df["tpKey"] < 0).astype(np.int8)
     df["qPerPix"] = df["charge"] / np.maximum(df["size"], 1)
     df["absZ"] = np.abs(df["globalZ"])
-    df["tpVr"] = np.where(df["tpIdx"] >= 0, np.hypot(df["tpVx"], df["tpVy"]), np.nan)
+    df["tpVr"] = np.where(df["tpKey"] >= 0, np.hypot(df["tpVx"], df["tpVy"]), np.nan)
     # Implied longitudinal origin of the cluster's reported direction (straight line in r-z,
     # exact for a helix in s-z, s ~ r at these radii): z0 = z - r * cot(theta_dir)
     ok = df["globalClusterCotTheta"] > -900

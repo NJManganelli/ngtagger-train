@@ -60,7 +60,7 @@ import tracklet_topology_cost as M  # noqa: E402
 IT_TABLE = "L1TSmartPixelsCluster"
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
 TP_KEY_SHIFT = 20
-COLS = ["layer", "globalR", "globalZ", "globalPhi", "tpIdx", "tpPt"]
+COLS = ["layer", "globalR", "globalZ", "globalPhi", "tpKey", "tpPt"]
 D0_EDGES_CM = [0.0, 0.005, 0.01, 0.05, 0.1, 0.5, 1e9]
 
 
@@ -82,9 +82,9 @@ def load(path, nev):
 
 
 def first_cluster_per_tp(D, layer, sel):
-    m = sel & (D["layer"] == layer) & (D["tpIdx"] >= 0)
+    m = sel & (D["layer"] == layer) & (D["tpKey"] >= 0)
     idx = np.flatnonzero(m)
-    k = D["event"][idx].astype(np.int64) * (1 << TP_KEY_SHIFT) + D["tpIdx"][idx]
+    k = D["event"][idx].astype(np.int64) * (1 << TP_KEY_SHIFT) + D["tpKey"][idx]
     o = np.argsort(k, kind="stable")
     k, idx = k[o], idx[o]
     first = np.r_[True, k[1:] != k[:-1]]

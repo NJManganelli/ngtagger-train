@@ -11,8 +11,12 @@ WHY THE STUBS HAVE TO BE JOINED. L1TTrack carries per-TRACK truth (genuine /
 combinatoric / unknown and a matched tp_*), but no per-STUB truth, so it cannot
 say how many of a track's stubs actually belong to the particle that owns it --
 which is the axis our whole contamination study is built on. L1TOTStub carries
-exactly that, per stub. The two are joined on the FULL stub identity
-(event, detId, bend, and x, y, z within a tolerance -- see join_stub_truth).
+exactly that, per stub. Current nanos carry the link: L1TTrackStub_otStubIdx
+is the row of the same stub in L1TOTStub (the L1TOTStub row IS the TTStubRef
+key, asserted in CMSSW), and stub_truth joins on it exactly. Older nanos lack
+it, and stub_truth falls back to the FULL stub identity (event, detId, bend,
+and x, y, z within a tolerance -- see fuzzy_stub_rows). compare_stub_joins
+runs both on a file that has the link, as the check that they agree.
 
 WHY THE FULL KEY. (event, detId, z) looks sufficient and is not: every stub on a
 2S module sits at the module-centre z, so on PU200 48% of OT stubs share that key
@@ -28,6 +32,7 @@ from pathlib import Path
 import numpy as np
 import awkward as ak
 import uproot
+from ngtagger.data import spix_nano as SPN
 from ngtagger.truth_helix import tp_phi0
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -39,26 +44,44 @@ TRK = ["pt", "eta", "phi", "d0", "z0", "rInv", "tanL", "nStubs", "chi2XYRed",
        "combinatoric", "unknown", "tp_pt", "tp_eta", "tp_phi", "tp_d0",
        "tp_z0", "tp_charge", "tp_vx", "tp_vy", "tp_vz"]
 TST = ["layer", "isBarrel", "trackIdx", "detId", "x", "y", "z", "r", "phi", "bend"]
-OTS = ["layer", "isBarrel", "detId", "x", "y", "z", "bend", "tpIdx", "tpPt",
+OTS = ["layer", "isBarrel", "detId", "x", "y", "z", "bend", "tpKey", "tpPt",
        "tpGenuine", "tpCombinatoric", "tpUnknown"]
+OT_LINK = "otStubIdx"      # track-stub table -> L1TOTStub row (current nanos)
 
 
 def _flat(A, pre, cols):
-    n = ak.to_numpy(ak.num(A[f"{pre}_{cols[0]}"]))
-    D = {c: ak.to_numpy(ak.flatten(A[f"{pre}_{c}"])) for c in cols}
+    J = SPN.table_columns(A, pre, cols)
+    n = ak.to_numpy(ak.num(J[cols[0]]))
+    D = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
     D["event"] = np.repeat(np.arange(len(n)), n)
     D["_n"] = n
     return D
 
 
-def load(spec, nev):
-    srcs = [f"{p}:Events" for p in M.expand_inputs(spec)]
-    keys = ([f"L1TTrack_{c}" for c in TRK] + [f"L1TTrackStub_{c}" for c in TST]
-            + [f"L1TOTStub_{c}" for c in OTS])
-    A = uproot.concatenate(srcs, keys)
-    if nev is not None:
-        A = A[:nev]
-    return _flat(A, "L1TTrack", TRK), _flat(A, "L1TTrackStub", TST), \
+def _read(spec, nev, tables):
+    """{table: cols} of the first `nev` events (all if None) of `spec`, as one
+    uproot batch. Streams, so a few events of a large file stay cheap."""
+    paths = M.expand_inputs(spec)
+    keys0 = uproot.open(f"{paths[0]}:Events").keys()
+    br = [b for t, cols in tables.items() for b in SPN.branch_names(keys0, t, cols)]
+    parts, seen = [], 0
+    for A in uproot.iterate([f"{p}:Events" for p in paths], br, step_size=50):
+        if nev is not None and seen + len(A) > nev:
+            A = A[:nev - seen]
+        parts.append(A)
+        seen += len(A)
+        if nev is not None and seen >= nev:
+            break
+    return ak.concatenate(parts) if len(parts) > 1 else parts[0]
+
+
+def load(spec, nev, stub_table="L1TTrackStub"):
+    """(L1TTrack, track stubs, L1TOTStub) flat. The track stubs carry
+    otStubIdx when the file has it (see stub_truth)."""
+    keys0 = uproot.open(f"{M.expand_inputs(spec)[0]}:Events").keys()
+    tst = TST + ([OT_LINK] if f"{stub_table}_{OT_LINK}" in keys0 else [])
+    A = _read(spec, nev, {"L1TTrack": TRK, stub_table: tst, "L1TOTStub": OTS})
+    return _flat(A, "L1TTrack", TRK), _flat(A, stub_table, tst), \
         _flat(A, "L1TOTStub", OTS)
 
 
@@ -70,17 +93,35 @@ def load(spec, nev):
 STUB_MATCH_TOL_CM = 1e-4
 
 
-def join_stub_truth(S, O):
-    """Attach (tpIdx, flag) to every track stub by its full identity.
+def _truth_of_rows(O, src):
+    """(tpKey, flag, matched) of the OT rows `src` (-1 = unmatched). flag is
+    1 genuine / 2 combinatoric / 3 unknown, 0 unmatched, matching
+    tp_findability._unify's code so the counters mean the same on both sides."""
+    hit = src >= 0
+    r = np.where(hit, src, 0)
+    tpkey = np.where(hit, O["tpKey"][r], -1)
+    flag = np.where(O["tpGenuine"][r] > 0, 1, np.where(O["tpCombinatoric"][r] > 0, 2, 3))
+    return tpkey, np.where(hit, flag, 0), hit
+
+
+def exact_stub_rows(S, O):
+    """Global L1TOTStub row of every track stub from its otStubIdx (exact), or
+    -1 where the producer wrote -1. S and O must share one event numbering."""
+    off = np.concatenate([[0], np.cumsum(O["_n"])])
+    link = np.asarray(S[OT_LINK]).astype(np.int64)
+    ok = link >= 0
+    if ok.any() and (link[ok] >= O["_n"][S["event"][ok]]).any():
+        raise ValueError(f"{OT_LINK} points past the end of its event's L1TOTStub")
+    return np.where(ok, off[S["event"]] + link, -1)
+
+
+def fuzzy_stub_rows(S, O):
+    """Global L1TOTStub row of every track stub by its full identity, or -1.
 
     A track stub matches the ONE OT stub in the same (event, detId) with the same
     bend and x, y, z each within STUB_MATCH_TOL_CM. Zero candidates, or more than
-    one, leaves it UNMATCHED (flag 0, tpIdx -1): a shared identity is reported,
-    never resolved by picking one. See the module docstring for why z alone fails.
-
-    Returns (tpidx, flag, matched) aligned to S. flag is 1 genuine /
-    2 combinatoric / 3 unknown, matching tp_findability._unify's code so the
-    counters mean the same thing on both sides.
+    one, leaves it UNMATCHED: a shared identity is reported, never resolved by
+    picking one. See the module docstring for why z alone fails.
     """
     mkey = lambda D: D["event"].astype(np.int64) * (1 << 32) + D["detId"].astype(np.int64)
     ko, ks = mkey(O), mkey(S)
@@ -96,12 +137,47 @@ def join_stub_truth(S, O):
     ncand = np.bincount(si[same], minlength=len(ks))
     src = np.full(len(ks), -1, np.int64)
     src[si[same]] = oi[same]
-    hit = ncand == 1
-    src = np.where(hit, src, 0)
-    tpidx = np.where(hit, O["tpIdx"][src], -1)
-    flag = np.where(O["tpGenuine"][src] > 0, 1,
-                    np.where(O["tpCombinatoric"][src] > 0, 2, 3))
-    return tpidx, np.where(hit, flag, 0), hit
+    return np.where(ncand == 1, src, -1)
+
+
+def stub_truth(S, O):
+    """(tpKey, flag, matched) of every track stub: exact via otStubIdx when S
+    has it, else the fuzzy identity join (the fallback for older nanos, which
+    stay in use). Aligned to S."""
+    rows = exact_stub_rows(S, O) if OT_LINK in S else fuzzy_stub_rows(S, O)
+    return _truth_of_rows(O, rows)
+
+
+def compare_stub_joins(spec, nev=None, stub_table="L1TTrackStub"):
+    """Run BOTH joins on a nano that has otStubIdx and report their agreement.
+
+    agree: stubs the fuzzy join matched whose exact row is the same OT row.
+    The fuzzy join leaves shared identities unmatched by design, so those are
+    reported apart (fuzzy_unmatched), together with whether the exact row
+    satisfies the identity the fuzzy join tests (exact_identity_ok, over all
+    linked stubs: same event, detId, bend and x/y/z within tolerance).
+    """
+    T, S, O = load(spec, nev, stub_table)
+    if OT_LINK not in S:
+        raise SystemExit(f"{spec} has no {stub_table}_{OT_LINK}: nothing to compare")
+    ex, fz = exact_stub_rows(S, O), fuzzy_stub_rows(S, O)
+    lk, fm = ex >= 0, fz >= 0
+    r = np.where(lk, ex, 0)
+    ident = lk & (O["event"][r] == S["event"]) & (O["detId"][r] == S["detId"]) \
+        & (O["bend"][r] == S["bend"])
+    for c in ("x", "y", "z"):
+        ident &= np.abs(np.asarray(O[c], np.float64)[r] - np.asarray(S[c], np.float64)) \
+            < STUB_MATCH_TOL_CM
+    agree = fm & (ex == fz)
+    out = {"file": spec, "stub_table": stub_table, "n_events": int(len(S["_n"])),
+           "n_stubs": int(len(ex)), "n_linked": int(lk.sum()),
+           "n_fuzzy_matched": int(fm.sum()), "n_agree": int(agree.sum()),
+           "agree_frac_of_fuzzy_matched": float(agree.sum() / max(fm.sum(), 1)),
+           "n_disagree": int((fm & ~agree).sum()),
+           "n_fuzzy_unmatched": int((~fm).sum()),
+           "n_exact_identity_ok": int(ident.sum()),
+           "exact_identity_ok_frac": float(ident.sum() / max(lk.sum(), 1))}
+    return out
 
 
 def main():
@@ -111,16 +187,25 @@ def main():
     ap.add_argument("--ptmin", type=float, default=2.0)
     ap.add_argument("--eta-max", type=float, default=M.ETA_MATCHED)
     ap.add_argument("-o", "--out", default=None)
+    ap.add_argument("--compare-joins", action="store_true",
+                    help="only check otStubIdx against the fuzzy identity join "
+                         "(L1TTrackStub and L1TExtTrackStub) and exit")
     a = ap.parse_args()
+    if a.compare_joins:
+        keys = uproot.open(f"{M.expand_inputs(a.input)[0]}:Events").keys()
+        for tbl in ("L1TTrackStub", "L1TExtTrackStub"):
+            if f"{tbl}_{OT_LINK}" in keys:
+                print(json.dumps(compare_stub_joins(a.input, a.nev, tbl), indent=1))
+        return
 
     T, S, O = load(a.input, a.nev)
     nev = len(T["_n"])
     print(f"{nev} events: {len(T['pt']):,} L1TTrack, {len(S['layer']):,} "
           f"track stubs, {len(O['layer']):,} OT stubs")
 
-    tpidx, flag, hit = join_stub_truth(S, O)
+    tpidx, flag, hit = stub_truth(S, O)
     bar = S["isBarrel"] > 0
-    print(f"\n=== the join ===")
+    print(f"\n=== the join ({'exact, otStubIdx' if OT_LINK in S else 'fuzzy stub identity'}) ===")
     print(f"  track stubs matched to an OT stub: {100 * hit.mean():.2f}% overall, "
           f"{100 * hit[bar].mean():.2f}% of barrel stubs")
     if hit[bar].mean() < 0.999:

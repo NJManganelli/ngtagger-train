@@ -833,7 +833,7 @@ def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
     # ownership, per hit, against the same majority owner the residuals use
     G = T["GIDX"]
     on = G >= 0
-    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
+    tp_of = np.where(on, U["tpKey"][np.clip(G, 0, None)], -1)
     own, _ = majority_owner(tp_of, on)
     wrong = on & (tp_of != own[:, None]) | (own[:, None] < 0)
     n_wrong = (on & ~((tp_of == own[:, None]) & (own[:, None] >= 0))).sum(axis=1)
@@ -899,8 +899,8 @@ def rank_score(fit, chi2s, w_angle=0.0):
 def truth_residuals(U, trip, fit, TP):
     """(dkappa, dd0, dcot, dz0, mask) against the TrackingParticle truth."""
     ga, gb, gc = trip
-    ta = U["tpIdx"][ga]
-    real = (ta >= 0) & (ta == U["tpIdx"][gb]) & (ta == U["tpIdx"][gc]) & fit["ok"]
+    ta = U["tpKey"][ga]
+    real = (ta >= 0) & (ta == U["tpKey"][gb]) & (ta == U["tpKey"][gc]) & fit["ok"]
     kk = M.tp_key(U["event"][ga], np.maximum(ta, 0))
     p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
     real &= (len(TP["key"]) > 0) & (TP["key"][p] == kk)
@@ -958,8 +958,8 @@ def tp_truth_table(U):
     kappa is UNSIGNED 1/pT [1/GeV]: every consumer compares it with |fitted
     kappa|, so a fit with the wrong charge is scored on curvature magnitude only.
     """
-    m = (U["tpIdx"] >= 0) & np.isfinite(U["tp_pt"])
-    k = M.tp_key(U["event"][m], U["tpIdx"][m])
+    m = (U["tpKey"] >= 0) & np.isfinite(U["tp_pt"])
+    k = M.tp_key(U["event"][m], U["tpKey"][m])
     o = np.argsort(k, kind="stable")
     k = k[o]
     f = np.r_[True, k[1:] != k[:-1]] if len(k) else np.zeros(0, bool)
@@ -1168,7 +1168,7 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     ga = trip[0]
     G = T["GIDX"]
     on = G >= 0
-    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
+    tp_of = np.where(on, U["tpKey"][np.clip(G, 0, None)], -1)
     own, n_own = majority_owner(tp_of, on)
     right = on & (tp_of == own[:, None]) & (own[:, None] >= 0)
     n_wrong = (on & ~right).sum(axis=1).astype(np.float64)
@@ -1225,11 +1225,11 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
         "n_ot_unknown": (is_ot & (flg == 3)).sum(axis=1).astype(np.float64),
         # 0 when the seed cluster belongs to a TP other than the owner, which
         # is what the seed-referenced convention used to hide
-        "own_is_seed": (own == U["tpIdx"][ga]).astype(np.float64),
-        # THE EXACT OWNER IDENTITY, and the reason it is stored as a bare tpIdx
-        # rather than read off tp_key: the packed (event << 20) | tpIdx needs 30
+        "own_is_seed": (own == U["tpKey"][ga]).astype(np.float64),
+        # THE EXACT OWNER IDENTITY, and the reason it is stored as a bare tpKey
+        # rather than read off tp_key: the packed (event << 20) | tpKey needs 30
         # bits, these rows are float32, and at event 999 keys 128 apart collapse
-        # onto one value. tpIdx alone is < 2**20 and survives exactly, and the
+        # onto one value. tpKey alone is < 2**20 and survives exactly, and the
         # event is already a column, so the exporter can rebuild the key in
         # int64 and match each track to its TrackingParticle's row. That link is
         # what the DELIVERED efficiency needs.

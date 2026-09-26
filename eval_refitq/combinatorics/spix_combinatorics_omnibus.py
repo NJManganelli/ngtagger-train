@@ -354,8 +354,8 @@ def _discover(path):
     miss_h = [c for c in need_hit if f"{hit}_{c}" not in keys]
     miss_c = ([CLUSTER_TABLE] if not any(k.startswith(CLUSTER_TABLE + "_") for k in keys)
               else [c for c in ("layer", "detId", "localX", "localY", "charge",
-                                "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpIdx")
-                    if f"{CLUSTER_TABLE}_{c}" not in keys])
+                                "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpKey")
+                    if not SPN.has_column(keys, CLUSTER_TABLE, c)])
     if miss_h or miss_c:
         raise SystemExit(
             "input cannot support this study.\n"
@@ -365,6 +365,13 @@ def _discover(path):
             "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
             "--variant digiRefit:1111 --needs-truth -o <out>.py")
     return hit, chosen, need_hit
+
+
+def _matched_tp_branch(files, hit):
+    """The variant track table's matched-TP key branch for refit hit table
+    `hit` (spixMatchedTpKey, or spixMatchedTpIdx on older nanos)."""
+    with uproot.open(f"{files[0]}:Events") as t:
+        return SPN.branch_name(t.keys(), hit.replace("RefitHit", "Track"), "spixMatchedTpKey")
 
 
 def _ttc():
@@ -380,7 +387,7 @@ def load(paths):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     hit, cfg, need_hit = _discover(files[0])
     ccols = ["layer", "detId", "localX", "localY", "charge", "tpPt",
-             "tpLocalCotAlpha", "tpLocalCotBeta", "sizeX", "sizeY", "tpIdx"]
+             "tpLocalCotAlpha", "tpLocalCotBeta", "sizeX", "sizeY", "tpKey"]
     # sensor angle + CPE sigma, present once the cluster table reads SmartPixelsRecHit
     optional = {"localCotAlpha": "clLocalCotAlpha", "localCotBeta": "clLocalCotBeta",
                 "sigAlpha": "clSigAlpha", "sigBeta": "clSigBeta",
@@ -423,13 +430,12 @@ def load(paths):
         flat = ak.to_numpy(ak.flatten(R[f"{REF}_{c}"]))
         X[f"trk_{c}"] = flat[off[ev_x] + X["trackIdx"].astype(np.int64)]
 
-    vtrk = uproot.concatenate([f"{f}:Events" for f in files],
-                              filter_name=[f"{hit.replace('RefitHit', 'Track')}_spixMatchedTpIdx"])
-    vname = f"{hit.replace('RefitHit', 'Track')}_spixMatchedTpIdx"
+    vname = _matched_tp_branch(files, hit)
+    vtrk = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[vname])
     mtp = ak.to_numpy(ak.flatten(vtrk[vname]))
     nmt = ak.to_numpy(ak.num(vtrk[vname]))
     offm = np.concatenate([[0], np.cumsum(nmt)])
-    X["trk_tpIdx"] = mtp[offm[ev_x] + X["trackIdx"].astype(np.int64)]
+    X["trk_tpKey"] = mtp[offm[ev_x] + X["trackIdx"].astype(np.int64)]
 
     ncl = ak.to_numpy(ak.num(C["layer"]))
     ev_c = np.repeat(np.arange(len(ncl)), ncl)
@@ -441,8 +447,9 @@ def load(paths):
     # per-cluster TP truth at the POCA (tp_d0, tp_z0, ...) from the L1TTP table;
     # study (12) facets on tp_d0 and skips without it
     M = _ttc()
-    if all(b in avail for b in M.tp_branches()):
-        TPA = uproot.concatenate([f"{f}:Events" for f in files], filter_name=M.tp_branches())
+    if all(SPN.has_column(avail, M.TP_TABLE, c) for c in M.TP_COLS):
+        TPA = uproot.concatenate([f"{f}:Events" for f in files],
+                                 filter_name=M.tp_branches(files[0]))
         M.attach_tp_truth(K, M.tp_table(TPA, np.arange(len(ncl))))
 
     print(f"files={len(files)} config={cfg} events={n_ev} "
@@ -694,16 +701,16 @@ def study_true_containment(X, K, P, ax_row, out):
     track's TrackingParticle and sit on the module it crosses, how many does the
     cone hold?
 
-    This is the study that selClusterIdx and tpIdx were added for. Study (2)
+    This is the study that selClusterIdx and tpKey were added for. Study (2)
     can only ever see clusters the current static window already offered, so it
     cannot detect a true cluster the window never showed the fit -- exactly the
     failure a cone redesign is meant to fix. Here the truth clusters are found by
-    joining tpIdx to the track's spixMatchedTpIdx, independently of what the
+    joining tpKey to the track's spixMatchedTpKey, independently of what the
     window did, so a cluster the window missed still counts against the cone.
     """
     xi, ci = P["xi"], P["ci"]
-    have = (X["trk_tpIdx"][xi] >= 0) & (K["tpIdx"][ci] >= 0)
-    is_true = have & (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
+    have = (X["trk_tpKey"][xi] >= 0) & (K["tpKey"][ci] >= 0)
+    is_true = have & (K["tpKey"][ci] == X["trk_tpKey"][xi])
     res = {"n_true_pairs": int(is_true.sum())}
     ax = ax_row[0]
     for cname, k in CONES.items():
@@ -811,8 +818,8 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
                          / np.maximum(K["clSigBeta"][ci], 1e-9)) ** 2, NEUTRAL)
 
     # the correct cluster for each crossing, from the TP join (window-independent)
-    have = (X["trk_tpIdx"][xi] >= 0) & (K["tpIdx"][ci] >= 0)
-    is_true = have & (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
+    have = (X["trk_tpKey"][xi] >= 0) & (K["tpKey"][ci] >= 0)
+    is_true = have & (K["tpKey"][ci] == X["trk_tpKey"][xi])
     ncross = len(X["layer"])
     has_true = np.zeros(ncross, dtype=bool)
     has_true[xi[is_true]] = True
@@ -916,7 +923,7 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     # unlinked), so "reports an angle" was a perfect proxy for "is real" and any
     # angle weight bought that proxy. Recomputed every run so it cannot go stale.
     if "clHasAlpha" in K:
-        lk = K["tpIdx"] >= 0
+        lk = K["tpKey"] >= 0
         ra, rb = float(K["clHasAlpha"][lk].mean()), float(K["clHasAlpha"][~lk].mean())
         res["angle_presence_TPlinked"], res["angle_presence_unlinked"] = ra, rb
         if abs(ra - rb) > 0.05:
@@ -1129,7 +1136,7 @@ def study_z0_resolution(X, K, P, ax_row, out):
             a.axis("off")
         return
 
-    ok = (K["tpIdx"] >= 0) & (K["gClCotTheta"] > SENTINEL) & (K["tpGClCotTheta"] > SENTINEL)
+    ok = (K["tpKey"] >= 0) & (K["gClCotTheta"] > SENTINEL) & (K["tpGClCotTheta"] > SENTINEL)
     if "clHasBeta" in K:
         ok &= K["clHasBeta"] > 0
     d = K["gClCotTheta"] - K["tpGClCotTheta"]          # cot(theta) residual
@@ -1419,11 +1426,11 @@ def _variant_crossings(files, suffix):
     X["event"] = ev
     # The matched TP is per TRACK and per VARIANT (each variant refits separately),
     # so it has to come from THIS variant's track table, not the one load() picked.
-    tname = f"{hit.replace('RefitHit', 'Track')}_spixMatchedTpIdx"
+    tname = _matched_tp_branch(files, hit)
     V = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tname])
     mtp = ak.to_numpy(ak.flatten(V[tname]))
     offm = np.concatenate([[0], np.cumsum(ak.to_numpy(ak.num(V[tname])))])
-    X["trk_tpIdx"] = mtp[offm[ev] + X["trackIdx"].astype(np.int64)]
+    X["trk_tpKey"] = mtp[offm[ev] + X["trackIdx"].astype(np.int64)]
     return X
 
 
@@ -1458,8 +1465,8 @@ def _combinations_per_track(X, K, kvals):
     # true one when the cluster's dominant TP is the TP the track was matched to.
     # Denominator counts only crossings where such a cluster EXISTS on the module,
     # so a layer that simply had no true cluster does not count as an inefficiency.
-    is_true = (K["tpIdx"][ci] >= 0) & (X["trk_tpIdx"][xi] >= 0) & \
-              (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
+    is_true = (K["tpKey"][ci] >= 0) & (X["trk_tpKey"][xi] >= 0) & \
+              (K["tpKey"][ci] == X["trk_tpKey"][xi])
     have_true = np.zeros(len(X["layer"]), bool)
     have_true[xi[is_true]] = True
     n_have = int(have_true.sum())
@@ -1983,7 +1990,7 @@ def study_sector_binning(X, K, P, ax_row, out):
     T = uproot.concatenate([f"{f}:Events" for f in files],
                            filter_name=[f"{REF}_{c}" for c in tcols])
     hitname = out.get("_hit_table", "")
-    tpname = f"{hitname.replace('RefitHit', 'Track')}_spixMatchedTpIdx"
+    tpname = _matched_tp_branch(files, hitname)
     MT = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tpname])
     ntr = ak.to_numpy(ak.num(T[f"{REF}_rInv"]))
     tr = {c: ak.to_numpy(ak.flatten(T[f"{REF}_{c}"])) for c in tcols}
@@ -1993,15 +2000,15 @@ def study_sector_binning(X, K, P, ax_row, out):
 
     cl = {"layer": K["layer"], "phi": K["globalPhi"],
           "eta": np.arcsinh(K["globalZ"] / np.maximum(K["globalR"], 1e-9)),
-          "r": K["globalR"], "tpIdx": K["tpIdx"],
+          "r": K["globalR"], "tpKey": K["tpKey"],
           "gphi": K.get("gClPhi"), "gcot": K.get("gClCotTheta"),
           "sphi": K.get("gSigPhi"), "scot": K.get("gSigCotTheta")}
     cev = K["event"]
     have_ang = cl["gphi"] is not None and cl["sphi"] is not None
 
     xi, ci, _ = join_on_module(X, K)
-    is_true = (K["tpIdx"][ci] >= 0) & (X["trk_tpIdx"][xi] >= 0) & \
-              (K["tpIdx"][ci] == X["trk_tpIdx"][xi])
+    is_true = (K["tpKey"][ci] >= 0) & (X["trk_tpKey"][xi] >= 0) & \
+              (K["tpKey"][ci] == X["trk_tpKey"][xi])
     want_c = np.full(len(X["layer"]), -1, dtype=np.int64)
     want_c[xi[is_true]] = ci[is_true]
     gi = off[X["event"]] + X["trackIdx"].astype(np.int64)
@@ -2233,8 +2240,8 @@ def study_hough_examples(X, K, P, ax_row, out):
         return
 
     # ---- per-TP aggregates, fully vectorised -------------------------------
-    ok = (K["tpIdx"] >= 0) & (K["tpGClPhi"] > SENTINEL) & (K["tpGClCotTheta"] > SENTINEL)
-    key = K["event"].astype(np.int64) * (1 << 20) + K["tpIdx"].astype(np.int64)
+    ok = (K["tpKey"] >= 0) & (K["tpGClPhi"] > SENTINEL) & (K["tpGClCotTheta"] > SENTINEL)
+    key = K["event"].astype(np.int64) * (1 << 20) + K["tpKey"].astype(np.int64)
     ukey, inv = np.unique(key[ok], return_inverse=True)
     cnt = np.bincount(inv).astype(float)
     laymask = np.zeros(len(ukey), dtype=np.int64)
@@ -2321,7 +2328,7 @@ def study_hough_examples(X, K, P, ax_row, out):
                 keep[np.random.default_rng(0).choice(sect.sum(), SECTOR_DRAW_CAP, False)] = True
                 si = np.flatnonzero(sect); sect = np.zeros_like(sect); sect[si[keep]] = True
             res["cells"][cell] = {
-                "found": True, "event": int(ev), "tpIdx": int(ukey[idx] & ((1 << 20) - 1)),
+                "found": True, "event": int(ev), "tpKey": int(ukey[idx] & ((1 << 20) - 1)),
                 "tp_pt": float(tp_pt[idx]), "tp_eta": float(tp_eta[idx]),
                 "n_layers": int(nlay[idx]), "n_clusters_tp": int(cnt[idx]),
                 "n_cone": int(cone.sum()), "n_sector": int(sect.sum()),
@@ -2445,7 +2452,7 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
     M = _ttc()
 
     need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
-            "gSigPhi", "gSigCotTheta", "sigY", "tpIdx", "tpPt", "tp_d0")
+            "gSigPhi", "gSigCotTheta", "sigY", "tpKey", "tpPt", "tp_d0")
     if any(c not in K for c in need):
         for a in ax_row:
             a.axis("off")
@@ -2460,7 +2467,7 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
          "globalClusterCotTheta": K["gClCotTheta"],
          "sigGlobalClusterPhi": K["gSigPhi"],
          "sigGlobalClusterCotTheta": K["gSigCotTheta"], "sigY": K["sigY"],
-         "tpIdx": K["tpIdx"], "tpPt": K["tpPt"], "tp_d0": K["tp_d0"], "event": K["event"]}
+         "tpKey": K["tpKey"], "tpPt": K["tpPt"], "tp_d0": K["tp_d0"], "event": K["event"]}
     M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
                  min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     PTMIN = 2.0
@@ -2488,7 +2495,7 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
         srcs = out.get("_inputs") or []
         if srcs:
             O, onev, have = M.load_ot(",".join(srcs), None)
-            if "tpIdx" in have:
+            if "tpKey" in have:
                 cal = M.calibrate_ot_bend(",".join(srcs), None)
                 base = np.arange(len(O["layer"]))
                 base = base[O["eta"][base] <= M.ETA_MATCHED]
@@ -2509,8 +2516,8 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
         for a in ax_row:
             a.axis("off")
         return
-    # Build the per-TP d0/pT table from build_tp_index, which selects tpIdx >= 0.
-    # An earlier revision keyed on np.maximum(tpIdx, 0), which folds EVERY noise
+    # Build the per-TP d0/pT table from build_tp_index, which selects tpKey >= 0.
+    # An earlier revision keyed on np.maximum(tpKey, 0), which folds EVERY noise
     # cluster onto real TP index 0 and corrupts that TP's d0 and pT in every
     # event -- it inflated the |d0| > 500 um count for one seed from ~96 to 455.
     uk, tpd0, tppt = ti["key"], ti["d0"], ti["pt"]
@@ -2666,7 +2673,7 @@ def study_seed_composition(X, K, P, ax_row, out):
     _sp = _ilu.spec_from_file_location("_ttc2", _p)
     M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
     need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
-            "gSigPhi", "gSigCotTheta", "sigY", "tpIdx", "tpPt")
+            "gSigPhi", "gSigCotTheta", "sigY", "tpKey", "tpPt")
     if any(c not in K for c in need):
         for a in ax_row:
             a.axis("off")
@@ -2677,7 +2684,7 @@ def study_seed_composition(X, K, P, ax_row, out):
          "globalClusterCotTheta": K["gClCotTheta"],
          "sigGlobalClusterPhi": K["gSigPhi"],
          "sigGlobalClusterCotTheta": K["gSigCotTheta"], "sigY": K["sigY"],
-         "tpIdx": K["tpIdx"], "tpPt": K["tpPt"], "event": K["event"]}
+         "tpKey": K["tpKey"], "tpPt": K["tpPt"], "event": K["event"]}
     M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
                  min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     PTMIN = 2.0
@@ -3104,7 +3111,7 @@ def study_combined_it_ot(X, K, P, ax_row, out):
     """
     M = _ttc()
     srcs = out.get("_inputs") or []
-    need = ("globalR", "globalZ", "globalPhi", "tpIdx", "tpPt")
+    need = ("globalR", "globalZ", "globalPhi", "tpKey", "tpPt")
     if not srcs or any(c not in K for c in need):
         for a in ax_row:
             a.axis("off")
@@ -3115,7 +3122,7 @@ def study_combined_it_ot(X, K, P, ax_row, out):
     try:
         I, nev, _ = M.load_flat(src, M.IT_TABLE,
                                 ["layer", "globalR", "globalZ", "globalPhi",
-                                 "tpIdx", "tpPt"], None, tp=("tp_z0", "tp_tanL"))
+                                 "tpKey", "tpPt"], None, tp=("tp_z0", "tp_tanL"))
         O, onev, _ = M.load_ot(src, None)
     except Exception as exc:
         for a in ax_row:
@@ -3127,20 +3134,20 @@ def study_combined_it_ot(X, K, P, ax_row, out):
                         O["layer"][bar] + 10],
          "r": np.r_[I["globalR"], O["r"][bar]], "z": np.r_[I["globalZ"], O["z"][bar]],
          "phi": np.r_[I["globalPhi"], O["phi"][bar]],
-         "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
+         "tpKey": np.r_[I["tpKey"], O["tpKey"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
-    mi = (I["tpIdx"] >= 0) & np.isfinite(I["tp_z0"])
-    kv = M.tp_key(I["event"][mi], I["tpIdx"][mi])
+    mi = (I["tpKey"] >= 0) & np.isfinite(I["tp_z0"])
+    kv = M.tp_key(I["event"][mi], I["tpKey"][mi])
     o = np.argsort(kv, kind="stable")
     kv, z0t, tlt = kv[o], I["tp_z0"][mi][o], I["tp_tanL"][mi][o]
     f = np.r_[True, kv[1:] != kv[:-1]]
     KV, Z0T, TLT = kv[f], z0t[f], tlt[f]
 
     def firstpertp(L):
-        m = (U["layer"] == L) & (U["tpIdx"] >= 0) & (U["tpPt"] >= PT)
+        m = (U["layer"] == L) & (U["tpKey"] >= 0) & (U["tpPt"] >= PT)
         idx = np.flatnonzero(m)
-        k = M.tp_key(U["event"][idx], U["tpIdx"][idx])
+        k = M.tp_key(U["event"][idx], U["tpKey"][idx])
         oo = np.argsort(k, kind="stable")
         k, idx = k[oo], idx[oo]
         ff = np.r_[True, k[1:] != k[:-1]]
@@ -3195,20 +3202,20 @@ def study_combined_it_ot(X, K, P, ax_row, out):
     layers = {}
     for L in (1, 2, 3, 4):
         m = (I["layer"] == L)
-        mt = m & (I["tpIdx"] >= 0) & (I["tpPt"] >= PT)
+        mt = m & (I["tpKey"] >= 0) & (I["tpPt"] >= PT)
         layers[NAME[L]] = (float(np.median(I["globalR"][m])), m.sum() / nev,
                            float(np.ptp(I["globalZ"][m])),
                            zres(I["globalR"][mt], I["globalZ"][mt],
-                                I["event"][mt], I["tpIdx"][mt]))
+                                I["event"][mt], I["tpKey"][mt]))
     for L in range(1, 7):
         m = bar & (O["layer"] == L)
         if m.sum() < 100:
             continue
-        mt = m & (O["tpIdx"] >= 0) & (O["tpPt"] >= PT)
+        mt = m & (O["tpKey"] >= 0) & (O["tpPt"] >= PT)
         layers[NAME[L + 10]] = (float(np.median(O["r"][m])), m.sum() / onev,
                                 float(np.ptp(O["z"][m])),
                                 zres(O["r"][mt], O["z"][mt], O["event"][mt],
-                                     O["tpIdx"][mt]))
+                                     O["tpKey"][mt]))
     ms = M.THETA_MS_MRAD * 1e-3 / PT
     # WHICH COORDINATE TO SEARCH ON, per target layer. The IT-only study found
     # z-first beat phi-first by 28x -- but that phi window carried the d0

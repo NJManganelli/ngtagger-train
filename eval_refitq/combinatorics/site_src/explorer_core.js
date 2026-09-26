@@ -150,7 +150,7 @@ function bitmapMask(found, nRows, nWords, mask) {
 }
 
 // tp_row is an INDEX into the exported TP table, not a key: (event << 20) |
-// tpIdx does not survive float32 (spacing is 128 at event 999), so equality
+// tpKey does not survive float32 (spacing is 128 at event 999), so equality
 // matching on tp_key is silently wrong and must never be used.
 const OWN_DEFS = {
   majority: 'more than half the hits, and at least 3',

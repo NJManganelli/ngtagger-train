@@ -143,6 +143,25 @@ Seeding and combinatorics studies that consume the SmartPixels cluster nano
 (`L1TSmartPixelsCluster`) and the all-stub table (`L1TOTStub`). They live in
 `eval_refitq/combinatorics/` and are independent of training.
 
+**Reading the tables: `ngtagger.data.spix_nano`.** Current nanos have ONE
+cluster table: every TBPX cluster first (same rows as before, so a refit hit's
+`selClusterIdx` still indexes it), then the ID1-ID4 disc clusters, with
+`subdet` (1 barrel, 2 disc), `layer` (0 on disc), `disk`/`side`/`ring`,
+`surface` (1-4 = IL1-IL4, 10 + disk on disc) and `idxInDet`
+((event, detId, idxInDet) is a stable key). Older nanos keep the discs in
+`L1TSmartPixelsDiscCluster` (all 12 disks) or have no discs at all;
+`cluster_columns` returns the unified layout from any of them (disc scope
+ID1-ID4 by default), and `surfaces=BARREL` keeps the barrel prefix, which is
+how every barrel study here reads it. Columns holding a TrackingParticle KEY
+were renamed from *Idx to *Key (`tpKey` on the cluster and OT stub tables,
+`L1TTP_key`, `spixMatchedTpKey` on the refit track tables); `branch_name`
+resolves either spelling. True row indices keep *Idx (`selClusterIdx`,
+`trackIdx`, `otStubIdx`). `L1TTP` now holds TPs with 3-momentum |p| > 1 GeV
+(older nanos: pT >= 1 GeV). Track stubs carry `otStubIdx`, their exact row in
+`L1TOTStub`; `ot_oracle.stub_truth` uses it and falls back to the stub-identity
+join on older nanos (`ot_oracle.py --compare-joins -i <nano>` checks the two
+agree).
+
 **Every tool takes one or many inputs**: `-i` accepts comma-separated paths
 and/or globs, order preserved. `-n` limits events and is enforced across files
 (uproot's own `entry_stop` is silently ignored when it is handed a file list, so

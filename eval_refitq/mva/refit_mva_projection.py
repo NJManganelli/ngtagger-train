@@ -90,17 +90,19 @@ def load(paths):
              "spixAnyWindowTruncated", "spixNKFUpdates",
              "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot",
              "spixChi2ITAtSeed", "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio",
-             "spixRefitPerformed", "spixMatchedTpIdx"]
+             "spixRefitPerformed", "spixMatchedTpKey"]
     ccols = ["layer", "detId", "localX", "localY", "sigX", "sigY", "charge",
-             "sizeX", "sizeY", "tpIdx"]
+             "sizeX", "sizeY", "tpKey"]
     copt = ["size", "localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta"]
 
-    miss = [c for c in vcols if f"{VAR}_{c}" not in keys]
+    miss = [c for c in vcols if not SPN.has_column(keys, VAR, c)]
     if miss:
         raise SystemExit(f"track table lacks {miss}; produce a current Clusters-tier nano")
 
     H = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[f"{HIT}_{c}" for c in hcols])
-    V = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[f"{VAR}_{c}" for c in vcols])
+    V = uproot.concatenate([f"{f}:Events" for f in files],
+                           filter_name=SPN.branch_names(keys, VAR, vcols))
+    V = SPN.table_columns(V, VAR, vcols)
     # TBPX only: selClusterIdx indexes the barrel rows (a per-event prefix)
     ccols = ccols + [x for x in copt if SPN.has_column(keys, CLUSTER_TABLE, x)]
     C = uproot.concatenate([f"{f}:Events" for f in files],
@@ -110,10 +112,10 @@ def load(paths):
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
 
     nh = ak.to_numpy(ak.num(H[f"{HIT}_layer"]))
-    nv = ak.to_numpy(ak.num(V[f"{VAR}_spixNCrossings"]))
+    nv = ak.to_numpy(ak.num(V["spixNCrossings"]))
     nc = ak.to_numpy(ak.num(C["layer"]))
     X = {c: ak.to_numpy(ak.flatten(H[f"{HIT}_{c}"])) for c in hcols}
-    T = {c: ak.to_numpy(ak.flatten(V[f"{VAR}_{c}"])) for c in vcols}
+    T = {c: ak.to_numpy(ak.flatten(V[c])) for c in vcols}
     K = {c: ak.to_numpy(ak.flatten(C[c])) for c in ccols}
     X["event"] = np.repeat(np.arange(len(nh)), nh)
     T["event"] = np.repeat(np.arange(len(nv)), nv)
@@ -252,10 +254,10 @@ def main():
         cols["hasAlpha"] = K["hasAlpha"][ci].astype(float)
         cols["hasBeta"] = K["hasBeta"][ci].astype(float)
 
-    valid = (px > SENTINEL) & (K["tpIdx"][ci] >= -1)
-    tp_of_trk = T["spixMatchedTpIdx"]
-    yB = (K["tpIdx"][ci] >= 0) & (tp_of_trk[X["gtrk"][xi]] >= 0) \
-         & (K["tpIdx"][ci] == tp_of_trk[X["gtrk"][xi]])
+    valid = (px > SENTINEL) & (K["tpKey"][ci] >= -1)
+    tp_of_trk = T["spixMatchedTpKey"]
+    yB = (K["tpKey"][ci] >= 0) & (tp_of_trk[X["gtrk"][xi]] >= 0) \
+         & (K["tpKey"][ci] == tp_of_trk[X["gtrk"][xi]])
     names = list(cols)
     FB = np.nan_to_num(np.column_stack([cols[c].astype(np.float64) for c in names]),
                        nan=0., posinf=1e12, neginf=-1e12)[valid]

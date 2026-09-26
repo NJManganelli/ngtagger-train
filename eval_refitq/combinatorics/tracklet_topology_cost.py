@@ -759,7 +759,10 @@ def expand_inputs(spec):
 
 
 # ---- TrackingParticle truth: the L1TTP table ---------------------------------
-# One row per charged TP with pT >= 1 GeV (L1TrackingParticleTableProducer).
+# One row per charged TP with 3-momentum |p| > 1 GeV (L1TrackingParticleTableProducer;
+# older nanos cut pT >= 1 GeV, a subset of the same TPs). L1TTP_key is the TP's
+# collection KEY (the value the per-object tpKey columns hold), not a row index;
+# older nanos call it L1TTP_idx and SPN resolves either spelling.
 # phi0/d0/z0 are at the POCA to the beamline, curvature-aware, in the TTTrack
 # convention (d0 = x0 sin(phi0) - y0 cos(phi0), as L1TTrack_d0); phi is the
 # momentum azimuth at PRODUCTION and vx/vy the production vertex. The per-cluster
@@ -767,7 +770,7 @@ def expand_inputs(spec):
 # from them is wrong for any TP produced off its POCA, so TP truth is read here
 # and nowhere else.
 TP_TABLE = "L1TTP"
-TP_COLS = ["idx", "pt", "eta", "phi", "phi0", "charge", "vx", "vy", "d0", "z0"]
+TP_COLS = ["key", "pt", "eta", "phi", "phi0", "charge", "vx", "vy", "d0", "z0"]
 TP_REGEN = "/Users/nmangane/smartpixels/cmssw/work/otstub_arm/itot_tp_f*_100ev.root"
 # per-object truth column -> column of the per-TP table built by tp_table
 TP_TRUTH = {"tp_pt": "pt", "tp_eta": "eta", "tp_tanL": "tanL",
@@ -779,7 +782,7 @@ def require_tp_table(paths):
     """SystemExit naming the first input without the complete L1TTP table."""
     for p in paths:
         keys = set(uproot.open(f"{p}:Events").keys())
-        miss = [f"{TP_TABLE}_{c}" for c in TP_COLS if f"{TP_TABLE}_{c}" not in keys]
+        miss = [f"{TP_TABLE}_{c}" for c in TP_COLS if not SPN.has_column(keys, TP_TABLE, c)]
         if miss:
             raise SystemExit(
                 f"{p} has no {TP_TABLE} TrackingParticle table (missing "
@@ -787,8 +790,9 @@ def require_tp_table(paths):
                 f"the regenerated nanos {TP_REGEN}.")
 
 
-def tp_branches():
-    return [f"{TP_TABLE}_{c}" for c in TP_COLS]
+def tp_branches(path):
+    """The L1TTP branches of files shaped like `path` (either key spelling)."""
+    return SPN.branch_names(uproot.open(f"{path}:Events").keys(), TP_TABLE, TP_COLS)
 
 
 def tp_table(A, ev):
@@ -798,35 +802,36 @@ def tp_table(A, ev):
     object tables of the same batch get, or the join pairs TPs of different
     events.
     """
-    n = ak.to_numpy(ak.num(A[f"{TP_TABLE}_idx"]))
-    T = {c: ak.to_numpy(ak.flatten(A[f"{TP_TABLE}_{c}"])) for c in TP_COLS}
-    idx = T.pop("idx")
+    J = SPN.table_columns(A, TP_TABLE, TP_COLS)
+    n = ak.to_numpy(ak.num(J["key"]))
+    T = {c: ak.to_numpy(ak.flatten(J[c])) for c in TP_COLS}
+    idx = T.pop("key")
     if len(idx) and idx.max() >= (1 << TP_KEY_SHIFT):
-        raise SystemExit(f"L1TTP_idx exceeds 2^{TP_KEY_SHIFT}; widen TP_KEY_SHIFT")
+        raise SystemExit(f"L1TTP_key exceeds 2^{TP_KEY_SHIFT}; widen TP_KEY_SHIFT")
     k = tp_key(np.repeat(np.asarray(ev), n), idx)
     o = np.argsort(k, kind="stable")
     T = {c: v[o] for c, v in T.items()}
     T["key"] = k[o]
     if len(k) and not (T["key"][1:] > T["key"][:-1]).all():
-        raise SystemExit("duplicate (event, L1TTP_idx) in the TP table")
+        raise SystemExit("duplicate (event, L1TTP_key) in the TP table")
     T["tanL"] = np.sinh(T["eta"])
     return T
 
 
 def attach_tp_truth(D, TP, names=None):
     """Add to object table D (clusters or stubs) the L1TTP truth of each
-    object's TP, joined exactly on tp_key(event, tpIdx). NaN where the object has
-    no TP (tpIdx < 0) or its TP is not in L1TTP (neutral, or pT < 1 GeV).
+    object's TP, joined exactly on tp_key(event, tpKey). NaN where the object has
+    no TP (tpKey < 0) or its TP is not in L1TTP (neutral, or below the L1TTP momentum cut).
     `names` selects from TP_TRUTH; default all."""
     names = list(TP_TRUTH) if names is None else list(names)
     nan = np.float32(np.nan)
     if not len(TP["key"]):
         for nm in names:
-            D[nm] = np.full(len(D["tpIdx"]), nan)
+            D[nm] = np.full(len(D["tpKey"]), nan)
         return D
-    k = tp_key(D["event"], np.maximum(D["tpIdx"], 0))
+    k = tp_key(D["event"], np.maximum(D["tpKey"], 0))
     p = np.clip(np.searchsorted(TP["key"], k), 0, len(TP["key"]) - 1)
-    hit = (D["tpIdx"] >= 0) & (TP["key"][p] == k)
+    hit = (D["tpKey"] >= 0) & (TP["key"][p] == k)
     for nm in names:
         D[nm] = np.where(hit, TP[TP_TRUTH[nm]][p], nan)
     return D
@@ -881,13 +886,13 @@ def load_flat(spec, table, cols, nev=None, tp=()):
     paths = expand_inputs(spec)
     tp = list(tp)
     if tp:
-        if "tpIdx" not in cols:
-            raise ValueError("joining TP truth needs tpIdx among cols")
+        if "tpKey" not in cols:
+            raise ValueError("joining TP truth needs tpKey among cols")
         require_tp_table(paths)
     keys = table_branches(paths[0], table, cols)
     parts, counts, seen = [], [], 0
     for A in uproot.iterate([f"{p}:Events" for p in paths],
-                            keys + (tp_branches() if tp else []), step_size=200):
+                            keys + (tp_branches(paths[0]) if tp else []), step_size=200):
         if nev is not None and seen + len(A) > nev:
             keep = nev - seen
             if keep <= 0:
@@ -916,7 +921,7 @@ IT_COLS = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
            "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
            # sigX is the r-phi CPE sigma; the KF emulation needs it for the
            # position variance and sigY alone (the z sigma) is not a substitute.
-           "sigX", "sigY", "tpIdx", "tpPt"]
+           "sigX", "sigY", "tpKey", "tpPt"]
 
 
 def it_chunks(path, nev, step=16):
@@ -935,7 +940,7 @@ def it_chunks(path, nev, step=16):
     paths = expand_inputs(path)
     require_tp_table(paths)
     srcs = [f"{p}:Events" for p in paths]
-    for A in uproot.iterate(srcs, table_branches(paths[0], IT_TABLE, IT_COLS) + tp_branches(),
+    for A in uproot.iterate(srcs, table_branches(paths[0], IT_TABLE, IT_COLS) + tp_branches(paths[0]),
                             step_size=step):
         # ENFORCE THE EVENT LIMIT HERE. uproot.iterate ignores entry_stop when it
         # is handed a LIST of files, so -n 8 across ten ttbar files silently
@@ -962,9 +967,9 @@ def load_ot(path, nev, tp=()):
     """The OT stub table; `tp` as for load_flat."""
     paths = expand_inputs(path)
     t = uproot.open(f"{paths[0]}:Events")
-    cols = ["layer", "isBarrel", "r", "phi", "z", "bend", "tpIdx", "tpPt",
+    cols = ["layer", "isBarrel", "r", "phi", "z", "bend", "tpKey", "tpPt",
             "tpGenuine", "tpCombinatoric", "tpUnknown"]
-    have = [c for c in cols if f"{OT_TABLE}_{c}" in t.keys()]
+    have = [c for c in cols if SPN.has_column(t.keys(), OT_TABLE, c)]
     D, nev_read, n = load_flat(path, OT_TABLE, have, nev, tp)
     D["eta"] = np.abs(np.arcsinh(D["z"] / np.maximum(D["r"], 1e-6)))
     return D, nev_read, have
@@ -1750,9 +1755,9 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
     # least one projection layer, inside the same eta restriction as the seed.
     # Without a denominator, unique_true_found below is a bare count and cannot
     # be compared with the IT efficiency at all.
-    if "tpIdx" in D and "tpPt" in D:
-        b0 = base[(D["tpIdx"][base] >= 0) & (D["tpPt"][base] >= ptmin)]
-        kk = tp_key(D["event"][b0], D["tpIdx"][b0])
+    if "tpKey" in D and "tpPt" in D:
+        b0 = base[(D["tpKey"][base] >= 0) & (D["tpPt"][base] >= ptmin)]
+        kk = tp_key(D["event"][b0], D["tpKey"][b0])
         ll = D["layer"][b0]
         ka = np.unique(kk[ll == la]); kb = np.unique(kk[ll == lb])
         kp = np.unique(kk[np.isin(ll, list(S["proj_l"]))]) if S["proj_l"] else kk
@@ -1769,11 +1774,11 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
     # Without this the OT could only be compared on combinatorics while the IT
     # had efficiency and fake rate, and that asymmetry silently biases any
     # conclusion drawn from the pair.
-    if "tpIdx" in D and trips:
+    if "tpKey" in D and trips:
         na = nt_ = 0
         found_keys = []
         for ga_, gb_, gc_ in trips:
-            ta, tb, tc = D["tpIdx"][ga_], D["tpIdx"][gb_], D["tpIdx"][gc_]
+            ta, tb, tc = D["tpKey"][ga_], D["tpKey"][gb_], D["tpKey"][gc_]
             real = (ta >= 0) & (ta == tb) & (tb == tc)
             na += len(ta); nt_ += int(real.sum())
             found_keys.append(tp_key(D["event"][ga_][real], ta[real]))
@@ -1800,7 +1805,7 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
 # ==========================================================================
 # Truth bookkeeping -- ARRAY BASED
 # ==========================================================================
-# An earlier revision did this with Python dicts and sets of (event, tpIdx)
+# An earlier revision did this with Python dicts and sets of (event, tpKey)
 # tuples, rebuilt per benchmark x configuration x pT floor. On 40 events that
 # reached 9.7 GB resident and was growing ~1 GB/min: ~1.07 M boxed tuple keys
 # plus per-combination set rebuilds. It was killed before finishing.
@@ -1810,11 +1815,11 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
 # per-event Python loop is pair formation, which is inherently per-event and is
 # itself vectorised inside; input is streamed in chunks so nothing scales with
 # total event count.
-TP_KEY_SHIFT = 20          # tpIdx must fit in 2^20; asserted at build time
+TP_KEY_SHIFT = 20          # tpKey must fit in 2^20; asserted at build time
 
 
 def tp_key(event, tpidx):
-    """Pack (event, tpIdx) into one int64. Event is the HIGH word so that
+    """Pack (event, tpKey) into one int64. Event is the HIGH word so that
     sorting by key groups by event, which the pair stages rely on."""
     return event.astype(np.int64) * (1 << TP_KEY_SHIFT) + tpidx.astype(np.int64)
 
@@ -1828,10 +1833,10 @@ def build_tp_index(D):
     if "tp_d0" not in D:
         raise SystemExit("build_tp_index needs the L1TTP truth: build D with "
                          "it_chunks or join it with attach_tp_truth")
-    m = D["tpIdx"] >= 0
-    if m.sum() and D["tpIdx"][m].max() >= (1 << TP_KEY_SHIFT):
-        raise SystemExit(f"tpIdx exceeds 2^{TP_KEY_SHIFT}; widen TP_KEY_SHIFT")
-    k = tp_key(D["event"][m], D["tpIdx"][m])
+    m = D["tpKey"] >= 0
+    if m.sum() and D["tpKey"][m].max() >= (1 << TP_KEY_SHIFT):
+        raise SystemExit(f"tpKey exceeds 2^{TP_KEY_SHIFT}; widen TP_KEY_SHIFT")
+    k = tp_key(D["event"][m], D["tpKey"][m])
     order = np.argsort(k, kind="stable")
     k = k[order]
     first = np.r_[True, k[1:] != k[:-1]]
@@ -1845,11 +1850,11 @@ def findable_keys(D, la, lb, lc, ptmin):
 
     Fully vectorised: the event is inside the key, so there is no event loop.
     """
-    base = (D["tpIdx"] >= 0) & (D["tpPt"] >= ptmin)
+    base = (D["tpKey"] >= 0) & (D["tpPt"] >= ptmin)
     sets = []
     for L in (la, lb, lc):
         m = base & (D["layer"] == L)
-        sets.append(np.unique(tp_key(D["event"][m], D["tpIdx"][m])))
+        sets.append(np.unique(tp_key(D["event"][m], D["tpKey"][m])))
     out = sets[0]
     for nxt in sets[1:]:
         out = np.intersect1d(out, nxt, assume_unique=True)
@@ -1858,7 +1863,7 @@ def findable_keys(D, la, lb, lc, ptmin):
 
 def recovered_keys(D, ga, gb, gc):
     """Sorted keys of TPs recovered by a truth-consistent candidate."""
-    ta, tb, tc = D["tpIdx"][ga], D["tpIdx"][gb], D["tpIdx"][gc]
+    ta, tb, tc = D["tpKey"][ga], D["tpKey"][gb], D["tpKey"][gc]
     real = (ta >= 0) & (ta == tb) & (tb == tc)
     if not real.any():
         return np.empty(0, dtype=np.int64)
@@ -1867,7 +1872,7 @@ def recovered_keys(D, ga, gb, gc):
 
 def cand_purity(D, ga, gb, gc):
     """(n_candidates, n_truth_matched) for one batch of candidate triples."""
-    ta, tb, tc = D["tpIdx"][ga], D["tpIdx"][gb], D["tpIdx"][gc]
+    ta, tb, tc = D["tpKey"][ga], D["tpKey"][gb], D["tpKey"][gc]
     return len(ta), int(((ta >= 0) & (ta == tb) & (tb == tc)).sum())
 
 
@@ -2198,7 +2203,7 @@ def main():
             eta = O["eta"]
             R["ot_input"] = {"stubs_per_event_full": len(O["layer"]) / onev,
                              "stubs_per_event_matched": float((eta < ETA_MATCHED).sum() / onev),
-                             "has_truth": "tpIdx" in have}
+                             "has_truth": "tpKey" in have}
             print(f"OT: {R['ot_input']['stubs_per_event_full']:.0f} stubs/event full, "
                   f"{R['ot_input']['stubs_per_event_matched']:.0f} matched")
             cal = calibrate_ot_bend(a.input, a.nev or 10 ** 9)

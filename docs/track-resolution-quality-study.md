@@ -202,7 +202,7 @@ Seed-truthful is the more generous number. Delivered is computed in the browser
 from the surviving track set precisely so that it moves when a score threshold
 moves, which is the whole point of the MVA-threshold workflow. It needs an exact
 track-to-TP link, which is why `own_tpidx` exists: the packed
-`(event << 20) | tpIdx` key needs 30 bits, the track rows are float32, and at
+`(event << 20) | tpKey` key needs 30 bits, the track rows are float32, and at
 event 999 keys 128 apart collapse onto one value -- so `tp_key` must never be
 used for equality matching.
 

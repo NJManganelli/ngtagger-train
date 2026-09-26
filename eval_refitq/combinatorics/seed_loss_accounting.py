@@ -46,7 +46,7 @@ def load(path, nev):
     """Clusters with their TP's L1TTP d0 at the POCA [cm] joined as tp_d0."""
     cols = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
             "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
-            "sigY", "tpIdx", "tpPt"]
+            "sigY", "tpKey", "tpPt"]
     return M.load_flat(path, T, cols, nev, tp=("tp_d0",))[:2]
 
 
@@ -132,7 +132,7 @@ def main():
     for e in range(nev):
         m = D["event"] == e
         idx = np.flatnonzero(m)
-        tp, ly, pt = D["tpIdx"][idx], D["layer"][idx], D["tpPt"][idx]
+        tp, ly, pt = D["tpKey"][idx], D["layer"][idx], D["tpPt"][idx]
         d0 = np.abs(D["tp_d0"][idx])
         ok = (tp >= 0) & (pt >= a.ptmin) & np.isfinite(d0)
         if a.d0max > 0:

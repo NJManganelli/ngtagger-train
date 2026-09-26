@@ -167,3 +167,101 @@ def test_jet_constituents_grouping(tmp_path):
     nested = jet_constituents(events)
     assert ak.to_list(ak.num(nested, axis=2)[0]) == [2, 2]
     assert nested.cand.pt[0][1][0] == 8.0
+
+
+def _write_smartpixels_multi(tmp_path, name):
+    """Two refit variants (prompt IIIA, Ext AAAA), a unified cluster table,
+    track stubs with otStubIdx into L1TOTStub. One event."""
+    tree = {
+        "run": np.array([1], dtype=np.uint32),
+        "luminosityBlock": np.array([1], dtype=np.uint32),
+        "event": np.array([1], dtype=np.uint64),
+        "L1TTrack": ak.zip({"pt": [[10.0, 5.0]]}),
+        "L1TExtTrack": ak.zip({"pt": [[11.0]]}),
+        "L1TSmartPixelsTrackDigiRefitIIIA": ak.zip({"pt": [[10.1, 5.1]], "hwTanl": [[1, 2]]}),
+        "L1TSmartPixelsExtTrackDigiRefitAAAA": ak.zip({"pt": [[11.1]], "hwTanl": [[3]]}),
+        "L1TSmartPixelsRefitHitDigiRefitIIIA": ak.zip({
+            "trackIdx": [[1, 0]], "detId": [[12, 11]], "selClusterIdx": [[2, -1]]}),
+        "L1TSmartPixelsExtRefitHitDigiRefitAAAA": ak.zip({
+            "trackIdx": [[0]], "detId": [[10]], "selClusterIdx": [[0]]}),
+        "L1TSmartPixelsCluster": ak.zip({
+            "detId": [[10, 11, 12, 20]], "surface": [[1, 2, 4, 11]], "subdet": [[1, 1, 1, 2]]}),
+        "L1TOTStub": ak.zip({"detId": [[500, 501, 502]], "bend": [[1.0, 2.0, 3.0]]}),
+        "L1TTrackStub": ak.zip({"trackIdx": [[0, 1]], "detId": [[502, 500]],
+                                "otStubIdx": [[2, 0]]}),
+    }
+    f = uproot.recreate(tmp_path / name)
+    types = {k: (v.type if isinstance(v, ak.Array) else v.dtype) for k, v in tree.items()}
+    f.mktree("Events", types, counter_name=lambda n: "n" + n,
+             field_name=lambda outer, inner: inner if outer == "" else outer + "_" + inner)
+    f["Events"].extend(tree)
+    f.close()
+    return str(tmp_path / name)
+
+
+def test_smartpixels_links_generic(tmp_path):
+    from ngtagger.coffea_schema import smartpixels_links
+
+    path = _write_smartpixels_multi(tmp_path, "multi.root")
+    fields = uproot.open(f"{path}:Events").keys()
+    mix, xref = smartpixels_links(fields)
+    # every variant present is registered, whatever its suffix
+    assert xref["L1TSmartPixelsRefitHitDigiRefitIIIA_trackIdx"] == "L1TSmartPixelsTrackDigiRefitIIIA"
+    assert xref["L1TSmartPixelsExtRefitHitDigiRefitAAAA_trackIdx"] == \
+        "L1TSmartPixelsExtTrackDigiRefitAAAA"
+    assert xref["L1TSmartPixelsRefitHitDigiRefitIIIA_selClusterIdx"] == "L1TSmartPixelsCluster"
+    assert xref["L1TTrackStub_otStubIdx"] == "L1TOTStub"
+    assert xref["L1TTrackStub_trackIdx"] == "L1TTrack"
+    assert mix["L1TSmartPixelsExtTrackDigiRefitAAAA"] == "L1TrackWord"
+    # no index column -> no crossref (older nanos without otStubIdx stay silent)
+    assert "L1TExtTrackStub_otStubIdx" not in smartpixels_links(["L1TExtTrackStub_trackIdx"])[1]
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        ev = _events(path)
+    assert not [w for w in caught if "cross-ref" in str(w.message)], \
+        [str(w.message) for w in caught]
+    h = ev.L1TSmartPixelsRefitHitDigiRefitIIIA
+    assert ak.all(h.track.pt[0] == [5.1, 10.1])
+    assert h.cluster.detId[0][0] == 12 and ak.is_none(h.cluster.detId[0], axis=0)[1]
+    assert ev.L1TSmartPixelsExtRefitHitDigiRefitAAAA.track.pt[0][0] == pytest.approx(11.1)
+    st = ev.L1TTrackStub
+    assert ak.all(st.ot_stub.detId[0] == st.detId[0])
+    assert ak.all(st.track.pt[0] == [10.0, 5.0])
+
+
+def test_real_file_crossrefs():
+    """On a real nano: SPIX_NANO=/path/to/file.root pytest tests/test_coffea_schema.py
+    -k real_file [SPIX_NANO_EVENTS=3]. Every refit hit table's trackIdx and
+    selClusterIdx, and every track-stub table's otStubIdx, must land on a row
+    with the same detId (and, for stubs, the same bend)."""
+    import os
+
+    path = os.environ.get("SPIX_NANO")
+    if not path:
+        pytest.skip("set SPIX_NANO to a nano to check its cross-references")
+    from coffea.nanoevents import NanoEventsFactory
+
+    from ngtagger.coffea_schema import L1ClustersNanoSchema, smartpixels_links
+
+    nev = int(os.environ.get("SPIX_NANO_EVENTS", "3"))
+    fields = uproot.open(f"{path}:Events").keys()
+    _, xref = smartpixels_links(fields)
+    ev = NanoEventsFactory.from_root({path: "Events"}, schemaclass=L1ClustersNanoSchema,
+                                     entry_stop=nev).events()
+    checked = []
+    for col, target in sorted(xref.items()):
+        src, idx = col.split("_", 1)
+        tab = ev[src]
+        linked = tab.cluster if idx == "selClusterIdx" else (
+            tab.ot_stub if idx == "otStubIdx" else tab.track)
+        ok = tab[idx] >= 0
+        if idx in ("selClusterIdx", "otStubIdx"):
+            assert ak.all(linked.detId[ok] == tab.detId[ok]), col
+        if idx == "otStubIdx":
+            assert ak.all(linked.bend[ok] == tab.bend[ok]), col
+        if idx == "trackIdx":
+            assert ak.all(ak.num(linked.pt[ok], axis=1) == ak.num(tab[idx][ok], axis=1)), col
+        checked.append(f"{col} -> {target}: {int(ak.sum(ok))} links")
+    print("\n".join(checked))
+    assert checked, "no SmartPixels / track-stub cross-references in this file"

@@ -43,8 +43,8 @@ def main():
     for p in paths:
         t = uproot.open(f"{p}:Events")
         keys = set(t.keys())
-        miss = [c for c in M.IT_COLS if f"{M.IT_TABLE}_{c}" not in keys]
-        if any(f"{M.TP_TABLE}_{c}" not in keys for c in M.TP_COLS):
+        miss = [c for c in M.IT_COLS if not M.SPN.has_column(keys, M.IT_TABLE, c)]
+        if any(not M.SPN.has_column(keys, M.TP_TABLE, c) for c in M.TP_COLS):
             miss.append(M.TP_TABLE)
         # clusters/ev counts TBPX only, as the studies read it (M.table_columns)
         want = M.table_branches(p, M.IT_TABLE, ["layer"])
@@ -62,7 +62,7 @@ def main():
             bad.append((p, miss))
         print(f"{Path(p).name[:33]:<34}{t.num_entries:>7}"
               f"{ncl.mean():>9.0f}+-{ncl.std():<3.0f}{nst.mean():>10.0f}"
-              f"{'Y' if f'{M.OT_TABLE}_tpIdx' in keys else 'N':>9}"
+              f"{'Y' if M.SPN.has_column(keys, M.OT_TABLE, 'tpKey') else 'N':>9}"
               f"{(','.join(miss) if miss else 'none'):>18}")
 
     tot = sum(len(v) for v in ids.values())

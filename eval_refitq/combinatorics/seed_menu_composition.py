@@ -43,7 +43,7 @@ def build(src, nev, ptmin):
     nO = int(bar.sum())
     # OT stub z resolution, measured per layer against the stub's L1TTP helix
     # z0 + r*tanL, used as the z-search target sigma
-    ob = {c: O[c][bar] for c in ("layer", "tpIdx", "tpPt", "z", "r", "tp_z0", "tp_tanL")}
+    ob = {c: O[c][bar] for c in ("layer", "tpKey", "tpPt", "z", "r", "tp_z0", "tp_tanL")}
 
     def rs(x):
         q = np.percentile(x, [15.865, 84.135])
@@ -51,7 +51,7 @@ def build(src, nev, ptmin):
     sig = np.full(nO, 0.2)
     for L in range(1, 7):
         m = ob["layer"] == L
-        g = m & (ob["tpIdx"] >= 0) & (ob["tpPt"] >= ptmin) & np.isfinite(ob["tp_z0"])
+        g = m & (ob["tpKey"] >= 0) & (ob["tpPt"] >= ptmin) & np.isfinite(ob["tp_z0"])
         if g.sum() < 200:
             continue
         sig[m] = rs(ob["z"][g] - (ob["tp_z0"][g] + ob["r"][g] * ob["tp_tanL"][g]))
@@ -61,7 +61,7 @@ def build(src, nev, ptmin):
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
          "globalPhi": np.r_[I["globalPhi"], O["phi"][bar]],
          "sigY": np.r_[I["sigY"], sig],
-         "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
+         "tpKey": np.r_[I["tpKey"], O["tpKey"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
     QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, None)
@@ -98,8 +98,8 @@ def main():
     # remaining instrumented layer with the largest acceptance
     FP = {}
     for L in use:
-        m = (U["layer"] == L) & (U["tpIdx"] >= 0) & (U["tpPt"] >= a.ptmin)
-        FP[L] = np.unique(M.tp_key(U["event"][m], U["tpIdx"][m]))
+        m = (U["layer"] == L) & (U["tpKey"] >= 0) & (U["tpPt"] >= a.ptmin)
+        FP[L] = np.unique(M.tp_key(U["event"][m], U["tpKey"][m]))
     cands = []
     for i, la in enumerate(use):
         for lb in use[i + 1:]:

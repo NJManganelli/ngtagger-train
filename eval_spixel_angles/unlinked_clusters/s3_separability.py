@@ -7,7 +7,7 @@
  c. autoencoder trained on TP-linked clusters only (non-angle features), reconstruction error as
     an anomaly score for unlinked clusters.
 
-Positive class = unlinked (tpIdx = -1) throughout; AUC 0.5 = indistinguishable.
+Positive class = unlinked (tpKey = -1) throughout; AUC 0.5 = indistinguishable.
 Writes results/separability.json, results/sep_*.md, figs/f3_*.png.
 """
 from __future__ import annotations

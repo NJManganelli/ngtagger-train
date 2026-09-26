@@ -21,8 +21,8 @@ frame and Jacobian (validate_against_refit).
 INPUTS (nano + one JSON):
   L1TTrack               helix (rInv, phi, tanL, z0, d0) and its fit covariance
                          cov_<p>_<q> (L1TrackHelixCovTableProducer)
-  L1TTrackStub           the track's stubs; L1TOTStub their truth (joined by
-                         ot_oracle.join_stub_truth on the full stub identity)
+  L1TTrackStub           the track's stubs; L1TOTStub their truth (ot_oracle.
+                         stub_truth: exact via otStubIdx, else the stub identity)
   L1TSmartPixelsCluster  untruncated IT clusters: local position, sensor angle
                          estimate (localCotAlpha/Beta), dominant TP
   module geometry JSON   SmartPixelsModuleGeometryDumper: per module origin and
@@ -65,7 +65,7 @@ from ngtagger.data import spix_nano as SPN
 from ngtagger.truth_helix import KPT_CMSSW, tp_phi0
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from ot_oracle import join_stub_truth   # noqa: E402
+from ot_oracle import OT_LINK, stub_truth   # noqa: E402
 
 HPAR = ("rInv", "phi", "tanL", "z0", "d0")          # TTTrack::Hpar order
 COV_COLS = [f"cov_{HPAR[i]}_{HPAR[j]}" for i in range(5) for j in range(i, 5)]
@@ -92,10 +92,10 @@ ON_PLANE_CM = 1e-4        # |distance to plane| accepted as converged (1 um)
 
 TRK_COLS = list(HPAR) + ["pt", "eta", "nStubs"] + COV_COLS
 TST_COLS = ["trackIdx", "detId", "x", "y", "z", "bend", "layer", "isBarrel"]
-OTS_COLS = ["detId", "x", "y", "z", "bend", "layer", "isBarrel", "tpIdx",
+OTS_COLS = ["detId", "x", "y", "z", "bend", "layer", "isBarrel", "tpKey",
             "tpGenuine", "tpCombinatoric", "tpUnknown"]
 CL_COLS = ["detId", "layer", "localX", "localY", "localCotAlpha",
-           "localCotBeta", "hasAlpha", "hasBeta", "tpIdx",
+           "localCotBeta", "hasAlpha", "hasBeta", "tpKey",
            "sigX", "sigY", "sigAlpha", "sigBeta",      # errors: the refit's measurement R
            "sizeX", "sizeY"]                             # cluster size: calibrated R lookup
 CL_TABLE = SPN.CLUSTER_TABLE
@@ -114,7 +114,7 @@ SENTINEL = -900.0
 #   majority owner -- a real piece of another particle.
 # fake stub: a stub that is not genuine at all -- stub-level combinatoric (its
 #   two clusters come from different TPs) or unknown (no TP: noise, out-of-time
-#   pileup). Its TPs are not recorded (L1TOTStub_tpIdx = -1), so a fake stub
+#   pileup). Its TPs are not recorded (L1TOTStub_tpKey = -1), so a fake stub
 #   cannot name a co-owner.
 # NB "combinatoric" is avoided as a TRACK class name on purpose: CMSSW uses it
 #   for tracks, L1TOTStub for stubs, and they mean different things.
@@ -146,7 +146,7 @@ EXCLUDED = ("tie", "no-owner", "unjoined")
 # B1  -- inside the ellipse, owned by a TP that also owns a foreign stub of
 #        this track: the trap a contaminated track sets for itself.
 # B2  -- inside the ellipse, owned by any other TP.
-# B3  -- inside the ellipse, no TP (tpIdx = -1): noise / unlinked.
+# B3  -- inside the ellipse, no TP (tpKey = -1): noise / unlinked.
 CATEGORIES = ("A-in", "A-out", "B1", "B2", "B3")
 
 
@@ -398,7 +398,7 @@ def branches(with_refit, path, cl_extra=()):
     """The branches the study reads from files shaped like `path`; `cl_extra`
     adds cluster columns (read with _flat(A, CL_TABLE, ...))."""
     keys = _keys(path)
-    b = []
+    b = [f"L1TTrackStub_{OT_LINK}"] if f"L1TTrackStub_{OT_LINK}" in keys else []
     for tbl, cols in _tables(with_refit, cl_extra):
         b += (SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL) if tbl == CL_TABLE
               else SPN.branch_names(keys, tbl, cols))
@@ -427,7 +427,7 @@ def classify_tracks(T, S, O):
     ntrk = len(T["pt"])
     off = np.concatenate([[0], np.cumsum(T["_n"])])
     gtrk = off[S["event"]] + S["trackIdx"].astype(np.int64)
-    tp, flag, hit = join_stub_truth(S, O)
+    tp, flag, hit = stub_truth(S, O)
     n_unj = np.bincount(gtrk, weights=~hit, minlength=ntrk).astype(int)
     gen = hit & (flag == 1) & (tp >= 0)
     key = gtrk[gen] * (1 << 24) + tp[gen]
@@ -478,7 +478,8 @@ def prepare_chunk(A, geo):
     """Everything about a chunk that does not depend on the track STATE:
     tables, track classes, and the (event, detId) cluster index."""
     T = _flat(A, "L1TTrack", TRK_COLS)
-    S = _flat(A, "L1TTrackStub", TST_COLS)
+    S = _flat(A, "L1TTrackStub", TST_COLS + ([OT_LINK] if f"L1TTrackStub_{OT_LINK}" in A.fields
+                                             else []))
     O = _flat(A, "L1TOTStub", OTS_COLS)
     K = _flat(A, CL_TABLE, CL_COLS)
     a, C = track_state(T)
@@ -533,8 +534,8 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
     cand_ratio = (dist / bound)[it_, im_]
     # target modules: every IT module on this layer holding a cluster of
     # the majority-owner TP, even if it is not among the candidates
-    tgt = kin & (klay == L) & (K["tpIdx"] >= 0)
-    tk = kev[tgt].astype(np.int64) * (1 << 24) + K["tpIdx"][tgt].astype(np.int64)
+    tgt = kin & (klay == L) & (K["tpKey"] >= 0)
+    tk = kev[tgt].astype(np.int64) * (1 << 24) + K["tpKey"][tgt].astype(np.int64)
     want = tev[ti].astype(np.int64) * (1 << 24) + maj_tp[ti]
     order = np.argsort(tk, kind="stable")
     lo = np.searchsorted(tk[order], want, "left")
@@ -584,7 +585,7 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
     m2 = np.where(det > 0, m2, np.inf)
     inside = m2 < nsig * nsig
     t_of = pt_[pq]
-    ctp = K["tpIdx"][ci].astype(np.int64)
+    ctp = K["tpKey"][ci].astype(np.int64)
     isA = ctp == maj_tp[t_of]
     isB1 = ~isA & np.isin(t_of * (1 << 24) + ctp, foreign_keys)
     cat = np.where(isA, np.where(inside, 0, 1),

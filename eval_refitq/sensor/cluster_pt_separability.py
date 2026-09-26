@@ -11,7 +11,7 @@ refitted. Everything else is bandwidth spent on a hit no refit will ever use.
 
 WHY pT IS THE WRONG TARGET, AND WHAT WE USE INSTEAD. "high momentum" is a proxy
 for "traverses outward"; the thing we actually care about is the traversal. With
-tpIdx on every cluster we can measure the traversal directly: count the
+tpKey on every cluster we can measure the traversal directly: count the
 distinct TBPX layers in which a given TrackingParticle deposits a cluster. So
 this script scores TWO targets and compares them:
 
@@ -74,7 +74,7 @@ def auc(score, label):
 def load(paths):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     cols = ["layer", "detId", "charge", "sizeX", "sizeY",
-            "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpIdx", "tpChargeFrac"]
+            "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpKey", "tpChargeFrac"]
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
     miss = [c for c in cols if not SPN.has_column(keys, CLUSTER_TABLE, c)]
@@ -98,12 +98,12 @@ def load(paths):
 def traversal_target(K):
     """Per cluster: how many distinct IT layers does its TP light up in this event?
 
-    Grouped on (event, tpIdx) so a TP is never mixed across events. Clusters
+    Grouped on (event, tpKey) so a TP is never mixed across events. Clusters
     with no TP get 0 and are excluded from the traversal target entirely -- they
     cannot be scored against a property of a particle they have no link to.
     """
-    ok = K["tpIdx"] >= 0
-    key = np.where(ok, K["event"].astype(np.int64) * (1 << 20) + K["tpIdx"].astype(np.int64), -1)
+    ok = K["tpKey"] >= 0
+    key = np.where(ok, K["event"].astype(np.int64) * (1 << 20) + K["tpKey"].astype(np.int64), -1)
     nlay = np.zeros(len(key), dtype=np.int8)
     idx = np.flatnonzero(ok)
     order = np.lexsort((K["layer"][idx], key[idx]))

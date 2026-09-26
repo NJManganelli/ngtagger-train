@@ -57,17 +57,17 @@ def scatter_rows(U, IT, OT, ia, ib, TP):
     Both tracks are required TRUTH-CLEAN, every hit from the matched TP: a single
     wrong hit would masquerade as a large deflection and bias the width.
     """
-    ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
+    ta, tb = IT["tpKey"][ia], OT["tpKey"][ib]
     ok = (ta >= 0) & (ta == tb)
     for S, idx in ((IT, ia), (OT, ib)):
         G = S["gidx"][idx]
         on = G >= 0
-        tp = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -2)
+        tp = np.where(on, U["tpKey"][np.clip(G, 0, None)], -2)
         ok &= (on & (tp == ta[:, None])).sum(1) == on.sum(1)
     if not ok.any():
         return None
     a_, b_ = ia[ok], ib[ok]
-    kk = M.tp_key(IT["event"][a_], IT["tpIdx"][a_])
+    kk = M.tp_key(IT["event"][a_], IT["tpKey"][a_])
     p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
     good = TP["key"][p] == kk
     a_, b_, p = a_[good], b_[good], p[good]
@@ -228,8 +228,8 @@ def main():
         if IT is None or OT is None:
             continue
         acc["n_it"] += len(IT["gA"]); acc["n_ot"] += len(OT["gA"])
-        acc["n_it_real"] += int((IT["tpIdx"] >= 0).sum())
-        acc["n_ot_real"] += int((OT["tpIdx"] >= 0).sum())
+        acc["n_it_real"] += int((IT["tpKey"] >= 0).sum())
+        acc["n_ot_real"] += int((OT["tpKey"] >= 0).sum())
         for pname, pars in PARSETS.items():
             for cut in CUTS:
                 ia, ib, c2 = AP.match_systems(IT, OT, pars, cut)
@@ -237,7 +237,7 @@ def main():
                 d = mtot.setdefault(k, {"n": 0, "right": 0, "both_real": 0})
                 d["n"] += len(ia)
                 if len(ia):
-                    ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
+                    ta, tb = IT["tpKey"][ia], OT["tpKey"][ib]
                     d["right"] += int(((ta >= 0) & (ta == tb)).sum())
                     d["both_real"] += int(((ta >= 0) & (tb >= 0)).sum())
         # resolutions for the three architectures, at the default cut
@@ -266,7 +266,7 @@ def main():
                 for k, v in sr.items():
                     scat.setdefault(k, []).append(v)
         if len(ia):
-            ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
+            ta, tb = IT["tpKey"][ia], OT["tpKey"][ib]
             good = (ta >= 0) & (ta == tb)
             scales = ([float(x) for x in a.ms_scan.split(",") if x.strip()]
                       if a.ms_scan else [0.0])
@@ -294,10 +294,10 @@ def main():
             # cluster: requiring only gA let contaminated tracks in and read the
             # OT-alone resolution as 66 cm in z0, which is contamination and not
             # a measurement of anything.
-            m = (S["tpIdx"] >= 0) & (S["tpIdx"] == U["tpIdx"][S["gB"]])
+            m = (S["tpKey"] >= 0) & (S["tpKey"] == U["tpKey"][S["gB"]])
             if m.sum() < 20:
                 continue
-            kk = M.tp_key(S["event"][m], S["tpIdx"][m])
+            kk = M.tp_key(S["event"][m], S["tpKey"][m])
             p = np.clip(np.searchsorted(TP["key"], kk), 0, len(TP["key"]) - 1)
             hit = TP["key"][p] == kk
             r = res.setdefault(lab, [[], [], [], []])

@@ -25,8 +25,8 @@ import kf_emulation as KF            # noqa: E402
 
 # per-layer OT stub sigma_z, the calibrated values the census installs
 SIGZ_OT = {1: 0.081, 2: 0.113, 3: 0.190, 4: 1.773, 5: 1.771, 6: 1.867}
-IT = ["layer", "globalR", "globalZ", "globalPhi", "sigY", "tpIdx", "tpPt"]
-OT = ["layer", "isBarrel", "r", "z", "tpIdx", "tpPt", "tpGenuine"]
+IT = ["layer", "globalR", "globalZ", "globalPhi", "sigY", "tpKey", "tpPt"]
+OT = ["layer", "isBarrel", "r", "z", "tpKey", "tpPt", "tpGenuine"]
 
 
 def load(spec, nev):
@@ -56,10 +56,10 @@ def main():
     a = ap.parse_args()
 
     I, O, nev = load(a.input, a.nev)
-    ik = I["event"].astype(np.int64) * 100000 + I["tpIdx"]
-    ok_i = I["tpIdx"] >= 0
-    ob = (O["isBarrel"] > 0) & (O["tpGenuine"] > 0) & (O["tpIdx"] >= 0)
-    ok_key = O["event"].astype(np.int64) * 100000 + O["tpIdx"]
+    ik = I["event"].astype(np.int64) * 100000 + I["tpKey"]
+    ok_i = I["tpKey"] >= 0
+    ob = (O["isBarrel"] > 0) & (O["tpGenuine"] > 0) & (O["tpKey"] >= 0)
+    ok_key = O["event"].astype(np.int64) * 100000 + O["tpKey"]
     print(f"{nev} events, {ok_i.sum():,} IT clusters with truth, "
           f"{ob.sum():,} genuine barrel OT stubs")
 

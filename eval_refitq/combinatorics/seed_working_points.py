@@ -59,7 +59,7 @@ def build(src, nev):
     """One unified hit table."""
     I, n, _ = M.load_flat(src, M.IT_TABLE,
                           ["layer", "globalR", "globalZ", "globalPhi", "sigY",
-                           "tpIdx", "tpPt"], nev)
+                           "tpKey", "tpPt"], nev)
     O, on, _ = M.load_ot(src, nev)
     bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
     U = {"layer": np.r_[M.it_barrel_codes(I["layer"], "seed_working_points.build"),
@@ -67,16 +67,16 @@ def build(src, nev):
          "r": np.r_[I["globalR"], O["r"][bar]],
          "z": np.r_[I["globalZ"], O["z"][bar]],
          "phi": np.r_[I["globalPhi"], O["phi"][bar]],
-         "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
+         "tpKey": np.r_[I["tpKey"], O["tpKey"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
     return U, n, on
 
 
 def first_per_tp(U, L, ptmin):
-    m = (U["layer"] == L) & (U["tpIdx"] >= 0) & (U["tpPt"] >= ptmin)
+    m = (U["layer"] == L) & (U["tpKey"] >= 0) & (U["tpPt"] >= ptmin)
     idx = np.flatnonzero(m)
-    k = M.tp_key(U["event"][idx], U["tpIdx"][idx])
+    k = M.tp_key(U["event"][idx], U["tpKey"][idx])
     o = np.argsort(k, kind="stable")
     k, idx = k[o], idx[o]
     f = np.r_[True, k[1:] != k[:-1]]

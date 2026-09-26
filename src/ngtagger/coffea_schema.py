@@ -26,6 +26,8 @@ Usage:
 
 from __future__ import annotations
 
+import re
+
 import awkward
 import numpy
 from coffea.nanoevents import NanoAODSchema
@@ -97,6 +99,37 @@ class _SmartPixelsRefitHitBase(base.NanoCollection):
     def track(self):
         """refit variant track this hit belongs to (via trackIdx)"""
         return self._events()[self._track_target]._apply_global_index(self.trackIdxG)
+
+    @property
+    def cluster(self):
+        """the selected L1TSmartPixelsCluster row (via selClusterIdx; masked where -1)"""
+        return self._events()[CLUSTER_TABLE]._apply_global_index(self.selClusterIdxG)
+
+
+class _TrackStubBase(base.NanoCollection):
+    """L1TTrackStub / L1TExtTrackStub: one row per stub of a track."""
+
+    _track_target = None
+
+    @property
+    def track(self):
+        """owning track (via trackIdx)"""
+        return self._events()[self._track_target]._apply_global_index(self.trackIdxG)
+
+    @property
+    def ot_stub(self):
+        """the same stub's L1TOTStub row, with its truth (via otStubIdx)"""
+        return self._events()["L1TOTStub"]._apply_global_index(self.otStubIdxG)
+
+
+@awkward.mixin_class(behavior)
+class L1TrackStubLink(_TrackStubBase):
+    _track_target = "L1TTrack"
+
+
+@awkward.mixin_class(behavior)
+class L1ExtTrackStubLink(_TrackStubBase):
+    _track_target = "L1TExtTrack"
 
 
 @awkward.mixin_class(behavior)
@@ -216,37 +249,71 @@ class L1TrackWord(L1TrackWordDecoded):
 
 # ---------------------------------------------------------------------------
 # SmartPixels digiRefit variant tables (Phase-3 tier-2 refit study).
-# Track tables L1TSmartPixelsTrack*/L1TSmartPixelsExtTrack* are track-like:
-# they carry the same hw track-word columns as L1TTrack (reuse the hw-decode
-# mixin) plus the spx* refit-status extension columns, and are 1:1 row-aligned
-# with the reference L1TTrack/L1TExtTrack. Hit tables
-# L1TSmartPixelsRefitHit*/L1TSmartPixelsExtRefitHit* are link tables (one row
-# per accepted refit hit) with a trackIdx crossref into the matching variant
-# track table. Registered dynamically for the four activeSP configs
-# (AIII/AAII/AAAI/AAAA) x {prompt, Ext}.
+# Track tables L1TSmartPixelsTrack<suffix>/L1TSmartPixelsExtTrack<suffix> are
+# track-like: they carry the same hw track-word columns as L1TTrack (reuse the
+# hw-decode mixin) plus the spix* refit-status extension columns, and are 1:1
+# row-aligned with the reference L1TTrack/L1TExtTrack. Hit tables
+# L1TSmartPixelsRefitHit<suffix>/L1TSmartPixelsExtRefitHit<suffix> are link
+# tables (one row per refit crossing) with a trackIdx crossref into the variant
+# track table of the same suffix and a selClusterIdx crossref into
+# L1TSmartPixelsCluster (a barrel row; barrel rows are a per-event prefix of
+# the unified table, so the row index is also valid there).
+#
+# Registered PER FILE, by table-name pattern, for every variant present (a
+# multi-variant file carries up to 15 activeSP masks x {prompt, Ext}), so no
+# config list has to be kept in step with the producer.
 # ---------------------------------------------------------------------------
-SMARTPIXELS_CONFIGS = ("AIII", "AAII", "AAAI", "AAAA")
+CLUSTER_TABLE = "L1TSmartPixelsCluster"
+_SPIX_HIT_RE = re.compile(r"^L1TSmartPixels(Ext)?RefitHit(\w+)$")
+_SPIX_TRACK_RE = re.compile(r"^L1TSmartPixels(Ext)?Track(\w+)$")
+_OT_STUB_TABLE = "L1TOTStub"
+# track-stub table -> its owning track table
+_TRACK_STUB_TABLES = {"L1TTrackStub": ("L1TTrack", "L1TrackStubLink"),
+                      "L1TExtTrackStub": ("L1TExtTrack", "L1ExtTrackStubLink")}
+_HIT_LINK_CLASSES = {}      # track table -> mixin class name
 
-# name -> mixin-class name, filled by the loop below and merged into the schema
-_SMARTPIXELS_MIXINS = {}
-# crossref column -> target table, merged into all_cross_references
-_SMARTPIXELS_CROSSREFS = {}
 
-for _pfx, _trk_base in (("L1TSmartPixels", "L1TSmartPixelsTrackDigiRefit"),
-                        ("L1TSmartPixelsExt", "L1TSmartPixelsExtTrackDigiRefit")):
-    _hit_base = _trk_base.replace("Track", "RefitHit")
-    for _cfg in SMARTPIXELS_CONFIGS:
-        _trk_tbl = f"{_trk_base}{_cfg}"
-        _hit_tbl = _hit_base + _cfg
-        # track table: reuse the track-word hw decoder mixin
-        _SMARTPIXELS_MIXINS[_trk_tbl] = "L1TrackWord"
-        # hit link table: dedicated mixin bound to its variant track target
-        _hit_cls = f"L1SmartPixelsRefitHit{'Ext' if 'Ext' in _pfx else ''}{_cfg}Link"
-        _cls = type(_hit_cls, (_SmartPixelsRefitHitBase,), {"_track_target": _trk_tbl})
-        _cls = awkward.mixin_class(behavior)(_cls)
-        globals()[_hit_cls] = _cls
-        _SMARTPIXELS_MIXINS[_hit_tbl] = _hit_cls
-        _SMARTPIXELS_CROSSREFS[f"{_hit_tbl}_trackIdx"] = _trk_tbl
+def _hit_link_class(track_table):
+    """The refit-hit mixin bound to `track_table`, created once per name."""
+    name = _HIT_LINK_CLASSES.get(track_table)
+    if name is None:
+        name = f"L1SmartPixelsRefitHitLink_{track_table}"
+        cls = type(name, (_SmartPixelsRefitHitBase,), {"_track_target": track_table})
+        globals()[name] = awkward.mixin_class(behavior)(cls)
+        _HIT_LINK_CLASSES[track_table] = name
+    return name
+
+
+def smartpixels_links(fields):
+    """(mixins, cross_references) for the SmartPixels and track-stub tables of
+    a file with branch names `fields`. A cross-reference is registered only
+    when its index column exists, so an older nano without otStubIdx reads
+    silently; a present index whose target table is missing still warns."""
+    fields = set(fields)
+    tables = {f.split("_")[0] for f in fields}
+    mixins, xref = {}, {}
+
+    def link(col, target):
+        if col in fields:
+            xref[col] = target
+
+    for t in sorted(tables):
+        m = _SPIX_TRACK_RE.match(t)
+        if m:
+            mixins[t] = "L1TrackWord"
+            continue
+        m = _SPIX_HIT_RE.match(t)
+        if m:
+            trk = f"L1TSmartPixels{m.group(1) or ''}Track{m.group(2)}"
+            mixins[t] = _hit_link_class(trk)
+            link(f"{t}_trackIdx", trk)
+            link(f"{t}_selClusterIdx", CLUSTER_TABLE)
+    for stub, (trk, mix) in _TRACK_STUB_TABLES.items():
+        if stub in tables:
+            mixins[stub] = mix
+            link(f"{stub}_trackIdx", trk)
+            link(f"{stub}_otStubIdx", _OT_STUB_TABLE)
+    return mixins, xref
 
 
 class _L1PFCandBase(candidate.PtEtaPhiMCandidate, base.NanoCollection):
@@ -327,10 +394,14 @@ class L1NanoSchema(NanoAODSchema):
     column or the target table is missing (a genuinely partial file)."""
 
     def __init__(self, base_form, *args, **kwargs):
-        import re
         import warnings as _warnings
 
-        present = {f.split("_")[0] for f in base_form.get("fields", [])}
+        fields = base_form.get("fields", [])
+        present = {f.split("_")[0] for f in fields}
+        # per-file SmartPixels/track-stub links, on top of the class tables
+        mix, xref = smartpixels_links(fields)
+        self.mixins = {**type(self).mixins, **mix}
+        self.all_cross_references = {**type(self).all_cross_references, **xref}
         with _warnings.catch_warnings(record=True) as caught:
             _warnings.simplefilter("always")
             super().__init__(base_form, *args, **kwargs)
@@ -354,7 +425,6 @@ class L1NanoSchema(NanoAODSchema):
         "L1puppiJetSC4NG": "NanoCollection",
         "L1puppiJetSC4": "NanoCollection",
         "L1DispVertex": "L1DispVtx",
-        **_SMARTPIXELS_MIXINS,
     }
 
     all_cross_references = {
@@ -374,8 +444,6 @@ class L1NanoSchema(NanoAODSchema):
         # displaced vertex track-pair crossrefs
         "L1DispVertex_firstIndexTrk": "L1TExtTrack",
         "L1DispVertex_secondIndexTrk": "L1TExtTrack",
-        # SmartPixels refit-hit -> variant track crossrefs
-        **_SMARTPIXELS_CROSSREFS,
     }
 
     @classmethod
@@ -400,15 +468,18 @@ def jet_constituents(events, link_table: str = "L1SC4NGJetCands", tagger_window:
 # ---------------------------------------------------------------------------
 # Clusters tier (L1PFTrkNanoSmartPixClusters)
 # ---------------------------------------------------------------------------
-CLUSTER_TABLE = "L1TSmartPixelsCluster"
 
 
 class _SmartPixelsClusterBase(base.NanoCollection):
     """Untruncated IT clusters.
 
-    No cross-reference to tracks exists and none is possible: a cluster is a
-    detector object that knows nothing about any track. The join to a refit
-    crossing is on (event, detId) and is an analysis-level operation.
+    A cluster is a detector object that knows nothing about any track; the
+    link runs the other way, from a refit hit's selClusterIdx (``hit.cluster``).
+
+    On current nanos the table holds every TBPX cluster, then the ID1-ID4 disc
+    clusters, with subdet/layer/disk/side/ring/surface/idxInDet. Barrel-only
+    work selects ``surface <= 4``; older files keep the discs in a separate
+    L1TSmartPixelsDiscCluster table (ngtagger.data.spix_nano reads both).
 
     The derived accessors below are the ones that are awkward to recompute
     correctly by hand, because both are per-MODULE quantities and the table is

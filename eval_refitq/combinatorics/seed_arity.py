@@ -381,10 +381,10 @@ def recovered_keys(U, out):
     different thing -- purity of the whole track rather than of the seed.
     """
     ga, gb = out["_gA"], out["_gB"]
-    ta = U["tpIdx"][ga]
-    real = (ta >= 0) & (ta == U["tpIdx"][gb])
+    ta = U["tpKey"][ga]
+    real = (ta >= 0) & (ta == U["tpKey"][gb])
     if out.get("_gC") is not None:
-        real &= ta == U["tpIdx"][out["_gC"]]
+        real &= ta == U["tpKey"][out["_gC"]]
     if not real.any():
         return np.empty(0, np.int64)
     return np.unique(M.tp_key(U["event"][ga][real], ta[real]))
