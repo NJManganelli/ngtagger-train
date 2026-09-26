@@ -313,7 +313,7 @@ def _unify(I, O, sigz_ot, bench=None):
             f"these branches.")
     ot_flag = np.where(O["tpGenuine"][bar] > 0, 1,
                        np.where(O["tpCombinatoric"][bar] > 0, 2, 3)).astype(np.int8)
-    U = {"layer": np.r_[I["layer"], ol + 10],
+    U = {"layer": np.r_[M.it_barrel_codes(I["layer"], "tp_findability._unify"), ol + 10],
          "globalR": np.r_[I["globalR"], O["r"][bar]],
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
          "globalPhi": np.r_[I["globalPhi"], O["phi"][bar]],

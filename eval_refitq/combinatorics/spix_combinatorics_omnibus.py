@@ -3123,7 +3123,8 @@ def study_combined_it_ot(X, K, P, ax_row, out):
         out["combined_it_ot"] = {"skipped": f"{type(exc).__name__}: {exc}"}
         return
     bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
-    U = {"layer": np.r_[I["layer"], O["layer"][bar] + 10],
+    U = {"layer": np.r_[M.it_barrel_codes(I["layer"], "omnibus.study_combined_it_ot"),
+                        O["layer"][bar] + 10],
          "r": np.r_[I["globalR"], O["r"][bar]], "z": np.r_[I["globalZ"], O["z"][bar]],
          "phi": np.r_[I["globalPhi"], O["phi"][bar]],
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],

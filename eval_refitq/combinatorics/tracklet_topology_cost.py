@@ -832,19 +832,41 @@ def attach_tp_truth(D, TP, names=None):
     return D
 
 
+# THE COMBINED IT+OT HIT CODE SPACE of these studies: 1-4 = IL1-IL4 and
+# 11-16 = OL1-OL6 (OT barrel stub layer + 10). The nano's cluster `surface`
+# ALSO uses 11-14, for the discs ID1-ID4, so an IT disc cluster that reached a
+# combined array would silently be read as an OT barrel stub. Disc clusters are
+# kept out of the census and the combinatorics altogether until a disc-seeding
+# extension gives them their own codes; it_barrel_codes is the guard every
+# combined array's IT half goes through.
+def it_barrel_codes(layer, where):
+    """`layer` unchanged, after asserting every IT code is a barrel layer 1-4."""
+    layer = np.asarray(layer)
+    if layer.size and not ((layer >= 1) & (layer <= 4)).all():
+        bad = np.unique(layer[(layer < 1) | (layer > 4)])
+        raise AssertionError(
+            f"{where}: IT cluster codes {bad.tolist()} outside 1-4 would enter the "
+            f"combined IT+OT code space, where 11-16 = OL1-OL6. Disc clusters "
+            f"(surface 11-14) are not supported here; read the table with "
+            f"table_columns, which keeps TBPX only.")
+    return layer
+
+
 # The IT studies here are TBPX-only (IT_CONFIGS are layer triples), so the
 # cluster table is read barrel-only: on a unified nano the disc rows that follow
 # the barrel would otherwise enter every per-layer count with layer = 0.
 def table_branches(path, table, cols):
     keys = uproot.open(f"{path}:Events").keys()
     if table == IT_TABLE:
-        return SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL)
+        return SPN.cluster_branches(keys, list(cols) + ["surface"], surfaces=SPN.BARREL)
     return SPN.branch_names(keys, table, cols)
 
 
 def table_columns(A, table, cols):
     if table == IT_TABLE:
-        return SPN.cluster_columns(A, cols, surfaces=SPN.BARREL)
+        J = SPN.cluster_columns(A, list(cols) + ["surface"], surfaces=SPN.BARREL)
+        it_barrel_codes(ak.to_numpy(ak.flatten(J["surface"])), "table_columns")
+        return {c: J[c] for c in cols}
     return SPN.table_columns(A, table, cols)
 
 

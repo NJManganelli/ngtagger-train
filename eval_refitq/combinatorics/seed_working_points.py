@@ -62,7 +62,8 @@ def build(src, nev):
                            "tpIdx", "tpPt"], nev)
     O, on, _ = M.load_ot(src, nev)
     bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
-    U = {"layer": np.r_[I["layer"], O["layer"][bar] + 10],
+    U = {"layer": np.r_[M.it_barrel_codes(I["layer"], "seed_working_points.build"),
+                        O["layer"][bar] + 10],
          "r": np.r_[I["globalR"], O["r"][bar]],
          "z": np.r_[I["globalZ"], O["z"][bar]],
          "phi": np.r_[I["globalPhi"], O["phi"][bar]],

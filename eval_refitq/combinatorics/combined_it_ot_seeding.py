@@ -51,7 +51,7 @@ for L in range(1,7):
 
 # ---- unified hit table: IT layers 1-4, OT barrel layers 11-16 --------------
 sigY_ot=np.array([otsig.get(int(L),0.2) for L in O["layer"][bar]])
-U={"layer":np.r_[I["layer"], O["layer"][bar]+10],
+U={"layer":np.r_[M.it_barrel_codes(I["layer"], "combined_it_ot_seeding"), O["layer"][bar]+10],
    "globalR":np.r_[I["globalR"], O["r"][bar]],
    "globalZ":np.r_[I["globalZ"], O["z"][bar]],
    "globalPhi":np.r_[I["globalPhi"], O["phi"][bar]],

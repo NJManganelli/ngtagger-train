@@ -55,7 +55,8 @@ def build(src, nev, ptmin):
         if g.sum() < 200:
             continue
         sig[m] = rs(ob["z"][g] - (ob["tp_z0"][g] + ob["r"][g] * ob["tp_tanL"][g]))
-    U = {"layer": np.r_[I["layer"], O["layer"][bar] + 10],
+    U = {"layer": np.r_[M.it_barrel_codes(I["layer"], "seed_menu_composition.build"),
+                        O["layer"][bar] + 10],
          "globalR": np.r_[I["globalR"], O["r"][bar]],
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
          "globalPhi": np.r_[I["globalPhi"], O["phi"][bar]],
