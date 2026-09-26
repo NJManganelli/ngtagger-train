@@ -51,7 +51,9 @@ import awkward as ak
 import numpy as np
 import uproot
 
-CLUSTER_TABLE = "L1TSmartPixelsCluster"
+from ngtagger.data import spix_nano as SPN
+
+CLUSTER_TABLE = SPN.CLUSTER_TABLE
 NQ = 40           # quantile bins, matching the payload this replaces
 SIZEY_BINS = [1, 2, 3, 4, 5, 6, 8, 12]   # upper edges; last bucket is "12 or more"
 
@@ -62,14 +64,16 @@ def build(paths, layers=(1, 2, 3, 4), use_truth=False):
     cols = ["layer", f"{src}Alpha", f"{src}Beta", "hasAlpha", "hasBeta", "tpIdx", "sizeY"]
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
-    miss = [c for c in cols if f"{CLUSTER_TABLE}_{c}" not in keys]
+    miss = [c for c in cols if not SPN.has_column(keys, CLUSTER_TABLE, c)]
     if miss:
         raise SystemExit(
             f"input lacks {CLUSTER_TABLE} columns {miss}. Needs a Clusters-tier nano produced "
             "AFTER the cluster table began reading SmartPixelsRecHit.")
+    # TBPX only: the payload is keyed on barrel layer
     A = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{CLUSTER_TABLE}_{c}" for c in cols])
-    K = {c: ak.to_numpy(ak.flatten(A[f"{CLUSTER_TABLE}_{c}"])) for c in cols}
+                           filter_name=SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL))
+    K = {c: ak.to_numpy(ak.flatten(v))
+         for c, v in SPN.cluster_columns(A, cols, surfaces=SPN.BARREL).items()}
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
 
     edges = list(np.linspace(0.0, 1.0, NQ + 1))

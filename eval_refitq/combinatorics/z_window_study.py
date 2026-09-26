@@ -30,18 +30,20 @@ OT = ["layer", "isBarrel", "r", "z", "tpIdx", "tpPt", "tpGenuine"]
 
 
 def load(spec, nev):
-    srcs = [f"{p}:Events" for p in M.expand_inputs(spec)]
-    A = uproot.concatenate(srcs, [f"L1TSmartPixelsCluster_{c}" for c in IT]
-                           + [f"L1TOTStub_{c}" for c in OT])
+    paths = M.expand_inputs(spec)
+    srcs = [f"{p}:Events" for p in paths]
+    A = uproot.concatenate(srcs, M.table_branches(paths[0], M.IT_TABLE, IT)
+                           + M.table_branches(paths[0], M.OT_TABLE, OT))
     if nev is not None:
         A = A[:nev]
     def flat(pre, cols):
-        n = ak.to_numpy(ak.num(A[f"{pre}_{cols[0]}"]))
-        D = {c: ak.to_numpy(ak.flatten(A[f"{pre}_{c}"])) for c in cols}
+        J = M.table_columns(A, pre, cols)        # clusters: TBPX only
+        n = ak.to_numpy(ak.num(J[cols[0]]))
+        D = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
         D["event"] = np.repeat(np.arange(len(n)), n)
         return D, len(n)
-    I, nev_ = flat("L1TSmartPixelsCluster", IT)
-    O, _ = flat("L1TOTStub", OT)
+    I, nev_ = flat(M.IT_TABLE, IT)
+    O, _ = flat(M.OT_TABLE, OT)
     return I, O, nev_
 
 

@@ -45,12 +45,14 @@ import numpy as np
 from statistics import NormalDist
 import uproot
 
+from ngtagger.data import spix_nano as SPN
+
 SENTINEL = -900.0
 LAYERS = (1, 2, 3, 4)
 CONES = {"q68": 1.0, "q95": 1.959964}
 PT_EDGES = np.array([2, 3, 4, 6, 10, 20, 1e9])
 ETA_EDGES = np.array([-2.4, -1.6, -0.8, 0.0, 0.8, 1.6, 2.4])
-CLUSTER_TABLE = "L1TSmartPixelsCluster"
+CLUSTER_TABLE = SPN.CLUSTER_TABLE
 REF = "L1TTrack"
 # eta bin EDGES for the cot(theta) resolution study; cot(theta) = sinh(eta)
 ETA_RES_EDGES = np.array([0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4])
@@ -398,8 +400,14 @@ def load(paths):
 
     H = uproot.concatenate([f"{f}:Events" for f in files],
                            filter_name=[f"{hit}_{c}" for c in need_hit])
+    with uproot.open(f"{files[0]}:Events") as t:
+        avail = set(t.keys())
+    got = [c for c in optional if SPN.has_column(avail, CLUSTER_TABLE, c)]
+    # TBPX only: every study here is per barrel layer, and selClusterIdx indexes
+    # the barrel rows, which stay a per-event prefix of the unified table
     C = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{CLUSTER_TABLE}_{c}" for c in ccols])
+                           filter_name=SPN.cluster_branches(avail, ccols + got, surfaces=SPN.BARREL))
+    C = SPN.cluster_columns(C, ccols + got, surfaces=SPN.BARREL)
     R = uproot.concatenate([f"{f}:Events" for f in files],
                            filter_name=[f"{REF}_{c}" for c in rcols])
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
@@ -423,17 +431,11 @@ def load(paths):
     offm = np.concatenate([[0], np.cumsum(nmt)])
     X["trk_tpIdx"] = mtp[offm[ev_x] + X["trackIdx"].astype(np.int64)]
 
-    ncl = ak.to_numpy(ak.num(C[f"{CLUSTER_TABLE}_layer"]))
+    ncl = ak.to_numpy(ak.num(C["layer"]))
     ev_c = np.repeat(np.arange(len(ncl)), ncl)
-    K = {c: ak.to_numpy(ak.flatten(C[f"{CLUSTER_TABLE}_{c}"])) for c in ccols}
-    with uproot.open(f"{files[0]}:Events") as t:
-        avail = set(t.keys())
-    got = [c for c in optional if f"{CLUSTER_TABLE}_{c}" in avail]
-    if got:
-        O = uproot.concatenate([f"{f}:Events" for f in files],
-                               filter_name=[f"{CLUSTER_TABLE}_{c}" for c in got])
-        for c in got:
-            K[optional[c]] = ak.to_numpy(ak.flatten(O[f"{CLUSTER_TABLE}_{c}"]))
+    K = {c: ak.to_numpy(ak.flatten(C[c])) for c in ccols}
+    for c in got:
+        K[optional[c]] = ak.to_numpy(ak.flatten(C[c]))
     K["event"] = ev_c
     K["_evt_base"] = np.concatenate([[0], np.cumsum(ncl)])
     # per-cluster TP truth at the POCA (tp_d0, tp_z0, ...) from the L1TTP table;

@@ -61,6 +61,7 @@ from pathlib import Path
 import awkward as ak
 import numpy as np
 import uproot
+from ngtagger.data import spix_nano as SPN
 from ngtagger.truth_helix import KPT_CMSSW, tp_phi0
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -97,6 +98,7 @@ CL_COLS = ["detId", "layer", "localX", "localY", "localCotAlpha",
            "localCotBeta", "hasAlpha", "hasBeta", "tpIdx",
            "sigX", "sigY", "sigAlpha", "sigBeta",      # errors: the refit's measurement R
            "sizeX", "sizeY"]                             # cluster size: calibrated R lookup
+CL_TABLE = SPN.CLUSTER_TABLE
 REFIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
 REFIT_COLS = ["trackIdx", "detId", "layer", "projSeedLocalX", "projSeedLocalY",
               "projSeedCotAlpha", "projSeedCotBeta", "projSeedSigX", "projSeedSigY"]
@@ -369,26 +371,44 @@ def project_with_cov(a, C, s0, geo, mi, jac="central", R=None):
 # per-chunk flattening
 # --------------------------------------------------------------------------
 def _flat(A, pre, cols):
-    n = ak.to_numpy(ak.num(A[f"{pre}_{cols[0]}"]))
-    D = {c: ak.to_numpy(ak.flatten(A[f"{pre}_{c}"])) for c in cols}
+    """Flat numpy columns of table `pre`. The cluster table is read TBPX-only
+    (the study and the refit are barrel-only): barrel rows are a per-event
+    prefix, so selClusterIdx indexes this table exactly as it does the file's."""
+    J = (SPN.cluster_columns(A, cols, surfaces=SPN.BARREL) if pre == CL_TABLE
+         else SPN.table_columns(A, pre, cols))
+    n = ak.to_numpy(ak.num(J[cols[0]]))
+    D = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
     D["event"] = np.repeat(np.arange(len(n)), n)
     D["_n"] = n
     return D
 
 
-def branches(with_refit):
-    b = ([f"L1TTrack_{c}" for c in TRK_COLS] + [f"L1TTrackStub_{c}" for c in TST_COLS]
-         + [f"L1TOTStub_{c}" for c in OTS_COLS]
-         + [f"L1TSmartPixelsCluster_{c}" for c in CL_COLS])
-    if with_refit:
-        b += [f"{REFIT}_{c}" for c in REFIT_COLS]
+def _tables(with_refit, cl_extra=()):
+    t = [("L1TTrack", TRK_COLS), ("L1TTrackStub", TST_COLS), ("L1TOTStub", OTS_COLS),
+         (CL_TABLE, CL_COLS + [c for c in cl_extra if c not in CL_COLS])]
+    return t + ([(REFIT, REFIT_COLS)] if with_refit else [])
+
+
+def _keys(path):
+    with uproot.open(f"{path}:Events") as t:
+        return set(t.keys())
+
+
+def branches(with_refit, path, cl_extra=()):
+    """The branches the study reads from files shaped like `path`; `cl_extra`
+    adds cluster columns (read with _flat(A, CL_TABLE, ...))."""
+    keys = _keys(path)
+    b = []
+    for tbl, cols in _tables(with_refit, cl_extra):
+        b += (SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL) if tbl == CL_TABLE
+              else SPN.branch_names(keys, tbl, cols))
     return b
 
 
 def check_inputs(path, with_refit=False):
-    with uproot.open(f"{path}:Events") as t:
-        keys = set(t.keys())
-    miss = [b for b in branches(with_refit) if b not in keys]
+    keys = _keys(path)
+    miss = [f"{tbl}_{c}" for tbl, cols in _tables(with_refit) for c in cols
+            if not SPN.has_column(keys, tbl, c)]
     if miss:
         cov = [m for m in miss if "_cov_" in m]
         hint = ("\n  L1TTrack_cov_* are written by L1TrackHelixCovTableProducer "
@@ -460,7 +480,7 @@ def prepare_chunk(A, geo):
     T = _flat(A, "L1TTrack", TRK_COLS)
     S = _flat(A, "L1TTrackStub", TST_COLS)
     O = _flat(A, "L1TOTStub", OTS_COLS)
-    K = _flat(A, "L1TSmartPixelsCluster", CL_COLS)
+    K = _flat(A, CL_TABLE, CL_COLS)
     a, C = track_state(T)
     cls, maj_tp, foreign_keys = classify_tracks(T, S, O)
     covok = np.trace(C, axis1=1, axis2=2) > 0
@@ -666,7 +686,7 @@ def run(files, geometry, nsig=4.0, chunk=10, nev=None, validate=True, log=print)
     ncls = np.zeros(10, np.int64)
     bound_ratio = 0.0
     done = 0
-    for A in uproot.iterate([f"{f}:Events" for f in files], branches(validate),
+    for A in uproot.iterate([f"{f}:Events" for f in files], branches(validate, files[0]),
                             step_size=chunk):
         if nev is not None and done >= nev:
             break

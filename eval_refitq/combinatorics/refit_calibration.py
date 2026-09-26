@@ -45,14 +45,14 @@ CL_TRUTH = ["tpLocalCotAlpha", "tpLocalCotBeta", "tpChargeFrac", "sizeX", "sizeY
 def extract(files, geometry, nev=None, chunk=10, log=print):
     geo = OP.load_geometry(geometry)
     OP.check_inputs(files[0])
-    extra = [f"L1TTrack_{c}" for c in TP_COLS] + [f"L1TSmartPixelsCluster_{c}" for c in CL_TRUTH]
+    extra = [f"L1TTrack_{c}" for c in TP_COLS]
     out = {k: [] for k in ("layer", "pt", "tanL", "d0", "r_mod", "res", "J", "C", "sig", "hasA",
                            "hasB", "meas", "truth", "cltruth", "chargeFrac", "sizeX", "sizeY",
                            "inside", "event", "track", "n_disk_stubs", "n_stubs")}
     done = 0
     ev_base = 0
     trk_base = 0
-    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(False) + extra,
+    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(False, files[0], cl_extra=CL_TRUTH) + extra,
                             step_size=chunk):
         if nev is not None and done >= nev:
             break
@@ -62,8 +62,9 @@ def extract(files, geometry, nev=None, chunk=10, log=print):
         T, K, a, C = ctx["T"], ctx["K"], ctx["a"], ctx["C"]
         kpt = RP.pt_constant(T)
         tp = {c: ak.to_numpy(ak.flatten(A[f"L1TTrack_{c}"])).astype(np.float64) for c in TP_COLS}
-        kt = {c: ak.to_numpy(ak.flatten(A[f"L1TSmartPixelsCluster_{c}"])).astype(np.float64)
-              for c in CL_TRUTH}
+        # the same TBPX-only rows as ctx["K"], so ci indexes both
+        kt = {c: v.astype(np.float64) for c, v in OP._flat(A, OP.CL_TABLE, CL_TRUTH).items()
+              if c in CL_TRUTH}
         a_tp = np.stack([tp["tp_charge"] * kpt / np.where(tp["tp_pt"] > 0, tp["tp_pt"], 1.0),
                          tp_phi0(tp, kpt=kpt), tp["tp_tanL"], tp["tp_z0"], tp["tp_d0"]], 1)
         use = (ctx["cls"] == 0) & (tp["tp_pt"] > 0)

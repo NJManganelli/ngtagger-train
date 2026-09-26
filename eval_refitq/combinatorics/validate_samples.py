@@ -46,11 +46,12 @@ def main():
         miss = [c for c in M.IT_COLS if f"{M.IT_TABLE}_{c}" not in keys]
         if any(f"{M.TP_TABLE}_{c}" not in keys for c in M.TP_COLS):
             miss.append(M.TP_TABLE)
-        want = [f"{M.IT_TABLE}_layer"]
+        # clusters/ev counts TBPX only, as the studies read it (M.table_columns)
+        want = M.table_branches(p, M.IT_TABLE, ["layer"])
         if f"{M.OT_TABLE}_layer" in keys:
             want.append(f"{M.OT_TABLE}_layer")
         A = t.arrays(want + ["run", "luminosityBlock", "event"])
-        ncl = ak.to_numpy(ak.num(A[f"{M.IT_TABLE}_layer"]))
+        ncl = ak.to_numpy(ak.num(M.table_columns(A, M.IT_TABLE, ["layer"])["layer"]))
         nst = (ak.to_numpy(ak.num(A[f"{M.OT_TABLE}_layer"]))
                if f"{M.OT_TABLE}_layer" in keys else np.zeros(len(ncl)))
         ids[p] = set(zip(ak.to_numpy(A["run"]).tolist(),

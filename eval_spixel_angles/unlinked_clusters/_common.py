@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 import uproot
 
+from ngtagger.data import spix_nano as SPN
+
 HERE = Path(__file__).resolve().parent
 FIGS = HERE / "figs"
 OTSTUB = Path.home() / "smartpixels/cmssw/work/otstub_arm"
@@ -34,7 +36,7 @@ SAMPLES = {
     "T": [(OTSTUB / "itot_tp_f01_100ev.root", 100), (OTSTUB / "itot_tp_f02_100ev.root", 100)],
     "N": [(WORK / "spix_sweep15_500.root", 200)],
 }
-CL = "L1TSmartPixelsCluster"
+CL = SPN.CLUSTER_TABLE
 
 # Training / payload coverage, SPEC convention (alpha = r-phi bending, beta = along z).
 # Conv1D_Full-2bit NN eval dump (the sample the adopted payload is built from):
@@ -55,10 +57,13 @@ ANGLE = ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "ha
 
 def _read_file(path: Path, nev: int, with_tp: bool) -> pd.DataFrame:
     t = uproot.open(path)["Events"]
-    keys = [k for k in t.keys() if k.startswith(CL + "_")]
-    a = t.arrays(keys + ["event"], entry_stop=nev)
-    counts = ak.num(a[keys[0]]).to_numpy()
-    df = pd.DataFrame({k[len(CL) + 1:]: ak.flatten(a[k]).to_numpy() for k in keys})
+    # every cluster column, TBPX only (the study is per barrel layer)
+    cols = [k[len(CL) + 1:] for k in t.keys() if k.startswith(CL + "_")]
+    a = t.arrays(SPN.cluster_branches(t.keys(), cols, surfaces=SPN.BARREL) + ["event"],
+                 entry_stop=nev)
+    J = SPN.cluster_columns(a, cols, surfaces=SPN.BARREL)
+    counts = ak.num(J[cols[0]]).to_numpy()
+    df = pd.DataFrame({c: ak.flatten(J[c]).to_numpy() for c in cols})
     df["event"] = np.repeat(a["event"].to_numpy(), counts)
     df["ientry"] = np.repeat(np.arange(len(counts)), counts)
     if with_tp and "L1TTP_idx" in t.keys():

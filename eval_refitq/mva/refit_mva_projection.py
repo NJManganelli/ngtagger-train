@@ -59,8 +59,10 @@ import uproot
 import xgboost as xgb
 from sklearn.metrics import roc_auc_score, roc_curve
 
+from ngtagger.data import spix_nano as SPN
+
 SENTINEL = -900.0
-CLUSTER_TABLE = "L1TSmartPixelsCluster"
+CLUSTER_TABLE = SPN.CLUSTER_TABLE
 REF = "L1TTrack"
 NFOLD = 3
 
@@ -99,19 +101,20 @@ def load(paths):
 
     H = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[f"{HIT}_{c}" for c in hcols])
     V = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[f"{VAR}_{c}" for c in vcols])
+    # TBPX only: selClusterIdx indexes the barrel rows (a per-event prefix)
+    ccols = ccols + [x for x in copt if SPN.has_column(keys, CLUSTER_TABLE, x)]
     C = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{CLUSTER_TABLE}_{c}" for c in ccols
-                                        + [x for x in copt if f"{CLUSTER_TABLE}_{x}" in keys]])
+                           filter_name=SPN.cluster_branches(keys, ccols, surfaces=SPN.BARREL))
+    C = SPN.cluster_columns(C, ccols, surfaces=SPN.BARREL)
     R = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[f"{REF}_pt", f"{REF}_eta"])
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
 
     nh = ak.to_numpy(ak.num(H[f"{HIT}_layer"]))
     nv = ak.to_numpy(ak.num(V[f"{VAR}_spixNCrossings"]))
-    nc = ak.to_numpy(ak.num(C[f"{CLUSTER_TABLE}_layer"]))
+    nc = ak.to_numpy(ak.num(C["layer"]))
     X = {c: ak.to_numpy(ak.flatten(H[f"{HIT}_{c}"])) for c in hcols}
     T = {c: ak.to_numpy(ak.flatten(V[f"{VAR}_{c}"])) for c in vcols}
-    K = {c: ak.to_numpy(ak.flatten(C[f"{CLUSTER_TABLE}_{c}"]))
-         for c in ccols + [x for x in copt if f"{CLUSTER_TABLE}_{x}" in keys]}
+    K = {c: ak.to_numpy(ak.flatten(C[c])) for c in ccols}
     X["event"] = np.repeat(np.arange(len(nh)), nh)
     T["event"] = np.repeat(np.arange(len(nv)), nv)
     K["event"] = np.repeat(np.arange(len(nc)), nc)

@@ -60,7 +60,7 @@ def replay_pulls(A, geo, k, form):
     K = ctx["K"]
     H = OP._flat(A, OP.REFIT, OP.REFIT_COLS + COLS)
     toff = np.concatenate([[0], np.cumsum(ak.to_numpy(ak.num(A["L1TTrack_pt"])))])
-    coff = np.concatenate([[0], np.cumsum(ak.to_numpy(ak.num(A["L1TSmartPixelsCluster_detId"])))])
+    coff = np.concatenate([[0], np.cumsum(K["_n"])])     # K is TBPX-only (OP._flat)
     gt = toff[H["event"]] + H["trackIdx"].astype(np.int64)
     kpt = RP.pt_constant(ctx["T"])
     a, C = ctx["a"].copy(), ctx["C"].copy()
@@ -125,7 +125,7 @@ def main():
     extra = [f"{OP.REFIT}_{c}" for c in COLS]
     chunks = []
     done = 0
-    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(True) + extra, step_size=20):
+    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(True, files[0]) + extra, step_size=20):
         chunks.append(A)
         done += len(A)
         if done >= a.nev:

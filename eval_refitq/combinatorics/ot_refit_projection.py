@@ -386,8 +386,7 @@ def replay_against_refit(ctx, geo, kpt, q_form="f629627"):
                                                 "projCotBeta"])
     ntrk_ev = ak.to_numpy(ak.num(A["L1TTrack_pt"]))
     toff = np.concatenate([[0], np.cumsum(ntrk_ev)])
-    ncl = ak.to_numpy(ak.num(A["L1TSmartPixelsCluster_detId"]))
-    coff = np.concatenate([[0], np.cumsum(ncl)])
+    coff = np.concatenate([[0], np.cumsum(K["_n"])])     # K is TBPX-only (OP._flat)
     gt = toff[H["event"]] + H["trackIdx"].astype(np.int64)
     a, C = ctx["a"].copy(), ctx["C"].copy()
     ntrk = ctx["ntrk"]
@@ -458,7 +457,7 @@ def run(files, geometry, mask="AAAA", use_angles="alphaBeta", variants=VARIANTS,
     rep = []
     ncls = np.zeros(10, np.int64)
     done = 0
-    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(True) + extra,
+    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(True, files[0]) + extra,
                             step_size=chunk):
         if nev is not None and done >= nev:
             break

@@ -38,7 +38,9 @@ import awkward as ak
 import numpy as np
 import uproot
 
-IT_TABLE, OT_TABLE = "L1TSmartPixelsCluster", "L1TOTStub"
+from ngtagger.data import spix_nano as SPN
+
+IT_TABLE, OT_TABLE = SPN.CLUSTER_TABLE, SPN.OT_TABLE
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
 Z_LUMI, NSIG = 15.0, 3.0
 SIG_PULL_INFLATE = 1.21          # sigGlobalClusterCotTheta measured 21% optimistic
@@ -830,6 +832,22 @@ def attach_tp_truth(D, TP, names=None):
     return D
 
 
+# The IT studies here are TBPX-only (IT_CONFIGS are layer triples), so the
+# cluster table is read barrel-only: on a unified nano the disc rows that follow
+# the barrel would otherwise enter every per-layer count with layer = 0.
+def table_branches(path, table, cols):
+    keys = uproot.open(f"{path}:Events").keys()
+    if table == IT_TABLE:
+        return SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL)
+    return SPN.branch_names(keys, table, cols)
+
+
+def table_columns(A, table, cols):
+    if table == IT_TABLE:
+        return SPN.cluster_columns(A, cols, surfaces=SPN.BARREL)
+    return SPN.table_columns(A, table, cols)
+
+
 def load_flat(spec, table, cols, nev=None, tp=()):
     """Flatten `cols` of `table` across every input file into one dict.
 
@@ -844,18 +862,19 @@ def load_flat(spec, table, cols, nev=None, tp=()):
         if "tpIdx" not in cols:
             raise ValueError("joining TP truth needs tpIdx among cols")
         require_tp_table(paths)
-    keys = [f"{table}_{c}" for c in cols]
+    keys = table_branches(paths[0], table, cols)
     parts, counts, seen = [], [], 0
     for A in uproot.iterate([f"{p}:Events" for p in paths],
                             keys + (tp_branches() if tp else []), step_size=200):
-        n = ak.to_numpy(ak.num(A[keys[0]]))
-        if nev is not None and seen + len(n) > nev:
+        if nev is not None and seen + len(A) > nev:
             keep = nev - seen
             if keep <= 0:
                 break
-            A, n = A[:keep], n[:keep]
+            A = A[:keep]
+        J = table_columns(A, table, cols)
+        n = ak.to_numpy(ak.num(J[cols[0]]))
         ev = np.arange(seen, seen + len(n))
-        P = {c: ak.to_numpy(ak.flatten(A[f"{table}_{c}"])) for c in cols}
+        P = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
         P["event"] = np.repeat(ev, n)
         if tp:
             attach_tp_truth(P, tp_table(A, ev), tp)
@@ -894,9 +913,8 @@ def it_chunks(path, nev, step=16):
     paths = expand_inputs(path)
     require_tp_table(paths)
     srcs = [f"{p}:Events" for p in paths]
-    for A in uproot.iterate(srcs, [f"{IT_TABLE}_{c}" for c in IT_COLS] + tp_branches(),
+    for A in uproot.iterate(srcs, table_branches(paths[0], IT_TABLE, IT_COLS) + tp_branches(),
                             step_size=step):
-        n = ak.to_numpy(ak.num(A[f"{IT_TABLE}_layer"]))
         # ENFORCE THE EVENT LIMIT HERE. uproot.iterate ignores entry_stop when it
         # is handed a LIST of files, so -n 8 across ten ttbar files silently
         # processed all 1000 -- the kind of miss that turns a quick check into a
@@ -904,10 +922,12 @@ def it_chunks(path, nev, step=16):
         if nev is not None:
             if seen >= nev:
                 return
-            if seen + len(n) > nev:
-                A, n = A[:nev - seen], n[:nev - seen]
+            if seen + len(A) > nev:
+                A = A[:nev - seen]
+        J = table_columns(A, IT_TABLE, IT_COLS)
+        n = ak.to_numpy(ak.num(J[IT_COLS[0]]))
         ev = np.arange(seen, seen + len(n))
-        D = {c: ak.to_numpy(ak.flatten(A[f"{IT_TABLE}_{c}"])) for c in IT_COLS}
+        D = {c: ak.to_numpy(ak.flatten(J[c])) for c in IT_COLS}
         D["event"] = np.repeat(ev, n)
         D["_events"] = ev
         attach_tp_truth(D, tp_table(A, ev))

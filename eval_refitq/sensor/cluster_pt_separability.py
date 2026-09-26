@@ -51,8 +51,10 @@ import numpy as np
 import uproot
 from scipy.stats import rankdata
 
+from ngtagger.data import spix_nano as SPN
+
 SENTINEL = -900.0
-CLUSTER_TABLE = "L1TSmartPixelsCluster"
+CLUSTER_TABLE = SPN.CLUSTER_TABLE
 LAYERS = (1, 2, 3, 4)
 PT_THRESHOLDS = (1.0, 2.0)
 MIN_TRAVERSED_LAYERS = 3
@@ -75,16 +77,18 @@ def load(paths):
             "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpIdx", "tpChargeFrac"]
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
-    miss = [c for c in cols if f"{CLUSTER_TABLE}_{c}" not in keys]
+    miss = [c for c in cols if not SPN.has_column(keys, CLUSTER_TABLE, c)]
     if miss:
         raise SystemExit(
             f"input lacks {CLUSTER_TABLE} columns {miss}. Produce a Clusters-tier file:\n"
             "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
             "--variant digiRefit:1111 --needs-truth -o <out>.py")
+    # TBPX only: the traversal target counts distinct barrel layers per TP
     A = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{CLUSTER_TABLE}_{c}" for c in cols])
-    n = ak.to_numpy(ak.num(A[f"{CLUSTER_TABLE}_layer"]))
-    K = {c: ak.to_numpy(ak.flatten(A[f"{CLUSTER_TABLE}_{c}"])) for c in cols}
+                           filter_name=SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL))
+    J = SPN.cluster_columns(A, cols, surfaces=SPN.BARREL)
+    n = ak.to_numpy(ak.num(J["layer"]))
+    K = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
     K["event"] = np.repeat(np.arange(len(n)), n)
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
     print(f"files={len(files)} events={n_ev} clusters={len(K['layer'])}")

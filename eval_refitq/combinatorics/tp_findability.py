@@ -260,8 +260,8 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
     paths = M.expand_inputs(spec)
     M.require_tp_table(paths)
     srcs = [f"{p}:Events" for p in paths]
-    itk = [f"{M.IT_TABLE}_{c}" for c in M.IT_COLS]
-    otk = [f"{M.OT_TABLE}_{c}" for c in OT_COLS]
+    itk = M.table_branches(paths[0], M.IT_TABLE, M.IT_COLS)
+    otk = M.table_branches(paths[0], M.OT_TABLE, OT_COLS)
     seen = 0
     for A in uproot.iterate(srcs, itk + otk + M.tp_branches(), step_size=step):
         # uproot.iterate IGNORES entry_stop when handed a list of files, so the
@@ -271,12 +271,14 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
                 return
             if len(A) > nev - seen:
                 A = A[:nev - seen]
-        nI = ak.to_numpy(ak.num(A[itk[0]]))
-        nO = ak.to_numpy(ak.num(A[otk[0]]))
+        JI = M.table_columns(A, M.IT_TABLE, M.IT_COLS)      # TBPX only
+        JO = M.table_columns(A, M.OT_TABLE, OT_COLS)
+        nI = ak.to_numpy(ak.num(JI[M.IT_COLS[0]]))
+        nO = ak.to_numpy(ak.num(JO[OT_COLS[0]]))
         ev = np.arange(seen, seen + len(nI))
-        I = {c: ak.to_numpy(ak.flatten(A[f"{M.IT_TABLE}_{c}"])) for c in M.IT_COLS}
+        I = {c: ak.to_numpy(ak.flatten(JI[c])) for c in M.IT_COLS}
         I["event"] = np.repeat(ev, nI)
-        O = {c: ak.to_numpy(ak.flatten(A[f"{M.OT_TABLE}_{c}"])) for c in OT_COLS}
+        O = {c: ak.to_numpy(ak.flatten(JO[c])) for c in OT_COLS}
         O["event"] = np.repeat(ev, nO)
         seen += len(nI)
         U, Q = _unify(I, O, sigz_ot, bench)
