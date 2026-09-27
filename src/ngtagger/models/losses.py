@@ -19,9 +19,12 @@ def nt_xent(z1, z2, temperature: float = 0.5):
     mask = ops.eye(2 * n) * 1e9
     sim = sim - mask  # remove self-similarity from the softmax
 
-    positives = ops.concatenate(
-        [ops.diagonal(sim, offset=n), ops.diagonal(sim, offset=-n)], axis=0
-    )  # (2N,)
+    # sim[i, i+N] = sim[i+N, i] = z1_i . z2_i / T (the self-mask only touches
+    # the main diagonal). Computed directly rather than via
+    # ops.diagonal(sim, offset=n): the TF backend branches on the offset in
+    # Python, which fails in graph mode when n is symbolic.
+    pos = ops.sum(z1 * z2, axis=1) / temperature
+    positives = ops.concatenate([pos, pos], axis=0)  # (2N,)
 
     denom = ops.logsumexp(sim, axis=1)
     loss = -(positives - denom)
