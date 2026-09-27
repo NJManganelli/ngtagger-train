@@ -43,6 +43,9 @@ FEATURE_GROUPS = {
     # refit track scored by the deployed Stage-3 conifer (0 for tracks without
     # a refit / neutral constituents).
     "refitbdt": ["refit_bdt_score"],
+    # on-the-fly per-track resolution-quality MVAs (ngtagger.train.trackmva) of
+    # the constituent's track; -1 (trackmva_feature.SENTINEL) for no track
+    "trackmva": ["trkmva_clean", "trkmva_d0acc", "trkmva_z0acc", "trkmva_log_sd0", "trkmva_log_sz0"],
 }
 
 
@@ -96,7 +99,7 @@ def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16,
         "quality": c.hwTkQuality,
     }
     for n in names:
-        if n.startswith(("trk_", "cl_", "vtx_", "vtxpv_", "refit_")):
+        if n.startswith(("trk_", "cl_", "vtx_", "vtxpv_", "refit_", "trkmva_")):
             if n == "cl_absZBarycenter":
                 feats[n] = abs(c["cl_zBarycenter"])
             else:

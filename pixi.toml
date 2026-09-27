@@ -11,6 +11,7 @@ train = "python -m ngtagger.cli train"
 multishot = "python -m ngtagger.cli multishot"
 export = "python -m ngtagger.cli export"
 inspect-nano = "python -m ngtagger.cli inspect-nano"
+train-trackmva = "python -m ngtagger.cli train-trackmva"
 test = "pytest tests -x -q"
 mlflow-ui = "mlflow ui --backend-store-uri file://$PIXI_PROJECT_ROOT/mlruns"
 

@@ -39,18 +39,21 @@ def class_pt_weights(y: np.ndarray, reco_pt: np.ndarray, method: str = "onlyclas
 def prepare_dataset(files: list[str], n_const: int = 16, feature_groups: list[str] | None = None,
                     max_events: int | None = None, test_fraction: float = 0.1, seed: int = 0,
                     tables: dict | None = None, gen_match_dr: float = 0.4,
-                    refit_config: str | None = None, refit_bdt_json: str | None = None):
+                    refit_config: str | None = None, refit_bdt_json: str | None = None,
+                    trackmva_model: str | None = None):
     """nano files -> train/test numpy tensors. No intermediate formats.
 
     tables: optional overrides for the nano table names (jet_table, link_table,
     cand_table, track_table, cluster_table) — e.g. the SC8 pipeline points
     jet_table/link_table at the SC8 NG collections. gen_match_dr follows the
     jet radius (0.4 for SC4, 0.8 for SC8). refit_config/refit_bdt_json feed the
-    on-the-fly refit-quality BDT feature group ("refitbdt").
+    on-the-fly refit-quality BDT feature group ("refitbdt"); trackmva_model (a
+    ngtagger.train.trackmva bundle) feeds the per-track MVA group ("trackmva").
     """
     jets, constituents, gen = load_jets(files, n_const=n_const, feature_groups=feature_groups,
                                         max_events=max_events,
                                         refit_config=refit_config, refit_bdt_json=refit_bdt_json,
+                                        trackmva_model=trackmva_model,
                                         **(tables or {}))
     label, target_pt, target_pt_phys, keep = label_jets(jets, gen, max_dr=gen_match_dr)
     charge_label = label_jet_charge(jets, gen, max_dr=gen_match_dr)
@@ -120,6 +123,7 @@ def run_training(config_path: str, files: list[str], output_dir: str, seed: int 
         gen_match_dr=dc.get("gen_match_dr", 0.4),
         refit_config=dc.get("refit_config"),
         refit_bdt_json=dc.get("refit_bdt_json"),
+        trackmva_model=dc.get("trackmva_model"),
     )
     model.class_labels = list(ds["class_labels"])
     model.feature_names = list(ds["feature_names"])

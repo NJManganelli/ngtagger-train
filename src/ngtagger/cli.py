@@ -4,6 +4,7 @@
   ngtagger multishot-jetmulticlass  -c configs/deepset_hgq2.yaml -i nano.root -o output/ms -n 5 -p 2
   ngtagger train-jetmulticlass-tabfm -i nano.root -o output/tabfm
   ngtagger export                   -m output/ms/best -o firmware/
+  ngtagger train-trackmva           -i f01.root ... f10.root --train-only _f01_ _f02_ -o trackmva_v1/
   ngtagger inspect-nano nano.root
 """
 
@@ -245,6 +246,42 @@ def main(argv=None):
     p_cq.add_argument("--max-events", type=int, default=None)
     p_cq.add_argument("--seed", type=int, default=0)
 
+    p_tm = sub.add_parser("train-trackmva",
+                          help="per-track resolution-quality MVAs (clean, d0acc, z0acc, "
+                               "sigma_hat d0/z0) of SmartPixels refit tracks; frozen bundle")
+    p_tm.add_argument("-i", "--inputs", nargs="+", required=True,
+                      help="withGen SmartPixels digiRefit nano files, in the order that "
+                           "defines the event index (and so the fold permutation)")
+    p_tm.add_argument("-o", "--output", required=True)
+    p_tm.add_argument("--train-only", nargs="*", default=[],
+                      help="files (path, basename, or a basename substring such as _f01_) "
+                           "whose events are in every training set and never evaluated, "
+                           "e.g. the files that trained the cluster-angle CNN")
+    p_tm.add_argument("--family", choices=["prompt", "ext"], default="prompt",
+                      help="prompt = L1TTrack + L1TSmartPixelsTrackDigiRefit<cfg>; "
+                           "ext = L1TExtTrack + L1TSmartPixelsExtTrackDigiRefit<cfg> (the table "
+                           "jet constituents crossref)")
+    p_tm.add_argument("--config", default="AAAA", help="digiRefit config suffix")
+    p_tm.add_argument("--colls", nargs="+", choices=["refit", "base"], default=["refit"],
+                      help="refit = the deliverable; base = the OT-only reference heads")
+    p_tm.add_argument("--crossfit", choices=["none", "outer", "nested"], default="nested",
+                      help="out-of-sample scores: outer K-fold, or the nested scheme that "
+                           "gives downstream models out-of-sample scores in every fold")
+    p_tm.add_argument("--n-folds", type=int, default=5)
+    p_tm.add_argument("--fold-seed", type=int, default=0)
+    p_tm.add_argument("--seed", type=int, default=1, help="HGB random_state")
+    p_tm.add_argument("--max-iter", type=int, default=200)
+    p_tm.add_argument("--learning-rate", type=float, default=0.1)
+    p_tm.add_argument("--trap-ablation", action="store_true",
+                      help="also report d0acc with vs without the withheld d0 features")
+    p_tm.add_argument("--no-freeze", action="store_true", help="skip the frozen all-event fit")
+    p_tm.add_argument("--dataset-cache", default=None,
+                      help="npz of the flattened per-track dataset (written if absent, "
+                           "reused if present and built from the same files)")
+    p_tm.add_argument("--step-events", type=int, default=25,
+                      help="events per uproot read (bounds the reader's RSS)")
+    p_tm.add_argument("--max-events", type=int, default=None)
+
     p_ins = sub.add_parser("inspect-nano", help="print tagger-relevant tables of a nano file")
     p_ins.add_argument("file")
 
@@ -369,6 +406,16 @@ def main(argv=None):
         from ngtagger.train.chi2quant import run
 
         run(args)
+    elif args.cmd == "train-trackmva":
+        from ngtagger.train.trackmva import train_trackmva
+
+        train_trackmva(args.inputs, args.output, family=args.family, config=args.config,
+                       colls=args.colls, train_only=args.train_only, n_folds=args.n_folds,
+                       crossfit_mode=args.crossfit, fold_seed=args.fold_seed, seed=args.seed,
+                       hgb_params={"max_iter": args.max_iter, "learning_rate": args.learning_rate},
+                       step_events=args.step_events, max_events=args.max_events,
+                       trap=args.trap_ablation, dataset_cache=args.dataset_cache,
+                       freeze=not args.no_freeze)
     elif args.cmd == "inspect-nano":
         import uproot
 

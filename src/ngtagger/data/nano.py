@@ -180,6 +180,7 @@ def load_jets(
     refit_config: str | None = None,
     refit_bdt_json: str | None = None,
     vertex_table: str = "L1Vertex",
+    trackmva_model: str | None = None,
 ):
     """Full pipeline: nano files -> (jets awkward record, per-jet constituent
     feature records). Feature engineering and labeling live in features.py /
@@ -191,12 +192,23 @@ def load_jets(
         constituent's SmartPixels-refit track (needs refit_config + refit_bdt_json).
       - "vertexdxy_pv": the transverse IP (dxy) of the constituent track w.r.t.
         the emulated primary vertex (L1Vertex z0 + track d0/z0/phi).
+      - "trackmva": the per-track resolution-quality MVA heads of the
+        constituent's track (ngtagger.data.trackmva_feature; needs
+        trackmva_model, a bundle of the family whose base table is track_table).
 
     link_cand_table: plain-Puppi tier row-aligned with cand_table that supplies
     a filled l1TrackIdx when the (deregionized) cand_table's own is unfilled.
     """
     groups = feature_groups or ["baseline"]
-    need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv"))
+    need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv",
+                                                "trackmva"))
+    if "trackmva" in groups:
+        from ngtagger.data.trackmva_feature import require_jet_tables
+
+        if trackmva_model is None:
+            raise ValueError("trackmva group requires trackmva_model")
+        with uproot.open(files[0]) as f:
+            require_jet_tables(f["Events"].keys(), (jet_table, link_table, cand_table), str(files[0]))
     events = read_events(
         files,
         jet_table=jet_table,
@@ -275,6 +287,12 @@ def load_jets(
             track_table=track_table, max_events=max_events,
         )
         const["refit_bdt_score"] = score
+    if "trackmva" in groups:
+        from ngtagger.data.trackmva_feature import trackmva_jet_features
+
+        const.update(trackmva_jet_features(
+            files, events, cands, nested_idx, link_idx_field, trackmva_model,
+            track_table=track_table, max_events=max_events))
 
     constituents = ak.zip(const, depth_limit=3)
     jets = events[jet_table]
