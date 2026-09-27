@@ -1,19 +1,20 @@
-"""Throughput table for the angle sources (payload / cnn_nano_v2 cnn / emu): steady-state per-event time from the
-'Begin processing' timestamps (events 21..N; the first 20 = warm-up, reported separately), wall/CPU/peak RSS from
-/usr/bin/time -v, the per-module FastTimerService breakdown, and the emu producer's internal step times.
+"""Throughput table for the angle sources: steady-state per-event time from the 'Begin processing' timestamps (events
+21..N; the first 20 = warm-up, reported separately), wall/CPU/peak RSS from /usr/bin/time -v, the per-module
+FastTimerService breakdown, and the emu producer's internal step times. Ratios are to the mode named "payload".
 
-  perf_report.py PERFDIR mode1 [mode2 ...]   (reads PERFDIR/log_<mode>.txt, PERFDIR/timing_<mode>.json)
+  perf_report.py PERFDIR:mode[:label] [...]   (reads PERFDIR/log_<mode>.txt, PERFDIR/timing_<mode>.json)
 -> emu_cmssw/perf_report.json, figs/emu_perf_table.pdf (table pages)"""
 import sys, os, re, json, datetime as dt, numpy as np, pandas as pd, matplotlib
 matplotlib.use("Agg"); import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-d, modes = sys.argv[1], sys.argv[2:]
 WARM = 20
 rows, mods, steps = [], [], []
-for mode in modes:
+for arg in sys.argv[1:]:
+    d, mode, *lab = arg.split(":")
     log = open(os.path.join(d, f"log_{mode}.txt"), errors="replace").read()
+    mode = lab[0] if lab else mode
     ts = [dt.datetime.strptime(m, "%d-%b-%Y %H:%M:%S.%f") for m in re.findall(r"Begin processing the \S+ record\..* at (\S+ \S+) UTC", log)]
     ts = np.array([(t - ts[0]).total_seconds() for t in ts])
     n = len(ts)
@@ -22,7 +23,7 @@ for mode in modes:
     user = float(re.search(r"User time \(seconds\): (\S+)", log).group(1)); sysc = float(re.search(r"System time \(seconds\): (\S+)", log).group(1))
     rss = float(re.search(r"Maximum resident set size \(kbytes\): (\d+)", log).group(1)) / 1024 ** 2
     steady = (ts[-1] - ts[WARM]) / (n - 1 - WARM)
-    js = json.load(open(os.path.join(d, f"timing_{mode}.json")))
+    js = json.load(open(os.path.join(d, f"timing_{arg.split(':')[1]}.json")))
     tot = js["total"]
     rows.append({"mode": mode, "events": n, "steady s/event (begin-processing spacing, events > 20)": round(steady, 2),
                  "steady events/s": round(1 / steady, 4), "first 20 events [s]": round(ts[WARM], 1),
@@ -41,8 +42,8 @@ for mode in modes:
         steps.append({"mode": mode, "step": "one-time setup (ONNX sessions, library load, KD-tree builds)", "total [s]": float(s.group(1)), "per event [ms]": np.nan})
 R = pd.DataFrame(rows); M = pd.DataFrame(mods); S = pd.DataFrame(steps)
 ref = R.set_index("mode")["steady s/event (begin-processing spacing, events > 20)"]
-if "cnn" in ref:
-    R["ratio to cnn_nano_v2 (cnn)"] = (R["steady s/event (begin-processing spacing, events > 20)"] / ref["cnn"]).round(3)
+if "payload" in ref:
+    R["ratio to payload"] = (R["steady s/event (begin-processing spacing, events > 20)"] / ref["payload"]).round(3)
 top = M.sort_values("real/event [ms]", ascending=False).groupby("mode").head(12)
 spx = M[M.module.str.startswith("spix")]
 out = {"summary": R.to_dict("records"), "top_modules": top.to_dict("records"), "spix_modules": spx.to_dict("records"), "emu_steps": S.to_dict("records")}
