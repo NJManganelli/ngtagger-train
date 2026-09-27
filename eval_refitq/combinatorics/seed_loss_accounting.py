@@ -33,7 +33,7 @@ Z_LUMI, NSIG = 15.0, 3.0
 SIG_PULL_INFLATE = 1.21
 THETA_MS_MRAD = 1.36
 
-STAGES = ["no_cluster_on_layer", "alpha_veto", "phi_window", "kappa_cut",
+STAGES = ["no_cluster_on_layer", "angle_capped", "alpha_veto", "phi_window", "kappa_cut",
           "z0_luminous", "alpha_consistency", "z0_consistency",
           "projection_phi", "projection_z", "lost_at_arbitration", "FOUND"]
 
@@ -46,14 +46,21 @@ def load(path, nev):
     """Clusters with their TP's L1TTP d0 at the POCA [cm] joined as tp_d0."""
     cols = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
             "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
-            "sigY", "tpKey", "tpPt"]
-    return M.load_flat(path, T, cols, nev, tp=("tp_d0",))[:2]
+            "sigY", "tpKey", "tpPt", "hasAlpha", "hasBeta", "localCotAlpha", "localCotBeta"]
+    D, nev = M.load_flat(path, T, cols, nev, tp=("tp_d0",))[:2]
+    # the seeder's angle cap (M.alpha_veto): no usable direction, no angle-using seed
+    D["dir_ok"] = M.SPN.direction_usable(D)
+    return D, nev
 
 
 def trace_one(D, ia, ib, ic, ptmin, d0_cm, rA, rB, dr):
     """Push ONE correct triple through the gates; return the first failing stage."""
     kmax = 1.0 / ptmin
     ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
+    # the angle cap: alpha or beta fails SPN.MEAS_ANGLE_MAX_ABS (or is absent), so the
+    # cluster's global direction is not used and the seeder vetoes it
+    if not all(D["dir_ok"][i] for i in (ia, ib, ic)):
+        return "angle_capped"
     # single-cluster alpha veto
     for i in (ia, ib, ic):
         h = wrap(D["globalPhi"][i] - D["globalClusterPhi"][i])

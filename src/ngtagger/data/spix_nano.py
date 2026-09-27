@@ -39,6 +39,10 @@ cap moved into the algorithms that use the angles (the CMSSW refit applies it
 itself). ``cluster_columns`` therefore returns has* = has* AND |cot| <=
 ``MEAS_ANGLE_MAX_ABS`` by default, which is a no-op on payload-mode files;
 ``cap_angles=False`` returns the stored flags (for audits of the table itself).
+The global direction columns (``DIRECTION_COLUMNS``) are built from both
+angles regardless of the flags and are NOT masked by the loader; a consumer
+gates them with ``direction_usable``. ``angle_cap_census`` counts what the cap
+passes and fails (the omnibus reports it on every run as a sentinel).
 
 Mixed generations in one ``uproot.iterate`` call are not supported (uproot
 itself needs the same branches in every file).
@@ -67,6 +71,11 @@ GEOMETRY = ("subdet", "layer", "disk", "side", "ring", "surface", "idxInDet")
 MEAS_ANGLE_MAX_ABS = 12.0
 # has-flag -> the angle it qualifies
 ANGLE_FLAGS = {"hasAlpha": "localCotAlpha", "hasBeta": "localCotBeta"}
+# the producers fill an absent value with -999; anything at or below this is that fill
+ABSENT_BELOW = -900.0
+# global direction of the cluster, built from BOTH angles (see direction_usable)
+DIRECTION_COLUMNS = ("globalClusterPhi", "globalClusterCotTheta",
+                     "sigGlobalClusterPhi", "sigGlobalClusterCotTheta")
 
 # new spelling -> old spelling; a None table applies to every table
 _RENAMES = {
@@ -143,6 +152,105 @@ def cap_angle_flags(cols, max_abs=MEAS_ANGLE_MAX_ABS):
         if flag in cols and cot in cols:
             cols[flag] = cols[flag] * angle_usable(cols[flag], cols[cot], max_abs)
     return cols
+
+
+def direction_usable(cols, max_abs=MEAS_ANGLE_MAX_ABS):
+    """Boolean: the cluster's global direction (DIRECTION_COLUMNS) may be used.
+
+    The table producer builds it from BOTH localCotAlpha and localCotBeta
+    without looking at hasAlpha/hasBeta (it only needs them finite), so a
+    capped angle -- or a -999 fill, which on payload-era files becomes a
+    constant globalClusterCotTheta of ~-1 rather than a -999 -- passes straight
+    into it. Usable iff both angles pass ``angle_usable``. `cols` maps
+    hasAlpha, hasBeta, localCotAlpha, localCotBeta to arrays."""
+    return (angle_usable(cols["hasAlpha"], cols["localCotAlpha"], max_abs)
+            & angle_usable(cols["hasBeta"], cols["localCotBeta"], max_abs))
+
+
+def surface_name(code):
+    """IL1-IL4 for barrel surface codes 1-4, ID<n> for disc codes 10+n."""
+    code = int(code)
+    return f"ID{code - DISC_SURFACE_OFFSET}" if code > DISC_SURFACE_OFFSET else f"IL{code}"
+
+
+def _cap_counts(cot, has, max_abs):
+    cot = np.asarray(cot)
+    valid = cot > ABSENT_BELOW
+    ok = valid & (np.abs(cot) <= max_abs)
+    n_valid, n_pass = int(valid.sum()), int(ok.sum())
+    c = {"n_total": int(len(cot)), "n_valid": n_valid, "n_pass": n_pass,
+         "n_fail": n_valid - n_pass,
+         "frac_fail": (n_valid - n_pass) / n_valid if n_valid else None}
+    if has is not None:
+        has = np.asarray(has)
+        c["n_flag_set"] = int((has > 0).sum())
+        c["n_dropped_by_cap"] = int(((has > 0) & ~angle_usable(has, cot, max_abs)).sum())
+    return c
+
+
+def angle_cap_groups(surface=None, tp_key=None, emu_class=None):
+    """{label: boolean mask or None (= every cluster)} for ``angle_cap_census``:
+    'all'; each surface (IL1.., ID1..); 'linked'/'unlinked' (tpKey >= 0); each
+    tpEmuClass value; and surface x link."""
+    g = {"all": None}
+    surfs = [] if surface is None else [int(s) for s in np.unique(surface)]
+    for s in surfs:
+        g[surface_name(s)] = surface == s
+    if tp_key is not None:
+        g["linked"], g["unlinked"] = tp_key >= 0, tp_key < 0
+    if emu_class is not None:
+        for v in np.unique(emu_class):
+            g[f"tpEmuClass={int(v)}"] = emu_class == v
+    if tp_key is not None:
+        for s in surfs:
+            g[f"{surface_name(s)}/linked"] = (surface == s) & (tp_key >= 0)
+            g[f"{surface_name(s)}/unlinked"] = (surface == s) & (tp_key < 0)
+    return g
+
+
+def angle_cap_census(cols, groups, max_abs=MEAS_ANGLE_MAX_ABS):
+    """How many measured angles the cap passes and fails, per group.
+
+    `cols` maps localCotAlpha, localCotBeta and optionally the STORED (not
+    capped, i.e. read with cap_angles=False) hasAlpha/hasBeta to flat arrays;
+    `groups` is from ``angle_cap_groups``. Returns {"max_abs", "angles":
+    {angle: {group: counts}}} for angle in alpha, beta and 'direction' (the
+    pair, as globalClusterPhi/CotTheta use it: valid when both are, passing
+    when both pass). counts: n_total; n_valid (not the -999 fill); n_pass
+    (valid, |cot| <= max_abs); n_fail (valid, |cot| > max_abs); frac_fail =
+    n_fail / n_valid (None when n_valid = 0); and, with the flags,
+    n_flag_set and n_dropped_by_cap (flag set but not ``angle_usable``: what
+    the loader's cap removes, a -999 fill under a set flag included)."""
+    ca, cb = np.asarray(cols["localCotAlpha"]), np.asarray(cols["localCotBeta"])
+    ha, hb = cols.get("hasAlpha"), cols.get("hasBeta")
+    both = (ca > ABSENT_BELOW) & (cb > ABSENT_BELOW)
+    series = {"alpha": (ca, ha), "beta": (cb, hb),
+              "direction": (np.where(both, np.maximum(np.abs(ca), np.abs(cb)), ABSENT_BELOW - 99.0),
+                            None if ha is None or hb is None
+                            else np.minimum(np.asarray(ha), np.asarray(hb)))}
+    out = {"max_abs": float(max_abs), "angles": {}}
+    for name, (cot, has) in series.items():
+        out["angles"][name] = {
+            lab: _cap_counts(cot if m is None else cot[m],
+                             None if has is None else (has if m is None else has[m]), max_abs)
+            for lab, m in groups.items()}
+    return out
+
+
+def angle_cap_census_add(acc, census):
+    """Sum `census` into `acc` (both from ``angle_cap_census``; `acc` may be
+    None), recomputing frac_fail. Returns the sum."""
+    if acc is None:
+        acc = {"max_abs": census["max_abs"], "angles": {}}
+    for name, cells in census["angles"].items():
+        A = acc["angles"].setdefault(name, {})
+        for lab, c in cells.items():
+            s = A.setdefault(lab, {k: 0 for k in c if k != "frac_fail"})
+            for k, v in c.items():
+                if k != "frac_fail":
+                    s[k] = s.get(k, 0) + v
+            s["frac_fail"] = s["n_fail"] / s["n_valid"] if s["n_valid"] else None
+    return acc
 
 
 def _cap_partners(keys, cols):

@@ -914,6 +914,8 @@ def load_flat(spec, table, cols, nev=None, tp=()):
         raise SystemExit("inputs contained no events")
     D = {c: np.concatenate([p[c] for p in parts]) for c in parts[0]}
     nall = np.concatenate(counts)
+    if table == IT_TABLE and all(c in D for c in SPN.ANGLE_FLAGS.values()):
+        log_angle_cap(angle_cap_census(D), "load_flat")
     return D, len(nall), nall
 
 
@@ -921,7 +923,11 @@ IT_COLS = ["layer", "globalR", "globalZ", "globalPhi", "globalClusterPhi",
            "globalClusterCotTheta", "sigGlobalClusterPhi", "sigGlobalClusterCotTheta",
            # sigX is the r-phi CPE sigma; the KF emulation needs it for the
            # position variance and sigY alone (the z sigma) is not a substitute.
-           "sigX", "sigY", "tpKey", "tpPt"]
+           "sigX", "sigY", "tpKey", "tpPt",
+           # the angle cap: globalClusterPhi/CotTheta are built from BOTH module-frame
+           # angles whatever the flags say, so it_prepare gates them with
+           # SPN.direction_usable (flags are capped by the loader)
+           "hasAlpha", "hasBeta", "localCotAlpha", "localCotBeta"]
 
 
 def it_chunks(path, nev, step=16):
@@ -1029,8 +1035,32 @@ def solve3(r1, p1, r2, p2, r3, p3):
     return wrap(p1 - A / r1 - B * r1), -A, -B / C_BEND, ok
 
 
+def angle_cap_census(D):
+    """SPN.angle_cap_census of an IT_COLS dict, per layer and TP link (the flags
+    in D are the loader's CAPPED ones, so n_dropped_by_cap is 0 by construction;
+    n_fail is the count the cap removes)."""
+    g = SPN.angle_cap_groups(D["layer"], D["tpKey"])
+    return SPN.angle_cap_census(D, g)
+
+
+def log_angle_cap(census, where):
+    """One line per angle: valid, passing, failing |cot| <= cap, all TBPX clusters."""
+    for ang, cells in census["angles"].items():
+        c = cells["all"]
+        f = c["frac_fail"]
+        print(f"  angle cap [{where}] {ang:9s} of {c['n_total']:,} clusters: "
+              f"valid {c['n_valid']:,}  pass {c['n_pass']:,}  fail {c['n_fail']:,} "
+              f"({'-' if f is None else f'{100 * f:.3f}%'} of valid)"
+              + (f"; {c['n_total'] - c['n_pass']:,} (fail or absent) vetoed from "
+                 "angle-using seeds" if ang == "direction" else ""))
+
+
 def it_prepare(D, bench):
-    """Per-cluster kappa_alpha, z0 and their effective sigmas, after quantization."""
+    """Per-cluster kappa_alpha, z0 and their effective sigmas, after quantization.
+
+    dir_ok: SPN.direction_usable. The angle-derived quantities of a cluster
+    without it are garbage (built from a capped or absent angle); alpha_veto
+    removes such a cluster from every angle-using seed and projection target."""
     half = wrap(D["globalPhi"] - D["globalClusterPhi"])
     cot_a = np.sin(half) / (C_BEND * D["globalR"])          # kappa implied by alpha
     z0 = D["globalZ"] - D["globalR"] * D["globalClusterCotTheta"]
@@ -1048,7 +1078,7 @@ def it_prepare(D, bench):
         z0, ovf_z, lsb_z = quantize(z0, bb, Z0_RANGE)
         s_z0 = np.hypot(s_z0, quant_sigma(bb, Z0_RANGE))
     return {"kap_a": cot_a, "s_kap": s_kap, "z0": z0, "s_z0": s_z0,
-            "ovf_a": ovf_a, "ovf_z": ovf_z}
+            "ovf_a": ovf_a, "ovf_z": ovf_z, "dir_ok": SPN.direction_usable(D)}
 
 
 # ---- projecting to the third layer: SEARCH ON z, CONFIRM ON phi -----------
@@ -1332,6 +1362,10 @@ def alpha_veto(D, Q, idxL, kmax, displaced):
     seeds apply exactly the same test to whichever layers they use."""
     k = np.abs(Q["kap_a"][idxL]) <= kmax + NSIG * Q["s_kap"][idxL]
     k |= Q["ovf_a"][idxL] & displaced      # displaced KEEPS alpha overflow
+    # the angle cap: no direction, no angle-using seed (overflow cannot rescue it).
+    # Before 2026-09-27 such clusters entered with a direction built from the
+    # capped or absent angle.
+    k &= Q["dir_ok"][idxL]
     return idxL[k]
 
 
@@ -2071,10 +2105,12 @@ def main():
               f"({SAFE_RSS_FRAC:.0%} of {PHYS_RAM_GB:.1f} GB physical)")
     set_limits(triplets_for_budget(a.pair_budget_gb), ceiling)
 
+    cap_census = None
     for D in it_chunks(a.input, a.nev, a.batch_events):
         rss_check()
         nev += len(D["_events"])
         ncl += len(D["layer"])
+        cap_census = SPN.angle_cap_census_add(cap_census, angle_cap_census(D))
         ti = build_tp_index(D)
         tp_k.append(ti["key"]); tp_d0.append(ti["d0"])
         allidx = np.arange(len(D["layer"]))
@@ -2137,8 +2173,11 @@ def main():
 
     R = {"n_events": nev, "n_clusters": ncl, "clusters_per_event": ncl / max(nev, 1),
          "nsig": NSIG, "z_lumi_cm": Z_LUMI, "eta_matched": ETA_MATCHED,
-         "d0_allowance_cm": a.d0, "benchmarks_run": sorted(benches), "it": {}}
+         "d0_allowance_cm": a.d0, "benchmarks_run": sorted(benches), "it": {},
+         "angle_cap_sentinel": cap_census}
     print(f"IT: {nev} events, {ncl/max(nev,1):.0f} clusters/event")
+    if cap_census is not None:
+        log_angle_cap(cap_census, "it_chunks")
     for tag in sorted(acc):
         bname, cname, ptl, seed = tag.split("|")
         ptmin = float(ptl[2:])

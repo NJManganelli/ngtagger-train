@@ -1,0 +1,696 @@
+{
+ "description": "Reference failing fractions of the measured-angle cap |cot| <= max_abs, per angle x cluster group, one entry per producer era. Read by the omnibus's angle-cap sentinel; regenerate with spix_combinatorics_omnibus.py --write-angle-cap-reference -i <file>.",
+ "rule": "WARNING when a cell's frac_fail > factor x max(reference frac_fail, 1 / reference n_valid), using the reference of the input's era (emu when every cluster has hasAlpha = hasBeta = 1, else payload)",
+ "factor": 2.0,
+ "max_abs": 12.0,
+ "eras": {
+  "emu": {
+   "source": "/Volumes/WDMac/smartpixels_scratch/emu_fix/validation/out_emu_f03.root",
+   "n_events": 100,
+   "created": "2026-09-27",
+   "code_commit": "8127547 + uncommitted changes to this script",
+   "cells": {
+    "alpha": {
+     "all": {
+      "frac_fail": 0.0007025312237249389,
+      "n_valid": 7246653,
+      "n_fail": 5091
+     },
+     "IL1": {
+      "frac_fail": 0.0013180564840036884,
+      "n_valid": 899051,
+      "n_fail": 1185
+     },
+     "IL2": {
+      "frac_fail": 0.0007431123978220453,
+      "n_valid": 723982,
+      "n_fail": 538
+     },
+     "IL3": {
+      "frac_fail": 0.0010725888237619677,
+      "n_valid": 581770,
+      "n_fail": 624
+     },
+     "IL4": {
+      "frac_fail": 0.001005605464837198,
+      "n_valid": 509146,
+      "n_fail": 512
+     },
+     "ID1": {
+      "frac_fail": 0.0006936941838503331,
+      "n_valid": 1029272,
+      "n_fail": 714
+     },
+     "ID2": {
+      "frac_fail": 0.0004884234595214535,
+      "n_valid": 1105598,
+      "n_fail": 540
+     },
+     "ID3": {
+      "frac_fail": 0.0004315523750762694,
+      "n_valid": 1170194,
+      "n_fail": 505
+     },
+     "ID4": {
+      "frac_fail": 0.00038529210517741357,
+      "n_valid": 1227640,
+      "n_fail": 473
+     },
+     "linked": {
+      "frac_fail": 0.0005298082809625179,
+      "n_valid": 6092770,
+      "n_fail": 3228
+     },
+     "unlinked": {
+      "frac_fail": 0.001614548442086416,
+      "n_valid": 1153883,
+      "n_fail": 1863
+     },
+     "tpEmuClass=0": {
+      "frac_fail": 0.002046381507681584,
+      "n_valid": 2123260,
+      "n_fail": 4345
+     },
+     "tpEmuClass=1": {
+      "frac_fail": 0.00014560663216739377,
+      "n_valid": 5123393,
+      "n_fail": 746
+     },
+     "IL1/linked": {
+      "frac_fail": 0.0010329807093963908,
+      "n_valid": 803500,
+      "n_fail": 830
+     },
+     "IL1/unlinked": {
+      "frac_fail": 0.0037152934035227262,
+      "n_valid": 95551,
+      "n_fail": 355
+     },
+     "IL2/linked": {
+      "frac_fail": 0.00047282979878465227,
+      "n_valid": 628133,
+      "n_fail": 297
+     },
+     "IL2/unlinked": {
+      "frac_fail": 0.002514371563605254,
+      "n_valid": 95849,
+      "n_fail": 241
+     },
+     "IL3/linked": {
+      "frac_fail": 0.000685321323142789,
+      "n_valid": 507791,
+      "n_fail": 348
+     },
+     "IL3/unlinked": {
+      "frac_fail": 0.0037307884669973914,
+      "n_valid": 73979,
+      "n_fail": 276
+     },
+     "IL4/linked": {
+      "frac_fail": 0.0007200084075515913,
+      "n_valid": 447217,
+      "n_fail": 322
+     },
+     "IL4/unlinked": {
+      "frac_fail": 0.0030680295176734648,
+      "n_valid": 61929,
+      "n_fail": 190
+     },
+     "ID1/linked": {
+      "frac_fail": 0.0005016961010388332,
+      "n_valid": 869052,
+      "n_fail": 436
+     },
+     "ID1/unlinked": {
+      "frac_fail": 0.0017351142179503182,
+      "n_valid": 160220,
+      "n_fail": 278
+     },
+     "ID2/linked": {
+      "frac_fail": 0.0003980338875554268,
+      "n_valid": 914495,
+      "n_fail": 364
+     },
+     "ID2/unlinked": {
+      "frac_fail": 0.0009209693202095206,
+      "n_valid": 191103,
+      "n_fail": 176
+     },
+     "ID3/linked": {
+      "frac_fail": 0.0003479067609880552,
+      "n_valid": 948530,
+      "n_fail": 330
+     },
+     "ID3/unlinked": {
+      "frac_fail": 0.0007894831817525624,
+      "n_valid": 221664,
+      "n_fail": 175
+     },
+     "ID4/linked": {
+      "frac_fail": 0.0003090184096947596,
+      "n_valid": 974052,
+      "n_fail": 301
+     },
+     "ID4/unlinked": {
+      "frac_fail": 0.0006782655330693882,
+      "n_valid": 253588,
+      "n_fail": 172
+     }
+    },
+    "beta": {
+     "all": {
+      "frac_fail": 0.0019283717280167763,
+      "n_valid": 7245491,
+      "n_fail": 13972
+     },
+     "IL1": {
+      "frac_fail": 0.006389840354145384,
+      "n_valid": 898614,
+      "n_fail": 5742
+     },
+     "IL2": {
+      "frac_fail": 0.0009504968003625151,
+      "n_valid": 723832,
+      "n_fail": 688
+     },
+     "IL3": {
+      "frac_fail": 0.0006223353046348508,
+      "n_valid": 581680,
+      "n_fail": 362
+     },
+     "IL4": {
+      "frac_fail": 0.000618719505967206,
+      "n_valid": 509116,
+      "n_fail": 315
+     },
+     "ID1": {
+      "frac_fail": 0.001635406402863856,
+      "n_valid": 1029102,
+      "n_fail": 1683
+     },
+     "ID2": {
+      "frac_fail": 0.0014617912551232798,
+      "n_valid": 1105493,
+      "n_fail": 1616
+     },
+     "ID3": {
+      "frac_fail": 0.0014443074204071238,
+      "n_valid": 1170111,
+      "n_fail": 1690
+     },
+     "ID4": {
+      "frac_fail": 0.0015282560366520765,
+      "n_valid": 1227543,
+      "n_fail": 1876
+     },
+     "linked": {
+      "frac_fail": 0.0015464787363687936,
+      "n_valid": 6091904,
+      "n_fail": 9421
+     },
+     "unlinked": {
+      "frac_fail": 0.003945086066330498,
+      "n_valid": 1153587,
+      "n_fail": 4551
+     },
+     "tpEmuClass=0": {
+      "frac_fail": 0.004916446325692543,
+      "n_valid": 2122468,
+      "n_fail": 10435
+     },
+     "tpEmuClass=1": {
+      "frac_fail": 0.0006904126723616115,
+      "n_valid": 5123023,
+      "n_fail": 3537
+     },
+     "IL1/linked": {
+      "frac_fail": 0.004195847729324244,
+      "n_valid": 803175,
+      "n_fail": 3370
+     },
+     "IL1/unlinked": {
+      "frac_fail": 0.024853571391150367,
+      "n_valid": 95439,
+      "n_fail": 2372
+     },
+     "IL2/linked": {
+      "frac_fail": 0.0006178196380659698,
+      "n_valid": 628015,
+      "n_fail": 388
+     },
+     "IL2/unlinked": {
+      "frac_fail": 0.0031309684085287577,
+      "n_valid": 95817,
+      "n_fail": 300
+     },
+     "IL3/linked": {
+      "frac_fail": 0.00042937136486915004,
+      "n_valid": 507719,
+      "n_fail": 218
+     },
+     "IL3/unlinked": {
+      "frac_fail": 0.0019469720528386583,
+      "n_valid": 73961,
+      "n_fail": 144
+     },
+     "IL4/linked": {
+      "frac_fail": 0.00045840274594425375,
+      "n_valid": 447205,
+      "n_fail": 205
+     },
+     "IL4/unlinked": {
+      "frac_fail": 0.0017767440357933163,
+      "n_valid": 61911,
+      "n_fail": 110
+     },
+     "ID1/linked": {
+      "frac_fail": 0.0014327867645027943,
+      "n_valid": 868936,
+      "n_fail": 1245
+     },
+     "ID1/unlinked": {
+      "frac_fail": 0.002734662787358116,
+      "n_valid": 160166,
+      "n_fail": 438
+     },
+     "ID2/linked": {
+      "frac_fail": 0.0013473183225449442,
+      "n_valid": 914409,
+      "n_fail": 1232
+     },
+     "ID2/unlinked": {
+      "frac_fail": 0.0020095874065855853,
+      "n_valid": 191084,
+      "n_fail": 384
+     },
+     "ID3/linked": {
+      "frac_fail": 0.0013780102459858994,
+      "n_valid": 948469,
+      "n_fail": 1307
+     },
+     "ID3/unlinked": {
+      "frac_fail": 0.0017280118389113976,
+      "n_valid": 221642,
+      "n_fail": 383
+     },
+     "ID4/linked": {
+      "frac_fail": 0.0014949033651753226,
+      "n_valid": 973976,
+      "n_fail": 1456
+     },
+     "ID4/unlinked": {
+      "frac_fail": 0.0016563669562679687,
+      "n_valid": 253567,
+      "n_fail": 420
+     }
+    },
+    "direction": {
+     "all": {
+      "frac_fail": 0.0024832838641067347,
+      "n_valid": 7245245,
+      "n_fail": 17992
+     },
+     "IL1": {
+      "frac_fail": 0.0073494143504994015,
+      "n_valid": 898575,
+      "n_fail": 6604
+     },
+     "IL2": {
+      "frac_fail": 0.0015847072298295231,
+      "n_valid": 723793,
+      "n_fail": 1147
+     },
+     "IL3": {
+      "frac_fail": 0.0015869031490485458,
+      "n_valid": 581636,
+      "n_fail": 923
+     },
+     "IL4": {
+      "frac_fail": 0.0015146216981836327,
+      "n_valid": 509038,
+      "n_fail": 771
+     },
+     "ID1": {
+      "frac_fail": 0.0021358800642124454,
+      "n_valid": 1029084,
+      "n_fail": 2198
+     },
+     "ID2": {
+      "frac_fail": 0.00182183140189655,
+      "n_valid": 1105481,
+      "n_fail": 2014
+     },
+     "ID3": {
+      "frac_fail": 0.001775918106074785,
+      "n_valid": 1170099,
+      "n_fail": 2078
+     },
+     "ID4": {
+      "frac_fail": 0.0018386381206625614,
+      "n_valid": 1227539,
+      "n_fail": 2257
+     },
+     "linked": {
+      "frac_fail": 0.0019505077935771135,
+      "n_valid": 6091747,
+      "n_fail": 11882
+     },
+     "unlinked": {
+      "frac_fail": 0.005296931594159678,
+      "n_valid": 1153498,
+      "n_fail": 6110
+     },
+     "tpEmuClass=0": {
+      "frac_fail": 0.00662123091189409,
+      "n_valid": 2122264,
+      "n_fail": 14052
+     },
+     "tpEmuClass=1": {
+      "frac_fail": 0.0007690834691754664,
+      "n_valid": 5122981,
+      "n_fail": 3940
+     },
+     "IL1/linked": {
+      "frac_fail": 0.004905659437666998,
+      "n_valid": 803154,
+      "n_fail": 3940
+     },
+     "IL1/unlinked": {
+      "frac_fail": 0.02791838274593643,
+      "n_valid": 95421,
+      "n_fail": 2664
+     },
+     "IL2/linked": {
+      "frac_fail": 0.001017525645149476,
+      "n_valid": 627994,
+      "n_fail": 639
+     },
+     "IL2/unlinked": {
+      "frac_fail": 0.005302769339972233,
+      "n_valid": 95799,
+      "n_fail": 508
+     },
+     "IL3/linked": {
+      "frac_fail": 0.0010419785379997164,
+      "n_valid": 507688,
+      "n_fail": 529
+     },
+     "IL3/unlinked": {
+      "frac_fail": 0.005328068372369773,
+      "n_valid": 73948,
+      "n_fail": 394
+     },
+     "IL4/linked": {
+      "frac_fail": 0.0010891224178070397,
+      "n_valid": 447149,
+      "n_fail": 487
+     },
+     "IL4/unlinked": {
+      "frac_fail": 0.004588860702224951,
+      "n_valid": 61889,
+      "n_fail": 284
+     },
+     "ID1/linked": {
+      "frac_fail": 0.0017861150271887677,
+      "n_valid": 868925,
+      "n_fail": 1552
+     },
+     "ID1/unlinked": {
+      "frac_fail": 0.00403349171760563,
+      "n_valid": 160159,
+      "n_fail": 646
+     },
+     "ID2/linked": {
+      "frac_fail": 0.001629480250480642,
+      "n_valid": 914402,
+      "n_fail": 1490
+     },
+     "ID2/unlinked": {
+      "frac_fail": 0.00274232123885932,
+      "n_valid": 191079,
+      "n_fail": 524
+     },
+     "ID3/linked": {
+      "frac_fail": 0.0016352807337360207,
+      "n_valid": 948461,
+      "n_fail": 1551
+     },
+     "ID3/unlinked": {
+      "frac_fail": 0.0023777511076620433,
+      "n_valid": 221638,
+      "n_fail": 527
+     },
+     "ID4/linked": {
+      "frac_fail": 0.0017392661405745944,
+      "n_valid": 973974,
+      "n_fail": 1694
+     },
+     "ID4/unlinked": {
+      "frac_fail": 0.002220337980399503,
+      "n_valid": 253565,
+      "n_fail": 563
+     }
+    }
+   }
+  },
+  "payload": {
+   "source": "/Users/nmangane/smartpixels/cmssw/work/otstub_arm/itot_tp_f03_100ev.root",
+   "n_events": 100,
+   "created": "2026-09-27",
+   "code_commit": "8127547 + uncommitted changes to this script",
+   "cells": {
+    "alpha": {
+     "all": {
+      "frac_fail": 0.005270882730401052,
+      "n_valid": 2386697,
+      "n_fail": 12580
+     },
+     "IL1": {
+      "frac_fail": 0.00319846672723426,
+      "n_valid": 803510,
+      "n_fail": 2570
+     },
+     "IL2": {
+      "frac_fail": 0.004599300473302884,
+      "n_valid": 628139,
+      "n_fail": 2889
+     },
+     "IL3": {
+      "frac_fail": 0.0065793749101514575,
+      "n_valid": 507799,
+      "n_fail": 3341
+     },
+     "IL4": {
+      "frac_fail": 0.008451667862868335,
+      "n_valid": 447249,
+      "n_fail": 3780
+     },
+     "linked": {
+      "frac_fail": 0.005270882730401052,
+      "n_valid": 2386697,
+      "n_fail": 12580
+     },
+     "unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL1/linked": {
+      "frac_fail": 0.00319846672723426,
+      "n_valid": 803510,
+      "n_fail": 2570
+     },
+     "IL1/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL2/linked": {
+      "frac_fail": 0.004599300473302884,
+      "n_valid": 628139,
+      "n_fail": 2889
+     },
+     "IL2/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL3/linked": {
+      "frac_fail": 0.0065793749101514575,
+      "n_valid": 507799,
+      "n_fail": 3341
+     },
+     "IL3/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL4/linked": {
+      "frac_fail": 0.008451667862868335,
+      "n_valid": 447249,
+      "n_fail": 3780
+     },
+     "IL4/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     }
+    },
+    "beta": {
+     "all": {
+      "frac_fail": 0.013106288403712904,
+      "n_valid": 2386488,
+      "n_fail": 31278
+     },
+     "IL1": {
+      "frac_fail": 0.0076317921643448946,
+      "n_valid": 803481,
+      "n_fail": 6132
+     },
+     "IL2": {
+      "frac_fail": 0.012276883445233254,
+      "n_valid": 628091,
+      "n_fail": 7711
+     },
+     "IL3": {
+      "frac_fail": 0.017019156152382604,
+      "n_valid": 507722,
+      "n_fail": 8641
+     },
+     "IL4": {
+      "frac_fail": 0.01966484344602119,
+      "n_valid": 447194,
+      "n_fail": 8794
+     },
+     "linked": {
+      "frac_fail": 0.013106288403712904,
+      "n_valid": 2386488,
+      "n_fail": 31278
+     },
+     "unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL1/linked": {
+      "frac_fail": 0.0076317921643448946,
+      "n_valid": 803481,
+      "n_fail": 6132
+     },
+     "IL1/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL2/linked": {
+      "frac_fail": 0.012276883445233254,
+      "n_valid": 628091,
+      "n_fail": 7711
+     },
+     "IL2/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL3/linked": {
+      "frac_fail": 0.017019156152382604,
+      "n_valid": 507722,
+      "n_fail": 8641
+     },
+     "IL3/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL4/linked": {
+      "frac_fail": 0.01966484344602119,
+      "n_valid": 447194,
+      "n_fail": 8794
+     },
+     "IL4/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     }
+    },
+    "direction": {
+     "all": {
+      "frac_fail": 0.015268813329349703,
+      "n_valid": 2386433,
+      "n_fail": 36438
+     },
+     "IL1": {
+      "frac_fail": 0.008925026541094824,
+      "n_valid": 803471,
+      "n_fail": 7171
+     },
+     "IL2": {
+      "frac_fail": 0.014026875557253854,
+      "n_valid": 628080,
+      "n_fail": 8810
+     },
+     "IL3": {
+      "frac_fail": 0.019615721728168917,
+      "n_valid": 507705,
+      "n_fail": 9959
+     },
+     "IL4": {
+      "frac_fail": 0.023476162682785563,
+      "n_valid": 447177,
+      "n_fail": 10498
+     },
+     "linked": {
+      "frac_fail": 0.015268813329349703,
+      "n_valid": 2386433,
+      "n_fail": 36438
+     },
+     "unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL1/linked": {
+      "frac_fail": 0.008925026541094824,
+      "n_valid": 803471,
+      "n_fail": 7171
+     },
+     "IL1/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL2/linked": {
+      "frac_fail": 0.014026875557253854,
+      "n_valid": 628080,
+      "n_fail": 8810
+     },
+     "IL2/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL3/linked": {
+      "frac_fail": 0.019615721728168917,
+      "n_valid": 507705,
+      "n_fail": 9959
+     },
+     "IL3/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     },
+     "IL4/linked": {
+      "frac_fail": 0.023476162682785563,
+      "n_valid": 447177,
+      "n_fail": 10498
+     },
+     "IL4/unlinked": {
+      "frac_fail": null,
+      "n_valid": 0,
+      "n_fail": 0
+     }
+    }
+   }
+  }
+ }
+}

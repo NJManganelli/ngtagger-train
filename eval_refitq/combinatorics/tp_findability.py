@@ -63,8 +63,10 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpKey", "tpPt",
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 19   # TP truth (census d0/z0/eta/phi/vr, qual_* and track-row
-                      # residuals, OT sigma z) from L1TTP at the POCA
+FORMAT_VERSION = 20   # 20: the IT seeder vetoes clusters whose global direction
+                      # fails the angle cap (SPN.direction_usable) from angle-using
+                      # seeds. 19: TP truth (census d0/z0/eta/phi/vr, qual_* and
+                      # track-row residuals, OT sigma z) from L1TTP at the POCA
 
 # ---- THE OUTPUT CEILING OF THE REAL OT TRACK FINDER ------------------------
 # THE TARGET TO DESIGN AGAINST, stated once here so it does not get re-derived

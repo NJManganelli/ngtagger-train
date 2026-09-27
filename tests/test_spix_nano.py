@@ -133,3 +133,39 @@ def test_angle_cap():
     R = S.cluster_columns(A, ["hasAlpha", "hasBeta"], cap_angles=False)
     assert R["hasAlpha"].tolist() == [[1, 1, 1, 0]]
     assert S.cluster_branches(A.fields, ["hasAlpha"], cap_angles=False) == [f"{CL}_hasAlpha", f"{CL}_subdet", f"{CL}_surface"]
+
+
+def test_direction_usable():
+    cap = S.MEAS_ANGLE_MAX_ABS
+    c = {"localCotAlpha": np.array([0.5, cap + 1, 0.5, -999.0]),
+         "localCotBeta": np.array([cap, 0.5, 0.5, 0.5]),
+         "hasAlpha": np.array([1, 1, 0, 1]), "hasBeta": np.array([1, 1, 1, 1])}
+    assert S.direction_usable(c).tolist() == [True, False, False, False]
+
+
+def test_angle_cap_census():
+    cap = S.MEAS_ANGLE_MAX_ABS
+    c = {"localCotAlpha": np.array([0.5, cap + 1, -999.0, 2.0, -cap - 3]),
+         "localCotBeta": np.array([1.0, 0.5, 0.5, cap + 2, 0.1]),
+         "hasAlpha": np.array([1, 1, 1, 1, 0]), "hasBeta": np.array([1, 1, 1, 1, 1])}
+    surf = np.array([1, 1, 11, 11, 11])
+    key = np.array([3, -1, -1, 4, 5])
+    g = S.angle_cap_groups(surf, key, emu_class=np.array([1, 0, 0, 1, 1]))
+    assert list(g)[:3] == ["all", "IL1", "ID1"] and "ID1/unlinked" in g and "tpEmuClass=0" in g
+    C = S.angle_cap_census(c, g)
+    a = C["angles"]["alpha"]["all"]
+    assert (a["n_total"], a["n_valid"], a["n_pass"], a["n_fail"]) == (5, 4, 2, 2)
+    assert a["frac_fail"] == 0.5
+    # the loader's cap drops a set flag over |cot| > cap or over the -999 fill; a clear flag is not counted
+    assert (a["n_flag_set"], a["n_dropped_by_cap"]) == (4, 2)
+    assert C["angles"]["beta"]["ID1/linked"]["n_fail"] == 1
+    d = C["angles"]["direction"]["all"]
+    assert (d["n_valid"], d["n_pass"], d["n_fail"]) == (4, 1, 3)
+    assert d["n_dropped_by_cap"] == int((~S.direction_usable(c)).sum()) - 1   # the clear flag
+    # summing two halves equals the whole
+    h1 = S.angle_cap_census({k: v[:2] for k, v in c.items()}, {"all": None})
+    h2 = S.angle_cap_census({k: v[2:] for k, v in c.items()}, {"all": None})
+    s = S.angle_cap_census_add(S.angle_cap_census_add(None, h1), h2)
+    assert s["angles"]["alpha"]["all"] == a
+    assert S.angle_cap_census({k: v[:0] for k, v in c.items()}, {"all": None}
+                              )["angles"]["beta"]["all"]["frac_fail"] is None

@@ -326,6 +326,190 @@ def robust_sigma(a):
 
 
 # --------------------------------------------------------------------------
+# ANGLE-CAP SENTINEL -- run on every invocation, before any study
+# --------------------------------------------------------------------------
+# A measured cluster angle is used only when |cot| <= SPN.MEAS_ANGLE_MAX_ABS (12,
+# the refit's digiRefitMeasAngleMaxAbs; ~85 deg from normal incidence). Payload-era
+# producers cleared hasAlpha/hasBeta beyond it; the emu producers set them on every
+# cluster, so the loader's cap is now the only protection. This counts, per angle
+# (alpha, beta, and the pair that globalClusterPhi/CotTheta are built from) and per
+# surface / TP link / tpEmuClass, how many valid angles pass and fail the cap, and
+# WARNs when a cell's failing fraction exceeds FACTOR x its reference (a band
+# measured once per producer era, stored in ANGLE_CAP_REFERENCE with provenance).
+ANGLE_CAP_REFERENCE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                   "angle_cap_reference.json")
+ANGLE_CAP_FACTOR = 2.0
+_SENTINEL_COLS = ["surface", "hasAlpha", "hasBeta", "localCotAlpha", "localCotBeta", "tpKey"]
+
+
+def angle_cap_census_files(files, step=10):
+    """SPN.angle_cap_census over every cluster (barrel + ID1-ID4) of `files`,
+    with the STORED flags. Returns (census, era, n_events): era 'emu' when every
+    cluster has both flags set (the emu producers), else 'payload'."""
+    acc, n_ev = None, 0
+    with uproot.open(f"{files[0]}:Events") as t:
+        keys = t.keys()
+    cols = _SENTINEL_COLS + (["tpEmuClass"] if SPN.has_column(keys, CLUSTER_TABLE, "tpEmuClass") else [])
+    br = SPN.cluster_branches(keys, cols, disc_scope="sp", cap_angles=False)
+    for A in uproot.iterate([f"{f}:Events" for f in files], br, step_size=step):
+        D, n = SPN.flat_clusters(A, cols, disc_scope="sp", cap_angles=False)
+        n_ev += len(n)
+        g = SPN.angle_cap_groups(D["surface"], D["tpKey"], D.get("tpEmuClass"))
+        acc = SPN.angle_cap_census_add(acc, SPN.angle_cap_census(D, g))
+    a = acc["angles"]
+    emu = all(a[x]["all"]["n_flag_set"] == a[x]["all"]["n_total"] for x in ("alpha", "beta"))
+    return acc, ("emu" if emu else "payload"), n_ev
+
+
+def _angle_cap_compare(census, era, ref_path=ANGLE_CAP_REFERENCE):
+    """Attach reference band and status to every cell; returns (cells, n_warn, ref_meta).
+    Band = FACTOR x max(ref frac_fail, 1 / ref n_valid): the floor keeps a cell whose
+    reference saw no failure from warning on the first one."""
+    try:
+        with open(ref_path) as fh:
+            R = json.load(fh)
+    except FileNotFoundError:
+        R = {}
+    E = R.get("eras", {}).get(era)
+    factor = R.get("factor", ANGLE_CAP_FACTOR)
+    rows, n_warn = [], 0
+    for ang, cells in census["angles"].items():
+        for lab, c in cells.items():
+            r = (E or {}).get("cells", {}).get(ang, {}).get(lab)
+            band, status = None, "no reference"
+            if r is not None and r["n_valid"] > 0:
+                band = factor * max(r["frac_fail"] or 0.0, 1.0 / r["n_valid"])
+                if c["frac_fail"] is None:
+                    status = "no valid angle"
+                elif c["frac_fail"] > band:
+                    status, n_warn = "WARNING", n_warn + 1
+                else:
+                    status = "ok"
+            rows.append(dict(c, angle=ang, group=lab, ref_frac_fail=None if r is None else r["frac_fail"],
+                             band=band, status=status))
+    meta = ({k: v for k, v in E.items() if k != "cells"} if E else None)
+    return rows, n_warn, {"reference_file": ref_path, "era": era, "factor": factor,
+                          "rule": R.get("rule"), "reference": meta}
+
+
+def _fmt_frac(f):
+    return "-" if f is None else f"{100 * f:.3f}%"
+
+
+def _angle_cap_pdf(rows, head, pdf_path, per_page=34):
+    """Vector table pages: one block of rows per angle."""
+    from matplotlib.backends.backend_pdf import PdfPages
+    cols = ["group", "N total", "N valid", "N pass", "N fail", "frac fail",
+            "N flag set", "N dropped by cap", "ref frac fail", "band", "status"]
+    with PdfPages(pdf_path) as pdf:
+        for ang in dict.fromkeys(r["angle"] for r in rows):
+            sel = [r for r in rows if r["angle"] == ang]
+            for p0 in range(0, len(sel), per_page):
+                part = sel[p0:p0 + per_page]
+                fig = plt.figure(figsize=(11.7, 8.3))
+                fig.text(0.03, 0.97, f"Angle-cap sentinel: {ang}  (|cot| <= {SPN.MEAS_ANGLE_MAX_ABS:g})",
+                         fontsize=13, fontweight="bold", va="top")
+                fig.text(0.03, 0.935, head, fontsize=7.5, va="top", family="monospace")
+                cell = [[r["group"], f"{r['n_total']:,}", f"{r['n_valid']:,}", f"{r['n_pass']:,}",
+                         f"{r['n_fail']:,}", _fmt_frac(r["frac_fail"]),
+                         f"{r.get('n_flag_set', 0):,}", f"{r.get('n_dropped_by_cap', 0):,}",
+                         _fmt_frac(r["ref_frac_fail"]), _fmt_frac(r["band"]), r["status"]]
+                        for r in part]
+                ax = fig.add_axes([0.03, 0.03, 0.94, 0.80])
+                ax.axis("off")
+                tb = ax.table(cellText=cell, colLabels=cols, loc="upper left", cellLoc="right")
+                tb.auto_set_font_size(False)
+                tb.set_fontsize(7)
+                tb.scale(1.0, 1.15)
+                for i, r in enumerate(part, start=1):
+                    tb[i, 0].set_text_props(ha="left")
+                    if r["status"] == "WARNING":
+                        for j in range(len(cols)):
+                            tb[i, j].set_facecolor("#f6d2cc")
+                pdf.savefig(fig)
+                plt.close(fig)
+
+
+def angle_cap_sentinel(files, outdir, ref_path=ANGLE_CAP_REFERENCE):
+    """Count, print, compare with the reference band, and write the table PDF.
+    Returns the JSON block."""
+    census, era, n_ev = angle_cap_census_files(files)
+    rows, n_warn, meta = _angle_cap_compare(census, era, ref_path)
+    print(f"\nANGLE-CAP SENTINEL  |cot| <= {SPN.MEAS_ANGLE_MAX_ABS:g}   era={era}  events={n_ev}  "
+          f"reference={os.path.basename(ref_path)}"
+          + ("" if meta["reference"] else "  (NO REFERENCE FOR THIS ERA: counts only)"))
+    print(f"  {'angle':9s} {'group':18s} {'N total':>10s} {'N valid':>10s} {'N pass':>10s} "
+          f"{'N fail':>8s} {'frac fail':>10s} {'dropped':>8s} {'band':>9s}  status")
+    for r in rows:
+        print(f"  {r['angle']:9s} {r['group']:18s} {r['n_total']:10d} {r['n_valid']:10d} "
+              f"{r['n_pass']:10d} {r['n_fail']:8d} {_fmt_frac(r['frac_fail']):>10s} "
+              f"{r.get('n_dropped_by_cap', 0):8d} {_fmt_frac(r['band']):>9s}  {r['status']}")
+    for r in rows:
+        if r["status"] == "WARNING":
+            print(f"WARNING *** ANGLE-CAP SENTINEL: {r['angle']} {r['group']}: "
+                  f"{_fmt_frac(r['frac_fail'])} of valid angles fail |cot| <= "
+                  f"{SPN.MEAS_ANGLE_MAX_ABS:g}, above the band {_fmt_frac(r['band'])} "
+                  f"({meta['factor']:g} x the {era} reference {_fmt_frac(r['ref_frac_fail'])}). "
+                  "The input's angle population differs from the reference: check the producer.")
+    if n_warn:
+        print(f"WARNING *** ANGLE-CAP SENTINEL: {n_warn} cell(s) outside the band")
+    pdf_path = os.path.join(outdir, "spix_angle_cap_sentinel.pdf")
+    ref = meta["reference"] or {}
+    head = (f"input: {', '.join(os.path.basename(f) for f in files)}   events {n_ev}   era {era} "
+            f"(emu = every cluster has both flags set)\n"
+            f"valid = not the -999 fill; frac fail = N fail / N valid; dropped by cap = stored flag set "
+            f"but not usable (what the loader removes; a -999 under a set flag included)\n"
+            f"direction = the (alpha, beta) pair globalClusterPhi/CotTheta are built from: valid when "
+            f"both are, passing when both pass\n"
+            f"band = {meta['factor']:g} x max(ref frac fail, 1/ref N valid);  reference: "
+            f"{ref.get('source', 'none for this era')}  ({ref.get('n_events', '-')} events)\n"
+            f"cells outside the band: {n_warn}")
+    _angle_cap_pdf(rows, head, pdf_path)
+    print(f"  wrote {pdf_path}")
+    return {"max_abs": census["max_abs"], "era": era, "n_events": n_ev, "n_warnings": n_warn,
+            "band": meta, "cells": rows, "pdf": pdf_path}
+
+
+def write_angle_cap_reference(files, ref_path=ANGLE_CAP_REFERENCE):
+    """Measure the census on `files` and store it as the reference of their era."""
+    import datetime
+    import subprocess
+    census, era, n_ev = angle_cap_census_files(files)
+    try:
+        with open(ref_path) as fh:
+            R = json.load(fh)
+    except FileNotFoundError:
+        R = {}
+    R.setdefault("description",
+                 "Reference failing fractions of the measured-angle cap |cot| <= max_abs, per "
+                 "angle x cluster group, one entry per producer era. Read by the omnibus's "
+                 "angle-cap sentinel; regenerate with spix_combinatorics_omnibus.py "
+                 "--write-angle-cap-reference -i <file>.")
+    R["rule"] = ("WARNING when a cell's frac_fail > factor x max(reference frac_fail, "
+                 "1 / reference n_valid), using the reference of the input's era (emu when "
+                 "every cluster has hasAlpha = hasBeta = 1, else payload)")
+    R["factor"], R["max_abs"] = ANGLE_CAP_FACTOR, census["max_abs"]
+    here = os.path.dirname(os.path.abspath(__file__))
+    try:
+        commit = subprocess.run(["git", "-C", here, "rev-parse", "--short", "HEAD"],
+                                capture_output=True, text=True).stdout.strip()
+        if subprocess.run(["git", "-C", here, "status", "--porcelain", "--",
+                           os.path.abspath(__file__)], capture_output=True, text=True).stdout.strip():
+            commit += " + uncommitted changes to this script"
+    except OSError:
+        commit = None
+    R.setdefault("eras", {})[era] = {
+        "source": ", ".join(os.path.abspath(f) for f in files), "n_events": n_ev,
+        "created": datetime.date.today().isoformat(), "code_commit": commit,
+        "cells": {a: {lab: {"frac_fail": c["frac_fail"], "n_valid": c["n_valid"],
+                            "n_fail": c["n_fail"]} for lab, c in cells.items()}
+                  for a, cells in census["angles"].items()}}
+    with open(ref_path, "w") as fh:
+        json.dump(R, fh, indent=1)
+    print(f"wrote the {era} reference ({n_ev} events) into {ref_path}")
+
+
+# --------------------------------------------------------------------------
 # loading + the (event, detId) join
 # --------------------------------------------------------------------------
 def _discover(path):
@@ -442,6 +626,23 @@ def load(paths):
     K = {c: ak.to_numpy(ak.flatten(C[c])) for c in ccols}
     for c in got:
         K[optional[c]] = ak.to_numpy(ak.flatten(C[c]))
+    # THE ANGLE CAP ON THE GLOBAL DIRECTION. gClPhi/gClCotTheta (and their sigmas)
+    # are built by the producer from BOTH module-frame angles whatever the flags
+    # say, so a cluster whose alpha or beta fails the cap (or is the -999 fill,
+    # which on payload-era files becomes a constant gClCotTheta ~ -1) carried a
+    # direction every study below used. Set those to the -999 fill, so each
+    # study's existing "> SENTINEL" gate drops them; studies 13/14 hand the flags
+    # to the seeder, which gates on SPN.direction_usable itself.
+    pair = {"hasAlpha": "clHasAlpha", "localCotAlpha": "clLocalCotAlpha",
+            "hasBeta": "clHasBeta", "localCotBeta": "clLocalCotBeta"}
+    if all(v in K for v in pair.values()):
+        dir_ok = SPN.direction_usable({k: K[v] for k, v in pair.items()})
+        for c in SPN.DIRECTION_COLUMNS:
+            if optional.get(c) in K:
+                K[optional[c]] = np.where(dir_ok, K[optional[c]], np.float32(-999.0))
+        print(f"  angle cap: global direction unusable on {int((~dir_ok).sum())} of "
+              f"{len(dir_ok)} TBPX clusters (alpha or beta fails |cot| <= "
+              f"{SPN.MEAS_ANGLE_MAX_ABS:g} or is absent); set to -999")
     K["event"] = ev_c
     K["_evt_base"] = np.concatenate([[0], np.cumsum(ncl)])
     # per-cluster TP truth at the POCA (tp_d0, tp_z0, ...) from the L1TTP table;
@@ -800,9 +1001,15 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     # per-pair residuals against the RUNNING projection (what the refit compares to)
     dx = (K["localX"][ci] - X["projLocalX"][xi]) / np.maximum(K["sigX"][ci], 1e-6)
     dy = (K["localY"][ci] - X["projLocalY"][xi]) / np.maximum(K["sigY"][ci], 1e-6)
-    okA = (K["clLocalCotAlpha"][ci] > SENTINEL) & (K["clSigAlpha"][ci] > 0) \
+    # An angle enters only where the cap allows it (SPN.angle_usable: flag set and
+    # |cot| <= MEAS_ANGLE_MAX_ABS), as in the refit. Before 2026-09-27 only the -999
+    # fill was excluded, so |cot| > 12 angles entered even on payload-era files,
+    # whose flags were already cleared there.
+    hasA = K.get("clHasAlpha", np.ones(len(K["clLocalCotAlpha"]), np.uint8))
+    hasB = K.get("clHasBeta", np.ones(len(K["clLocalCotBeta"]), np.uint8))
+    okA = SPN.angle_usable(hasA[ci], K["clLocalCotAlpha"][ci]) & (K["clSigAlpha"][ci] > 0) \
           & (X["projCotAlpha"][xi] > SENTINEL)
-    okB = (K["clLocalCotBeta"][ci] > SENTINEL) & (K["clSigBeta"][ci] > 0) \
+    okB = SPN.angle_usable(hasB[ci], K["clLocalCotBeta"][ci]) & (K["clSigBeta"][ci] > 0) \
           & (X["projCotBeta"][xi] > SENTINEL)
     # A cluster whose sensor reports NO angle must be neither rewarded nor punished
     # for it. Filling its normalized residual with 0 (the naive choice) makes it
@@ -2452,7 +2659,8 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
     M = _ttc()
 
     need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
-            "gSigPhi", "gSigCotTheta", "sigY", "tpKey", "tpPt", "tp_d0")
+            "gSigPhi", "gSigCotTheta", "sigY", "tpKey", "tpPt", "tp_d0",
+            "clHasAlpha", "clHasBeta", "clLocalCotAlpha", "clLocalCotBeta")
     if any(c not in K for c in need):
         for a in ax_row:
             a.axis("off")
@@ -2467,7 +2675,10 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
          "globalClusterCotTheta": K["gClCotTheta"],
          "sigGlobalClusterPhi": K["gSigPhi"],
          "sigGlobalClusterCotTheta": K["gSigCotTheta"], "sigY": K["sigY"],
-         "tpKey": K["tpKey"], "tpPt": K["tpPt"], "tp_d0": K["tp_d0"], "event": K["event"]}
+         "tpKey": K["tpKey"], "tpPt": K["tpPt"], "tp_d0": K["tp_d0"], "event": K["event"],
+         # the flags + angles the seeder's direction_usable gate reads
+         "hasAlpha": K["clHasAlpha"], "hasBeta": K["clHasBeta"],
+         "localCotAlpha": K["clLocalCotAlpha"], "localCotBeta": K["clLocalCotBeta"]}
     M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
                  min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     PTMIN = 2.0
@@ -2673,7 +2884,8 @@ def study_seed_composition(X, K, P, ax_row, out):
     _sp = _ilu.spec_from_file_location("_ttc2", _p)
     M = _ilu.module_from_spec(_sp); _sp.loader.exec_module(M)
     need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
-            "gSigPhi", "gSigCotTheta", "sigY", "tpKey", "tpPt")
+            "gSigPhi", "gSigCotTheta", "sigY", "tpKey", "tpPt",
+            "clHasAlpha", "clHasBeta", "clLocalCotAlpha", "clLocalCotBeta")
     if any(c not in K for c in need):
         for a in ax_row:
             a.axis("off")
@@ -2684,7 +2896,10 @@ def study_seed_composition(X, K, P, ax_row, out):
          "globalClusterCotTheta": K["gClCotTheta"],
          "sigGlobalClusterPhi": K["gSigPhi"],
          "sigGlobalClusterCotTheta": K["gSigCotTheta"], "sigY": K["sigY"],
-         "tpKey": K["tpKey"], "tpPt": K["tpPt"], "event": K["event"]}
+         "tpKey": K["tpKey"], "tpPt": K["tpPt"], "event": K["event"],
+         # the flags + angles the seeder's direction_usable gate reads
+         "hasAlpha": K["clHasAlpha"], "hasBeta": K["clHasBeta"],
+         "localCotAlpha": K["clLocalCotAlpha"], "localCotBeta": K["clLocalCotBeta"]}
     M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
                  min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     PTMIN = 2.0
@@ -4403,18 +4618,29 @@ def main():
                          "produced before 2026-09-24")
     ap.add_argument("--proj-chunk", type=int, default=10,
                     help="events per chunk for study 19 (~0.35 GB RSS at 10)")
+    ap.add_argument("--angle-cap-reference", default=ANGLE_CAP_REFERENCE,
+                    help="reference JSON for the angle-cap sentinel's WARNING band")
+    ap.add_argument("--write-angle-cap-reference", action="store_true",
+                    help="measure the angle-cap census on -i, store it as the reference "
+                         "of the input's era in --angle-cap-reference, and exit")
     args = ap.parse_args()
+    files = [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])]
+    if args.write_angle_cap_reference:
+        write_angle_cap_reference(files, args.angle_cap_reference)
+        return
     os.makedirs(args.outdir, exist_ok=True)
 
+    sentinel = angle_cap_sentinel(files, args.outdir, args.angle_cap_reference)
     hit, cfg, X, K, n_ev = load(args.inputs)
     P = prepare(X, K)
     out = {"config": cfg, "n_events": n_ev, "n_crossings": int(len(X["layer"])),
            "n_clusters": int(len(K["layer"])),
+           "angle_cap_sentinel": sentinel,
            # side-artefact directory for studies that write their own files;
            # stripped before the JSON is dumped
            "_outdir": args.outdir,
            # studies that need to re-read the file for OTHER activeSP variants
-           "_inputs": [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])],
+           "_inputs": files,
            "_hit_table": hit,
            "_menu_inputs": args.menu_inputs, "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
            "_menu_budget_gb": args.menu_budget_gb,
