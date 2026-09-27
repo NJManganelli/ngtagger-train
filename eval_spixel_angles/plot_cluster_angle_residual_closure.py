@@ -42,7 +42,7 @@ fig, axs = plt.subplots(2, 2, figsize=(13.5, 9.6))
 rows = []
 for v in VAR:
     S = to_spec(load_parquet([str(ROOT / f"2t-{v}_optimized-vars.parquet")]))
-    cs = CorrectionSet.from_file(str(HERE / f"spix_angle_response_{v}.json"))
+    cs = CorrectionSet.from_file(str(HERE / f"spix_angle_response_{v}_v5.json"))
     n = len(S["true_alpha"])
     lay = np.full(n, LAYER, float); bly = np.full(n, BLOCALY_CLAMP)
     for j, a in enumerate(("alpha", "beta")):
@@ -56,7 +56,7 @@ for v in VAR:
         rd = DEG(ang(tru + r) - ang(tru))
         sd = DEG(ang(tru + shift) - ang(tru))
         for i, (x_p, x_a, lim, un) in enumerate(
-                ((r, shift, 0.25, ""), (rd, sd, 15.0, " deg"))):
+                ((r, shift, 1.0, ""), (rd, sd, 15.0, " deg"))):
             _, wp = robust(x_p); _, wa = robust(x_a)
             # Both estimators, because they disagree by 1.5-2x and the gap IS
             # the tail: MAD is the core width the payload's sigma can be held

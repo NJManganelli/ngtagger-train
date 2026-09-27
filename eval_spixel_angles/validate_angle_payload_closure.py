@@ -12,7 +12,9 @@ TWO DISTRIBUTIONS, ONE PLOT, AND THEY MUST AGREE.
 Agreement validates the extraction. Disagreement localises it: a width mismatch
 is a sigma-fit or binning problem, an offset is the bias sign (the parquet
 column is true - pred while the spec wants pred - true), and a mismatch only
-outside |cotBeta| ~ 1.07 is the known source-coverage clamp rather than a bug.
+outside |cotBeta| ~ 7 is the known source-coverage clamp rather than a bug.
+The dump stores normalised labels; both sides are compared in PHYSICAL units
+(PIXELAV_LABEL_SCALE, the extractor's rescale).
 
 The same run also prints the parquet's own residual widths per variant, which is
 the number to compare a NEW training against: regenerate its -vars.parquet and
@@ -26,7 +28,7 @@ import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 # The one place the frame swap is allowed to live, reused rather than restated.
-from extract_pixelav_angle_payload import SWAP_ALPHA_BETA  # noqa: E402
+from extract_pixelav_angle_payload import SWAP_ALPHA_BETA, PIXELAV_LABEL_SCALE  # noqa: E402
 
 BLOCALY_CLAMP = -3.81          # the payload's single degenerate bLocalY bin
 LAYER = 1                      # layer axis is a duplicated fit; any layer works
@@ -86,7 +88,7 @@ def load_parquet(paths):
 
 
 def to_spec(D):
-    """Source columns -> spec convention, and the residual sign flip.
+    """Source columns -> spec convention in physical units, and the residual sign flip.
 
     spec alpha (bending) <- source cotB ; spec beta <- source cotA, per the
     coordinate relation cotAlpha_cms = +cotBeta_pix. The parquet residual is
@@ -97,8 +99,8 @@ def to_spec(D):
     for spec, src in (("alpha", sa), ("beta", sb)):
         if f"{src}true" not in D or f"residuals_{src}" not in D:
             continue
-        out[f"true_{spec}"] = D[f"{src}true"]
-        out[f"resid_{spec}"] = -D[f"residuals_{src}"]
+        out[f"true_{spec}"] = PIXELAV_LABEL_SCALE[src] * D[f"{src}true"]
+        out[f"resid_{spec}"] = -PIXELAV_LABEL_SCALE[src] * D[f"residuals_{src}"]
     if "true_alpha" not in out:
         raise SystemExit("this dump has no spec-alpha columns; nothing to test")
     # The payload's sigma/bias are functions of BOTH true angles. A dump that

@@ -26,6 +26,8 @@ Each row is one PixelAV-simulated cluster; columns:
   residuals_cotA/_B  : (true - pred)   [note the sign; see RESIDUAL_IS_TRUE_MINUS_PRED]
   sigmacotA/_B       : NN's own predicted per-cluster uncertainty (Conv variants only)
 The 'Mlp_Slim' variant regresses only beta (cotB); the Conv variants regress both.
+ALL of these are stored NORMALISED (the training labels); physical = PIXELAV_LABEL_SCALE x stored
+(see below). The payload is built in physical units.
 
 ALPHA/BETA CONVENTION  (see ALPHA_BETA_MAPPING below -- the ONE place the mapping lives)
 --------------------------------------------------------------------------------------
@@ -52,7 +54,7 @@ binning without a redesign. --model-variant is mandatory: it enters provenance A
 filename (spec: variants are separate payload files, never extra axes).
 
 Usage:
-  extract_pixelav_angle_payload.py --model-variant Mlp_Slim-2bit \\
+  extract_pixelav_angle_payload.py --model-variant Mlp_Slim-2bit --version v5 \\
       --out-dir eval_spixel_angles \\
       'PATH/2t-Mlp_Slim-2bit_optimized-vars.parquet' [more files/globs...]
 """
@@ -140,34 +142,33 @@ PRNG_HASH_ORDERS = {
     "spix_angle_valid_flat": ["bLocalY", "cotBeta", "cotAlpha", "layer"],
 }
 
+# The eval dumps store the NORMALISED training labels. Physical value = scale x stored, for the
+# prediction, the truth, the residual and the NN sigma alike (rescale() in smart-pixels-ml
+# summary-plots/read-all-models-2s.ipynb). Payloads up to v4 were built from the stored values,
+# so their CMS alpha axis/sigma were x1.88 and their CMS beta axis/sigma x6.53 too small.
+PIXELAV_LABEL_SCALE = {"cotA": 6.528905408493022, "cotB": 1.8827422609846889}
+
+
+def _source_label(spec_angle):
+    """the dump label ('cotA' | 'cotB') that feeds spec 'alpha' | 'beta'"""
+    return {"alpha": "cotB", "beta": "cotA"}[spec_angle] if SWAP_ALPHA_BETA else \
+        {"alpha": "cotA", "beta": "cotB"}[spec_angle]
+
+
 def ALPHA_BETA_MAPPING(cols_true, cols_pred, cols_resid):
     """Return (spec_alpha_dict, spec_beta_dict), each mapping 'true'/'pred'/'resid' to the
-    source column name in the parquet, or None if that spec angle is unavailable in this file.
+    source column name in the parquet (None if unavailable in this file), 'sigma_nn' to the NN
+    sigma column and 'scale' to the physical-unit factor of that source label.
 
     cols_* are the sets of available column names for true / pred / residual."""
     def pick(kind_cols, name):
         return name if name in kind_cols else None
 
-    if SWAP_ALPHA_BETA:
-        # spec alpha  <- pixelav BETA (cotB)  ;  spec beta <- pixelav ALPHA (cotA)
-        spec_alpha = dict(true=pick(cols_true, "cotBtrue"),
-                          pred=pick(cols_pred, "cotB"),
-                          resid=pick(cols_resid, "residuals_cotB"),
-                          sigma_nn="sigmacotB")
-        spec_beta = dict(true=pick(cols_true, "cotAtrue"),
-                         pred=pick(cols_pred, "cotA"),
-                         resid=pick(cols_resid, "residuals_cotA"),
-                         sigma_nn="sigmacotA")
-    else:
-        spec_alpha = dict(true=pick(cols_true, "cotAtrue"),
-                          pred=pick(cols_pred, "cotA"),
-                          resid=pick(cols_resid, "residuals_cotA"),
-                          sigma_nn="sigmacotA")
-        spec_beta = dict(true=pick(cols_true, "cotBtrue"),
-                         pred=pick(cols_pred, "cotB"),
-                         resid=pick(cols_resid, "residuals_cotB"),
-                         sigma_nn="sigmacotB")
-    return spec_alpha, spec_beta
+    def spec(src):
+        return dict(true=pick(cols_true, f"{src}true"), pred=pick(cols_pred, src),
+                    resid=pick(cols_resid, f"residuals_{src}"), sigma_nn=f"sigma{src}",
+                    scale=PIXELAV_LABEL_SCALE[src])
+    return spec(_source_label("alpha")), spec(_source_label("beta"))
 
 
 # Residual column sign: verified empirically residuals == (true - pred) for all variants.
@@ -181,21 +182,17 @@ RESIDUAL_IS_TRUE_MINUS_PRED = True
 #  primary resolved axis; cotBeta (spec) gets a coarse axis where data supports it.
 # =====================================================================================
 LAYERS = [1, 2, 3, 4]
-# Edges sized to the ACTUAL sample range, measured on the 2t-Mlp_Full-2bit dump
-# (108222 rows): spec-alpha (= pixelav cotB) spans [-1.077, +0.746] and spec-beta
-# (= pixelav cotA) spans [-1.067, +1.069].
-#
-# The previous alpha edges stopped at +-0.6 and therefore CLAMPED 23.3% of the sample into
-# the two outer bins -- nearly a quarter of the clusters got no angular resolution, and
-# asymmetrically so (cotB reaches -1.077 but only +0.746, so the lower edge bin absorbed
-# most of it). The previous beta edges ran to +-6 although the data stops near +-1.07,
-# leaving two near-empty bins that fell through to the pooled fallback.
-#
-# spec-alpha (bending): 0.1-wide core, widening to 0.2/0.3 in the sparse tails.
-SPEC_ALPHA_EDGES = [-1.1, -0.8, -0.6, -0.4, -0.3, -0.2, -0.1, 0.0,
-                    0.1, 0.2, 0.3, 0.4, 0.6, 0.8]
+# Edges sized to the ACTUAL sample range of the Conv1D_Full-2bit dump (108222 rows), chosen on
+# the NORMALISED labels and kept as the same bins in physical units (so each cell holds the same
+# clusters as in the v4 payload): in physical units spec-alpha (= pixelav cotB) spans
+# [-2.03, +1.40] and spec-beta (= pixelav cotA) spans [-6.97, +6.98].
+# spec-alpha (bending): normalised 0.1-wide core, widening to 0.2/0.3 in the sparse tails.
+_NORM_ALPHA_EDGES = [-1.1, -0.8, -0.6, -0.4, -0.3, -0.2, -0.1, 0.0,
+                     0.1, 0.2, 0.3, 0.4, 0.6, 0.8]
 # spec-beta (non-bending): coarse but bounded by the data, symmetric.
-SPEC_BETA_EDGES = [-1.1, -0.6, -0.3, 0.0, 0.3, 0.6, 1.1]
+_NORM_BETA_EDGES = [-1.1, -0.6, -0.3, 0.0, 0.3, 0.6, 1.1]
+SPEC_ALPHA_EDGES = [round(PIXELAV_LABEL_SCALE[_source_label("alpha")] * e, 6) for e in _NORM_ALPHA_EDGES]
+SPEC_BETA_EDGES = [round(PIXELAV_LABEL_SCALE[_source_label("beta")] * e, 6) for e in _NORM_BETA_EDGES]
 # bLocalY: single degenerate clamp bin around the nominal field
 BLOCALY_EDGES = [-4.0, 4.0]
 MIN_BIN_COUNT = 25          # below this, fall back to the pooled (all-bins) estimate
@@ -300,8 +297,10 @@ def accumulate_files(files, spec_alpha, spec_beta):
         sig_a = spec_alpha["sigma_nn"] if spec_alpha["sigma_nn"] in have else None
         sig_b = spec_beta["sigma_nn"] if (spec_beta and spec_beta["sigma_nn"] in have) else None
         read = cols + [c for c in (sig_a, sig_b) if c]
+        scale = {spec[k]: spec["scale"] for spec in (spec_alpha, spec_beta) if spec
+                 for k in ("true", "pred", "resid", "sigma_nn") if spec.get(k)}
         for batch in pf.iter_batches(batch_size=200_000, columns=read):
-            d = {c: np.asarray(batch.column(c)).astype(np.float64) for c in read}
+            d = {c: scale[c] * np.asarray(batch.column(c)).astype(np.float64) for c in read}
             n = len(next(iter(d.values())))
             total_rows += n
             if not sign_checked:
@@ -591,6 +590,9 @@ def build_payload(variant, files, acc_alpha, acc_beta, diag, upstream):
         f"deviation alpha={diag['residual_sign_dev']['alpha']} "
         f"beta={diag['residual_sign_dev']['beta']}). | "
         f"{CMS_PIX_TRANSFORM} | "
+        f"UNITS: PHYSICAL -- every dump column (true, pred, residual, NN sigma) multiplied by the "
+        f"smart-pixels-ml rescale() factor of its label {PIXELAV_LABEL_SCALE}; payloads before v5 "
+        f"used the stored normalised values (CMS alpha x1.88, CMS beta x6.53 too small). | "
         f"COVERAGE LIMITS: no layer column (one fit duplicated across layers 1-4); "
         f"no bLocalY column (single clamp bin at -3.81 T); "
         f"beta(spec) measurable={beta_measurable}; "
@@ -638,6 +640,8 @@ def main():
     ap.add_argument("--model-variant", required=True, help="e.g. Mlp_Slim-2bit (into provenance + filename)")
     ap.add_argument("--out-dir", default=".", help="output directory")
     ap.add_argument("--gzip", action="store_true", help="write .json.gz")
+    ap.add_argument("--version", default="v5",
+                    help="payload version, appended to the file name (never overwrite a deployed payload)")
     # Upstream attribution: the NN evaluation that produced the input dumps is NOT done here.
     ap.add_argument("--nn-source", default="smart-pix/smart-pixels-ml (rev unrecorded)",
                     help="repo/commit that evaluated the NN and wrote the input parquet(s)")
@@ -660,15 +664,13 @@ def main():
     spec_alpha, spec_beta = ALPHA_BETA_MAPPING(have, have, have)
     if spec_alpha["true"] is None or spec_alpha["resid"] is None:
         ap.error(f"spec-alpha source columns missing in {files[0]} (need cotBtrue/residuals_cotB under swap)")
-    if spec_beta["true"] is None:
-        spec_beta = None  # variant regresses only the bending angle (Mlp_Slim)
+    if spec_beta["true"] is None:  # variant regresses only the bending angle (Mlp_Slim)
         print("[info] beta (spec) not present in this variant -> beta corrections inert.")
 
     print(f"[info] {len(files)} file(s); variant={args.model_variant}")
-    print(f"[info] mapping: spec_alpha<-{spec_alpha['true']}/{spec_alpha['pred']}; "
-          f"spec_beta<-{(spec_beta or {}).get('true')}")
-    acc_alpha, acc_beta, diag = accumulate_files(
-        files, spec_alpha, spec_beta or dict(true=None, pred=None, resid=None, sigma_nn="sigmacotA"))
+    print(f"[info] mapping: spec_alpha<-{spec_alpha['true']}/{spec_alpha['pred']} x{spec_alpha['scale']}; "
+          f"spec_beta<-{spec_beta['true']} x{spec_beta['scale']}")
+    acc_alpha, acc_beta, diag = accumulate_files(files, spec_alpha, spec_beta)
     print(f"[info] accumulated {diag['total_rows']} rows")
 
     cf_a, cf_b = diag["clamped_frac_alpha"], diag["clamped_frac_beta"]
@@ -688,7 +690,7 @@ def main():
 
     os.makedirs(args.out_dir, exist_ok=True)
     ext = ".json.gz" if args.gzip else ".json"
-    out = os.path.join(args.out_dir, f"spix_angle_response_{args.model_variant}{ext}")
+    out = os.path.join(args.out_dir, f"spix_angle_response_{args.model_variant}_{args.version}{ext}")
     raw = cset.json(exclude_unset=True)  # schemav2 model -> json string
     opener = gzip.open if args.gzip else open
     with opener(out, "wt") as f:
