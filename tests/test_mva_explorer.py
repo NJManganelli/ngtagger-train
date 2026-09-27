@@ -350,6 +350,7 @@ def _synth_refit_tables(n_events=8, tracks_per_event=12, seed=1):
                 "trkMVA1": float(rng.random()),
                 "genuine": g, "looselyGenuine": g, "combinatoric": not g,
                 "unknown": False, "tpPt": 10.0, "tpFromHardInteraction": g,
+                "tpPdgId": 211 if g else 0,
             })
             var_rows.append({
                 "spixRefitPerformed": bool(it % 4 != 3),  # some passthrough
@@ -357,8 +358,10 @@ def _synth_refit_tables(n_events=8, tracks_per_event=12, seed=1):
                 "spixNAcceptedHits": 2, "spixLayerHitMask": 3,
                 "spixMaxWindowMult": 2, "spixAnyWindowTruncated": False,
                 "spixNKFUpdates": 2,
-                "spixChi2IncRPhiTot": float(rng.random() * 10),
-                "spixChi2IncRZTot": float(rng.random() * 10),
+                "spixChi2IncXTot": float(rng.random() * 5),
+                "spixChi2IncYTot": float(rng.random() * 5),
+                "spixChi2IncAlphaTot": float(rng.random() * 5),
+                "spixChi2IncBetaTot": float(rng.random() * 5),
                 "rInv": 0.01, "phi": 0.1, "tanL": 0.5, "z0": 1.0, "d0": 0.0,
             })
             for lyr in (1, 2):
@@ -368,7 +371,8 @@ def _synth_refit_tables(n_events=8, tracks_per_event=12, seed=1):
                     "resX": 0.01, "resY": 0.01, "pullX": 0.5, "pullY": 0.5,
                     "pullAlpha": 0.5, "pullBeta": 0.5,
                     "sigAlpha": 0.1, "sigBeta": 0.1,
-                    "chi2IncRPhi": 1.0, "chi2IncRZ": 1.0,
+                    "chi2IncX": 0.5, "chi2IncY": 0.5,
+                    "chi2IncAlpha": 0.5, "chi2IncBeta": 0.5,
                 })
         ref_ev.append(ref_rows); var_ev.append(var_rows); hit_ev.append(hit_rows)
     return ak.Array(ref_ev), ak.Array(var_ev), ak.Array(hit_ev)
@@ -410,10 +414,22 @@ def test_tkq_rows_synthetic(tmp_path):
     assert np.all(rows[:, COLUMNS.index("abs_d0")] >= 0)
 
 
-@pytest.mark.skipif(
-    not os.path.exists("/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/"
-                       "nano_fat_1111_coopt_file1.root"),
-    reason="unified coherent nanos not available")
+_COOPT_NANO = "/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/nano_fat_1111_coopt_file1.root"
+
+
+def _has_split_chi2(path):
+    """The export needs the split (X/Y/Alpha/Beta) refit chi2 columns; the
+    pre-v2.6 coopt nanos carry RPhi/RZ only and are rejected by design."""
+    if not os.path.exists(path):
+        return False
+    import uproot
+
+    with uproot.open(path) as f:
+        return "L1TSmartPixelsTrackDigiRefitAAAA_spixChi2IncXTot" in f["Events"].keys()
+
+
+@pytest.mark.skipif(not _has_split_chi2(_COOPT_NANO),
+                    reason="unified coherent nanos with split refit chi2 not available")
 def test_tkq_export_integration(tmp_path):
     from ngtagger.viz.mva_explorer.tkquality_export import export_tkquality
 

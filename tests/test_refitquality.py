@@ -35,6 +35,7 @@ def _synth(n_events=60, tracks_per_event=30, seed=0):
                 "trkMVA1": float(rng.random() * (0.5 if not g else 1.0)),
                 "genuine": g, "looselyGenuine": g, "combinatoric": (not g),
                 "unknown": False, "tpPt": 10.0 if g else -1.0, "tpFromHardInteraction": g,
+                "tpPdgId": 211 if g else 0,
             })
             # cleaner refit for genuine tracks
             kick = (0.002 if g else 0.05)
@@ -43,8 +44,10 @@ def _synth(n_events=60, tracks_per_event=30, seed=0):
                 "spixNCrossings": 2, "spixNAcceptedHits": 2,
                 "spixLayerHitMask": 3, "spixMaxWindowMult": int(rng.integers(2, 6)),
                 "spixAnyWindowTruncated": (not g), "spixNKFUpdates": 2,
-                "spixChi2IncRPhiTot": float(rng.random() * (5 if g else 500)),
-                "spixChi2IncRZTot": float(rng.random() * (5 if g else 500)),
+                "spixChi2IncXTot": float(rng.random() * (2.5 if g else 250)),
+                "spixChi2IncYTot": float(rng.random() * (2.5 if g else 250)),
+                "spixChi2IncAlphaTot": float(rng.random() * (2.5 if g else 250)),
+                "spixChi2IncBetaTot": float(rng.random() * (2.5 if g else 250)),
                 "rInv": 0.01 + rng.normal(0, kick), "phi": 0.1 + rng.normal(0, kick),
                 "tanL": 0.5 + rng.normal(0, kick), "z0": 1.0 + rng.normal(0, kick),
                 "d0": rng.normal(0, kick),
@@ -62,8 +65,10 @@ def _synth(n_events=60, tracks_per_event=30, seed=0):
                     "pullBeta": pull if hasang else -999.0,
                     "sigAlpha": 0.02 if hasang else -999.0,
                     "sigBeta": 0.02 if hasang else -999.0,
-                    "chi2IncRPhi": float(rng.random() * (2 if g else 50)),
-                    "chi2IncRZ": float(rng.random() * (2 if g else 50)),
+                    "chi2IncX": float(rng.random() * (1 if g else 25)),
+                    "chi2IncY": float(rng.random() * (1 if g else 25)),
+                    "chi2IncAlpha": float(rng.random() * (1 if g else 25)),
+                    "chi2IncBeta": float(rng.random() * (1 if g else 25)),
                 })
         ref_ev.append(ref_rows)
         var_ev.append(var_rows)
