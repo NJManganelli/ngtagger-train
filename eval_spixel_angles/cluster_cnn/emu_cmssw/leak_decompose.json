@@ -1,0 +1,48 @@
+{
+ "emu (v3)": {
+  "IL2-4": {
+   "base": 0.7806,
+   "+cot": 0.0068,
+   "+cot+sig": 0.0069,
+   "+has": 0.0002,
+   "+all angle columns": 0.007
+  },
+  "IL1": {
+   "base": 0.8161,
+   "+cot": 0.005,
+   "+cot+sig": 0.0053,
+   "+has": 0.0005,
+   "+all angle columns": 0.0044
+  },
+  "ID1-4": {
+   "base": 0.7529,
+   "+cot": -0.0002,
+   "+cot+sig": -0.0002,
+   "+has": 0.0,
+   "+all angle columns": -0.0004
+  }
+ },
+ "cnn (v2, reference)": {
+  "IL2-4": {
+   "base": 0.7806,
+   "+cot": 0.016,
+   "+cot+sig": 0.0155,
+   "+has": -0.0001,
+   "+all angle columns": 0.0166
+  },
+  "IL1": {
+   "base": 0.8161,
+   "+cot": 0.0217,
+   "+cot+sig": 0.0212,
+   "+has": 0.0006,
+   "+all angle columns": 0.0201
+  },
+  "ID1-4": {
+   "base": 0.7529,
+   "+cot": 0.0024,
+   "+cot+sig": 0.0023,
+   "+has": 0.0001,
+   "+all angle columns": 0.0022
+  }
+ }
+}
