@@ -31,6 +31,15 @@ either spelling in both directions, new name preferred, so a reader written
 against one generation reads the other. True row indices keep *Idx
 (selClusterIdx, trackIdx, genPartIdx, otStubIdx).
 
+Measured-angle cap. ``hasAlpha``/``hasBeta`` say whether a cluster's
+``localCotAlpha``/``localCotBeta`` may be used. The payload-mode rec-hit
+producer (truth + parametrised smear) cleared them beyond |cot| > 12; the emu
+mode sets them to 1 on EVERY cluster, so the flag cannot leak truth, and the
+cap moved into the algorithms that use the angles (the CMSSW refit applies it
+itself). ``cluster_columns`` therefore returns has* = has* AND |cot| <=
+``MEAS_ANGLE_MAX_ABS`` by default, which is a no-op on payload-mode files;
+``cap_angles=False`` returns the stored flags (for audits of the table itself).
+
 Mixed generations in one ``uproot.iterate`` call are not supported (uproot
 itself needs the same branches in every file).
 """
@@ -52,6 +61,12 @@ SP_DISCS = (11, 12, 13, 14)                 # surfaces ID1-ID4
 # disc_scope -> largest pxfDisk kept (TFPX = disks 1-8, TEPX = 9-12)
 DISC_SCOPES = {"none": 0, "sp": 4, "tfpx": 8, "all": 12}
 GEOMETRY = ("subdet", "layer", "disk", "side", "ring", "surface", "idxInDet")
+
+# Largest |cot| of a measured cluster angle that is used: the default of the
+# CMSSW refit's digiRefitMeasAngleMaxAbs (~85 deg from normal incidence).
+MEAS_ANGLE_MAX_ABS = 12.0
+# has-flag -> the angle it qualifies
+ANGLE_FLAGS = {"hasAlpha": "localCotAlpha", "hasBeta": "localCotBeta"}
 
 # new spelling -> old spelling; a None table applies to every table
 _RENAMES = {
@@ -112,6 +127,31 @@ def table_columns(A, table, cols):
 
 
 # ---------------------------------------------------------------------------
+# the measured-angle cap (see the module docstring)
+# ---------------------------------------------------------------------------
+def angle_usable(has, cot, max_abs=MEAS_ANGLE_MAX_ABS):
+    """Boolean: the angle `cot` may be used (flag `has` set and |cot| <= max_abs).
+    Works on numpy, awkward and pandas columns alike."""
+    return (has > 0) & (abs(cot) <= max_abs)
+
+
+def cap_angle_flags(cols, max_abs=MEAS_ANGLE_MAX_ABS):
+    """In the {column: array} dict `cols`, replace each has-flag whose angle is
+    also present by ``angle_usable`` (keeping the flag's dtype). A flag whose
+    angle is absent is left as stored. Returns `cols` (modified in place)."""
+    for flag, cot in ANGLE_FLAGS.items():
+        if flag in cols and cot in cols:
+            cols[flag] = cols[flag] * angle_usable(cols[flag], cols[cot], max_abs)
+    return cols
+
+
+def _cap_partners(keys, cols):
+    """The angle columns the cap needs that `cols` lacks and `keys` holds."""
+    return [cot for flag, cot in ANGLE_FLAGS.items()
+            if flag in cols and cot not in cols and has_column(keys, CLUSTER_TABLE, cot)]
+
+
+# ---------------------------------------------------------------------------
 # the cluster table
 # ---------------------------------------------------------------------------
 def cluster_layout(keys):
@@ -139,11 +179,14 @@ def _wants_disc(disc_scope, surfaces):
     return surfaces is None or any(int(s) > DISC_SURFACE_OFFSET for s in surfaces)
 
 
-def cluster_branches(keys, cols, disc_scope="sp", surfaces=None):
+def cluster_branches(keys, cols, disc_scope="sp", surfaces=None, cap_angles=True):
     """The raw branches `cluster_columns` needs for `cols` on a file with
-    branch names `keys`. Pass them to uproot alongside any other table's."""
+    branch names `keys`. Pass them to uproot alongside any other table's.
+    With `cap_angles` a requested has-flag also reads its angle (for the cap)."""
     lay = cluster_layout(keys)
     cols = list(cols)
+    if cap_angles:
+        cols += _cap_partners(keys, cols)
     if lay == "unified":
         need = cols + ["subdet", "surface"]
         return list(dict.fromkeys(branch_name(keys, CLUSTER_TABLE, c) for c in need))
@@ -203,7 +246,7 @@ def _check_barrel_first(subdet):
                              f"({int(bad.sum())} times): barrel is not a prefix")
 
 
-def cluster_columns(A, cols, disc_scope="sp", surfaces=None):
+def cluster_columns(A, cols, disc_scope="sp", surfaces=None, cap_angles=True):
     """{col: jagged per-event array} of the cluster table in the unified layout.
 
     `A` is an uproot batch read with (at least) ``cluster_branches(...)``.
@@ -218,7 +261,20 @@ def cluster_columns(A, cols, disc_scope="sp", surfaces=None):
     Row numbers: barrel rows keep their table row number whatever the filter
     (they are a per-event prefix), so ``surfaces=BARREL`` is safe to index
     with selClusterIdx. Disc rows keep theirs only when no disc is dropped.
+
+    `cap_angles` (default) returns hasAlpha/hasBeta AND |cot| <=
+    MEAS_ANGLE_MAX_ABS, reading the angle when `A` holds it (it does when `A`
+    was read with ``cluster_branches``); False returns the stored flags.
     """
+    cols = list(cols)
+    if not cap_angles:
+        return _cluster_columns(A, cols, disc_scope, surfaces)
+    out = cap_angle_flags(_cluster_columns(A, cols + _cap_partners(_fields(A), cols),
+                                           disc_scope, surfaces))
+    return {c: out[c] for c in cols}
+
+
+def _cluster_columns(A, cols, disc_scope, surfaces):
     f = _fields(A)
     lay = cluster_layout(f)
     cols = list(cols)
@@ -263,22 +319,22 @@ def cluster_columns(A, cols, disc_scope="sp", surfaces=None):
 
 
 def read_clusters(path, cols, disc_scope="sp", surfaces=None,
-                  entry_start=None, entry_stop=None, tree="Events"):
+                  entry_start=None, entry_stop=None, tree="Events", cap_angles=True):
     """cluster_columns on one file (for small reads and checks)."""
     import uproot
 
     t = uproot.open(f"{path}:{tree}")
-    br = cluster_branches(t.keys(), cols, disc_scope, surfaces)
+    br = cluster_branches(t.keys(), cols, disc_scope, surfaces, cap_angles)
     A = t.arrays(br, entry_start=entry_start, entry_stop=entry_stop)
-    return cluster_columns(A, cols, disc_scope, surfaces)
+    return cluster_columns(A, cols, disc_scope, surfaces, cap_angles)
 
 
-def flat_clusters(A, cols, disc_scope="sp", surfaces=None, event_offset=0):
+def flat_clusters(A, cols, disc_scope="sp", surfaces=None, event_offset=0, cap_angles=True):
     """cluster_columns flattened to numpy, plus 'event' (event_offset + entry)
     and the per-event counts: (dict, counts)."""
     if not cols:
         raise ValueError("flat_clusters needs at least one column")
-    J = cluster_columns(A, cols, disc_scope, surfaces)
+    J = cluster_columns(A, cols, disc_scope, surfaces, cap_angles)
     n = ak.to_numpy(ak.num(J[cols[0]]))
     D = {c: ak.to_numpy(ak.flatten(v)) for c, v in J.items()}
     D["event"] = np.repeat(np.arange(event_offset, event_offset + len(n)), n)

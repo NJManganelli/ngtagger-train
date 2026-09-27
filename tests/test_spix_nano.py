@@ -111,3 +111,25 @@ def test_flat_clusters():
     assert n.tolist() == [3, 1]
     assert D["event"].tolist() == [10, 10, 10, 11]
     assert isinstance(D["detId"], np.ndarray)
+
+
+def test_angle_cap():
+    # emu-mode flags (all 1): the cap drops |cot| > MEAS_ANGLE_MAX_ABS; a stored 0 stays 0
+    cap = S.MEAS_ANGLE_MAX_ABS
+    A = ak.Array({
+        f"{CL}_subdet": [[1, 1, 1, 1]], f"{CL}_surface": [[1, 1, 2, 2]],
+        f"{CL}_localCotAlpha": [[0.5, -cap - 0.1, cap, 3.0]],
+        f"{CL}_localCotBeta": [[cap + 1, 2.0, -cap, -999.0]],
+        f"{CL}_hasAlpha": np.array([[1, 1, 1, 0]], np.uint8),
+        f"{CL}_hasBeta": np.array([[1, 1, 1, 0]], np.uint8),
+    })
+    br = S.cluster_branches(A.fields, ["hasAlpha", "hasBeta"])
+    assert f"{CL}_localCotAlpha" in br and f"{CL}_localCotBeta" in br
+    J = S.cluster_columns(A, ["hasAlpha", "hasBeta"])
+    assert set(J) == {"hasAlpha", "hasBeta"}
+    assert J["hasAlpha"].tolist() == [[1, 0, 1, 0]]
+    assert J["hasBeta"].tolist() == [[0, 1, 1, 0]]
+    assert str(ak.type(J["hasAlpha"])).endswith("uint8")
+    R = S.cluster_columns(A, ["hasAlpha", "hasBeta"], cap_angles=False)
+    assert R["hasAlpha"].tolist() == [[1, 1, 1, 0]]
+    assert S.cluster_branches(A.fields, ["hasAlpha"], cap_angles=False) == [f"{CL}_hasAlpha", f"{CL}_subdet", f"{CL}_surface"]
