@@ -1,7 +1,7 @@
 """Static sigAlpha/sigBeta table of the CMSSW SmartPixels-output emulator (angleSource = "emu"), INCLUSIVE of both classes.
 
   emu_sigma_table.py routes                       both routes on the training (split 0) and test (split 2) events -> ROUTES cache
-  emu_sigma_table.py build OUT.json [KEY]         the table (training events); KEY = none | own | both (default own)
+  emu_sigma_table.py build OUT.json [KEY]         the table (training events); KEY = none (v2, default) | own | both (v3)
   emu_sigma_table.py pulls OUT.json [TAG]         pull checks of the table on the test events
 
 Population (training events = split 0, the class-T clusters, which are the only ones with a consistent truth): every cluster
@@ -9,8 +9,9 @@ is emulated through BOTH routes -- the class-T route (truth pseudo-angle) and th
 the two are pooled with weights f_T and f_C = 1 - f_T, the production class fractions on the same events of the key cell the
 cluster falls in (surface x cluster-size bins), so the pooled residuals describe the inclusive (T + C) emitted population.
 sigma = (q84 - q16) / 2 of (emitted - true) COT (weighted quantiles), keyed ONLY on what the sensor reports: the surface
-code (1-4 = IL1-4, 11-14 = ID1-4), the cluster size(s) (KEY: none = v2; own = sizeX for alpha, sizeY for beta; both = sizeX
-and sizeY for either angle; ASSUMPTION: the cluster size counts as sensor-reported) and the |emitted cot| of that angle.
+code (1-4 = IL1-4, 11-14 = ID1-4), optionally the cluster size(s) (KEY: none = v2, the adopted table; own = sizeX for
+alpha, sizeY for beta; both = sizeX and sizeY for either angle; the size keys were studied as v3 and not adopted; ASSUMPTION:
+the cluster size counts as sensor-reported) and the |emitted cot| of that angle.
 Rows whose emitted angle saturated are excluded, and so is |emitted cot| > CAP (the refit's measAngleMaxAbs): the top cot bin
 ends at CAP and the table clamps above it. Bins are chosen from the data, outermost key first: integer sizes are merged
 upwards until each bin holds >= MIN_N clusters per route (a sparse last bin into its predecessor; the table clamps sizes
@@ -156,7 +157,8 @@ class Builder:
         return cs.Binning(nodetype="binning", input="absCot", edges=edges, content=[round(float(v), 6) for v in sig], flow="clamp")
 
 
-def build(out, key="own"):
+def build(out, key="none"):
+    version = 2 if key == "none" else 3
     M = class_meta(0)
     P = routes(0)
     rows, corrs = [], []
@@ -173,19 +175,20 @@ def build(out, key="own"):
         size_txt = {"none": "", "own": f" x cluster size{' along x (sizeX)' if ang == 'A' else ' along y (sizeY)'}",
                     "both": " x cluster sizes (sizeX, sizeY)"}[key]
         corrs.append(cs.Correction(
-            name=f"spix_emu_{nm}_sigma", version=3,
+            name=f"spix_emu_{nm}_sigma", version=version,
             description=(f"SmartPixels-output emulator cot{nm.capitalize()} resolution: weighted (q84-q16)/2 of (emitted - true) cot "
                          f"of the INCLUSIVE emulated population (class-T and class-C routes on the class-T clusters of the training "
                          f"events, weighted by the class fractions of the key cell), by surface code (1-4 IL, 11-14 ID){size_txt} "
                          f"and |reported cot| <= {CAP} (clamped above). Saturated rows excluded; bins merged from the data "
-                         f"(>= {MIN_N} per route). Inputs are sensor-reported only (the cluster size is assumed sensor-reported)."),
+                         f"(>= {MIN_N} per route). Inputs are sensor-reported only"
+                         f"{'' if key == 'none' else ' (the cluster size is assumed sensor-reported)'}."),
             inputs=[cs.Variable(name="surface", type="int", description="IT surface code: 1-4 = IL1-IL4, 11-14 = ID1-ID4")]
                    + [cs.Variable(name=v, type="int", description=f"cluster bounding-box extent in pixels, local {v[-1].lower()}")
                       for v in keys]
                    + [cs.Variable(name="absCot", type="real", description=f"|reported cot{nm.capitalize()}|")],
             output=cs.Variable(name="sigma", type="real", description=f"cot{nm.capitalize()} resolution"),
             data=cs.Category(nodetype="category", input="surface", content=content)))
-    cset = cs.CorrectionSet(schema_version=2, description=f"SmartPixels-output emulator angle resolution (sigma) tables, v3 "
+    cset = cs.CorrectionSet(schema_version=2, description=f"SmartPixels-output emulator angle resolution (sigma) tables, v{version} "
                                                           f"(inclusive; key = surface{'' if key == 'none' else ' x cluster size'} x |cot|; "
                                                           f"variant '{key}')", corrections=corrs)
     open(out, "w").write(cset.model_dump_json(exclude_unset=True, indent=1))
