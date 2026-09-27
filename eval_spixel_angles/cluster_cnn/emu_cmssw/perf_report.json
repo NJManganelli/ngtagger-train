@@ -1,0 +1,445 @@
+{
+ "summary": [
+  {
+   "mode": "cnn",
+   "events": 200,
+   "steady s/event (begin-processing spacing, events > 20)": 9.82,
+   "steady events/s": 0.1018,
+   "first 20 events [s]": 190.1,
+   "job wall [s]": 2023.4,
+   "job CPU user+sys [s]": 7670.7,
+   "CPU/event (job avg) [s]": 38.35,
+   "peak RSS [GB]": 6.94,
+   "FastTimer event loop real [s]": 7918.4,
+   "ratio to cnn_nano_v2 (cnn)": 1.0
+  },
+  {
+   "mode": "payload",
+   "events": 200,
+   "steady s/event (begin-processing spacing, events > 20)": 2.46,
+   "steady events/s": 0.4059,
+   "first 20 events [s]": 49.6,
+   "job wall [s]": 539.2,
+   "job CPU user+sys [s]": 1684.6,
+   "CPU/event (job avg) [s]": 8.42,
+   "peak RSS [GB]": 6.95,
+   "FastTimer event loop real [s]": 2019.2,
+   "ratio to cnn_nano_v2 (cnn)": 0.251
+  },
+  {
+   "mode": "emu",
+   "events": 200,
+   "steady s/event (begin-processing spacing, events > 20)": 8.23,
+   "steady events/s": 0.1215,
+   "first 20 events [s]": 160.5,
+   "job wall [s]": 1705.5,
+   "job CPU user+sys [s]": 6407.9,
+   "CPU/event (job avg) [s]": 32.04,
+   "peak RSS [GB]": 7.0,
+   "FastTimer event loop real [s]": 6632.6,
+   "ratio to cnn_nano_v2 (cnn)": 0.838
+  }
+ ],
+ "top_modules": [
+  {
+   "mode": "cnn",
+   "module": "spixSmartPixelsRecHits",
+   "type": "SmartPixelsRecHitProducer",
+   "real/event [ms]": 30481.748187785,
+   "cpu/event [ms]": 30399.466119945,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "spixSmartPixelsRecHits",
+   "type": "SmartPixelsRecHitProducer",
+   "real/event [ms]": 24278.838323165,
+   "cpu/event [ms]": 24211.223088270002,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "other",
+   "type": "other",
+   "real/event [ms]": 3556.83453276,
+   "cpu/event [ms]": 2548.466367255,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "source",
+   "type": "PoolSource",
+   "real/event [ms]": 3321.694458395,
+   "cpu/event [ms]": 2762.085763845,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "source",
+   "type": "PoolSource",
+   "real/event [ms]": 3125.335918285,
+   "cpu/event [ms]": 2558.60083929,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "NANOAODSIMoutput",
+   "type": "NanoAODOutputModule",
+   "real/event [ms]": 2804.6729727049997,
+   "cpu/event [ms]": 2760.7093578900003,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "NANOAODSIMoutput",
+   "type": "NanoAODOutputModule",
+   "real/event [ms]": 2751.7812812200004,
+   "cpu/event [ms]": 2709.56762247,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "NANOAODSIMoutput",
+   "type": "NanoAODOutputModule",
+   "real/event [ms]": 2389.847896935,
+   "cpu/event [ms]": 2323.175028295,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "source",
+   "type": "PoolSource",
+   "real/event [ms]": 2008.929979665,
+   "cpu/event [ms]": 1505.191863775,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "other",
+   "type": "other",
+   "real/event [ms]": 1036.610712465,
+   "cpu/event [ms]": 574.335825935,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "other",
+   "type": "other",
+   "real/event [ms]": 993.284382835,
+   "cpu/event [ms]": 597.715863675,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "l1tTTTracksFromExtendedTrackletEmulation",
+   "type": "L1FPGATrackProducer",
+   "real/event [ms]": 575.0270557250001,
+   "cpu/event [ms]": 571.594810645,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "idle",
+   "type": "idle",
+   "real/event [ms]": 549.7947512850001,
+   "cpu/event [ms]": 352.41521419,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "l1tTTTracksFromExtendedTrackletEmulation",
+   "type": "L1FPGATrackProducer",
+   "real/event [ms]": 543.353097715,
+   "cpu/event [ms]": 541.568725995,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "l1tTTTracksFromExtendedTrackletEmulation",
+   "type": "L1FPGATrackProducer",
+   "real/event [ms]": 537.9786808800001,
+   "cpu/event [ms]": 535.60471522,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "idle",
+   "type": "idle",
+   "real/event [ms]": 472.63720083,
+   "cpu/event [ms]": 396.76831503,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "idle",
+   "type": "idle",
+   "real/event [ms]": 452.714770825,
+   "cpu/event [ms]": 789.66780904,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "cleanup",
+   "type": "cleanup",
+   "real/event [ms]": 348.31575164000003,
+   "cpu/event [ms]": 346.762361005,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "cleanup",
+   "type": "cleanup",
+   "real/event [ms]": 275.71058141500004,
+   "cpu/event [ms]": 273.17932204,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "cleanup",
+   "type": "cleanup",
+   "real/event [ms]": 260.38194571500003,
+   "cpu/event [ms]": 259.326018,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "spixSmartPixelsRecHits",
+   "type": "SmartPixelsRecHitProducer",
+   "real/event [ms]": 217.548667185,
+   "cpu/event [ms]": 214.639759815,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "spixPixelClusters",
+   "type": "SiPixelClusterProducer",
+   "real/event [ms]": 110.15162566000001,
+   "cpu/event [ms]": 106.280262315,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "spixPixelClusters",
+   "type": "SiPixelClusterProducer",
+   "real/event [ms]": 105.475161245,
+   "cpu/event [ms]": 103.442077895,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "l1tTTTracksFromTrackletEmulation",
+   "type": "L1FPGATrackProducer",
+   "real/event [ms]": 102.992293335,
+   "cpu/event [ms]": 102.14043835000001,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "spixPixelClusters",
+   "type": "SiPixelClusterProducer",
+   "real/event [ms]": 99.467362295,
+   "cpu/event [ms]": 96.848739995,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "l1tTTTracksFromTrackletEmulation",
+   "type": "L1FPGATrackProducer",
+   "real/event [ms]": 97.63101962500001,
+   "cpu/event [ms]": 97.15305983,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "l1tSmartPixelsTrackProducerExtendedWdigiRefitAAAA",
+   "type": "L1SmartPixelsTrackProducer",
+   "real/event [ms]": 94.74960360499999,
+   "cpu/event [ms]": 94.060680835,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "l1tTTTracksFromTrackletEmulation",
+   "type": "L1FPGATrackProducer",
+   "real/event [ms]": 94.35754465,
+   "cpu/event [ms]": 93.92916713000001,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "l1tSmartPixelsTrackProducerExtendedWdigiRefitAAAA",
+   "type": "L1SmartPixelsTrackProducer",
+   "real/event [ms]": 75.88856545499999,
+   "cpu/event [ms]": 75.719899915,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "spixPixelRecHits",
+   "type": "SiPixelRecHitConverter",
+   "real/event [ms]": 68.89546362,
+   "cpu/event [ms]": 67.850803,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "spixPixelRecHits",
+   "type": "SiPixelRecHitConverter",
+   "real/event [ms]": 68.241117585,
+   "cpu/event [ms]": 67.28750941,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "l1tSmartPixelsTrackProducerExtendedWdigiRefitAAAA",
+   "type": "L1SmartPixelsTrackProducer",
+   "real/event [ms]": 68.204147125,
+   "cpu/event [ms]": 67.61370417500001,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "spixPixelRecHits",
+   "type": "SiPixelRecHitConverter",
+   "real/event [ms]": 65.979833375,
+   "cpu/event [ms]": 64.93933608,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "l1tSmartPixelsTrackProducerWdigiRefitAAAA",
+   "type": "L1SmartPixelsTrackProducer",
+   "real/event [ms]": 62.243841679999996,
+   "cpu/event [ms]": 61.792928419999996,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "l1tPh3SmartPixelsClusterTable",
+   "type": "L1SmartPixelsClusterTableProducer",
+   "real/event [ms]": 61.338991495,
+   "cpu/event [ms]": 60.825441014999996,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "l1tPh3SmartPixelsClusterTable",
+   "type": "L1SmartPixelsClusterTableProducer",
+   "real/event [ms]": 57.840206715,
+   "cpu/event [ms]": 57.136322265,
+   "events": 200
+  }
+ ],
+ "spix_modules": [
+  {
+   "mode": "cnn",
+   "module": "spixPixelClusters",
+   "type": "SiPixelClusterProducer",
+   "real/event [ms]": 105.475161245,
+   "cpu/event [ms]": 103.442077895,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "spixPixelRecHits",
+   "type": "SiPixelRecHitConverter",
+   "real/event [ms]": 68.241117585,
+   "cpu/event [ms]": 67.28750941,
+   "events": 200
+  },
+  {
+   "mode": "cnn",
+   "module": "spixSmartPixelsRecHits",
+   "type": "SmartPixelsRecHitProducer",
+   "real/event [ms]": 30481.748187785,
+   "cpu/event [ms]": 30399.466119945,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "spixPixelClusters",
+   "type": "SiPixelClusterProducer",
+   "real/event [ms]": 110.15162566000001,
+   "cpu/event [ms]": 106.280262315,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "spixPixelRecHits",
+   "type": "SiPixelRecHitConverter",
+   "real/event [ms]": 68.89546362,
+   "cpu/event [ms]": 67.850803,
+   "events": 200
+  },
+  {
+   "mode": "payload",
+   "module": "spixSmartPixelsRecHits",
+   "type": "SmartPixelsRecHitProducer",
+   "real/event [ms]": 217.548667185,
+   "cpu/event [ms]": 214.639759815,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "spixPixelClusters",
+   "type": "SiPixelClusterProducer",
+   "real/event [ms]": 99.467362295,
+   "cpu/event [ms]": 96.848739995,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "spixPixelRecHits",
+   "type": "SiPixelRecHitConverter",
+   "real/event [ms]": 65.979833375,
+   "cpu/event [ms]": 64.93933608,
+   "events": 200
+  },
+  {
+   "mode": "emu",
+   "module": "spixSmartPixelsRecHits",
+   "type": "SmartPixelsRecHitProducer",
+   "real/event [ms]": 24278.838323165,
+   "cpu/event [ms]": 24211.223088270002,
+   "events": 200
+  }
+ ],
+ "emu_steps": [
+  {
+   "mode": "emu",
+   "step": "helix (class-T test)",
+   "total [s]": 42.543,
+   "per event [ms]": 212.715
+  },
+  {
+   "mode": "emu",
+   "step": "CNN (ONNX)",
+   "total [s]": 2926.468,
+   "per event [ms]": 14632.34
+  },
+  {
+   "mode": "emu",
+   "step": "donor kNN",
+   "total [s]": 1707.119,
+   "per event [ms]": 8535.595
+  },
+  {
+   "mode": "emu",
+   "step": "dump kNN",
+   "total [s]": 75.505,
+   "per event [ms]": 377.525
+  },
+  {
+   "mode": "emu",
+   "step": "draw+bookkeeping",
+   "total [s]": 36.363,
+   "per event [ms]": 181.815
+  },
+  {
+   "mode": "emu",
+   "step": "one-time setup (ONNX sessions, library load, KD-tree builds)",
+   "total [s]": 5.04,
+   "per event [ms]": NaN
+  }
+ ]
+}
