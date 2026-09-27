@@ -54,7 +54,7 @@ binning without a redesign. --model-variant is mandatory: it enters provenance A
 filename (spec: variants are separate payload files, never extra axes).
 
 Usage:
-  extract_pixelav_angle_payload.py --model-variant Mlp_Slim-2bit --version v5 \\
+  extract_pixelav_angle_payload.py --model-variant Mlp_Slim-2bit --version v6 \\
       --out-dir eval_spixel_angles \\
       'PATH/2t-Mlp_Slim-2bit_optimized-vars.parquet' [more files/globs...]
 """
@@ -182,17 +182,24 @@ RESIDUAL_IS_TRUE_MINUS_PRED = True
 #  primary resolved axis; cotBeta (spec) gets a coarse axis where data supports it.
 # =====================================================================================
 LAYERS = [1, 2, 3, 4]
-# Edges sized to the ACTUAL sample range of the Conv1D_Full-2bit dump (108222 rows), chosen on
+# v5 edges: sized to the ACTUAL sample range of the Conv1D_Full-2bit dump (108222 rows), chosen on
 # the NORMALISED labels and kept as the same bins in physical units (so each cell holds the same
 # clusters as in the v4 payload): in physical units spec-alpha (= pixelav cotB) spans
 # [-2.03, +1.40] and spec-beta (= pixelav cotA) spans [-6.97, +6.98].
 # spec-alpha (bending): normalised 0.1-wide core, widening to 0.2/0.3 in the sparse tails.
 _NORM_ALPHA_EDGES = [-1.1, -0.8, -0.6, -0.4, -0.3, -0.2, -0.1, 0.0,
                      0.1, 0.2, 0.3, 0.4, 0.6, 0.8]
-# spec-beta (non-bending): coarse but bounded by the data, symmetric.
+# spec-beta (non-bending): coarse (|beta| 0-63 deg is one bin), symmetric.
 _NORM_BETA_EDGES = [-1.1, -0.6, -0.3, 0.0, 0.3, 0.6, 1.1]
-SPEC_ALPHA_EDGES = [round(PIXELAV_LABEL_SCALE[_source_label("alpha")] * e, 6) for e in _NORM_ALPHA_EDGES]
-SPEC_BETA_EDGES = [round(PIXELAV_LABEL_SCALE[_source_label("beta")] * e, 6) for e in _NORM_BETA_EDGES]
+_phys = lambda angle, norm: [round(PIXELAV_LABEL_SCALE[_source_label(angle)] * e, 6) for e in norm]
+SPEC_ALPHA_EDGES = _phys("alpha", _NORM_ALPHA_EDGES)
+SPEC_BETA_EDGES = _phys("beta", _NORM_BETA_EDGES)
+# v6: the same alpha edges without normalised 0.6 (cot 1.13): the dump ends at cot 1.40, so the top
+# alpha bin holds only 2.5% of the rows, too few for fine beta cells. The beta edges are derived from
+# the dump (derive_beta_edges), with the v5 outer edges kept so the clamp region is unchanged.
+SPEC_ALPHA_EDGES_V6 = _phys("alpha", [e for e in _NORM_ALPHA_EDGES if e != 0.6])
+BETA_ANGLE_STEP_DEG = 5
+BETA_ANGLE_TOP_DEG = 80
 # bLocalY: single degenerate clamp bin around the nominal field
 BLOCALY_EDGES = [-4.0, 4.0]
 MIN_BIN_COUNT = 25          # below this, fall back to the pooled (all-bins) estimate
@@ -235,6 +242,33 @@ def _edges_index(x, edges):
     return np.clip(idx, 0, len(edges) - 2)
 
 
+def derive_beta_edges(files, spec_alpha, spec_beta, alpha_edges, min_rows):
+    """Beta (spec) edges symmetric in the ANGLE atan(cotBeta): grow each |beta| bin outwards from 0
+    in BETA_ANGLE_STEP_DEG steps until every (alpha, beta) cell on both signs holds >= min_rows dump
+    rows; the last bin runs to BETA_ANGLE_TOP_DEG, then one outer bin to the v5 outer edge."""
+    cols = [spec_alpha["true"], spec_beta["true"]]
+    t = {c: np.concatenate([np.asarray(pq.read_table(f, columns=[c]).column(c), np.float64) for f in files]) for c in cols}
+    ia = _edges_index(spec_alpha["scale"] * t[cols[0]], alpha_edges)
+    deg = np.degrees(np.arctan(spec_beta["scale"] * t[cols[1]]))
+    na = len(alpha_edges) - 1
+
+    def fills(lo, hi):
+        return all(np.bincount(ia[(s * deg >= lo) & (s * deg < hi)], minlength=na).min() >= min_rows for s in (1, -1))
+
+    top = SPEC_BETA_EDGES[-1]
+    if not fills(BETA_ANGLE_TOP_DEG, 90.0):
+        raise SystemExit(f"[fatal] the outer beta bin |beta| >= {BETA_ANGLE_TOP_DEG} deg has a cell below {min_rows} rows")
+    ang = [0]
+    for e in range(BETA_ANGLE_STEP_DEG, BETA_ANGLE_TOP_DEG + 1, BETA_ANGLE_STEP_DEG):
+        if fills(ang[-1], e):
+            ang.append(e)
+    ang[-1] = BETA_ANGLE_TOP_DEG  # an unfilled remainder merges into the last bin
+    if not fills(ang[-2], ang[-1]):
+        raise SystemExit(f"[fatal] no beta binning gives >= {min_rows} rows per cell")
+    pos = [round(float(np.tan(np.radians(a))), 6) for a in ang[1:]] + [top]
+    return [-p for p in reversed(pos)] + [0.0] + pos
+
+
 def _verify_residual_sign(d, spec, label):
     """Check RESIDUAL_IS_TRUE_MINUS_PRED against the data instead of trusting the comment.
 
@@ -262,12 +296,13 @@ def _verify_residual_sign(d, spec, label):
     return stated
 
 
-def accumulate_files(files, spec_alpha, spec_beta):
+def accumulate_files(files, spec_alpha, spec_beta, edges):
     """Stream all files row-group-wise; accumulate spec-signed residuals for alpha and (if
     available) beta into (n_alpha_bins, n_beta_bins) cells indexed by (spec_alpha, spec_beta).
-    layer + bLocalY are degenerate (single bin)."""
-    na = len(SPEC_ALPHA_EDGES) - 1
-    nb = len(SPEC_BETA_EDGES) - 1
+    layer + bLocalY are degenerate (single bin). edges = (alpha edges, beta edges)."""
+    alpha_edges, beta_edges = edges
+    na = len(alpha_edges) - 1
+    nb = len(beta_edges) - 1
     acc_alpha = BinAccumulator((na, nb))
     acc_beta = BinAccumulator((na, nb)) if spec_beta["true"] is not None else None
     # NN self-reported sigma accumulation (diagnostic, not part of payload)
@@ -280,8 +315,8 @@ def accumulate_files(files, spec_alpha, spec_beta):
     sign_dev = dict(alpha=None, beta=None)
     clamped_alpha = clamped_beta = 0
     beta_axis_rows = 0
-    a_lo, a_hi = SPEC_ALPHA_EDGES[0], SPEC_ALPHA_EDGES[-1]
-    b_lo, b_hi = SPEC_BETA_EDGES[0], SPEC_BETA_EDGES[-1]
+    a_lo, a_hi = alpha_edges[0], alpha_edges[-1]
+    b_lo, b_hi = beta_edges[0], beta_edges[-1]
 
     # which columns to read
     read_cols = set()
@@ -317,12 +352,12 @@ def accumulate_files(files, spec_alpha, spec_beta):
             a_pred_minus_true = -a_resid if RESIDUAL_IS_TRUE_MINUS_PRED else a_resid
             clamped_alpha += int(np.count_nonzero((a_true < a_lo) | (a_true > a_hi)))
             # bin index: alpha axis from spec-alpha-true; beta axis from spec-beta-true if present
-            ia = _edges_index(a_true, SPEC_ALPHA_EDGES)
+            ia = _edges_index(a_true, alpha_edges)
             if spec_beta and spec_beta["true"] and spec_beta["true"] in d:
                 b_true = d[spec_beta["true"]]
                 clamped_beta += int(np.count_nonzero((b_true < b_lo) | (b_true > b_hi)))
                 beta_axis_rows += n
-                ib = _edges_index(b_true, SPEC_BETA_EDGES)
+                ib = _edges_index(b_true, beta_edges)
             else:
                 # no spec-beta axis data -> put everything in the central beta bin
                 ib = np.full(n, (nb - 1) // 2, dtype=int)
@@ -347,6 +382,10 @@ def accumulate_files(files, spec_alpha, spec_beta):
         clamped_frac_beta=(clamped_beta / beta_axis_rows) if beta_axis_rows else None,
     )
     return acc_alpha, acc_beta, diag
+
+
+def _nbins(edges):
+    return len(edges[0]) - 1, len(edges[1]) - 1
 
 
 def _content_values(acc, kind, na, nb):
@@ -376,19 +415,19 @@ def _content_values(acc, kind, na, nb):
     return content
 
 
-def _multibinning(acc, kind, na, nb):
+def _multibinning(acc, kind, edges):
     """Build a schemav2 MultiBinning over (cotAlpha, cotBeta, bLocalY) from an accumulator.
     kind in {'sigma','bias'}.  bLocalY has one bin (degenerate)."""
     return cs.MultiBinning(
         nodetype="multibinning",
         inputs=["cotAlpha", "cotBeta", "bLocalY"],
-        edges=[SPEC_ALPHA_EDGES, SPEC_BETA_EDGES, BLOCALY_EDGES],
-        content=_content_values(acc, kind, na, nb),
+        edges=[*edges, BLOCALY_EDGES],
+        content=_content_values(acc, kind, *_nbins(edges)),
         flow="clamp",
     )
 
 
-def _final_multibinning(acc, na, nb):
+def _final_multibinning(acc, edges):
     """The fused-shift terminal node: bias table whose cells are Formula nodes
     '<bias> + x' over the prngAcc accumulator (which holds sigma*z when reached),
     so the cell outputs bias + sigma*z. Bias constants are the SAME rounded decimals
@@ -398,24 +437,25 @@ def _final_multibinning(acc, na, nb):
                    expression=f"{repr(bias)} + x",
                    parser="TFormula",
                    variables=["prngAcc"])
-        for bias in _content_values(acc, "bias", na, nb)
+        for bias in _content_values(acc, "bias", *_nbins(edges))
     ]
     return cs.MultiBinning(
         nodetype="multibinning",
         inputs=["cotAlpha", "cotBeta", "bLocalY"],
-        edges=[SPEC_ALPHA_EDGES, SPEC_BETA_EDGES, BLOCALY_EDGES],
+        edges=[*edges, BLOCALY_EDGES],
         content=content,
         flow="clamp",
     )
 
 
-def _prob_multibinning(na, nb):
+def _prob_multibinning(edges):
     """valid_prob: no validity/quality flag in these eval dumps -> 1.0 everywhere."""
+    na, nb = _nbins(edges)
     ncell = na * nb  # * 1 bLocalY bin
     return cs.MultiBinning(
         nodetype="multibinning",
         inputs=["cotAlpha", "cotBeta", "bLocalY"],
-        edges=[SPEC_ALPHA_EDGES, SPEC_BETA_EDGES, BLOCALY_EDGES],
+        edges=[*edges, BLOCALY_EDGES],
         content=[1.0] * ncell,
         flow="clamp",
     )
@@ -493,7 +533,7 @@ def _prng_correction(name, dist):
     )
 
 
-def _final_correction(x, acc, na, nb, prov):
+def _final_correction(x, acc, edges, prov):
     """spix_angle_{x}_final: terminal node of the fused shift compound. Same
     (layer category; cotAlpha,cotBeta,bLocalY multibinning) structure as the bias
     table, but each cell is the Formula '<bias> + prngAcc' -> bias + sigma*N(0,1)
@@ -511,7 +551,7 @@ def _final_correction(x, acc, na, nb, prov):
         output=cs.Variable(name=f"spix_angle_{x}_final", type="real"),
         data=cs.Category(
             nodetype="category", input="layer",
-            content=[cs.CategoryItem(key=l, value=_final_multibinning(acc, na, nb))
+            content=[cs.CategoryItem(key=l, value=_final_multibinning(acc, edges))
                      for l in LAYERS]),
     )
 
@@ -567,8 +607,7 @@ def git_rev():
         return "unknown"
 
 
-def build_payload(variant, files, acc_alpha, acc_beta, diag, upstream):
-    na, nb = len(SPEC_ALPHA_EDGES) - 1, len(SPEC_BETA_EDGES) - 1
+def build_payload(variant, files, acc_alpha, acc_beta, diag, upstream, edges, binning):
     beta_measurable = acc_beta is not None
     cf_a = diag["clamped_frac_alpha"]
     cf_b = diag["clamped_frac_beta"]
@@ -599,29 +638,30 @@ def build_payload(variant, files, acc_alpha, acc_beta, diag, upstream):
         f"axis edges cover the measured sample range -- clamped row fraction "
         f"alpha={'%.4f' % cf_a if cf_a is not None else 'n/a'} "
         f"beta={'%.4f' % cf_b if cf_b is not None else 'n/a'}; "
+        f"BINNING {binning}: cotAlpha edges {list(edges[0])}, cotBeta edges {list(edges[1])}; "
         f"valid_prob=1.0 (no per-cluster validity flag in eval dumps). "
         f"NN self-reported sigma median: alpha={diag['nn_sigma_alpha_med']} beta={diag['nn_sigma_beta_med']}."
     )
     corrs = [
         _correction("spix_angle_alpha_sigma", "sigma(cotAlpha_NN - cotAlpha_true), robust (q84-q16)/2. " + prov,
-                    lambda: _multibinning(acc_alpha, "sigma", na, nb)),
+                    lambda: _multibinning(acc_alpha, "sigma", edges)),
         _correction("spix_angle_alpha_bias", "median(cotAlpha_NN - cotAlpha_true). " + prov,
-                    lambda: _multibinning(acc_alpha, "bias", na, nb)),
+                    lambda: _multibinning(acc_alpha, "bias", edges)),
         _correction("spix_angle_beta_sigma",
                     ("sigma(cotBeta_NN - cotBeta_true), robust. " if beta_measurable
                      else "beta NOT measurable in this variant (no cotA prediction); inert positive sigma. ") + prov,
-                    lambda: _multibinning(acc_beta, "sigma", na, nb)),
+                    lambda: _multibinning(acc_beta, "sigma", edges)),
         _correction("spix_angle_beta_bias",
                     ("median(cotBeta_NN - cotBeta_true). " if beta_measurable
                      else "beta NOT measurable in this variant; zero bias. ") + prov,
-                    lambda: _multibinning(acc_beta, "bias", na, nb)),
+                    lambda: _multibinning(acc_beta, "bias", edges)),
         _correction("spix_angle_valid_prob", "P(NN emits usable angle). No validity flag -> 1.0 everywhere. " + prov,
-                    lambda: _prob_multibinning(na, nb)),
+                    lambda: _prob_multibinning(edges)),
         _prng_correction("spix_angle_prng", "stdnormal"),
         _prng_correction("spix_angle_prng_beta", "stdnormal"),
         _prng_correction("spix_angle_valid_flat", "stdflat"),
-        _final_correction("alpha", acc_alpha, na, nb, prov),
-        _final_correction("beta", acc_beta, na, nb, prov),
+        _final_correction("alpha", acc_alpha, edges, prov),
+        _final_correction("beta", acc_beta, edges, prov),
     ]
     compounds = [_smear_compound("alpha", prov), _smear_compound("beta", prov),
                  _shift_compound("alpha", prov), _shift_compound("beta", prov)]
@@ -640,8 +680,12 @@ def main():
     ap.add_argument("--model-variant", required=True, help="e.g. Mlp_Slim-2bit (into provenance + filename)")
     ap.add_argument("--out-dir", default=".", help="output directory")
     ap.add_argument("--gzip", action="store_true", help="write .json.gz")
-    ap.add_argument("--version", default="v5",
+    ap.add_argument("--version", default="v6",
                     help="payload version, appended to the file name (never overwrite a deployed payload)")
+    ap.add_argument("--binning", choices=("v5", "v6"), default="v6",
+                    help="v5: the fixed coarse edges (|beta| 0-63 deg is one bin); v6: beta edges symmetric in "
+                         "angle, derived from the dump with >= --min-cell-rows rows per (alpha, beta) cell")
+    ap.add_argument("--min-cell-rows", type=int, default=100, help="v6 binning: minimum dump rows per cell")
     # Upstream attribution: the NN evaluation that produced the input dumps is NOT done here.
     ap.add_argument("--nn-source", default="smart-pix/smart-pixels-ml (rev unrecorded)",
                     help="repo/commit that evaluated the NN and wrote the input parquet(s)")
@@ -670,7 +714,16 @@ def main():
     print(f"[info] {len(files)} file(s); variant={args.model_variant}")
     print(f"[info] mapping: spec_alpha<-{spec_alpha['true']}/{spec_alpha['pred']} x{spec_alpha['scale']}; "
           f"spec_beta<-{spec_beta['true']} x{spec_beta['scale']}")
-    acc_alpha, acc_beta, diag = accumulate_files(files, spec_alpha, spec_beta)
+    if args.binning == "v6" and spec_beta["true"] is not None:
+        edges = (SPEC_ALPHA_EDGES_V6,
+                 derive_beta_edges(files, spec_alpha, spec_beta, SPEC_ALPHA_EDGES_V6, args.min_cell_rows))
+        binning = f"v6 (beta symmetric in angle, >= {args.min_cell_rows} dump rows per cell)"
+    else:
+        edges = (SPEC_ALPHA_EDGES, SPEC_BETA_EDGES)
+        binning = "v5"
+    print(f"[info] binning {binning}: {len(edges[0]) - 1} cotAlpha x {len(edges[1]) - 1} cotBeta bins; "
+          f"cotBeta edges {edges[1]}")
+    acc_alpha, acc_beta, diag = accumulate_files(files, spec_alpha, spec_beta, edges)
     print(f"[info] accumulated {diag['total_rows']} rows")
 
     cf_a, cf_b = diag["clamped_frac_alpha"], diag["clamped_frac_beta"]
@@ -678,15 +731,15 @@ def main():
           + (f"alpha={cf_a:.4%}" if cf_a is not None else "alpha=n/a")
           + (f" beta={cf_b:.4%}" if cf_b is not None else ""))
     if cf_a is not None and cf_a > 0.02:
-        print(f"[warn] {cf_a:.2%} of rows fall outside SPEC_ALPHA_EDGES "
-              f"[{SPEC_ALPHA_EDGES[0]}, {SPEC_ALPHA_EDGES[-1]}] and are clamped into the edge "
+        print(f"[warn] {cf_a:.2%} of rows fall outside the cotAlpha edges "
+              f"[{edges[0][0]}, {edges[0][-1]}] and are clamped into the edge "
               f"bins -- they get no angular resolution. Widen the edges to the sample range.")
     if cf_b is not None and cf_b > 0.02:
-        print(f"[warn] {cf_b:.2%} of rows fall outside SPEC_BETA_EDGES "
-              f"[{SPEC_BETA_EDGES[0]}, {SPEC_BETA_EDGES[-1]}] and are clamped.")
+        print(f"[warn] {cf_b:.2%} of rows fall outside the cotBeta edges "
+              f"[{edges[1][0]}, {edges[1][-1]}] and are clamped.")
 
     upstream = dict(source=args.nn_source, dataset=args.nn_dataset, tier=args.nn_tier)
-    cset = build_payload(args.model_variant, files, acc_alpha, acc_beta, diag, upstream)
+    cset = build_payload(args.model_variant, files, acc_alpha, acc_beta, diag, upstream, edges, binning)
 
     os.makedirs(args.out_dir, exist_ok=True)
     ext = ".json.gz" if args.gzip else ".json"
