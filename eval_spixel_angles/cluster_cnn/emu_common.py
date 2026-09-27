@@ -1,16 +1,23 @@
-"""Shared pieces of the CMSSW port of the SmartPixels-output angle emulator (angleSource = "emu").
+"""Python reference of the CMSSW SmartPixels-output angle emulator (angleSource = "emu").
 
-The CMSSW producer (L1Trigger/Phase3SmartPixels SmartPixelsRecHitProducer, angleSource "emu") and the python
-reference (emu_reference.py) implement the SAME procedure; this module holds the python side of every piece that must
-agree bit-for-bit: the pos-hubsig network + its scalar inputs, the cluster hash, the exact k-NN ordering, the response.
+The CMSSW producer (L1Trigger/Phase3SmartPixels SmartPixelsRecHitProducer, angleSource "emu") and this module implement
+the SAME procedure; everything that must agree between the two lives here: the class-T definition, the tiny CNN and its
+scalar inputs, the A1 residual model and its inputs, the cluster hash, the exact dump k-NN ordering and the response.
 
-Procedure (approved design, v4 angle space): pseudo-truth angle [deg] = TP helix angle (class T: charged dominant TP,
-pT >= 0.25, helix within 1 cm of the hit) or CNN + donor residual (class C, one of the 10 nearest class-T donors per
-surface in 11 standardised observables); saturate at +-(90 - 0.01). Response: the 32 nearest dump rows in (atan alpha,
-atan beta) [deg] of the pseudo-truth (discs: alpha key = atan(cotAlpha_pseudo - 0.312)), bias = median r, one row r
-drawn by the cluster hash, the SAME row for alpha and beta; out = pseudo + bias + 1.5 (r - bias), saturated, cot = tan.
+Procedure (approved design: v4 angle space, fix round 2026-09-28):
+  CLASS T: the dominant TP is linked and charged and its helix crosses the module plane within 1 cm of the hit (NO pT
+           cut). pseudo = atan(helix-propagated true cot) [deg].
+  CLASS C: everything else. pseudo = tiny-CNN angle + a residual r DRAWN from the A1 model p(rA | z) p(rB | z, rA)
+           (autoregressive 156-bin histogram, fast_models.EDGES), z = the CNN angles and sigmas + 7 cluster observables +
+           the surface one-hot, with 4 hash uniforms (SALTS_A1); saturated at +-(90 - 0.01).
+  RESPONSE: the 32 nearest dump rows in (atan alpha, atan beta) [deg] of the pseudo-truth (discs: alpha key =
+           atan(cotAlpha_pseudo - 0.312)), bias = median r, one row drawn by the cluster hash (SALT_DUMP), the SAME row for
+           alpha and beta; out = pseudo + bias + 1.5 (r - bias), saturated at +-(90 - 0.01), never wrapped; cot = tan.
+Models: trained/tiny_{barrel,disc} (the tiny CNNs, CNN_DIR) and emu_cmssw/a1_{barrel,disc}.pt (A1, emu_train_a1.py).
 """
-import numpy as np, torch, torch.nn as nn
+import json, os
+import numpy as np
+import torch
 
 torch.set_num_threads(4)
 
@@ -19,91 +26,127 @@ K_INFL = 1.5
 C_LOR = -0.312
 EPS_DEG = 0.01
 SAT = 90.0 - EPS_DEG
-KNN_DUMP, KNN_DONOR = 32, 10
-PT_MIN, HXDIST_MAX = 0.25, 1.0
-SALT_DONOR = 0xD0A0D0A0D0A0D0A1
+KNN_DUMP = 32
+HXDIST_MAX = 1.0
 SALT_DUMP = 0x5A7E11175A7E1117
-DONOR_OBS = ["cnnA", "cnnB", "sigA", "sigB", "sizeX", "sizeY", "logq", "r", "absz", "localX", "localY"]
+SALTS_A1 = (0xA2A2A2A2A2A2A201, 0xA2A2A2A2A2A2A202, 0xA2A2A2A2A2A2A203, 0xA2A2A2A2A2A2A204)
+# A1 inputs, in graph order: the CNN outputs [deg], 7 cluster observables, then the surface one-hot (4 per region)
+A1_OBS = ["cnnA", "cnnB", "sigA", "sigB", "sizeX", "sizeY", "logq", "r", "absz", "localX", "localY"]
+N_A1_IN = len(A1_OBS) + 4
+REGIONS = {"barrel": 0, "disc": 10}          # surface code = offset + layer | disk
+# the tiny CNNs = the fast-study barrel_tiny / disc_tiny weights (fast_train.py), exported by emu_export_onnx.py
+CNN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trained", "tiny_{reg}")
+
+sat = lambda a: np.clip(a, -SAT, SAT)
 
 
-class V2Net(nn.Module):
-    """pos-hubsig network, identical to v2_train.Net (inputs ADC/16 + occupancy + coordinates; no canon flip)."""
-    def __init__(self, ns, nout=6):
-        super().__init__()
-        def blk(i, o, s=1):
-            return nn.Sequential(nn.Conv2d(i, o, 3, s, 1, bias=False), nn.BatchNorm2d(o), nn.ReLU())
-        self.conv = nn.Sequential(blk(4, 32), blk(32, 32), blk(32, 64, 2), blk(64, 64), blk(64, 64, 2))
-        gx, gy = torch.meshgrid(torch.linspace(-1, 1, WX), torch.linspace(-1, 1, WY), indexing="ij")
-        self.register_buffer("coords", torch.stack([gx, gy])[None])
-        self.register_buffer("qlut", torch.zeros(17))          # unused (no qenc); keeps the state_dict loadable
-        nflat = 64 * ((WX + 3) // 4) * ((WY + 3) // 4)
-        self.head = nn.Sequential(nn.Linear(nflat + ns, 256), nn.ReLU(), nn.Linear(256, 128), nn.ReLU(), nn.Linear(128, nout))
-
-    def forward(self, x, s):
-        x = x.float(); adc = x / 16.0; occ = (x > 0).float()
-        z = torch.cat([adc[:, None], occ[:, None], self.coords.expand(x.shape[0], -1, -1, -1)], 1)
-        return self.head(torch.cat([self.conv(z).flatten(1), s], 1))
+def class_t(linked, charge, hxOk, hxDist):
+    """class T: linked to a TP, charged, helix crossing within HXDIST_MAX of the hit (no pT cut)"""
+    return (np.asarray(linked) & (np.asarray(charge) != 0) & (np.asarray(hxOk) == 1)
+            & (np.asarray(hxDist) < HXDIST_MAX))
 
 
-def load_net(mdir):
-    import json, os
+# ---------------- tiny CNN ----------------
+def load_cnn(mdir):
+    from fast_models import FastNet
     nd = json.load(open(os.path.join(mdir, "norm.json")))
-    net = V2Net(len(nd["cols"]))
-    sd = torch.load(os.path.join(mdir, "model.pt"), map_location="cpu")
-    sd.setdefault("qlut", torch.zeros(17))
-    net.load_state_dict(sd); net.eval()
+    net = FastNet(nd["arch"], len(nd["cols"]), nd["wx"], nd["wy"])
+    net.load_state_dict(torch.load(os.path.join(mdir, "model.pt"), map_location="cpu")); net.eval()
     return net, nd
 
 
-def norm_arrays(nd):
-    cols = nd["cols"]
-    return np.array([nd["mu"][c] for c in cols], np.float32), np.array([nd["sd"][c] for c in cols], np.float32)
+def cnn_scalars(m, region, nd):
+    """RAW scalar inputs of the exported CNN graph, float32, in norm.json 'cols' order. The orientation columns are
+    rounded to 1e-6 (float64 rint, as numpy.round) -- the producer does the same before the graph."""
+    from fast_models import raw_scalars, ORIENT
+    S = raw_scalars(m, region)
+    for c in ORIENT:
+        if c in S:
+            S[c] = S[c].round(6)
+    return S[nd["cols"]].values.astype(np.float32)
 
 
-def normalise(S, nd):
-    """float32, the arithmetic of the exported graph. NB some inputs are geometry rounding residues (training sd ~1e-16,
-    e.g. barrel axXz/axZz/axYr): the network uses them (freezing them moves barrel beta by a median 1.4 deg, up to 30 deg,
-    emu_cmssw/check_frozen.json), so the producer must reproduce the raw values bit-exactly."""
-    mu, sd = norm_arrays(nd)
-    return ((np.asarray(S, np.float32) - mu) / sd).astype(np.float32)
+def run_cnn(net, nd, img, S, bs=8192):
+    """the exported graph's arithmetic: (s - mu) / sd in float32, then the point head"""
+    mu = torch.tensor([nd["mu"][c] for c in nd["cols"]], dtype=torch.float32)
+    sd = torch.tensor([nd["sd"][c] for c in nd["cols"]], dtype=torch.float32)
+    out = []
+    with torch.no_grad():
+        for i in range(0, len(img), bs):
+            s = (torch.as_tensor(np.ascontiguousarray(S[i:i + bs])) - mu) / sd
+            out.append(net(torch.as_tensor(np.ascontiguousarray(img[i:i + bs])), s).numpy())
+    return np.concatenate(out) if out else np.zeros((0, 6), np.float32)
 
 
 def decode(o):
-    """raw network output -> CNN angles and sigmas [deg] (hubsig head, atan target)"""
+    """raw network output -> CNN angles and sigmas [deg] (atan target, log sigma head)"""
     o = np.asarray(o, np.float64)
     aA = np.degrees(np.clip(o[:, 0], -1.5707, 1.5707)); aB = np.degrees(np.clip(o[:, 1], -1.5707, 1.5707))
     s = np.degrees(np.exp(np.clip(o[:, 2:4], -7, 3)))
     return aA, aB, s[:, 0], s[:, 1]
 
 
-def run_net(net, img, Z, bs=8192):
+# ---------------- A1 residual model ----------------
+def a1_inputs(cnnA, cnnB, sigA, sigB, sizeX, sizeY, charge, r, absz, localX, localY, layer_or_disk):
+    """RAW A1 inputs [n, 15] (the graph standardises): logq = log(max(charge, 1)) in float32 as the producer"""
+    logq = np.log(np.maximum(np.asarray(charge, np.float32), np.float32(1)))
+    oh = np.stack([np.asarray(layer_or_disk) == k for k in (1, 2, 3, 4)], 1)
+    return np.c_[cnnA, cnnB, sigA, sigB, sizeX, sizeY, logq, r, absz, localX, localY, oh].astype(np.float32)
+
+
+def load_a1(path):
+    """A1 checkpoint (emu_train_a1.py): {'state': ARH state_dict, 'mu': [15], 'sd': [15]}"""
+    from fast_a1 import ARH
+    ck = torch.load(path, map_location="cpu")
+    net = ARH(N_A1_IN); net.load_state_dict(ck["state"]); net.eval()
+    return net, np.asarray(ck["mu"], np.float32), np.asarray(ck["sd"], np.float32)
+
+
+def a1_draw(a1, Z, U, bs=65536):
+    """the exported A1 graph in torch float32: standardise, trunk, draw rA (bin by u0, position by u1), then rB given
+    the drawn rA (u2, u3). Returns [n, 2] residuals [deg] (float64 of the float32 values)."""
+    from fast_models import EDGES, NB
+    net, mu, sd = a1
+    E = torch.tensor(EDGES, dtype=torch.float32)
+
+    def draw(lg, ub, ui):
+        c = torch.cumsum(torch.softmax(lg, 1), 1); k = torch.clamp((c < ub[:, None]).sum(1), max=NB - 1)
+        return E[k] + ui * (E[k + 1] - E[k])
     out = []
     with torch.no_grad():
-        for i in range(0, len(img), bs):
-            out.append(net(torch.as_tensor(np.ascontiguousarray(img[i:i + bs])), torch.as_tensor(Z[i:i + bs])).numpy())
-    return np.concatenate(out) if out else np.zeros((0, 6), np.float32)
+        for i in range(0, len(Z), bs):
+            z = (torch.as_tensor(np.ascontiguousarray(Z[i:i + bs], np.float32)) - torch.from_numpy(mu)) / torch.from_numpy(sd)
+            u = torch.as_tensor(np.ascontiguousarray(U[i:i + bs], np.float32))
+            h = net.t(z); rA = draw(net.logitsA(h), u[:, 0], u[:, 1]); rB = draw(net.logitsB(h, rA), u[:, 2], u[:, 3])
+            out.append(torch.stack([rA, rB], 1).numpy())
+    return np.concatenate(out).astype(np.float64) if out else np.zeros((0, 2))
 
 
-# ---------------- hash (MUST match SmartPixelsRecHitProducer emuHashIndex) ----------------
-M64 = np.uint64(0xFFFFFFFFFFFFFFFF)
-
-
+# ---------------- hash (MUST match SmartPixelsRecHitProducer emuHashU) ----------------
 def _mix(z):
     z = (z ^ (z >> np.uint64(30))) * np.uint64(0xBF58476D1CE4E5B9)
     z = (z ^ (z >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
     return z ^ (z >> np.uint64(31))
 
 
-def hash_index(run, event, detId, idxInDet, salt, k):
-    """index in [0, k) from the stable cluster key (run, event, detId, idxInDet) and a salt:
+def hash_u(run, event, detId, idxInDet, salt):
+    """uniform in [0, 1) from the stable cluster key (run, event, detId, idxInDet) and a salt:
     h = mix(((detId << 16) | idxInDet) + golden); h = mix(h ^ event); h = mix(h ^ run); h = mix(h ^ salt);
-    index = floor(((h >> 11) * 2^-53) * k)   [mix = the splitmix64 finaliser]"""
+    u = (h >> 11) * 2^-53   [mix = the splitmix64 finaliser]"""
     with np.errstate(over="ignore"):
         u64 = lambda v: np.asarray(v).astype(np.uint64)
         h = _mix(((u64(detId) << np.uint64(16)) | u64(idxInDet)) + np.uint64(0x9E3779B97F4A7C15))
         h = _mix(h ^ u64(event)); h = _mix(h ^ u64(run)); h = _mix(h ^ np.uint64(salt))
-    u = (h >> np.uint64(11)).astype(np.float64) * (1.0 / 9007199254740992.0)
-    return np.minimum((u * k).astype(np.int64), k - 1)
+    return (h >> np.uint64(11)).astype(np.float64) * (1.0 / 9007199254740992.0)
+
+
+def hash_index(run, event, detId, idxInDet, salt, k):
+    return np.minimum((hash_u(run, event, detId, idxInDet, salt) * k).astype(np.int64), k - 1)
+
+
+def a1_uniforms(run, event, detId, idxInDet):
+    """the 4 A1 uniforms [n, 4]; the graph input is float32 (the producer casts the same double)"""
+    return np.stack([hash_u(run, event, detId, idxInDet, s) for s in SALTS_A1], 1).astype(np.float32)
 
 
 # ---------------- exact k-NN, deterministic order (squared distance, then library index) ----------------
@@ -125,75 +168,31 @@ def knn_exact(lib, q, k, pre=4):
         dd = np.zeros(len(lib))
         for j in range(lib.shape[1]):
             dd += (q[i, j] - lib[:, j]) ** 2
-        o = np.lexsort((np.arange(len(lib)), dd))[:k]
-        cand[i, :k] = o
+        cand[i, :k] = np.lexsort((np.arange(len(lib)), dd))[:k]
     return cand[:, :k]
 
 
-sat = lambda a: np.clip(a, -SAT, SAT)
-
-
-def scalars_v2(m, region, cols):
-    """raw pos-hubsig scalar inputs, exactly v2_train.feats (--inputs pos) on a meta frame carrying the ntuple columns
-    (derived() columns are recomputed here if absent)."""
-    import pandas as pd
-    from models_def import scalars as base_scalars
-    from v2_common import derived
-    if "pu" not in m:
-        m = pd.concat([m.reset_index(drop=True), derived(m.reset_index(drop=True))], axis=1)
-    s = base_scalars(m, "base" if region == "barrel" else "disc")
-    s["is3D"] = ((m.subdet == 1) & (m.layer == 1)).values.astype(np.float32)
-    for c in ["axXz", "axYz", "axZz", "axXr", "axYr", "axZr", "sideZ", "pu", "pv", "pw", "globalR", "globalZ", "localX", "localY"]:
-        s[c] = m[c].values
-    s = s.astype(np.float32)
-    assert list(s.columns) == list(cols), (list(s.columns), cols)
-    return s.values
-
-
-# ---------------- the library file (emu_build_library.py) ----------------
+# ---------------- the library file (emu_build_library.py): the rescaled SmartPixels dump ----------------
 def load_library(path):
     import uproot
-    f = uproot.open(path)
-    dump = {k: f["dump"][k].array(library="np") for k in ("tA", "tB", "rA", "rB")}
-    don = {k: f["donors"][k].array(library="np") for k in ["surface"] + DONOR_OBS + ["resA", "resB"]}
-    nrm = {k: f["norm"][k].array(library="np") for k in f["norm"].keys()}
-    lib = {"dump_pts": np.c_[dump["tA"].astype(np.float64), dump["tB"].astype(np.float64)],
-           "rA": dump["rA"].astype(np.float64), "rB": dump["rB"].astype(np.float64), "donors": {}}
-    for i, s in enumerate(nrm["surface"]):
-        sel = don["surface"] == s
-        mu = np.array([nrm[f"mu_{c}"][i] for c in DONOR_OBS]); sd = np.array([nrm[f"sd_{c}"][i] for c in DONOR_OBS])
-        X = np.stack([don[c][sel].astype(np.float64) for c in DONOR_OBS], 1)
-        lib["donors"][int(s)] = dict(mu=mu, sd=sd, Z=(X - mu) / sd, resA=don["resA"][sel].astype(np.float64),
-                                     resB=don["resB"][sel].astype(np.float64))
-    return lib
+    d = {k: uproot.open(path)["dump"][k].array(library="np").astype(np.float64) for k in ("tA", "tB", "rA", "rB")}
+    return {"dump_pts": np.c_[d["tA"], d["tB"]], "rA": d["rA"], "rB": d["rB"]}
 
 
-def emulate(lib, surface, classT, trueCotA, trueCotB, cnnA, cnnB, obs, run, event, detId, idxInDet):
-    """The emu procedure on arrays (one entry per cluster). obs: [n, 11] donor observables (DONOR_OBS order; the CNN
-    ones = cnnA, cnnB, sigA, sigB). Returns a dict of per-cluster arrays (pseudo, donor, dump row, biases, outputs,
-    saturation flags, cot outputs)."""
-    n = len(surface)
-    pA = np.where(classT, np.degrees(np.arctan(np.asarray(trueCotA, np.float64))), np.nan)
-    pB = np.where(classT, np.degrees(np.arctan(np.asarray(trueCotB, np.float64))), np.nan)
-    donor = np.full(n, -1, np.int64); psat = np.zeros(n, bool)
-    for s in np.unique(surface[~classT]):
-        sel = np.where((surface == s) & ~classT)[0]
-        L = lib["donors"][int(s)]
-        Zq = (np.asarray(obs[sel], np.float64) - L["mu"]) / L["sd"]
-        nb = knn_exact(L["Z"], Zq, KNN_DONOR)
-        j = hash_index(run[sel], event[sel], detId[sel], idxInDet[sel], SALT_DONOR, KNN_DONOR)
-        d = nb[np.arange(len(sel)), j]; donor[sel] = d
-        rawA = cnnA[sel] + L["resA"][d]; rawB = cnnB[sel] + L["resB"][d]
-        psat[sel] = (np.abs(rawA) >= SAT) | (np.abs(rawB) >= SAT)
-        pA[sel] = sat(rawA); pB[sel] = sat(rawB)
-    disc = surface > 10
-    qA = np.where(disc, np.degrees(np.arctan(np.tan(np.radians(pA)) + C_LOR)), pA)
+def emulate(lib, surface, classT, trueCotA, trueCotB, cnnA, cnnB, drawA, drawB, run, event, detId, idxInDet):
+    """The emu procedure on arrays (one entry per cluster). cnnA/B [deg] and the A1 draws drawA/B [deg] are used for
+    class C only. Returns per-cluster pseudo-truth, dump row, biases, outputs [deg], saturation flags, cot outputs."""
+    classT = np.asarray(classT, bool)
+    rawPA = np.where(classT, np.degrees(np.arctan(np.asarray(trueCotA, np.float64))), np.asarray(cnnA, np.float64) + drawA)
+    rawPB = np.where(classT, np.degrees(np.arctan(np.asarray(trueCotB, np.float64))), np.asarray(cnnB, np.float64) + drawB)
+    psat = ~classT & ((np.abs(rawPA) >= SAT) | (np.abs(rawPB) >= SAT))
+    pA, pB = sat(rawPA), sat(rawPB)
+    qA = np.where(np.asarray(surface) > 10, np.degrees(np.arctan(np.tan(np.radians(pA)) + C_LOR)), pA)
     nb = knn_exact(lib["dump_pts"], np.c_[qA, pB], KNN_DUMP)
-    j = hash_index(run, event, detId, idxInDet, SALT_DUMP, KNN_DUMP)
-    row = nb[np.arange(n), j]
+    row = nb[np.arange(len(pA)), hash_index(run, event, detId, idxInDet, SALT_DUMP, KNN_DUMP)]
     bA = np.median(lib["rA"][nb], 1); bB = np.median(lib["rB"][nb], 1)
     rawA = (pA + bA) + K_INFL * (lib["rA"][row] - bA); rawB = (pB + bB) + K_INFL * (lib["rB"][row] - bB)
     oA, oB = sat(rawA), sat(rawB)
-    return dict(pseudoA=pA, pseudoB=pB, donor=donor, pseudoSat=psat, dumpRow=row, biasA=bA, biasB=bB,
-                outA=oA, outB=oB, satA=np.abs(rawA) >= SAT, satB=np.abs(rawB) >= SAT,
+    return dict(pseudoA=pA, pseudoB=pB, pseudoSat=psat, dumpRow=row, biasA=bA, biasB=bB, outA=oA, outB=oB,
+                satA=np.abs(rawA) >= SAT, satB=np.abs(rawB) >= SAT,
                 cotA=np.tan(np.radians(oA)).astype(np.float32), cotB=np.tan(np.radians(oB)).astype(np.float32))
