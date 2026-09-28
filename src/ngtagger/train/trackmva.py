@@ -649,11 +649,12 @@ def _package_versions() -> dict:
 
 
 def _git_state() -> dict:
-    here = os.path.dirname(os.path.abspath(__file__))
+    # the ngtagger package directory; "src_dirty" = uncommitted changes under it
+    pkg = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        head = subprocess.run(["git", "-C", here, "rev-parse", "HEAD"], capture_output=True,
+        head = subprocess.run(["git", "-C", pkg, "rev-parse", "HEAD"], capture_output=True,
                               text=True, check=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "-C", here, "status", "--porcelain", "--", "src"],
+        dirty = bool(subprocess.run(["git", "-C", pkg, "status", "--porcelain", "--", "."],
                                     capture_output=True, text=True).stdout.strip())
         return {"commit": head, "src_dirty": dirty}
     except (OSError, subprocess.CalledProcessError):
