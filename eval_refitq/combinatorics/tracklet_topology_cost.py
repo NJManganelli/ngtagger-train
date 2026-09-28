@@ -1965,17 +1965,19 @@ def calibrate_ot_bend(path, nev):
     """bend -> kappa per OT layer, MEASURED from on-track stubs vs track rInv,
     so no strip pitch or sensor spacing has to be assumed."""
     srcs = [f"{p}:Events" for p in expand_inputs(path)]
-    S = uproot.concatenate(srcs, ["L1TTrackStub_bend", "L1TTrackStub_layer",
-                                  "L1TTrackStub_trackIdx"])
+    stub_cols = ["bend", "layer", "trackIdx"]
+    keys = uproot.open(srcs[0]).keys()
+    S = uproot.concatenate(srcs, SPN.branch_names(keys, "L1TTrackStub", stub_cols))
     K = uproot.concatenate(srcs, ["L1TTrack_rInv"])
     if nev is not None:
         S, K = S[:nev], K[:nev]
-    ns = ak.to_numpy(ak.num(S["L1TTrackStub_bend"]))
+    S = SPN.table_columns(S, "L1TTrackStub", stub_cols)   # link-only nanos: via L1TOTStub
+    ns = ak.to_numpy(ak.num(S["bend"]))
     nt = ak.to_numpy(ak.num(K["L1TTrack_rInv"]))
     evs = np.repeat(np.arange(len(ns)), ns)
-    bend = ak.to_numpy(ak.flatten(S["L1TTrackStub_bend"]))
-    lay = ak.to_numpy(ak.flatten(S["L1TTrackStub_layer"])).astype(np.int64)
-    ti = ak.to_numpy(ak.flatten(S["L1TTrackStub_trackIdx"])).astype(np.int64)
+    bend = ak.to_numpy(ak.flatten(S["bend"]))
+    lay = ak.to_numpy(ak.flatten(S["layer"])).astype(np.int64)
+    ti = ak.to_numpy(ak.flatten(S["trackIdx"])).astype(np.int64)
     rinv = ak.to_numpy(ak.flatten(K["L1TTrack_rInv"]))
     off = np.concatenate([[0], np.cumsum(nt)])
     kap = np.full(len(bend), np.nan)

@@ -218,7 +218,7 @@ def plot_resolution():
 # ---------------------------------------------------------------------------
 # 3. Sidecar distributions
 # ---------------------------------------------------------------------------
-_PERTRK_COLS = ["spixStatus", "spixRefitPerformed", "spixSeedCovOK", "spixParametrizedSeed",
+_PERTRK_COLS = ["spixStatus", "spixRefitPerformed", "spixOTCovOK", "spixParametrizedSeed",
                 "spixAnyWindowTruncated", "spixNCrossings", "spixNAcceptedHits", "spixNKFUpdates",
                 "spixLayerHitMask", "spixMaxWindowMult", "spixChi2IncRPhiTot", "spixChi2IncRZTot",
                 "spixCompactWord"]
@@ -249,8 +249,10 @@ def plot_sidecar(cfg):
         vt = f"L1TSmartPixelsTrackDigiRefit{cfg}"
         ht = f"L1TSmartPixelsRefitHitDigiRefit{cfg}"
         perf = ak.to_numpy(ak.flatten(t[f"{vt}_spixRefitPerformed"].array())).astype(bool)
-        pertrk = {c: ak.to_numpy(ak.flatten(t[f"{vt}_{c}"].array())) for c in _PERTRK_COLS
-                  if f"{vt}_{c}" in t.keys()}
+        from ngtagger.data.spix_nano import branch_name
+        keys = set(t.keys())
+        pertrk = {c: ak.to_numpy(ak.flatten(t[branch_name(keys, vt, c)].array())) for c in _PERTRK_COLS
+                  if branch_name(keys, vt, c, required=False)}
         selcls = ak.to_numpy(ak.flatten(t[f"{ht}_selHitClass"].array()))
         perhit = {c: ak.to_numpy(ak.flatten(t[f"{ht}_{c}"].array())) for c in _PERHIT_COLS
                   if f"{ht}_{c}" in t.keys()}

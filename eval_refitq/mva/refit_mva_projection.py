@@ -20,8 +20,8 @@ tracks rather than half, so its cost in efficiency is much lower and its
 achievable purity higher. That is the thing to quantify.
 
 Features are all hardware-available at the refit output: hit counts and the layer
-mask, window occupancy/truncation, the four chi2 totals, and the seed-vs-refit
-diagnostics (chi2ITAtSeed/AtRefit, shiftChi2, logDetRatio) that need no stubs.
+mask, window occupancy/truncation, the four chi2 totals, and the OT-track-vs-refit
+diagnostics (chi2ITAtOT/AtRefit, shiftChi2, logDetRatio) that need no stubs.
 
 --------------------------------------------------------------------------
 B) PER-CLUSTER COMPATIBILITY.  "Does this cluster belong to this track?"
@@ -84,12 +84,12 @@ def load(paths):
 
     hcols = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
              "projLocalX", "projLocalY", "projCotAlpha", "projCotBeta",
-             "projSeedLocalX", "projSeedLocalY", "projSeedSigX", "projSeedSigY",
-             "projSeedCotAlpha", "projSeedCotBeta", "windowMult", "selClusterIdx"]
+             "projOTLocalX", "projOTLocalY", "projOTSigX", "projOTSigY",
+             "projOTCotAlpha", "projOTCotBeta", "windowMult", "selClusterIdx"]
     vcols = ["spixNCrossings", "spixNAcceptedHits", "spixLayerHitMask", "spixMaxWindowMult",
              "spixAnyWindowTruncated", "spixNKFUpdates",
              "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot",
-             "spixChi2ITAtSeed", "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio",
+             "spixChi2ITAtOT", "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio",
              "spixRefitPerformed", "spixMatchedTpKey"]
     ccols = ["layer", "detId", "localX", "localY", "sigX", "sigY", "charge",
              "sizeX", "sizeY", "tpKey"]
@@ -99,7 +99,8 @@ def load(paths):
     if miss:
         raise SystemExit(f"track table lacks {miss}; produce a current Clusters-tier nano")
 
-    H = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[f"{HIT}_{c}" for c in hcols])
+    H = uproot.concatenate([f"{f}:Events" for f in files], filter_name=SPN.branch_names(keys, HIT, hcols))
+    H = SPN.table_columns(H, HIT, hcols)
     V = uproot.concatenate([f"{f}:Events" for f in files],
                            filter_name=SPN.branch_names(keys, VAR, vcols))
     V = SPN.table_columns(V, VAR, vcols)
@@ -111,10 +112,10 @@ def load(paths):
     R = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[f"{REF}_pt", f"{REF}_eta"])
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
 
-    nh = ak.to_numpy(ak.num(H[f"{HIT}_layer"]))
+    nh = ak.to_numpy(ak.num(H["layer"]))
     nv = ak.to_numpy(ak.num(V["spixNCrossings"]))
     nc = ak.to_numpy(ak.num(C["layer"]))
-    X = {c: ak.to_numpy(ak.flatten(H[f"{HIT}_{c}"])) for c in hcols}
+    X = {c: ak.to_numpy(ak.flatten(H[c])) for c in hcols}
     T = {c: ak.to_numpy(ak.flatten(V[c])) for c in vcols}
     K = {c: ak.to_numpy(ak.flatten(C[c])) for c in ccols}
     X["event"] = np.repeat(np.arange(len(nh)), nh)
@@ -174,11 +175,11 @@ def main():
     # ================= A) TRACK-LEVEL TRUST GATE =========================
     feats_A = ["spixNCrossings", "spixNAcceptedHits", "spixLayerHitMask", "spixMaxWindowMult",
                "spixAnyWindowTruncated", "spixNKFUpdates", "spixChi2IncXTot", "spixChi2IncYTot",
-               "spixChi2IncAlphaTot", "spixChi2IncBetaTot", "spixChi2ITAtSeed",
+               "spixChi2IncAlphaTot", "spixChi2IncBetaTot", "spixChi2ITAtOT",
                "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio"]
     good = (T["spixRefitPerformed"] > 0)
     FA = np.column_stack([T[f][good].astype(np.float64) for f in feats_A]
-                         + [(T["spixChi2ITAtSeed"] - T["spixChi2ITAtRefit"])[good]])
+                         + [(T["spixChi2ITAtOT"] - T["spixChi2ITAtRefit"])[good]])
     FA = np.nan_to_num(FA, nan=-999., posinf=1e12, neginf=-1e12)
     yA = (n_wrong[good] == 0)
     gA = np.arange(len(yA))
@@ -192,7 +193,7 @@ def main():
     print(f"    out-of-fold AUC = {aucA:.4f}   (seed spread over 4 seeds: "
           f"{min(spread + [aucA]):.4f}-{max(spread + [aucA]):.4f}, sigma {recA_spread:.4f})")
     recA = {"auc_seed_sigma": recA_spread, "n_tracks": int(len(yA)), "clean_fraction": float(yA.mean()), "auc": float(aucA),
-            "features": feats_A + ["chi2ITSeedMinusRefit"], "working_points": []}
+            "features": feats_A + ["chi2ITOTMinusRefit"], "working_points": []}
     for keep in (0.95, 0.90, 0.80, 0.60):
         cut = np.quantile(pA[yA], 1 - keep)
         sel = pA >= cut
@@ -232,10 +233,10 @@ def main():
     is_first = first_rec[xi]
 
     # residuals against the projection the refit ACTUALLY used at that crossing
-    px = np.where(is_first, X["projSeedLocalX"][xi], X["projLocalX"][xi])
-    py = np.where(is_first, X["projSeedLocalY"][xi], X["projLocalY"][xi])
-    pa = np.where(is_first, X["projSeedCotAlpha"][xi], X["projCotAlpha"][xi])
-    pb = np.where(is_first, X["projSeedCotBeta"][xi], X["projCotBeta"][xi])
+    px = np.where(is_first, X["projOTLocalX"][xi], X["projLocalX"][xi])
+    py = np.where(is_first, X["projOTLocalY"][xi], X["projLocalY"][xi])
+    pa = np.where(is_first, X["projOTCotAlpha"][xi], X["projCotAlpha"][xi])
+    pb = np.where(is_first, X["projOTCotBeta"][xi], X["projCotBeta"][xi])
     sx = np.maximum(K["sigX"][ci], 1e-6); sy = np.maximum(K["sigY"][ci], 1e-6)
     cols = {"dx_sig": (K["localX"][ci] - px) / sx,
             "dy_sig": (K["localY"][ci] - py) / sy,
@@ -243,7 +244,7 @@ def main():
             "charge": K["charge"][ci], "sizeX": K["sizeX"][ci], "sizeY": K["sizeY"][ci],
             "layer": K["layer"][ci], "is_first": is_first.astype(float),
             "windowMult": X["windowMult"][xi],
-            "projSeedSigX": X["projSeedSigX"][xi], "projSeedSigY": X["projSeedSigY"][xi]}
+            "projOTSigX": X["projOTSigX"][xi], "projOTSigY": X["projOTSigY"][xi]}
     if "size" in K:
         cols["size"] = K["size"][ci]
         cols["chargeDensity"] = K["charge"][ci] / np.maximum(K["size"][ci], 1)

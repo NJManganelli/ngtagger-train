@@ -9,7 +9,7 @@ Stage 4 (on-the-fly tagger feature).
 
 5-par framing: trained on the prompt L1TTrack refit collection
 (L1TSmartPixelsTrackDigiRefit<CFG>) = 5-par OT-only reference vs 5-par OT+IT refit.
-promptHnpar=5 => seed_npar=5, track_npar=5 (ref d0 is the real seed d0).
+promptHnpar=5 => ot_npar=5, track_npar=5 (ref d0 is the OT track's real d0).
 
 Feature set: REFIT_BDT_FEATURES v1 (24 features) = the 17 v0 sidecar/kick/seed
 features + the classic-7 TrackQuality hw features of the reference track. v1 is
@@ -45,7 +45,7 @@ def _report_order():
 
 
 def best_of_n(files, config, out_dir, seeds, spec_version, test_fraction,
-              seed_npar, track_npar, label):
+              ot_npar, track_npar, label):
     """Load tables once, run N seeds, keep the best model by validation AUC.
     Saves winning xgboost + conifer JSON + meta for the config. Returns dict."""
     import xgboost as xgb
@@ -53,7 +53,7 @@ def best_of_n(files, config, out_dir, seeds, spec_version, test_fraction,
 
     ref, var, hits = rq.load_refit_tables(files, config, "L1TTrack", None)
     X, y, names, aux = rq.build_spec_dataset(
-        ref, var, hits, config, label=label, seed_npar=seed_npar,
+        ref, var, hits, config, label=label, ot_npar=ot_npar,
         track_npar=track_npar, spec_version=spec_version)
     n_pos_all = int(y.sum()); n_neg_all = int((y == 0).sum())
 
@@ -109,7 +109,7 @@ def best_of_n(files, config, out_dir, seeds, spec_version, test_fraction,
         "n_features": len(names), "features": names,
         "label": label, "track_table": "L1TTrack",
         "framing": "5-par OT-only ref vs 5-par OT+IT refit (promptHnpar=5)",
-        "seed_npar": seed_npar, "track_npar": track_npar,
+        "ot_npar": ot_npar, "track_npar": track_npar,
         "margin_semantics": "raw_logit_margin",
         "best_seed": best["seed"], "best_val_auc": best["auc"],
         "per_seed_auc": {str(s): a for s, a in per_seed},
@@ -165,7 +165,7 @@ def main():
     for i, cfg in enumerate(run_order, 1):
         t0 = time.time()
         meta = best_of_n(files, cfg, args.out_dir, args.seeds, args.spec_version,
-                         args.test_fraction, seed_npar=5, track_npar=5, label=args.label)
+                         args.test_fraction, ot_npar=5, track_npar=5, label=args.label)
         results[cfg] = meta
         dt = time.time() - t0
         print(f"[{i:2d}/{len(run_order)}] {cfg} ({meta['activeSP']}): "

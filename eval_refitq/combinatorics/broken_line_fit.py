@@ -424,7 +424,7 @@ HIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
 VTRK = "L1TSmartPixelsTrackDigiRefitAAAA"
 HIT_COLS = ["trackIdx", "layer", "detId", "hitAccepted", "selClusterIdx", "selHitClass", "hasAlpha",
             "recoLocalX", "recoLocalY", "recoCotAlpha", "sigX", "sigY", "sigAlpha",
-            "projSeedLocalX", "projSeedLocalY", "projSeedCotAlpha", "recoSizeX", "recoSizeY"]
+            "projOTLocalX", "projOTLocalY", "projOTCotAlpha", "recoSizeX", "recoSizeY"]
 VTRK_COLS = list(HP) + ["spixRefitPerformed", "spixNAcceptedHits"]
 TP_COLS = ["genuine", "tp_pt", "tp_phi0", "tp_tanL", "tp_z0", "tp_d0", "tp_charge"]
 
@@ -449,9 +449,11 @@ def cmssw(args, log):
                      for r, _, w in planes])
     Rtab = json.load(open(Path(args.calib_dir) / "R_tables_tp.json"))
     files = sorted(glob.glob(args.nano))
-    need = ([f"L1TTrack_{c}" for c in OP.TRK_COLS + TP_COLS] + [f"{HIT}_{c}" for c in HIT_COLS]
-            + [f"{VTRK}_{c}" for c in VTRK_COLS] + ["L1TTrackStub_trackIdx", "L1TTrackStub_isBarrel",
-                                                    "run", "luminosityBlock", "event"])
+    keys = OP._keys(files[0])
+    need = (OP.SPN.branch_names(keys, "L1TTrack", OP.TRK_COLS + TP_COLS)
+            + OP.SPN.branch_names(keys, HIT, HIT_COLS) + OP.SPN.branch_names(keys, VTRK, VTRK_COLS)
+            + OP.SPN.branch_names(keys, "L1TTrackStub", ["trackIdx", "isBarrel"])
+            + ["run", "luminosityBlock", "event"])
     Eh, ptb_h = load_hybrid(Path(args.calib_dir) / "fit_v10h.json")
     CONF = (("HL calR", "HL calR hybrid") if args.hybrid_only
             else ("prodQ", "HL prodR", "HL calR", "HL calR hybrid"))
@@ -501,9 +503,9 @@ def cmssw(args, log):
         ia = np.flatnonzero(acc & (mi >= 0))
         u0, v0, cA0, J0, rad0 = project(a[gt[ia]], Hh["layer"][ia], mi[ia])
         ok0 = np.isfinite(u0) & np.isfinite(J0).all((1, 2))
-        stored = Hh["projSeedLocalX"][ia] > OP.SENTINEL
-        out["proj_du"].append((u0 - Hh["projSeedLocalX"][ia])[ok0 & stored])
-        out["proj_dv"].append((v0 - Hh["projSeedLocalY"][ia])[ok0 & stored])
+        stored = Hh["projOTLocalX"][ia] > OP.SENTINEL
+        out["proj_du"].append((u0 - Hh["projOTLocalX"][ia])[ok0 & stored])
+        out["proj_dv"].append((v0 - Hh["projOTLocalY"][ia])[ok0 & stored])
         out["counts"].append(np.array([int(acc.sum()), int((~ok0).sum() + (acc & (mi < 0)).sum()),
                                        int((ok0 & ~stored).sum())]))
         ia, u0, v0, cA0, J0, rad0 = ia[ok0], u0[ok0], v0[ok0], cA0[ok0], J0[ok0], rad0[ok0]
@@ -646,11 +648,11 @@ def cmssw(args, log):
                             pull_dims=np.array(["u", "v", "cotAlpha"]))
         log(f"   wrote {args.tracks_out} ({sum(len(v) for v in TRK['chi2'])} tracks)")
     log(f"== (b0) accepted hits {cnt[0]}: not refittable here {cnt[1]} ({cnt[1] / max(cnt[0], 1):.4%}; module outside "
-        f"the barrel geometry, seed projection misses the module, or a non-finite Jacobian column); "
-        f"no stored producer seed projection (projSeedLocalX = -999) {cnt[2]} ({cnt[2] / max(cnt[0], 1):.2%})")
+        f"the barrel geometry, OT-track projection misses the module, or a non-finite Jacobian column); "
+        f"no stored producer OT-track projection (projOTLocalX = -999) {cnt[2]} ({cnt[2] / max(cnt[0], 1):.2%})")
     for k, lab in (("proj_du", "u"), ("proj_dv", "v")):
         d = np.abs(O[k]) * 1e4
-        log(f"   seed projection vs projSeedLocal{'X' if lab == 'u' else 'Y'}: |d{lab}| median {np.median(d):.4f} um, "
+        log(f"   OT-track projection vs projOTLocal{'X' if lab == 'u' else 'Y'}: |d{lab}| median {np.median(d):.4f} um, "
             f"p99 {np.percentile(d, 99):.3f} um, max {d.max():.2f} um, within 1 um {np.mean(d < 1):.5f} (n {len(d)})")
     log(f"   Gauss-Newton re-projections that failed and kept the previous linearisation: {n_fallback}")
     pt, clean = O["pt"], O["clean"]

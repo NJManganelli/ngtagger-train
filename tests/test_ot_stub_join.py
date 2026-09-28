@@ -25,7 +25,7 @@ def oo():
     return mod
 
 
-def _write(path, oo, with_link=True, old_names=False):
+def _write(path, oo, with_link=True, old_names=False, link_only=False):
     # event 0: OT stubs 0,1,2 ; rows 1 and 2 share one identity (fuzzy must refuse)
     # event 1: OT stubs 0,1
     ot = {"layer": [[1, 2, 2], [3, 1]], "isBarrel": [[1, 1, 1], [1, 1]],
@@ -44,6 +44,9 @@ def _write(path, oo, with_link=True, old_names=False):
                "phi": [[0.0, 0.0], [0.0, 0.0]]})
     if with_link:
         st["otStubIdx"] = rows
+    if link_only:   # current nanos: the stub columns live only in L1TOTStub
+        st = {"trackIdx": st["trackIdx"], "otStubIdx": rows}
+        ot.update({"r": [[1.0] * 3, [1.0] * 2], "phi": [[0.0] * 3, [0.0] * 2]})
     trk = {c: [[0.0], [0.0]] for c in oo.TRK}
     tree = {"L1TOTStub": ak.zip({k: ak.Array(v) for k, v in ot.items()}),
             "L1TTrackStub": ak.zip({k: ak.Array(v) for k, v in st.items()}),
@@ -78,3 +81,11 @@ def test_fallback_on_old_file(tmp_path, oo):
     assert tk.tolist() == [11, -1, -1, 21] and hit.tolist() == [True, False, True, True]
     with pytest.raises(SystemExit):
         oo.compare_stub_joins(p)
+
+
+def test_link_only_file(tmp_path, oo):
+    p = _write(tmp_path / "linkonly.root", oo, link_only=True)
+    T, S, O = oo.load(p, None)
+    assert S["x"].tolist() == [1.0, 2.0, 4.0, 3.0]      # joined from L1TOTStub
+    tk, flag, hit = oo.stub_truth(S, O)
+    assert tk.tolist() == [11, 13, -1, 21] and hit.all()

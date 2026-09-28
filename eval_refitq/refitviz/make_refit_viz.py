@@ -18,7 +18,7 @@ import os
 from ngtagger.viz.refit_replay import build_refit_viz
 
 # Default: the FIXED-projector nano_pF (crossLayer sign fix; carries matched-TP truth
-# tp_d0/tp_z0, embedded L1TTrackStub OT stubs, the 4 produced refit configs). The
+# tp_d0/tp_z0, OT stubs (L1TTrackStub -> L1TOTStub), the 4 produced refit configs). The
 # separately-produced 15-config nano_pG_PFTrkSmartPix_withGen_file{1..10}.root swaps in
 # trivially here once ready (and PRODUCED_CONFIGS in _dataio.py extends to 15) -- no
 # other change needed; develop on nano_pF for now.

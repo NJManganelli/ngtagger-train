@@ -11,7 +11,12 @@ HP = ["rInv", "phi", "tanL", "z0", "d0"]
 cov = [f"cov_{HP[i]}_{HP[j]}" for i in range(5) for j in range(i, 5)]
 cols = HP + ["genuine", "tp_pt", "tp_phi0", "tp_tanL", "tp_z0", "tp_d0", "tp_charge", "nStubs", "hitPattern"] + cov
 A = uproot.concatenate([f"{f}:Events" for f in files], [f"L1TTrack_{c}" for c in cols])
-S = uproot.concatenate([f"{f}:Events" for f in files], ["L1TTrackStub_trackIdx", "L1TTrackStub_layer", "L1TTrackStub_isBarrel"])
+from ngtagger.data import spix_nano as SPN
+_sc = ["trackIdx", "layer", "isBarrel"]   # link-only nanos read these through L1TOTStub
+S = SPN.table_columns(uproot.concatenate([f"{f}:Events" for f in files],
+                                         SPN.branch_names(uproot.open(f"{files[0]}:Events").keys(), "L1TTrackStub", _sc)),
+                      "L1TTrackStub", _sc)
+S = {f"L1TTrackStub_{c}": v for c, v in S.items()}
 N = {c: ak.to_numpy(ak.flatten(A[f"L1TTrack_{c}"])).astype(float) for c in cols}
 ntrk = ak.to_numpy(ak.num(A["L1TTrack_rInv"])); off = np.r_[0, np.cumsum(ntrk)]
 nst = ak.to_numpy(ak.num(S["L1TTrackStub_trackIdx"])); ev = np.repeat(np.arange(len(nst)), nst)

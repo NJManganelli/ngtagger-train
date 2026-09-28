@@ -24,10 +24,10 @@ parameter, vertexing)? The 4-par pinned-`d0` path is dropped entirely.
 
 | role | collection |
 |---|---|
-| **SEED** = 5-par OT-only track | `L1TTrack` (real `d0`/`z0`/`phi`/`rInv`/`tanL`, reduced fit `chi2XYRed`/`chi2ZRed`, `tpPt`/`tpEta`/`genuine`) |
+| **OT track** = 5-par OT-only track (the refit's input; the viz code calls it `seed`) | `L1TTrack` (real `d0`/`z0`/`phi`/`rInv`/`tanL`, reduced fit `chi2XYRed`/`chi2ZRed`, `tpPt`/`tpEta`/`genuine`) |
 | **REFIT** = 5-par OT+IT | `L1TSmartPixelsTrackDigiRefit{AIII,AAII,AAAI,AAAA}` (**prompt**, not the `Ext`/displaced twins) |
 | refit per-hit sidecar | `L1TSmartPixelsRefitHitDigiRefit{…}` |
-| **real OT stubs** | `L1TTrackStub` (`x`/`y`/`z`, `r`, `layer`, `isBarrel`) — linked per track by `trackIdx` |
+| **real OT stubs** | `L1TTrackStub` (`trackIdx`, `otStubIdx`) joined to `L1TOTStub` (`x`/`y`/`z`, `r`, `layer`, `isBarrel`); older nanos carry the stub columns inline |
 | truth | `GenVtx_{x,y,z}` + `tpPt`/`tpEta` |
 
 ## The physics being shown (seed = 5-par OT-only, refit = 5-par OT+IT)
@@ -45,7 +45,7 @@ lives (r-φ deviation grows outward across the IT layers).
 
 - **(a) OVERVIEW (full radius, r → 115 cm)**: the long-lever-arm picture. The 6 OT
   barrel layer circles (tan guide rings at 25.0 / 37.2 / 52.2 / 68.7 / 86.0 / 108.6 cm),
-  the **REAL OT stubs** from `L1TTrackStub` (cyan squares at their persisted `x`/`y`),
+  the **REAL OT stubs** (`L1TTrackStub` → `L1TOTStub`; cyan squares at their persisted `x`/`y`),
   the 4 IT SmartPixels layers near the vertex (grey dotted), both helices, and the IT
   selected hits. Barrel stubs are drawn at their true coordinates now — not schematic.
 - **(b) IT-zoom r-φ (x–y, r < 18 cm)**: the per-hit refit action at IT scale —
@@ -145,8 +145,8 @@ Ported from `L1Trigger/Phase3SmartPixels/plugins/L1SmartPixelsTrackProducer.cc`
 (the `digiRefit` branch: the `scalarUpdate` lambda, diagonal-R sequential updates,
 numerical-Jacobian measurement model `h=(localx, localy, cotAlpha, cotBeta)`).
 
-- **Seed state** `a=(rInv, phi0, tanL, z0, d0)` from the `L1TTrack` reference
-  (`phi0 = momentum().phi()`), `seed_npar=5` (real `d0`).
+- **OT-track state** `a=(rInv, phi0, tanL, z0, d0)` from the `L1TTrack` reference
+  (`phi0 = momentum().phi()`), `ot_npar=5` (real `d0`).
 - **Seed covariance**: parametrized `diag(paramSigmas²)` (fidelity caveat below).
 - **Measurement Jacobian**: analytic helix → cylinder(mean-R) crossing (mirrors
   `SmartPixelsHelixProjector::crossLayer`, incl. the `|R|` law-of-cosines fix), then a

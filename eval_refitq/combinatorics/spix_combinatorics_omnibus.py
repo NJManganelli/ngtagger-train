@@ -17,7 +17,7 @@ untruncated per-cluster table joined to the per-crossing refit records on
 (event, detId). Both are produced by the same job, so the clusters are exactly
 the ones the refit was offered.
 
-THE CONE. Built from the SEED covariance: projSeedSigX/Y = sqrt(diag(H C H^T))
+THE CONE. Built from the OT-track covariance: projOTSigX/Y = sqrt(diag(H C H^T))
 projected to the module, with NO Kalman updates -- the single-shot cold start.
 q68 -> 1.00 sigma, q95 -> 1.96 sigma per coordinate. This is the track's own
 uncertainty and excludes the measurement term, which is the right choice here:
@@ -162,8 +162,8 @@ GLOSSARY = [
      "Fraction of tracks to which the refit actually attached that many hits. 0% for "
      "every two-layer build is STRUCTURAL (only two layers exist to be hit), not a "
      "performance statement."),
-    ("projSeedSig{X,Y}",
-     "Projected track uncertainty from the OT SEED covariance alone -- single shot, "
+    ("projOTSig{X,Y}",
+     "Projected track uncertainty from the OT-track covariance alone -- single shot, "
      "no refit updates. The naive cone."),
     ("projSig{X,Y}",
      "RUNNING projected track uncertainty: after multiple-scattering Q has been "
@@ -230,7 +230,7 @@ GLOSSARY = [
      "knows before it has included any IT cluster. Each layer is projected "
      "independently from the OT fit, so IL1 is not informed by IL4. Computed "
      "outside the refit (ot_projection.py) and cross-checked against the "
-     "producer's own seed projection (projSeed*) on every shared crossing."),
+     "producer's own OT-track projection (projOT*) on every shared crossing."),
     ("layer projection",
      "One OT track projected to one IT barrel layer. It may span SEVERAL modules: "
      "the ellipse is evaluated on every module it overlaps, not only on the one the "
@@ -531,11 +531,11 @@ def _discover(path):
               f"use {chosen} (most instrumented). Study (10) covers all of them.")
     hit = f"L1TSmartPixelsRefitHitDigiRefit{chosen}"
     need_hit = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
-                "projSeedLocalX", "projSeedLocalY", "projSeedSigX", "projSeedSigY",
-                "projSeedCotAlpha", "projSeedCotBeta", "projLocalX", "projLocalY",
+                "projOTLocalX", "projOTLocalY", "projOTSigX", "projOTSigY",
+                "projOTCotAlpha", "projOTCotBeta", "projLocalX", "projLocalY",
                 "projCotAlpha", "projCotBeta", "projSigX", "projSigY",
                 "recoLocalX", "recoLocalY", "selClusterIdx"]
-    miss_h = [c for c in need_hit if f"{hit}_{c}" not in keys]
+    miss_h = [c for c in need_hit if not SPN.has_column(keys, hit, c)]
     miss_c = ([CLUSTER_TABLE] if not any(k.startswith(CLUSTER_TABLE + "_") for k in keys)
               else [c for c in ("layer", "detId", "localX", "localY", "charge",
                                 "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpKey")
@@ -589,10 +589,11 @@ def load(paths):
                 "hasBeta": "clHasBeta"}
     rcols = ["pt", "eta"]
 
-    H = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{hit}_{c}" for c in need_hit])
     with uproot.open(f"{files[0]}:Events") as t:
         avail = set(t.keys())
+    H = uproot.concatenate([f"{f}:Events" for f in files],
+                           filter_name=SPN.branch_names(avail, hit, need_hit))
+    H = SPN.table_columns(H, hit, need_hit)
     got = [c for c in optional if SPN.has_column(avail, CLUSTER_TABLE, c)]
     # TBPX only: every study here is per barrel layer, and selClusterIdx indexes
     # the barrel rows, which stay a per-event prefix of the unified table
@@ -604,9 +605,9 @@ def load(paths):
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
 
     # flatten crossings, tagging event index and the owning track's pt/eta
-    ncross = ak.to_numpy(ak.num(H[f"{hit}_layer"]))
+    ncross = ak.to_numpy(ak.num(H["layer"]))
     ev_x = np.repeat(np.arange(len(ncross)), ncross)
-    X = {c: ak.to_numpy(ak.flatten(H[f"{hit}_{c}"])) for c in need_hit}
+    X = {c: ak.to_numpy(ak.flatten(H[c])) for c in need_hit}
     X["event"] = ev_x
     ntrk = ak.to_numpy(ak.num(R[f"{REF}_pt"]))
     off = np.concatenate([[0], np.cumsum(ntrk)])
@@ -684,11 +685,11 @@ def prepare(X, K):
     P["xi"], P["ci"] = xi, ci
     P["n_on_module"] = n_on_module
     # displacement of each cluster from the SEED projection, in sigma
-    dx = K["localX"][ci] - X["projSeedLocalX"][xi]
-    dy = K["localY"][ci] - X["projSeedLocalY"][xi]
-    sx = X["projSeedSigX"][xi]
-    sy = X["projSeedSigY"][xi]
-    good = (sx > 0) & (sy > 0) & (X["projSeedLocalX"][xi] > SENTINEL)
+    dx = K["localX"][ci] - X["projOTLocalX"][xi]
+    dy = K["localY"][ci] - X["projOTLocalY"][xi]
+    sx = X["projOTSigX"][xi]
+    sy = X["projOTSigY"][xi]
+    good = (sx > 0) & (sy > 0) & (X["projOTLocalX"][xi] > SENTINEL)
     with np.errstate(divide="ignore", invalid="ignore"):
         P["nsigx"] = np.where(good, dx / sx, np.inf)
         P["nsigy"] = np.where(good, dy / sy, np.inf)
@@ -706,9 +707,9 @@ def prepare(X, K):
         P["nsigy_rf"] = np.where(good_rf, dyr / syr, np.inf)
     P["good_rf"] = good_rf
     # angle mismatch vs the track's expectation at this module
-    P["dCotA"] = K["tpLocalCotAlpha"][ci] - X["projSeedCotAlpha"][xi]
-    P["dCotB"] = K["tpLocalCotBeta"][ci] - X["projSeedCotBeta"][xi]
-    P["ang_ok"] = (K["tpLocalCotAlpha"][ci] > SENTINEL) & (X["projSeedCotAlpha"][xi] > SENTINEL)
+    P["dCotA"] = K["tpLocalCotAlpha"][ci] - X["projOTCotAlpha"][xi]
+    P["dCotB"] = K["tpLocalCotBeta"][ci] - X["projOTCotBeta"][xi]
+    P["ang_ok"] = (K["tpLocalCotAlpha"][ci] > SENTINEL) & (X["projOTCotAlpha"][xi] > SENTINEL)
     P["sel_gidx"] = selected_global_index(X, K)
     # over PAIRS: is this pair the crossing's selected cluster?
     P["is_selected"] = (P["sel_gidx"][P["xi"]] >= 0) & (P["ci"] == P["sel_gidx"][P["xi"]])
@@ -793,13 +794,13 @@ def study_cone_containment(X, K, P, ax_row, out):
     every cluster row, which the tier does not yet carry -- listed in the writeup.
     """
     ok = (X["hitAccepted"] > 0) & (X["selHitClass"] == 0) & (X["recoLocalX"] > SENTINEL) \
-         & (X["projSeedSigX"] > 0) & (X["projSeedLocalX"] > SENTINEL)
+         & (X["projOTSigX"] > 0) & (X["projOTLocalX"] > SENTINEL)
     res = {"n_reference_hits": int(ok.sum()), "conditioning":
            "selected-and-truth-correct hits only; biased upward, see docstring"}
     ax = ax_row[0]
     for cname, k in CONES.items():
-        nx = np.abs(X["recoLocalX"] - X["projSeedLocalX"]) / np.where(X["projSeedSigX"] > 0, X["projSeedSigX"], np.nan)
-        ny = np.abs(X["recoLocalY"] - X["projSeedLocalY"]) / np.where(X["projSeedSigY"] > 0, X["projSeedSigY"], np.nan)
+        nx = np.abs(X["recoLocalX"] - X["projOTLocalX"]) / np.where(X["projOTSigX"] > 0, X["projOTSigX"], np.nan)
+        ny = np.abs(X["recoLocalY"] - X["projOTLocalY"]) / np.where(X["projOTSigY"] > 0, X["projOTSigY"], np.nan)
         inside = ok & (nx < k) & (ny < k)
         eff = [inside[ok & (X["layer"] == L)].mean() if (ok & (X["layer"] == L)).any() else np.nan
                for L in LAYERS]
@@ -821,7 +822,7 @@ def study_cone_containment(X, K, P, ax_row, out):
 
     # cone size itself, the thing that drives (1) and (2) together
     ax = ax_row[1]
-    for nm, key in (("$\\sigma_x$", "projSeedSigX"), ("$\\sigma_y$", "projSeedSigY")):
+    for nm, key in (("$\\sigma_x$", "projOTSigX"), ("$\\sigma_y$", "projOTSigY")):
         v = [np.median(X[key][(X["layer"] == L) & (X[key] > 0)]) * 1e4 for L in LAYERS]
         ax.plot(LAYERS, v, marker="o", label=nm)
         res.setdefault("cone_sigma_um", {})[key] = [float(x) for x in v]
@@ -1213,7 +1214,7 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
     hs, hr = [], []
     for L in LAYERS:
         m = xlay == L
-        a = X["projSeedSigX"][m]; b = X["projSigX"][m]
+        a = X["projOTSigX"][m]; b = X["projSigX"][m]
         hs.append(float(np.median(a[a > 0]) * 1e4) if (a > 0).any() else np.nan)
         hr.append(float(np.median(b[b > 0]) * 1e4) if (b > 0).any() else np.nan)
     ax.plot(LAYERS, hs, marker="o", ls="--", label="seed sigma_x")
@@ -3980,7 +3981,7 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
             if abs(val[k] - 1.0) > lim["sig_ratio_median_tol"]]
     if V["n_compared"] < 0.99 * V["n_refit"]:
         bad.append("n_compared")
-    print(f"    cross-check vs refit projSeed*: {V['n_compared']}/{V['n_refit']} crossings, "
+    print(f"    cross-check vs refit projOT*: {V['n_compared']}/{V['n_refit']} crossings, "
           f"|du| p99 {val['du_p99_cm'] * 1e4:.3f} um, |dcotB| p99 {val['dcotB_p99']:.2e}, "
           f"width ratio {val['sigU_ratio_median']:.4f}/{val['sigV_ratio_median']:.4f}")
     if bad:
@@ -4062,7 +4063,7 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
         "Ellipse: d < 4 of J C J^T, OT fit covariance, no MS, no KF update;\n"
         "  every module it overlaps, residuals in the cluster's module frame.\n"
         f"OT fit pull widths (MAD; 1 = honest): {pull_txt}\n"
-        f"Cross-check vs refit projSeed*: {V['n_compared']:,} crossings, |du| p99\n"
+        f"Cross-check vs refit projOT*: {V['n_compared']:,} crossings, |du| p99\n"
         f"  {val['du_p99_cm'] * 1e4:.3f} um, width ratio {val['sigU_ratio_median']:.3f}\n"
         f"Per-layer residual figures: spix_ot_projection_IL1..4.png / .pdf")
     ax.text(0.0, 1.0, legend_txt, fontsize=5.6, va="top", ha="left", family="monospace",

@@ -21,7 +21,8 @@ frame and Jacobian (validate_against_refit).
 INPUTS (nano + one JSON):
   L1TTrack               helix (rInv, phi, tanL, z0, d0) and its fit covariance
                          cov_<p>_<q> (L1TrackHelixCovTableProducer)
-  L1TTrackStub           the track's stubs; L1TOTStub their truth (ot_oracle.
+  L1TTrackStub           the track's stubs (link-only on current nanos: the stub
+                         columns come from L1TOTStub[otStubIdx]); L1TOTStub their truth (ot_oracle.
                          stub_truth: exact via otStubIdx, else the stub identity)
   L1TSmartPixelsCluster  untruncated IT clusters: local position, sensor angle
                          estimate (localCotAlpha/Beta), dominant TP
@@ -100,8 +101,8 @@ CL_COLS = ["detId", "layer", "localX", "localY", "localCotAlpha",
            "sizeX", "sizeY"]                             # cluster size: calibrated R lookup
 CL_TABLE = SPN.CLUSTER_TABLE
 REFIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
-REFIT_COLS = ["trackIdx", "detId", "layer", "projSeedLocalX", "projSeedLocalY",
-              "projSeedCotAlpha", "projSeedCotBeta", "projSeedSigX", "projSeedSigY"]
+REFIT_COLS = ["trackIdx", "detId", "layer", "projOTLocalX", "projOTLocalY",
+              "projOTCotAlpha", "projOTCotBeta", "projOTSigX", "projOTSigY"]
 SENTINEL = -900.0
 
 # --------------------------------------------------------------------------
@@ -650,17 +651,17 @@ def process_chunk(A, geo, nsig=4.0, with_refit=False):
 
 
 def validate_against_refit(A, a, C, geo):
-    """Our projection vs the producer's own seed projection, same track, same module.
+    """Our projection vs the producer's own OT-track projection, same track, same module.
 
-    The refit's projSeed* is the UNMODIFIED seed helix projected by the CMSSW
-    projector, recorded wherever the seed and the updated state share a module.
+    The refit's projOT* is the UNMODIFIED OT-track helix projected by the CMSSW
+    projector, recorded wherever the OT track and the updated state share a module.
     On those crossings the two implementations must agree on position, angle
     and cone width; any disagreement is a helix, frame or Jacobian bug here.
     """
     H = _flat(A, REFIT, REFIT_COLS)
     ntrk_ev = ak.to_numpy(ak.num(A["L1TTrack_pt"]))
     off = np.concatenate([[0], np.cumsum(ntrk_ev)])
-    has = H["projSeedLocalX"] > SENTINEL
+    has = H["projOTLocalX"] > SENTINEL
     gt = off[H["event"][has]] + H["trackIdx"][has].astype(np.int64)
     mi = module_index(geo, H["detId"][has])
     ok = mi >= 0
@@ -670,12 +671,12 @@ def validate_against_refit(A, a, C, geo):
     pj = project_with_cov(a[gt], C[gt], s0, geo, mi)
     h = {c: H[c][has][ok].astype(np.float64) for c in REFIT_COLS}
     g = pj["ok"]
-    return {"layer": lay[g], "du": (pj["u"] - h["projSeedLocalX"])[g],
-            "dv": (pj["v"] - h["projSeedLocalY"])[g],
-            "dcotA": (pj["cotA"] - h["projSeedCotAlpha"])[g],
-            "dcotB": (pj["cotB"] - h["projSeedCotBeta"])[g],
-            "rsu": (np.sqrt(pj["S"][g, 0, 0]) / h["projSeedSigX"][g]),
-            "rsv": (np.sqrt(pj["S"][g, 1, 1]) / h["projSeedSigY"][g]),
+    return {"layer": lay[g], "du": (pj["u"] - h["projOTLocalX"])[g],
+            "dv": (pj["v"] - h["projOTLocalY"])[g],
+            "dcotA": (pj["cotA"] - h["projOTCotAlpha"])[g],
+            "dcotB": (pj["cotB"] - h["projOTCotBeta"])[g],
+            "rsu": (np.sqrt(pj["S"][g, 0, 0]) / h["projOTSigX"][g]),
+            "rsv": (np.sqrt(pj["S"][g, 1, 1]) / h["projOTSigY"][g]),
             "n_refit": int(has.sum()), "n_compared": int(g.sum())}
 
 
