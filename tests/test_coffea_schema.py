@@ -324,3 +324,123 @@ def test_tp_links_every_convention(tmp_path, convention):
         assert got.tolist() == want, t
         assert tab.tp.pt.tolist() == [[pt[e][r] if r >= 0 else None for r in ev_rows]
                                       for e, ev_rows in enumerate(want)], t
+
+
+_TRK_DOC = ("index of the underlying track in the {} table (-1 if this candidate has no "
+            "resolvable track; -2 if the track/PFTrack product is unavailable)")
+_SEED_DOC = ("row of the {0} track this SmartPixels track was seeded from (-1 if not seeded "
+             "from an {0} track, e.g. joint IT+OT seeding; -2 if the {0} product is unavailable)")
+
+
+def _write_cand_links(tmp_path, name, coopt, sp_seed_col=True):
+    """Two events of L1PuppiCand whose l1TrackIdx points into L1TTrack (old
+    nano) or L1TSmartPixelsTrack (coopt nano, whose l1TrackIdx points into
+    L1TTrack), plus a displaced vertex pair. Returns (path, branch docs)."""
+    tree = {"run": np.array([1, 1], dtype=np.uint32),
+            "luminosityBlock": np.array([1, 1], dtype=np.uint32),
+            "event": np.array([1, 2], dtype=np.uint64),
+            "L1TTrack": ak.zip({"pt": [[10.0, 20.0, 30.0], [40.0]]}),
+            "L1TExtTrack": ak.zip({"pt": [[50.0, 60.0], [70.0]]})}
+    # coopt: cand -> SP rows [0, -1, 1, -2, 2, 3] | [0, -1]; SP -> OT rows [2, -1, -2, 0] | [0]
+    idx = [[0, -1, 1, -2, 2, 3], [0, -1]] if coopt else [[2, -1, 0, -2, 1, 0], [0, -1]]
+    tree["L1PuppiCand"] = ak.zip({"pt": [[1.0] * 6, [1.0] * 2], "eta": [[0.0] * 6, [0.0] * 2],
+                                  "phi": [[0.0] * 6, [0.0] * 2], "mass": [[0.0] * 6, [0.0] * 2],
+                                  "charge": [[0] * 6, [0] * 2], "l1TrackIdx": idx})
+    tree["L1DispVertex"] = ak.zip({"firstIndexTrk": [[0], [0]], "secondIndexTrk": [[1], [-1]]})
+    docs = {"L1PuppiCand_l1TrackIdx": _TRK_DOC.format("L1TTrack")}
+    trk_table = "L1TExtTrack"
+    if coopt:
+        trk_table = "L1TSmartPixelsExtTrack"
+        docs["L1PuppiCand_l1TrackIdx"] = _TRK_DOC.format("L1TSmartPixelsTrack")
+        sp = {"pt": [[1.0, 1.1, 1.2, 1.3], [1.4]]}
+        if sp_seed_col:
+            sp["l1TrackIdx"] = [[2, -1, -2, 0], [0]]
+            docs["L1TSmartPixelsTrack_l1TrackIdx"] = _SEED_DOC.format("L1TTrack")
+        tree["L1TSmartPixelsTrack"] = ak.zip(sp)
+        tree["L1TSmartPixelsExtTrack"] = ak.zip({"pt": [[5.0, 6.0], [7.0]]})
+    docs["L1DispVertex_firstIndexTrk"] = f"index of the higher-pt track in the {trk_table} table"
+    docs["L1DispVertex_secondIndexTrk"] = f"index of the lower-pt track in the {trk_table} table"
+    f = uproot.recreate(tmp_path / name)
+    types = {k: (v.type if isinstance(v, ak.Array) else v.dtype) for k, v in tree.items()}
+    f.mktree("Events", types, counter_name=lambda n: "n" + n,
+             field_name=lambda outer, inner: inner if outer == "" else outer + "_" + inner)
+    f["Events"].extend(tree)
+    f.close()
+    return str(tmp_path / name), docs
+
+
+def _documented_events(path, docs, via_smartpixels=False):
+    """Events read with `docs` as the branch docs (uproot writes the branch
+    title as "name[counter]/type", so a synthetic file cannot carry them; coffea
+    keeps a real one as the jagged branch content's __doc__)."""
+    from coffea.nanoevents import NanoEventsFactory
+
+    from ngtagger.coffea_schema import L1NanoSchema
+
+    class Documented(L1NanoSchema):
+        candidate_ot_track_via_smartpixels = via_smartpixels
+
+        def __init__(self, base_form, *args, **kwargs):
+            for name, form in zip(base_form["fields"], base_form["contents"]):
+                if name in docs:
+                    form["content"].setdefault("parameters", {})["__doc__"] = docs[name]
+            super().__init__(base_form, *args, **kwargs)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        events = NanoEventsFactory.from_root({path: "Events"}, schemaclass=Documented).events()
+    return events, [w for w in caught if w.category.__name__ == "SmartPixelsTrackLinkWarning"]
+
+
+def test_old_doc_targets_ot_track(tmp_path):
+    path, docs = _write_cand_links(tmp_path, "old.root", coopt=False)
+    ev, spx_warnings = _documented_events(path, docs, via_smartpixels=True)
+    assert not spx_warnings, [str(w.message) for w in spx_warnings]
+    want = [[30.0, None, 10.0, None, 20.0, 10.0], [40.0, None]]
+    assert ev.L1PuppiCand.matched_track.pt.tolist() == want
+    # flag on an old nano: the direct link
+    assert ev.L1PuppiCand.matched_ot_track.pt.tolist() == want
+    assert ev.L1DispVertex.first_track.pt.tolist() == [[50.0], [70.0]]
+
+
+def test_smartpixels_doc_targets_smartpixels_track_and_warns(tmp_path):
+    path, docs = _write_cand_links(tmp_path, "coopt.root", coopt=True)
+    ev, spx_warnings = _documented_events(path, docs)
+    assert len(spx_warnings) == 1
+    msg = str(spx_warnings[0].message)
+    assert "L1TSmartPixelsTrack" in msg and "candidate_ot_track_via_smartpixels" in msg
+    assert ev.L1PuppiCand.matched_track.pt.tolist() == [[1.0, None, 1.1, None, 1.2, 1.3], [1.4, None]]
+    assert ev.L1DispVertex.first_track.pt.tolist() == [[5.0], [7.0]]
+    assert ev.L1DispVertex.second_track.pt.tolist() == [[6.0], [None]]
+    # the SmartPixels track -> seeding OT track link (-1/-2 masked)
+    assert ev.L1TSmartPixelsTrack.ot_track.pt.tolist() == [[30.0, None, None, 10.0], [40.0]]
+    with pytest.raises(AttributeError, match="candidate_ot_track_via_smartpixels"):
+        ev.L1PuppiCand.matched_ot_track
+
+
+def test_candidate_ot_track_via_smartpixels(tmp_path):
+    path, docs = _write_cand_links(tmp_path, "coopt_flag.root", coopt=True)
+    ev, _ = _documented_events(path, docs, via_smartpixels=True)
+    # cand -> SP [0, -1, 1, -2, 2, 3] -> OT [2, x, -1, x, -2, 0]; event 2: SP 0 -> OT 0
+    assert ev.L1PuppiCand.matched_ot_track.pt.tolist() == \
+        [[30.0, None, None, None, None, 10.0], [40.0, None]]
+
+    path, docs = _write_cand_links(tmp_path, "coopt_noseed.root", coopt=True, sp_seed_col=False)
+    ev, spx_warnings = _documented_events(path, docs, via_smartpixels=True)
+    assert any("unavailable" in str(w.message) for w in spx_warnings)
+    with pytest.raises(AttributeError):
+        ev.L1PuppiCand.matched_ot_track
+
+
+def test_doc_absent_uses_default_targets(tmp_path):
+    from ngtagger.coffea_schema import doc_target
+
+    path, _ = _write_cand_links(tmp_path, "nodoc.root", coopt=False)
+    ev, spx_warnings = _documented_events(path, {})
+    assert not spx_warnings
+    fields = uproot.open(f"{path}:Events")
+    assert doc_target({"content": {"parameters": {"__doc__": fields["L1PuppiCand_l1TrackIdx"].title}}}) \
+        is None
+    assert ev.L1PuppiCand.matched_track.pt.tolist() == [[30.0, None, 10.0, None, 20.0, 10.0], [40.0, None]]
+    assert ev.L1DispVertex.first_track.pt.tolist() == [[50.0], [70.0]]
+    assert type(ev.L1PuppiCand).__name__ == "L1PuppiCandidateArray"

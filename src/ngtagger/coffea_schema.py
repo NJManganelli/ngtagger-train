@@ -17,6 +17,14 @@ One schema serves every tier:
     and uniform track-truth access: `trk_genuine` uses the direct column
     (candidate-only L1PFNano tier) or falls back to the l1TrackIdx
     indirection into the track-table truth (L1PFTrkNano tier)
+  - track crossrefs whose target the producer states in the branch doc
+    ("... in the <TABLE> table ...", see _DOC_LINKS) follow the doc: in a
+    coopt nano the candidate l1TrackIdx points into L1TSmartPixelsTrack /
+    L1TSmartPixelsExtTrack, so matched_track returns SmartPixels tracks
+    (SmartPixelsTrackLinkWarning). The canonical SmartPixels track tables get
+    an `ot_track` accessor (via their l1TrackIdx, the seeding OT track), and
+    L1NanoSchema.candidate_ot_track_via_smartpixels adds the candidate ->
+    SmartPixels track -> OT track hop as `matched_ot_track`
 
 Usage:
     from coffea.nanoevents import NanoEventsFactory
@@ -31,6 +39,7 @@ from __future__ import annotations
 
 import copy
 import re
+import warnings
 
 import awkward
 import numpy
@@ -141,17 +150,21 @@ class L1ExtTrackStubLink(_TrackStubBase):
 
 @awkward.mixin_class(behavior)
 class L1DispVtx(base.NanoCollection):
-    """GTT displaced vertex: track-pair accessors via first/secondIndexTrk."""
+    """GTT displaced vertex: track-pair accessors via first/secondIndexTrk
+    (targets bound per file from the branch doc, see _DOC_LINKS)."""
+
+    _first_target = "L1TExtTrack"
+    _second_target = "L1TExtTrack"
 
     @property
     def first_track(self):
         """higher-pt track of the pair"""
-        return self._events().L1TExtTrack._apply_global_index(self.firstIndexTrkG)
+        return self._events()[self._first_target]._apply_global_index(self.firstIndexTrkG)
 
     @property
     def second_track(self):
         """lower-pt track of the pair"""
-        return self._events().L1TExtTrack._apply_global_index(self.secondIndexTrkG)
+        return self._events()[self._second_target]._apply_global_index(self.secondIndexTrkG)
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +283,29 @@ class L1TrackWord(L1TrackWordDecoded, _TPLinked):
     pass
 
 
+class _SmartPixelsTrackBase(L1TrackWord):
+    """Canonical (coopt) SmartPixels track table, linked back to the OT track
+    it was seeded from via l1TrackIdx."""
+
+    _ot_track_target = None
+
+    @property
+    def ot_track(self):
+        """seeding OT track (via l1TrackIdx; masked where -1, not seeded from
+        an OT track, or -2, OT track product unavailable)"""
+        return self._events()[self._ot_track_target]._apply_global_index(self.l1TrackIdxG)
+
+
+@awkward.mixin_class(behavior)
+class L1SmartPixelsTrack(_SmartPixelsTrackBase):
+    _ot_track_target = "L1TTrack"
+
+
+@awkward.mixin_class(behavior)
+class L1SmartPixelsExtTrack(_SmartPixelsTrackBase):
+    _ot_track_target = "L1TExtTrack"
+
+
 # ---------------------------------------------------------------------------
 # SmartPixels digiRefit variant tables (Phase-3 tier-2 refit study).
 # Track tables L1TSmartPixelsTrack<suffix>/L1TSmartPixelsExtTrack<suffix> are
@@ -293,6 +329,10 @@ _OT_STUB_TABLE = "L1TOTStub"
 # track-stub table -> its owning track table
 _TRACK_STUB_TABLES = {"L1TTrackStub": ("L1TTrack", "L1TrackStubLink"),
                       "L1TExtTrackStub": ("L1TExtTrack", "L1ExtTrackStubLink")}
+# canonical SmartPixels track table -> the OT track table its l1TrackIdx
+# points into (default when the branch doc does not name it)
+_SPIX_OT_TRACK_TABLES = {"L1TSmartPixelsTrack": ("L1TTrack", "L1SmartPixelsTrack"),
+                         "L1TSmartPixelsExtTrack": ("L1TExtTrack", "L1SmartPixelsExtTrack")}
 _HIT_LINK_CLASSES = {}      # track table -> mixin class name
 
 
@@ -396,6 +436,10 @@ def smartpixels_links(fields):
             mixins[stub] = mix
             link(f"{stub}_trackIdx", trk)
             link(f"{stub}_otStubIdx", _OT_STUB_TABLE)
+    for spx, (trk, mix) in _SPIX_OT_TRACK_TABLES.items():
+        if spx in tables:
+            mixins[spx] = mix
+            link(f"{spx}_l1TrackIdx", trk)
     for name, _ in tp_links(fields):
         xref[name] = spix_nano.TP_TABLE
     return mixins, xref
@@ -405,12 +449,26 @@ class _L1PFCandBase(candidate.PtEtaPhiMCandidate, base.NanoCollection):
     """L1 PF/Puppi candidates: matched-object accessors + uniform truth."""
 
     _track_target = None
+    _ot_track_target = None
     _jet_target = None
 
     @property
     def matched_track(self):
-        """underlying L1 track (via l1TrackIdx; masked where -1)"""
+        """underlying track (via l1TrackIdx; masked where -1/-2): an OT track,
+        or a SmartPixels track in a coopt nano (see _DOC_LINKS)"""
         return self._events()[self._track_target]._apply_global_index(self.l1TrackIdxG)
+
+    @property
+    def matched_ot_track(self):
+        """underlying OT track, through the SmartPixels track when
+        matched_track is one (candidate -> SmartPixels track -> OT track via
+        both l1TrackIdx hops, masked where either is < 0); the direct link
+        otherwise. Needs L1NanoSchema.candidate_ot_track_via_smartpixels."""
+        if "otTrackIdxG" not in self.fields:
+            raise AttributeError(
+                "matched_ot_track needs L1NanoSchema.candidate_ot_track_via_smartpixels = True "
+                "(and, for SmartPixels-linked candidates, the SmartPixels track l1TrackIdx column)")
+        return self._events()[self._ot_track_target]._apply_global_index(self.otTrackIdxG)
 
     @property
     def matched_cluster(self):
@@ -443,6 +501,7 @@ behavior.update(awkward._util.copy_behaviors("PtEtaPhiMCandidate", "L1PuppiCandi
 @awkward.mixin_class(behavior)
 class L1PuppiCandidate(_L1PFCandBase):
     _track_target = "L1TTrack"
+    _ot_track_target = "L1TTrack"
     _jet_target = "L1puppiJetSC4"
 
 
@@ -452,20 +511,103 @@ behavior.update(awkward._util.copy_behaviors("PtEtaPhiMCandidate", "L1ExtPuppiCa
 @awkward.mixin_class(behavior)
 class L1ExtPuppiCandidate(_L1PFCandBase):
     _track_target = "L1TExtTrack"
+    _ot_track_target = "L1TExtTrack"
     _jet_target = "L1puppiJetSC4NG"
 
 
+def _wire_candidate(name):
+    """Vector projections of the candidate mixin `name`."""
+    arr = globals()[f"{name}Array"]  # created by awkward.mixin_class
+    rec = globals()[f"{name}Record"]
+    arr.ProjectionClass2D = vector.TwoVectorArray
+    arr.ProjectionClass3D = vector.ThreeVectorArray
+    arr.ProjectionClass4D = arr
+    arr.MomentumClass = vector.LorentzVectorArray
+    rec.ProjectionClass2D = vector.TwoVectorRecord
+    rec.ProjectionClass3D = vector.ThreeVectorRecord
+    rec.ProjectionClass4D = rec
+    rec.MomentumClass = vector.LorentzVectorRecord
+
+
 for _name in ("L1PuppiCandidate", "L1ExtPuppiCandidate"):
-    _arr = globals()[f"{_name}Array"]  # created by awkward.mixin_class
-    _rec = globals()[f"{_name}Record"]
-    _arr.ProjectionClass2D = vector.TwoVectorArray
-    _arr.ProjectionClass3D = vector.ThreeVectorArray
-    _arr.ProjectionClass4D = _arr
-    _arr.MomentumClass = vector.LorentzVectorArray
-    _rec.ProjectionClass2D = vector.TwoVectorRecord
-    _rec.ProjectionClass3D = vector.ThreeVectorRecord
-    _rec.ProjectionClass4D = _rec
-    _rec.MomentumClass = vector.LorentzVectorRecord
+    _wire_candidate(_name)
+
+
+def _bound_mixin(mixin, attr, target):
+    """The mixin `mixin` with class attribute `attr` (a crossref target) set
+    to `target`: `mixin` itself when it already is, else a subclass created
+    once per (mixin, attr, target), like the refit-hit link classes."""
+    cls = globals()[mixin]
+    if getattr(cls, attr) == target:
+        return mixin
+    name = f"{mixin}_{attr.strip('_')}_{target}"
+    if name not in globals():
+        is_cand = issubclass(cls, candidate.PtEtaPhiMCandidate)
+        if is_cand:
+            behavior.update(awkward._util.copy_behaviors("PtEtaPhiMCandidate", name, behavior))
+        globals()[name] = awkward.mixin_class(behavior)(type(name, (cls,), {attr: target}))
+        if is_cand:
+            _wire_candidate(name)
+    return name
+
+
+# Crossrefs whose target the producer states in the branch doc -> the mixin
+# class attribute bound to that target. A coopt nano points the candidate
+# l1TrackIdx (and possibly the displaced-vertex track pair) into the
+# SmartPixels track tables; the doc names the table either way, so the target
+# is read from it. Without a parseable doc (older nanos) the schema default
+# (all_cross_references / smartpixels_links) stands.
+_DOC_LINKS = {
+    "L1PuppiCand_l1TrackIdx": "_track_target",
+    "L1ExtPuppiCand_l1TrackIdx": "_track_target",
+    "L1DispVertex_firstIndexTrk": "_first_target",
+    "L1DispVertex_secondIndexTrk": "_second_target",
+    "L1TSmartPixelsTrack_l1TrackIdx": "_ot_track_target",
+    "L1TSmartPixelsExtTrack_l1TrackIdx": "_ot_track_target",
+}
+# candidate -> track links, for the SmartPixels warning and the indirect hop
+_CAND_TRACK_LINKS = ("L1PuppiCand_l1TrackIdx", "L1ExtPuppiCand_l1TrackIdx")
+# "index of the ... track in the <TABLE> table (...)" (candidate, displaced
+# vertex) / "row of the <TABLE> track this SmartPixels track was seeded from"
+_DOC_TARGET_RE = re.compile(r"\bin the (\w+) table\b|^row of the (\w+) track\b")
+
+
+def doc_target(form):
+    """Target table named by a branch form's doc (coffea keeps the ROOT branch
+    title as __doc__, on the content of a jagged branch), or None."""
+    for f in (form, form.get("content") or {}):
+        m = _DOC_TARGET_RE.search((f.get("parameters") or {}).get("__doc__") or "")
+        if m:
+            return m.group(1) or m.group(2)
+    return None
+
+
+class SmartPixelsTrackLinkWarning(UserWarning):
+    """A candidate's track crossref points into a SmartPixels track table."""
+
+
+# candidate -> SmartPixels track -> OT track: compose the two global indices
+# (looked up by name in coffea.nanoevents.transforms, like the TP-row ones)
+def _compose_global_index_form(first, second):
+    form = copy.deepcopy(first)
+    form["content"]["form_key"] = concat(
+        first["content"]["form_key"], second["content"]["form_key"],
+        "!ngtagger_compose_global_index")
+    form["content"]["parameters"] = {
+        "__doc__": "global OT track index through the SmartPixels track (-1 if either hop is < 0)"}
+    return form
+
+
+def _compose_global_index(stack):
+    second = transforms.ensure_array(stack.pop())
+    first = transforms.ensure_array(stack.pop())
+    out = numpy.full(len(first), -1, dtype=numpy.int64)
+    ok = first >= 0  # local2global already masked < 0 and out-of-range rows
+    out[ok] = second[first[ok]]
+    stack.append(out)
+
+
+transforms.ngtagger_compose_global_index = _compose_global_index
 
 
 class L1NanoSchema(NanoAODSchema):
@@ -476,26 +618,73 @@ class L1NanoSchema(NanoAODSchema):
     unresolvable cross-reference, including when the *source* collection is
     entirely absent (a different tier, not a problem). This subclass keeps
     the warning only when the source collection is present but the index
-    column or the target table is missing (a genuinely partial file)."""
+    column or the target table is missing (a genuinely partial file).
+
+    Doc-resolved targets: the crossrefs in _DOC_LINKS take their target from
+    the branch doc when it names one (all_cross_references is the default for
+    nanos whose doc does not). A candidate l1TrackIdx naming a SmartPixels
+    track table emits a SmartPixelsTrackLinkWarning.
+
+    ``candidate_ot_track_via_smartpixels`` (class-level, like
+    ``warn_missing_crossrefs``; set it on the class or a subclass): when true,
+    candidates get ``matched_ot_track``, the OT track reached through the
+    SmartPixels track's l1TrackIdx (the direct l1TrackIdx link when the
+    candidate already points at an OT track). If the SmartPixels track table
+    has no l1TrackIdx column this warns and matched_ot_track stays
+    unavailable."""
+
+    candidate_ot_track_via_smartpixels = False  # If True, synthesize <cand>_otTrackIdxG
 
     def __init__(self, base_form, *args, **kwargs):
-        import warnings as _warnings
-
         fields = base_form.get("fields", [])
+        forms = dict(zip(fields, base_form.get("contents", [])))
         present = {f.split("_")[0] for f in fields}
         # per-file SmartPixels/track-stub links, on top of the class tables
         mix, xref = smartpixels_links(fields)
-        self.mixins = {**type(self).mixins, **mix}
-        self.all_cross_references = {**type(self).all_cross_references, **xref}
-        with _warnings.catch_warnings(record=True) as caught:
-            _warnings.simplefilter("always")
+        mixins = {**type(self).mixins, **mix}
+        xrefs = {**type(self).all_cross_references, **xref}
+        for col, attr in _DOC_LINKS.items():
+            if col in forms and col in xrefs:
+                xrefs[col] = doc_target(forms[col]) or xrefs[col]
+                src = col.split("_")[0]
+                mixins[src] = _bound_mixin(mixins[src], attr, xrefs[col])
+        special = dict(type(self).special_items)
+        for col in _CAND_TRACK_LINKS:
+            if col not in forms:
+                continue
+            cand, target = col.split("_")[0], xrefs[col]
+            if target.startswith("L1TSmartPixels"):
+                warnings.warn(
+                    f"{col} points into {target} (per its branch doc): {cand}.matched_track "
+                    "returns SmartPixels tracks, not OT tracklet tracks. For the OT track, set "
+                    "L1NanoSchema.candidate_ot_track_via_smartpixels = True and use "
+                    f"{cand}.matched_ot_track.", SmartPixelsTrackLinkWarning, stacklevel=2)
+            if not self.candidate_ot_track_via_smartpixels:
+                continue
+            hop = f"{target}_l1TrackIdx"
+            if hop in xrefs:
+                special[f"{cand}_otTrackIdxG"] = (_compose_global_index_form, (col + "G", hop + "G"))
+                ot = xrefs[hop]
+            elif target.startswith("L1TSmartPixels"):
+                warnings.warn(
+                    f"candidate_ot_track_via_smartpixels: {col} points into {target}, which has no "
+                    f"l1TrackIdx column; {cand}.matched_ot_track is unavailable.",
+                    SmartPixelsTrackLinkWarning, stacklevel=2)
+                continue
+            else:  # already an OT track: the direct link
+                special[f"{cand}_otTrackIdxG"] = (copy.deepcopy, (col + "G",))
+                ot = target
+            mixins[cand] = _bound_mixin(mixins[cand], "_ot_track_target", ot)
+        self.mixins, self.all_cross_references, self.special_items = mixins, xrefs, special
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
             super().__init__(base_form, *args, **kwargs)
         for w in caught:
             msg = str(w.message)
             m = re.match(r"Missing cross-reference index for (\w+) => (\w+)", msg)
             if m and m.group(1).split("_")[0] not in present:
                 continue  # whole source collection absent: silent
-            _warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
     def _build_collections(self, field_names, input_contents):
         return super()._build_collections(*with_tp_rows(field_names, input_contents))
@@ -531,6 +720,7 @@ class L1NanoSchema(NanoAODSchema):
         "L1ExtPuppiCand_l1TrackIdx": "L1TExtTrack",
         "L1ExtPuppiCand_hgcClusterIdx": "L1HGCCluster",
         # displaced vertex track-pair crossrefs
+        # (the l1TrackIdx and these targets follow the branch doc, _DOC_LINKS)
         "L1DispVertex_firstIndexTrk": "L1TExtTrack",
         "L1DispVertex_secondIndexTrk": "L1TExtTrack",
     }
