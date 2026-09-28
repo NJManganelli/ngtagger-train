@@ -55,8 +55,8 @@ NANO_DIR = pathlib.Path("/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano")
 DEFAULT_FILES = [str(NANO_DIR / f"clamp_on_f{i}.root") for i in (1, 2)]
 
 REF = "L1TTrack"
-VAR = "L1TSmartPixelsTrackDigiRefitAAAA"
-HIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
+VAR = "L1TSmartPixelsTrackSeedlessRefitAAAA"
+HIT = "L1TSmartPixelsRefitHitSeedlessRefitAAAA"
 
 SENTINEL = -900.0
 DIMS = ("X", "Y", "Alpha", "Beta")

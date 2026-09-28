@@ -21,7 +21,7 @@ be compared under the projection the refit actually uses.
           local x, y, then cotAlpha, cotBeta (when the cluster has them and
           USE_ANGLES asks for them).
 
-THE UPDATE MIRRORS L1SmartPixelsTrackProducer (digiRefit) term for term:
+THE UPDATE MIRRORS L1SmartPixelsTrackProducer (seedlessRefit) term for term:
   * measurement h = (u, v, cotAlpha, cotBeta) on the chosen cluster's module,
     H = its numerical Jacobian w.r.t. (rInv, phi, tanL, z0, d0); a column with
     any |H| > JACOBIAN_MAX_ABS (or non-finite) is zeroed;
@@ -45,7 +45,7 @@ RANKING METRICS (which in-ellipse cluster is "best"):
               track's projected uncertainty PLUS the cluster's errors, with all
               correlations. Nothing tuned. A missing angle term is dropped from
               the quadratic form and replaced by its expectation, 1.
-  producer    the digiRefit selection as it is today:
+  producer    the seedlessRefit selection as it is today:
               (du/sigX)^2 + (dv/sigY)^2 + (dcotA/sigA)^2 + (dcotB/sigB)^2, every
               term over the CLUSTER'S error only; a missing angle adds 0, as
               in the producer. (Its window is a static box and one module; here
@@ -84,7 +84,7 @@ VARIANTS = ("none", "innovation", "producer", "tuned", "oracle")
 VARIANT_DEF = {
     "none": "no update: study 19's OT-only projection to every layer (baseline)",
     "innovation": "innovation chi2 r^T (J C J^T + R)^-1 r, track + cluster errors",
-    "producer": "digiRefit today: sum (residual / cluster error)^2, unit weights",
+    "producer": "seedlessRefit today: sum (residual / cluster error)^2, unit weights",
     "tuned": "study-6 weights (1, 2, 16384, 16384) on the producer terms (stale)",
     "oracle": "truth: the majority-owner cluster when inside the ellipse",
 }

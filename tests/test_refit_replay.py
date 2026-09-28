@@ -1,4 +1,4 @@
-"""Tests for the SmartPixels digiRefit refit-replay visualizer.
+"""Tests for the SmartPixels seedlessRefit refit-replay visualizer.
 
 Two layers:
   * always-on synthetic tests: the offline KF replay obeys its structural
@@ -479,7 +479,8 @@ def test_no_user_visible_seed_string():
     for fr in fig.frames:
         if fr.layout and fr.layout.annotations:
             visible.extend(a.text for a in fr.layout.annotations)
-    offenders = [v for v in visible if v and "seed" in str(v).lower()]
+    # the producer mode is called seedlessRefit; that name is not an offender
+    offenders = [v for v in visible if v and "seed" in str(v).lower().replace("seedlessrefit", "")]
     assert not offenders, f"user-visible 'seed' strings remain: {offenders[:5]}"
 
 

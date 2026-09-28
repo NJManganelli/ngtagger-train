@@ -18,7 +18,7 @@ ev = json.load(open(os.path.join(AUD, "evidence.json")))
 
 f = uproot.open("/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/nano_fat_1111_coopt_file1.root")
 t = f["Events"]
-pre = "L1TSmartPixelsExtRefitHitDigiRefitAAAA_"
+pre = "L1TSmartPixelsExtRefitHitSeedlessRefitAAAA_"
 cols = ["hasAlpha", "hasBeta", "sigAlpha", "sigBeta", "pullAlpha", "pullBeta",
         "parCotAlpha", "parCotBeta", "cotAlphaMeas", "cotBetaMeas"]
 a = t.arrays([pre + c for c in cols], library="np")

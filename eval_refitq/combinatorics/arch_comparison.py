@@ -9,10 +9,10 @@
 
   COMBINED       every seed follows all ten layers; mixed IT+OT seeds exist.
 
-  DIGIREFIT-LIKE an OT track projected into the IT, attaching clusters, refit --
+  SEEDLESSREFIT-LIKE an OT track projected into the IT, attaching clusters, refit --
                  the IT is guided by the OT and finds nothing itself. Obtained as
                  COMBINED restricted to OT-only seeds, so it costs nothing extra.
-                 The existing SmartPixels digiRefit is a simplified,
+                 The existing SmartPixels seedlessRefit is a simplified,
                  hardware-ignorant precursor of the parallel design.
 
 The question the PARALLEL design lives or dies on is whether an IT mini-track can

@@ -28,9 +28,9 @@ LAYERS = (1, 2, 3, 4)
 def load(path):
     t = uproot.open(f"{path}:Events")
     cfg = sorted({m.group(1) for m in
-                  (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k)
+                  (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k)
                    for k in t.keys()) if m})[-1]
-    hit = f"L1TSmartPixelsRefitHitDigiRefit{cfg}"
+    hit = f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}"
     trk = hit.replace("RefitHit", "Track")
     need = [f"{hit}_{c}" for c in ("trackIdx", "layer", "hitAccepted", "selHitClass")]
     need += [f"{trk}_{c}" for c in ("d0", "z0", "pt", "spixNAcceptedHits")]

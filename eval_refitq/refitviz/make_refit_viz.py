@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Regenerate the standalone SmartPixels digiRefit refit-replay HTML.
+"""Regenerate the standalone SmartPixels seedlessRefit refit-replay HTML.
 
 Usage (from the repo root, in the pixi env):
     pixi run python eval_refitq/refitviz/make_refit_viz.py \

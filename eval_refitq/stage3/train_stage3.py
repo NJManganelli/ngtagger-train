@@ -8,7 +8,7 @@ best by validation AUC, saves the winning xgboost + conifer JSON per config for
 Stage 4 (on-the-fly tagger feature).
 
 5-par framing: trained on the prompt L1TTrack refit collection
-(L1TSmartPixelsTrackDigiRefit<CFG>) = 5-par OT-only reference vs 5-par OT+IT refit.
+(L1TSmartPixelsTrackSeedlessRefit<CFG>) = 5-par OT-only reference vs 5-par OT+IT refit.
 promptHnpar=5 => ot_npar=5, track_npar=5 (ref d0 is the OT track's real d0).
 
 Feature set: REFIT_BDT_FEATURES v1 (24 features) = the 17 v0 sidecar/kick/seed

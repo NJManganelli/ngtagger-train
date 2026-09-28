@@ -106,7 +106,7 @@ def pull_rows(D, tag):
 
 
 # ======================= refit =======================
-RT, RH = "L1TSmartPixelsTrackDigiRefitAAAA_", "L1TSmartPixelsRefitHitDigiRefitAAAA_"
+RT, RH = "L1TSmartPixelsTrackSeedlessRefitAAAA_", "L1TSmartPixelsRefitHitSeedlessRefitAAAA_"
 TRK = ["pt", "d0", "z0", "spixRefitPerformed", "spixNAcceptedHits", "spixChi2IncXTot", "spixChi2IncYTot",
        "spixChi2IncAlphaTot", "spixChi2IncBetaTot"]
 HIT = ["hitAccepted", "hasAlpha", "hasBeta", "selClusterIdx", "selHitClass"]
@@ -328,7 +328,7 @@ NANO_LEAK = []
 nano_probe(E2, "emu nano, v2 table (all angle columns incl. sigma)", NANO_LEAK)
 nano_probe(E3, "emu nano, v3 table (all angle columns incl. sigma)", NANO_LEAK)
 EMU_RF, EMU_CP = refit_pdf("emu_fix2_refit.pdf", [("emu, v2 sigma table", R("emu_v2tab")), ("emu, v3 sigma table (size key)", R("emu_v3tab"))],
-                           "digiRefit AAAA, emu angles, file 3 (100 events): v2 vs v3 sigma table, TP-matched refit tracks")
+                           "seedlessRefit AAAA, emu angles, file 3 (100 events): v2 vs v3 sigma table, TP-matched refit tracks")
 OUT["refit_emu"] = EMU_RF.to_dict("records"); OUT["refit_emu_hits"] = EMU_CP.to_dict("records")
 
 # ============================================================================================
@@ -440,7 +440,7 @@ with PdfPages(FIG("emu_fix2_leak.pdf")) as pdf:
                               "(and swapped). No-angle convention for the payload: an absent angle = NaN", per=26)
     table_pages(pdf, fmt(NLK), "Leak test (nano, file 3, 100 events): gain of ALL angle columns (cot, sigma, has, sat) over the nano probe", per=26)
 PAY_RF, PAY_CP = refit_pdf("emu_fix2_refit_payload.pdf", [(lab, R(t)) for lab, t in PAYS],
-                           "digiRefit AAAA, payload angles, file 3 (100 events): v4 old code vs v4 new code vs v5, TP-matched refit tracks")
+                           "seedlessRefit AAAA, payload angles, file 3 (100 events): v4 old code vs v4 new code vs v5, TP-matched refit tracks")
 OUT["refit_payload"] = PAY_RF.to_dict("records"); OUT["refit_payload_hits"] = PAY_CP.to_dict("records")
 
 if a.perf:

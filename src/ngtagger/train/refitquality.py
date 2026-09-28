@@ -1,11 +1,11 @@
-"""Refit-aware track-quality BDT study on the SmartPixels digiRefit nano tables.
+"""Refit-aware track-quality BDT study on the SmartPixels seedlessRefit nano tables.
 
-This is the offline counterpart to the Tier-2 digiRefit producer
+This is the offline counterpart to the Tier-2 seedlessRefit producer
 (L1Trigger/Phase3SmartPixels): it trains an xgboost genuine-vs-fake classifier
 using progressively richer feature sets that ablate what the BDT is allowed to
 *see* of the refit, holding the labels (reference L1TTrack truth) and the
 train/test split fixed via the 1:1 row alignment between the reference tracks
-and every digiRefit variant table.
+and every seedlessRefit variant table.
 
 Tier / config matrix (13 trainings):
   Tier A  (config-independent): the classic 7 TRKQ_FEATURES built from the
@@ -214,7 +214,7 @@ def load_refit_tables(files: list[str], config: str, track_table: str = "L1TTrac
         side): the scenario tables carry no nStubs/truth/TP columns, so pass
         the nominal table as crossref_track_table - the reference columns are
         read from it and linked to the scenario rows IMPLICITLY by index
-        (scenario track i == nominal track i, the digiRefit producer's 1:1
+        (scenario track i == nominal track i, the seedlessRefit producer's 1:1
         output-sync invariant). The alignment is validated per event below.
 
     Reference and variant track tables are 1:1 row aligned; the per-hit
@@ -223,8 +223,8 @@ def load_refit_tables(files: list[str], config: str, track_table: str = "L1TTrac
     if config not in SMARTPIXELS_CONFIGS:
         raise ValueError(f"unknown config {config!r}; known: {SMARTPIXELS_CONFIGS}")
     ext = "Ext" if "Ext" in track_table else ""
-    var_tbl = f"L1TSmartPixels{ext}TrackDigiRefit{config}"
-    hit_tbl = f"L1TSmartPixels{ext}RefitHitDigiRefit{config}"
+    var_tbl = f"L1TSmartPixels{ext}TrackSeedlessRefit{config}"
+    hit_tbl = f"L1TSmartPixels{ext}RefitHitSeedlessRefit{config}"
     ref_tbl = crossref_track_table or track_table
     if ref_tbl.startswith("L1TSmartPixels"):
         raise ValueError(
@@ -604,7 +604,7 @@ def train_matrix(files: list[str], output_dir: str, track_table: str = "L1TTrack
     config-independent A cell + B/C/D per available config) and return a
     nested AUC dict: {'A': auc, 'B': {config: auc, ...}, 'C': {...}, 'D': {...}}.
 
-    Configs whose digiRefit tables are absent from the first input file are
+    Configs whose seedlessRefit tables are absent from the first input file are
     skipped with a notice - simultaneous-storage productions typically carry a
     single activeSP scenario per file."""
     os.makedirs(output_dir, exist_ok=True)
@@ -613,11 +613,11 @@ def train_matrix(files: list[str], output_dir: str, track_table: str = "L1TTrack
     with uproot.open(f"{files[0]}:Events") as tree:
         keys = set(tree.keys())
     have = [c for c in configs
-            if f"L1TSmartPixels{ext}TrackDigiRefit{c}_{_VAR_EXT[0]}" in keys]
+            if f"L1TSmartPixels{ext}TrackSeedlessRefit{c}_{_VAR_EXT[0]}" in keys]
     if not have:
         raise RuntimeError(
-            f"no L1TSmartPixels{ext}TrackDigiRefit* tables for configs {tuple(configs)} "
-            f"in {files[0]}; is this a SmartPixels digiRefit nano?")
+            f"no L1TSmartPixels{ext}TrackSeedlessRefit* tables for configs {tuple(configs)} "
+            f"in {files[0]}; is this a SmartPixels seedlessRefit nano?")
     if len(have) < len(configs):
         skipped = [c for c in configs if c not in have]
         print(f"configs {skipped} have no tables in {os.path.basename(files[0])}; "
@@ -627,7 +627,7 @@ def train_matrix(files: list[str], output_dir: str, track_table: str = "L1TTrack
     ref_tbl = crossref_track_table or track_table
 
     def _tables(cfg):
-        return {"ref": ref_tbl, "var": f"L1TSmartPixels{ext}TrackDigiRefit{cfg}"}
+        return {"ref": ref_tbl, "var": f"L1TSmartPixels{ext}TrackSeedlessRefit{cfg}"}
 
     results = {"A": None, "B": {}, "C": {}, "D": {}}
     if crossref_track_table:
@@ -677,7 +677,7 @@ def train_matrix(files: list[str], output_dir: str, track_table: str = "L1TTrack
     print(header)
     if "A-spx" in results:
         row = "  A-spx:  " + "  ".join(f"{results['A-spx'][c]:7.4f}" for c in configs)
-        print(row + f"   (features from L1TSmartPixels{ext}TrackDigiRefit<cfg>)")
+        print(row + f"   (features from L1TSmartPixels{ext}TrackSeedlessRefit<cfg>)")
     for tier in ("B", "C", "D"):
         row = f"  {tier}:      " + "  ".join(f"{results[tier][c]:7.4f}" for c in configs)
         print(row)
@@ -743,7 +743,7 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
 
     ot_npar / track_npar: the producer starts the KF d0 from the OT track as
         aOT[4] = (otNPar==5 && track.nFitPars()==5) ? track.d0 : 0.0
-    (otNPar = digiRefitConfig 'otNPar', formerly 'seedNPar'), so feature 15
+    (otNPar = seedlessRefitConfig 'otNPar', formerly 'seedNPar'), so feature 15
     (dD0 = refit_d0 - aOT[4]) subtracts 0.0 for 4-par OT tracks.
     track_npar defaults to 4 for the prompt L1TTrack collection and 5 for the
     Ext collection (nFitPars is not persisted in nano). Getting this wrong puts

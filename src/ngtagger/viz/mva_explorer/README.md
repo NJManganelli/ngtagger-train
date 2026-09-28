@@ -4,7 +4,7 @@ One static, offline, interactive site that browses all three SmartPixels MVA
 families with the same overlay/range/aggregation machinery:
 
 1. **Regressions** — correctionlib payloads (tkLayout smearing, CalV1 compound
-   smearing, the digiRefit v4fixed payloads, or any schema-v2 file you point
+   smearing, the seedlessRefit v4fixed payloads, or any schema-v2 file you point
    it at), grid-evaluated at export time and sliced in the browser.
 2. **tkQuality** — the Stage-3 refit-quality BDT scored per track on the unified
    coherent nanos.
@@ -52,7 +52,7 @@ Exports the three presets:
 * `reg_calv1` — `cmssw/spixel_smear_all_configs_barrel_CalV1_v2p1_compound.json`,
   same structure on (pt × |eta|) only; stored raw float32 because uncovered
   bins carry exact zeros.
-* `reg_smarthit_true` / `reg_smarthit_fake` / `reg_spx_angle` — the digiRefit
+* `reg_smarthit_true` / `reg_smarthit_fake` / `reg_spx_angle` — the seedlessRefit
   v4fixed payloads through the fully generic ingester (category axes such as
   the TBPX layer become dropdowns; binning/multibinning edges become the grid).
 

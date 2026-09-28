@@ -15,7 +15,7 @@ TKLAYOUT_JSON = os.path.join(
     SMARTPIXELS, "tkLayoutRedux/tkLayout/spixel_smear_tklayout_trigger_MS.json.gz")
 CALV1_JSON = os.path.join(
     SMARTPIXELS, "cmssw/spixel_smear_all_configs_barrel_CalV1_v2p1_compound.json")
-DIGIREFIT_JSONS = {
+SEEDLESSREFIT_JSONS = {
     "smarthit_true": os.path.join(SMARTPIXELS, "cmssw/work/spxsmoke/smarthit_true_v4fixed.json"),
     "smarthit_fake": os.path.join(SMARTPIXELS, "cmssw/work/spxsmoke/smarthit_fake_v4fixed.json"),
     "spx_angle": os.path.join(
@@ -57,14 +57,14 @@ def export_calv1(out_dir: str, json_path: str = CALV1_JSON) -> dict:
     return _rewrite(_label_axes(meta), out_dir)
 
 
-def export_digirefit(out_dir: str, jsons: dict | None = None) -> list[dict]:
+def export_seedlessrefit(out_dir: str, jsons: dict | None = None) -> list[dict]:
     metas = []
     titles = {
-        "smarthit_true": "digiRefit v4fixed: smarthit true-hit payload",
-        "smarthit_fake": "digiRefit v4fixed: smarthit fake-hit payload",
-        "spx_angle": "digiRefit v4fixed: angle response (Conv1D Full-2bit)",
+        "smarthit_true": "seedlessRefit v4fixed: smarthit true-hit payload",
+        "smarthit_fake": "seedlessRefit v4fixed: smarthit fake-hit payload",
+        "spx_angle": "seedlessRefit v4fixed: angle response (Conv1D Full-2bit)",
     }
-    for key, path in (jsons or DIGIREFIT_JSONS).items():
+    for key, path in (jsons or SEEDLESSREFIT_JSONS).items():
         meta = export_generic_dataset(
             path, f"reg_{key}", titles.get(key, key), out_dir)
         metas.append(_rewrite(_label_axes(meta), out_dir))
@@ -81,5 +81,5 @@ def _rewrite(meta: dict, out_dir: str) -> dict:
 
 def export_all_regressions(out_dir: str) -> list[dict]:
     metas = [export_tklayout(out_dir), export_calv1(out_dir)]
-    metas += export_digirefit(out_dir)
+    metas += export_seedlessrefit(out_dir)
     return metas

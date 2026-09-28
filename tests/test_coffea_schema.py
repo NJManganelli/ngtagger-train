@@ -117,7 +117,7 @@ def test_track_only_tier_silent(tmp_path):
 
 
 def _write_smartpixels(tmp_path, name):
-    """Reference L1TTrack + one digiRefit variant track table (row-aligned)
+    """Reference L1TTrack + one seedlessRefit variant track table (row-aligned)
     + its per-hit link table with a trackIdx crossref. Two events, 3 tracks."""
     tree = {
         "run": np.array([1, 1], dtype=np.uint32),
@@ -128,12 +128,12 @@ def _write_smartpixels(tmp_path, name):
         "pt": [[10.0, 5.0, 8.0]] * 2, "genuine": [[True, False, True]] * 2,
         "hwTanl": [[100, 200, 300]] * 2,
     })
-    tree["L1TSmartPixelsTrackDigiRefitAAAA"] = ak.zip({
+    tree["L1TSmartPixelsTrackSeedlessRefitAAAA"] = ak.zip({
         "pt": [[10.1, 5.2, 8.05]] * 2, "hwTanl": [[100, 200, 300]] * 2,
         "spixRefitPerformed": [[True, False, True]] * 2,
         "spixNKFUpdates": [[2, 0, 3]] * 2,
     })
-    tree["L1TSmartPixelsRefitHitDigiRefitAAAA"] = ak.zip({
+    tree["L1TSmartPixelsRefitHitSeedlessRefitAAAA"] = ak.zip({
         "trackIdx": [[0, 0, 2]] * 2, "layer": [[1, 2, 1]] * 2,
         "pullX": [[0.3, -0.2, 0.1]] * 2, "hitAccepted": [[True, True, True]] * 2,
     })
@@ -148,13 +148,13 @@ def _write_smartpixels(tmp_path, name):
 
 def test_smartpixels_track_and_hit_crossref(tmp_path):
     events = _events(_write_smartpixels(tmp_path, "spx.root"))
-    trk = events.L1TSmartPixelsTrackDigiRefitAAAA
+    trk = events.L1TSmartPixelsTrackSeedlessRefitAAAA
     # track-word hw decode reused from L1TrackWord mixin
     assert hasattr(trk, "tanlFromHw")
     assert ak.all(trk.spixRefitPerformed[0] == [True, False, True])
 
     # per-hit link table resolves trackIdx crossref back to the variant track
-    hit = events.L1TSmartPixelsRefitHitDigiRefitAAAA
+    hit = events.L1TSmartPixelsRefitHitSeedlessRefitAAAA
     linked = hit.track
     assert ak.all(linked.pt[0] == [10.1, 10.1, 8.05])  # trackIdx 0,0,2
     assert ak.all(abs(hit.pullX[0] - np.array([0.3, -0.2, 0.1])) < 1e-6)
@@ -178,17 +178,16 @@ def _write_smartpixels_multi(tmp_path, name):
         "event": np.array([1], dtype=np.uint64),
         "L1TTrack": ak.zip({"pt": [[10.0, 5.0]]}),
         "L1TExtTrack": ak.zip({"pt": [[11.0]]}),
-        "L1TSmartPixelsTrackDigiRefitIIIA": ak.zip({"pt": [[10.1, 5.1]], "hwTanl": [[1, 2]]}),
-        "L1TSmartPixelsExtTrackDigiRefitAAAA": ak.zip({"pt": [[11.1]], "hwTanl": [[3]]}),
-        "L1TSmartPixelsRefitHitDigiRefitIIIA": ak.zip({
+        "L1TSmartPixelsTrackSeedlessRefitIIIA": ak.zip({"pt": [[10.1, 5.1]], "hwTanl": [[1, 2]]}),
+        "L1TSmartPixelsExtTrackSeedlessRefitAAAA": ak.zip({"pt": [[11.1]], "hwTanl": [[3]]}),
+        "L1TSmartPixelsRefitHitSeedlessRefitIIIA": ak.zip({
             "trackIdx": [[1, 0]], "detId": [[12, 11]], "selClusterIdx": [[2, -1]]}),
-        "L1TSmartPixelsExtRefitHitDigiRefitAAAA": ak.zip({
+        "L1TSmartPixelsExtRefitHitSeedlessRefitAAAA": ak.zip({
             "trackIdx": [[0]], "detId": [[10]], "selClusterIdx": [[0]]}),
         "L1TSmartPixelsCluster": ak.zip({
             "detId": [[10, 11, 12, 20]], "surface": [[1, 2, 4, 11]], "subdet": [[1, 1, 1, 2]]}),
         "L1TOTStub": ak.zip({"detId": [[500, 501, 502]], "bend": [[1.0, 2.0, 3.0]]}),
-        "L1TTrackStub": ak.zip({"trackIdx": [[0, 1]], "detId": [[502, 500]],
-                                "otStubIdx": [[2, 0]]}),
+        "L1TTrackStub": ak.zip({"trackIdx": [[0, 1]], "otStubIdx": [[2, 0]]}),
     }
     f = uproot.recreate(tmp_path / name)
     types = {k: (v.type if isinstance(v, ak.Array) else v.dtype) for k, v in tree.items()}
@@ -206,14 +205,14 @@ def test_smartpixels_links_generic(tmp_path):
     fields = uproot.open(f"{path}:Events").keys()
     mix, xref = smartpixels_links(fields)
     # every variant present is registered, whatever its suffix
-    assert xref["L1TSmartPixelsRefitHitDigiRefitIIIA_trackIdx"] == "L1TSmartPixelsTrackDigiRefitIIIA"
-    assert xref["L1TSmartPixelsExtRefitHitDigiRefitAAAA_trackIdx"] == \
-        "L1TSmartPixelsExtTrackDigiRefitAAAA"
-    assert xref["L1TSmartPixelsRefitHitDigiRefitIIIA_selClusterIdx"] == "L1TSmartPixelsCluster"
+    assert xref["L1TSmartPixelsRefitHitSeedlessRefitIIIA_trackIdx"] == "L1TSmartPixelsTrackSeedlessRefitIIIA"
+    assert xref["L1TSmartPixelsExtRefitHitSeedlessRefitAAAA_trackIdx"] == \
+        "L1TSmartPixelsExtTrackSeedlessRefitAAAA"
+    assert xref["L1TSmartPixelsRefitHitSeedlessRefitIIIA_selClusterIdx"] == "L1TSmartPixelsCluster"
     assert xref["L1TTrackStub_otStubIdx"] == "L1TOTStub"
     assert xref["L1TTrackStub_trackIdx"] == "L1TTrack"
-    assert mix["L1TSmartPixelsExtTrackDigiRefitAAAA"] == "L1TrackWord"
-    # no index column -> no crossref (older nanos without otStubIdx stay silent)
+    assert mix["L1TSmartPixelsExtTrackSeedlessRefitAAAA"] == "L1TrackWord"
+    # no index column -> no crossref
     assert "L1TExtTrackStub_otStubIdx" not in smartpixels_links(["L1TExtTrackStub_trackIdx"])[1]
 
     with warnings.catch_warnings(record=True) as caught:
@@ -221,20 +220,20 @@ def test_smartpixels_links_generic(tmp_path):
         ev = _events(path)
     assert not [w for w in caught if "cross-ref" in str(w.message)], \
         [str(w.message) for w in caught]
-    h = ev.L1TSmartPixelsRefitHitDigiRefitIIIA
+    h = ev.L1TSmartPixelsRefitHitSeedlessRefitIIIA
     assert ak.all(h.track.pt[0] == [5.1, 10.1])
     assert h.cluster.detId[0][0] == 12 and ak.is_none(h.cluster.detId[0], axis=0)[1]
-    assert ev.L1TSmartPixelsExtRefitHitDigiRefitAAAA.track.pt[0][0] == pytest.approx(11.1)
+    assert ev.L1TSmartPixelsExtRefitHitSeedlessRefitAAAA.track.pt[0][0] == pytest.approx(11.1)
     st = ev.L1TTrackStub
-    assert ak.all(st.ot_stub.detId[0] == st.detId[0])
+    assert st.detId.tolist() == [[502, 500]]           # L1TOTStub[otStubIdx]
     assert ak.all(st.track.pt[0] == [10.0, 5.0])
 
 
 def test_real_file_crossrefs():
     """On a real nano: SPIX_NANO=/path/to/file.root pytest tests/test_coffea_schema.py
     -k real_file [SPIX_NANO_EVENTS=3]. Every refit hit table's trackIdx and
-    selClusterIdx, and every track-stub table's otStubIdx, must land on a row
-    with the same detId (and, for stubs, the same bend)."""
+    selClusterIdx must land on a row with the same detId; every link-table
+    otStubIdx / clusterIdx must land on a row."""
     import os
 
     path = os.environ.get("SPIX_NANO")
@@ -262,10 +261,10 @@ def test_real_file_crossrefs():
             continue
         linked = tab.cluster if idx in ("selClusterIdx", "clusterIdx") else (
             tab.ot_stub if idx == "otStubIdx" else tab.track)
-        if idx in ("selClusterIdx", "otStubIdx"):
+        if idx == "selClusterIdx":
             assert ak.all(linked.detId[ok] == tab.detId[ok]), col
-        if idx == "otStubIdx":
-            assert ak.all(linked.bend[ok] == tab.bend[ok]), col
+        if idx in ("otStubIdx", "clusterIdx"):   # link-only tables: every link lands on a row
+            assert not ak.any(ak.is_none(linked.detId[ok], axis=1)), col
         if idx == "trackIdx":
             assert ak.all(ak.num(linked.pt[ok], axis=1) == ak.num(tab[idx][ok], axis=1)), col
         checked.append(f"{col} -> {target}: {int(ak.sum(ok))} links")
@@ -279,10 +278,10 @@ def _write_tp_links(tmp_path, name, convention):
     the tpIdx names + L1TTP_idx). L1TTP keeps keys 3, 8 | 9 (5 and 7 pruned)."""
     keys = {"L1TTrack": [[3, -1], [9]], "L1TOTStub": [[8, 5, -1], [7]],
             "L1TSmartPixelsCluster": [[3, 3, 5], [9, -1]],
-            "L1TSmartPixelsTrackDigiRefitAAAA": [[3, -1], [7]]}
+            "L1TSmartPixelsTrackSeedlessRefitAAAA": [[3, -1], [7]]}
     rows = {"L1TTrack": [[0, -1], [0]], "L1TOTStub": [[1, -8, -1], [-10]],
             "L1TSmartPixelsCluster": [[0, 0, -8], [0, -1]],
-            "L1TSmartPixelsTrackDigiRefitAAAA": [[0, -1], [-10]]}
+            "L1TSmartPixelsTrackSeedlessRefitAAAA": [[0, -1], [-10]]}
     link = rows if convention == "row" else keys
     tp_col = "key" if convention == "key" else "idx"
     tree = {"run": np.array([1, 1], dtype=np.uint32),
@@ -315,7 +314,7 @@ def test_tp_links_every_convention(tmp_path, convention):
     _, xref = smartpixels_links(uproot.open(f"{path}:Events").keys())
     for t in ("L1TTrack", "L1TOTStub", "L1TSmartPixelsCluster"):
         assert xref[f"{t}_tpIdx"] == "L1TTP"
-    assert xref["L1TSmartPixelsTrackDigiRefitAAAA_spixMatchedTpIdx"] == "L1TTP"
+    assert xref["L1TSmartPixelsTrackSeedlessRefitAAAA_spixMatchedTpIdx"] == "L1TTP"
     ev = NanoEventsFactory.from_root({path: "Events"}, schemaclass=L1ClustersNanoSchema).events()
     pt = [[30.0, 80.0], [90.0]]
     for t, want in rows.items():

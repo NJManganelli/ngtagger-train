@@ -1,7 +1,7 @@
-# SmartPixels digiRefit refit-replay visualizer (5-par prompt framing)
+# SmartPixels seedlessRefit refit-replay visualizer (5-par prompt framing)
 
 Interactive, self-contained (kernel-free) Plotly tool that shows a **PROMPT**
-digiRefit L1Track Kalman refit **step by step**, across the 3 angle modes
+seedlessRefit L1Track Kalman refit **step by step**, across the 3 angle modes
 (`none` / `alpha` / `alphaBeta`) and the 15 SmartPixels layer configs
 (`1000` .. `1111`), for a curated set of example tracks. Built for the RISE talk;
 opens offline in a browser and embeds in a Jupyter/RISE notebook.
@@ -25,16 +25,16 @@ parameter, vertexing)? The 4-par pinned-`d0` path is dropped entirely.
 | role | collection |
 |---|---|
 | **OT track** = 5-par OT-only track (the refit's input; the viz code calls it `seed`) | `L1TTrack` (real `d0`/`z0`/`phi`/`rInv`/`tanL`, reduced fit `chi2XYRed`/`chi2ZRed`, `tpPt`/`tpEta`/`genuine`) |
-| **REFIT** = 5-par OT+IT | `L1TSmartPixelsTrackDigiRefit{AIII,AAII,AAAI,AAAA}` (**prompt**, not the `Ext`/displaced twins) |
-| refit per-hit sidecar | `L1TSmartPixelsRefitHitDigiRefit{…}` |
-| **real OT stubs** | `L1TTrackStub` (`trackIdx`, `otStubIdx`) joined to `L1TOTStub` (`x`/`y`/`z`, `r`, `layer`, `isBarrel`); older nanos carry the stub columns inline |
+| **REFIT** = 5-par OT+IT | `L1TSmartPixelsTrackSeedlessRefit{AIII,AAII,AAAI,AAAA}` (**prompt**, not the `Ext`/displaced twins) |
+| refit per-hit sidecar | `L1TSmartPixelsRefitHitSeedlessRefit{…}` |
+| **real OT stubs** | `L1TTrackStub` (`trackIdx`, `otStubIdx`) joined to `L1TOTStub` (`x`/`y`/`z`, `r`, `layer`, `isBarrel`) |
 | truth | `GenVtx_{x,y,z}` + `tpPt`/`tpEta` |
 
 ## The physics being shown (seed = 5-par OT-only, refit = 5-par OT+IT)
 
 The **seed helix** is the 5-par OT-only `L1TTrack` from the L1TrackFinder (tracklet):
 fit from **outer-tracker stubs + the beamline**, `promptHnpar=5` (real `d0`), anchored
-way out at r ≈ 25–108 cm. The **refit helix** is the prompt `digiRefit`: the same track
+way out at r ≈ 25–108 cm. The **refit helix** is the prompt `seedlessRefit`: the same track
 after adding **SmartPixels inner-tracker hits** at r < 16 cm. So the refit is not
 "fit 4 inner hits" — it is an OT-anchored, long-lever-arm track *gaining inner-pixel
 constraints near the vertex*. The near-vertex `d0`/`z0` improvement is the payoff, and
@@ -142,7 +142,7 @@ toggle visibility, so the HTML needs no Python kernel.
 ## The replay formulation (faithful port of the producer KF)
 
 Ported from `L1Trigger/Phase3SmartPixels/plugins/L1SmartPixelsTrackProducer.cc`
-(the `digiRefit` branch: the `scalarUpdate` lambda, diagonal-R sequential updates,
+(the `seedlessRefit` branch: the `scalarUpdate` lambda, diagonal-R sequential updates,
 numerical-Jacobian measurement model `h=(localx, localy, cotAlpha, cotBeta)`).
 
 - **OT-track state** `a=(rInv, phi0, tanL, z0, d0)` from the `L1TTrack` reference

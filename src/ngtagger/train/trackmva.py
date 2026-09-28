@@ -10,8 +10,8 @@ spelling), the frozen-model bundle with metadata, and the loader/scorer used by
 
 Track families (all 1:1 row aligned per event, validated on read):
 
-  prompt  L1TTrack    + L1TSmartPixelsTrackDigiRefit<cfg>    + ...RefitHitDigiRefit<cfg>
-  ext     L1TExtTrack + L1TSmartPixelsExtTrackDigiRefit<cfg> + ...ExtRefitHitDigiRefit<cfg>
+  prompt  L1TTrack    + L1TSmartPixelsTrackSeedlessRefit<cfg>    + ...RefitHitSeedlessRefit<cfg>
+  ext     L1TExtTrack + L1TSmartPixelsExtTrackSeedlessRefit<cfg> + ...ExtRefitHitSeedlessRefit<cfg>
 
 The base table (L1TTrack / L1TExtTrack) supplies the OT-only fit, its KF
 covariance and the TP truth (genuine, tp_pt, tp_d0, tp_z0: the OT associator's
@@ -95,7 +95,7 @@ import time
 import awkward as ak
 import numpy as np
 
-from ngtagger.data.spix_nano import CLUSTER_TABLE, OT_RENAMES, branch_name, branch_names, tp_idx
+from ngtagger.data.spix_nano import CLUSTER_TABLE, branch_name, branch_names, tp_idx
 from ngtagger.train.trkquality import nlaymiss_interior
 
 SPEC_VERSION = 1
@@ -112,10 +112,10 @@ SEED = 1                   # model random_state (the pilot's)
 COLLS = ("refit", "base")
 
 FAMILIES = {
-    "prompt": {"base": "L1TTrack", "refit": "L1TSmartPixelsTrackDigiRefit{cfg}",
-               "hits": "L1TSmartPixelsRefitHitDigiRefit{cfg}"},
-    "ext": {"base": "L1TExtTrack", "refit": "L1TSmartPixelsExtTrackDigiRefit{cfg}",
-            "hits": "L1TSmartPixelsExtRefitHitDigiRefit{cfg}"},
+    "prompt": {"base": "L1TTrack", "refit": "L1TSmartPixelsTrackSeedlessRefit{cfg}",
+               "hits": "L1TSmartPixelsRefitHitSeedlessRefit{cfg}"},
+    "ext": {"base": "L1TExtTrack", "refit": "L1TSmartPixelsExtTrackSeedlessRefit{cfg}",
+            "hits": "L1TSmartPixelsExtRefitHitSeedlessRefit{cfg}"},
 }
 
 # online (model-input) columns
@@ -725,9 +725,7 @@ class TrackMVA:
         if coll not in self.models:
             raise KeyError(f"bundle has no {coll!r} models (has {self.colls})")
         X, names = feature_matrix(T, coll)
-        # bundles frozen before the OT rename name OT-track features by their "seed" spelling
-        old_to_new = {o: n for n, o in OT_RENAMES.items()}
-        if names != [old_to_new.get(n, n) for n in self.meta["features"][coll]]:
+        if names != self.meta["features"][coll]:
             raise RuntimeError(f"feature order mismatch for {coll}: bundle {self.meta['features'][coll]} "
                                f"vs code {names}")
         out = np.full((len(X), len(EVAL_COLUMNS)), np.nan)

@@ -1,18 +1,18 @@
-"""Nano I/O + track curation for the digiRefit refit-replay visualizer.
+"""Nano I/O + track curation for the seedlessRefit refit-replay visualizer.
 
 Re-anchored to the 5-par PROMPT framing (mem:smartpixels-5par-framing-directive):
 
   SEED  = 5-par OT-only PROMPT track = the reference ``L1TTrack`` table
           (promptHnpar=5: real d0/z0/phi/rInv/tanL + reduced fit chi2
           ``chi2XYRed``/``chi2ZRed`` + matched-TP ``tpPt``/``tpEta``/``genuine``).
-  REFIT = 5-par OT+IT = the PROMPT digiRefit variant tracks
-          ``L1TSmartPixelsTrackDigiRefit{AIII,AAII,AAAI,AAAA}`` (NOT the Ext /
+  REFIT = 5-par OT+IT = the PROMPT seedlessRefit variant tracks
+          ``L1TSmartPixelsTrackSeedlessRefit{AIII,AAII,AAAI,AAAA}`` (NOT the Ext /
           displaced variants) + their per-hit sidecars
-          ``L1TSmartPixelsRefitHitDigiRefit{...}``.
+          ``L1TSmartPixelsRefitHitSeedlessRefit{...}``.
   OT stubs = the REAL OT stubs of each track: ``L1TTrackStub`` (trackIdx) joined to
-          ``L1TOTStub`` (x/y/z, r, layer, isBarrel) through otStubIdx, or inline on
-          older nanos (``spix_nano.track_stub_columns``) -- replaces the old
-          schematic hitPattern placement.
+          ``L1TOTStub`` (x/y/z, r, layer, isBarrel) through otStubIdx
+          (``spix_nano.track_stub_columns``) -- replaces the old schematic
+          hitPattern placement.
   TRUTH = ``GenVtx_{x,y,z}`` (interim, prompt-only) + ``tpPt``/``tpEta``; see
           :mod:`ngtagger.viz._truth`.
 
@@ -46,8 +46,8 @@ ANGLE_MODES = ["none", "alpha", "alphaBeta"]
 
 # PROMPT collections (re-anchored; NOT the Ext/displaced twins).
 REF = "L1TTrack"                                 # 5-par OT-only prompt seed
-SIDE = "L1TSmartPixelsRefitHitDigiRefitAAAA"     # all-layer prompt sidecar
-TRK = "L1TSmartPixelsTrackDigiRefit"             # prompt refit + variant suffix
+SIDE = "L1TSmartPixelsRefitHitSeedlessRefitAAAA"     # all-layer prompt sidecar
+TRK = "L1TSmartPixelsTrackSeedlessRefit"             # prompt refit + variant suffix
 STUB = "L1TTrackStub"                            # track -> OT stub link table
 GENVTX = "GenVtx"                                # interim prompt truth vertex
 

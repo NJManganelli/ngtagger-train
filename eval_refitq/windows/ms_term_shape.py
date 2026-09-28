@@ -58,9 +58,9 @@ def main():
     with uproot.open(f"{files[0]}:Events") as t:
         keys = list(t.keys())
     cfg = sorted({m.group(1) for m in
-                  (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k) for k in keys)
+                  (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k) for k in keys)
                   if m})[-1]
-    HIT = f"L1TSmartPixelsRefitHitDigiRefit{cfg}"
+    HIT = f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}"
     print(f"config={cfg}")
 
     hcols = ["trackIdx", "layer", "hitAccepted", "selHitClass",

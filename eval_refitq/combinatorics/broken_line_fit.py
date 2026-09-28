@@ -420,8 +420,8 @@ def oracle(args, log):
 # ----------------------------------------------------------------------------
 # (b) the CMSSW producer's own hits
 # ----------------------------------------------------------------------------
-HIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
-VTRK = "L1TSmartPixelsTrackDigiRefitAAAA"
+HIT = "L1TSmartPixelsRefitHitSeedlessRefitAAAA"
+VTRK = "L1TSmartPixelsTrackSeedlessRefitAAAA"
 HIT_COLS = ["trackIdx", "layer", "detId", "hitAccepted", "selClusterIdx", "selHitClass", "hasAlpha",
             "recoLocalX", "recoLocalY", "recoCotAlpha", "sigX", "sigY", "sigAlpha",
             "projOTLocalX", "projOTLocalY", "projOTCotAlpha", "recoSizeX", "recoSizeY"]

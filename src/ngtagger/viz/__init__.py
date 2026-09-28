@@ -1,4 +1,4 @@
-"""Visualization helpers for the SmartPixels Phase-3 digiRefit study.
+"""Visualization helpers for the SmartPixels Phase-3 seedlessRefit study.
 
 Public entry point: :func:`ngtagger.viz.refit_replay.build_refit_viz`.
 """

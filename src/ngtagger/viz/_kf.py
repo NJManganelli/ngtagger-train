@@ -1,8 +1,8 @@
 import numpy as np
 
 # ---------------------------------------------------------------------------
-# FAITHFUL OFFLINE REPLAY of the CMSSW digiRefit sequential-scalar Kalman filter
-# (L1SmartPixelsTrackProducer.cc, digiRefit branch). Pure numpy; reads ONLY the
+# FAITHFUL OFFLINE REPLAY of the CMSSW seedlessRefit sequential-scalar Kalman filter
+# (L1SmartPixelsTrackProducer.cc, seedlessRefit branch). Pure numpy; reads ONLY the
 # reference seed + per-hit sidecar records (never the real refit answer).
 # ---------------------------------------------------------------------------
 
@@ -292,7 +292,7 @@ _REPLAY_SEED_SIGMAS = (3e-5, 3e-4, 1e-3, 0.02, 0.03)
 def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBeta",
                  active_layers=(1, 1, 1, 1), param_sigmas=_REPLAY_SEED_SIGMAS,
                  ot_npar=5):
-    """Offline replay of the digiRefit sequential-scalar Kalman filter.
+    """Offline replay of the seedlessRefit sequential-scalar Kalman filter.
 
     seed_params : (rInv, phi0, tanL, z0, d0)  -- phi0 from momentum().phi().
     hit_records : list of per-hit dicts (sidecar), each with keys:

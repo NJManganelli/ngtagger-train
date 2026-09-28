@@ -21,9 +21,9 @@ frame and Jacobian (validate_against_refit).
 INPUTS (nano + one JSON):
   L1TTrack               helix (rInv, phi, tanL, z0, d0) and its fit covariance
                          cov_<p>_<q> (L1TrackHelixCovTableProducer)
-  L1TTrackStub           the track's stubs (link-only on current nanos: the stub
-                         columns come from L1TOTStub[otStubIdx]); L1TOTStub their truth (ot_oracle.
-                         stub_truth: exact via otStubIdx, else the stub identity)
+  L1TTrackStub           the track's stubs (link-only: the stub columns are
+                         L1TOTStub[otStubIdx]); L1TOTStub their truth (ot_oracle.
+                         stub_truth, exact via otStubIdx)
   L1TSmartPixelsCluster  untruncated IT clusters: local position, sensor angle
                          estimate (localCotAlpha/Beta), dominant TP
   module geometry JSON   SmartPixelsModuleGeometryDumper: per module origin and
@@ -100,7 +100,7 @@ CL_COLS = ["detId", "layer", "localX", "localY", "localCotAlpha",
            "sigX", "sigY", "sigAlpha", "sigBeta",      # errors: the refit's measurement R
            "sizeX", "sizeY"]                             # cluster size: calibrated R lookup
 CL_TABLE = SPN.CLUSTER_TABLE
-REFIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
+REFIT = "L1TSmartPixelsRefitHitSeedlessRefitAAAA"
 REFIT_COLS = ["trackIdx", "detId", "layer", "projOTLocalX", "projOTLocalY",
               "projOTCotAlpha", "projOTCotBeta", "projOTSigX", "projOTSigY"]
 SENTINEL = -900.0
@@ -399,7 +399,7 @@ def branches(with_refit, path, cl_extra=()):
     """The branches the study reads from files shaped like `path`; `cl_extra`
     adds cluster columns (read with _flat(A, CL_TABLE, ...))."""
     keys = _keys(path)
-    b = [f"L1TTrackStub_{OT_LINK}"] if f"L1TTrackStub_{OT_LINK}" in keys else []
+    b = [f"L1TTrackStub_{OT_LINK}"]
     for tbl, cols in _tables(with_refit, cl_extra):
         b += (SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL) if tbl == CL_TABLE
               else SPN.branch_names(keys, tbl, cols))
@@ -479,8 +479,7 @@ def prepare_chunk(A, geo):
     """Everything about a chunk that does not depend on the track STATE:
     tables, track classes, and the (event, detId) cluster index."""
     T = _flat(A, "L1TTrack", TRK_COLS)
-    S = _flat(A, "L1TTrackStub", TST_COLS + ([OT_LINK] if f"L1TTrackStub_{OT_LINK}" in A.fields
-                                             else []))
+    S = _flat(A, "L1TTrackStub", TST_COLS + [OT_LINK])
     O = _flat(A, "L1TOTStub", OTS_COLS)
     K = _flat(A, CL_TABLE, CL_COLS)
     a, C = track_state(T)

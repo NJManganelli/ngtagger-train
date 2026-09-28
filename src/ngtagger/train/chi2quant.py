@@ -138,18 +138,18 @@ def discover_tables(a_file: str, config: str | None = None,
     with uproot.open(f"{a_file}:Events") as t:
         keys = set(t.keys())
     ext = "Ext" if extended else ""
-    pat = re.compile(rf"^L1TSmartPixels{ext}TrackDigiRefit([A-Za-z0-9]+)_spx")
+    pat = re.compile(rf"^L1TSmartPixels{ext}TrackSeedlessRefit([A-Za-z0-9]+)_spx")
     configs = sorted({m.group(1) for m in (pat.match(k) for k in keys) if m})
     if not configs:
         raise RuntimeError(
-            f"{a_file}: no L1TSmartPixels{ext}TrackDigiRefit*_spx* tables found - "
-            f"is this a digiRefit nano with the sidecar tables enabled?")
+            f"{a_file}: no L1TSmartPixels{ext}TrackSeedlessRefit*_spx* tables found - "
+            f"is this a seedlessRefit nano with the sidecar tables enabled?")
     if config is None:
         config = configs[-1]
     elif config not in configs:
         raise RuntimeError(f"{a_file}: config {config!r} not present; have {configs}")
-    var = f"L1TSmartPixels{ext}TrackDigiRefit{config}"
-    hit = f"L1TSmartPixels{ext}RefitHitDigiRefit{config}"
+    var = f"L1TSmartPixels{ext}TrackSeedlessRefit{config}"
+    hit = f"L1TSmartPixels{ext}RefitHitSeedlessRefit{config}"
     ref = f"L1T{ext}Track" if ext else "L1TTrack"
     if f"{ref}_genuine" not in keys:
         raise RuntimeError(f"{a_file}: reference table {ref}_* not found (need truth columns)")

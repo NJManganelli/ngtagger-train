@@ -329,7 +329,7 @@ def robust_sigma(a):
 # ANGLE-CAP SENTINEL -- run on every invocation, before any study
 # --------------------------------------------------------------------------
 # A measured cluster angle is used only when |cot| <= SPN.MEAS_ANGLE_MAX_ABS (12,
-# the refit's digiRefitMeasAngleMaxAbs; ~85 deg from normal incidence). Payload-era
+# the refit's seedlessRefitMeasAngleMaxAbs; ~85 deg from normal incidence). Payload-era
 # producers cleared hasAlpha/hasBeta beyond it; the emu producers set them on every
 # cluster, so the loader's cap is now the only protection. This counts, per angle
 # (alpha, beta, and the pair that globalClusterPhi/CotTheta are built from) and per
@@ -516,9 +516,9 @@ def _discover(path):
     with uproot.open(f"{path}:Events") as t:
         keys = set(t.keys())
     cfgs = sorted({m.group(1) for m in
-                   (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k) for k in keys) if m})
+                   (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k) for k in keys) if m})
     if not cfgs:
-        raise SystemExit("no L1TSmartPixelsRefitHitDigiRefit* table in the input")
+        raise SystemExit("no L1TSmartPixelsRefitHitSeedlessRefit* table in the input")
     # PICK THE MOST-INSTRUMENTED CONFIG, not the alphabetically last one. On a
     # multi-variant file (an activeSP sweep) sorted()[-1] is "IIIA" -- the build with
     # only L4 instrumented -- so every single-config study silently ran on the least
@@ -529,7 +529,7 @@ def _discover(path):
     if len(cfgs) > 1:
         print(f"  {len(cfgs)} activeSP variants present {cfgs}; single-config studies "
               f"use {chosen} (most instrumented). Study (10) covers all of them.")
-    hit = f"L1TSmartPixelsRefitHitDigiRefit{chosen}"
+    hit = f"L1TSmartPixelsRefitHitSeedlessRefit{chosen}"
     need_hit = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
                 "projOTLocalX", "projOTLocalY", "projOTSigX", "projOTSigY",
                 "projOTCotAlpha", "projOTCotBeta", "projLocalX", "projLocalY",
@@ -547,7 +547,7 @@ def _discover(path):
             f"  missing from {CLUSTER_TABLE}: {miss_c or 'none'}\n\n"
             "Produce a Clusters-tier file:\n"
             "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
-            "--variant digiRefit:1111 --needs-truth -o <out>.py")
+            "--variant seedlessRefit:1111 --needs-truth -o <out>.py")
     return hit, chosen, need_hit
 
 
@@ -1623,7 +1623,7 @@ SWEEP_TABLE_CONES = [0.99, 0.999, 0.9999]
 
 def _variant_crossings(files, suffix):
     """Crossings for ONE activeSP variant. Only the columns the sweep needs."""
-    hit = f"L1TSmartPixelsRefitHitDigiRefit{suffix}"
+    hit = f"L1TSmartPixelsRefitHitSeedlessRefit{suffix}"
     cols = ["trackIdx", "layer", "detId", "projLocalX", "projLocalY", "projSigX", "projSigY",
             "hitAccepted"]
     H = uproot.concatenate([f"{f}:Events" for f in files],
@@ -1858,10 +1858,10 @@ def study_combination_sweep(X, K, P, ax_row, out):
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
     sfx = sorted({m.group(1) for m in
-                  (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([AI]{4})_", k) for k in keys) if m})
+                  (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([AI]{4})_", k) for k in keys) if m})
     if len(sfx) < 2:
         print(f"   (10) SKIPPED: input has {len(sfx)} activeSP variant(s); the sweep needs the "
-              "15 non-trivial masks. Regenerate with a repeated --variant digiRefit:XXXX.")
+              "15 non-trivial masks. Regenerate with a repeated --variant seedlessRefit:XXXX.")
         for a in ax_row:
             a.axis("off")
         return
@@ -4229,7 +4229,7 @@ def _refit_explain_page(res, rep_val, mask, nsig):
         "labelled A-in / A-out / B1 / B2 / B3, the variant's metric picks the best in-ellipse cluster, "
         "and the track is UPDATED on it before the next layer is projected. The first layer has had no "
         "update, so it is identical for every variant and to study 19.\n\n"
-        "UPDATE (mirrors the digiRefit producer term for term)\n"
+        "UPDATE (mirrors the seedlessRefit producer term for term)\n"
         "Sequential scalar Kalman updates in local x, y, then cotAlpha, cotBeta, linearised about the "
         "pre-update state (the projection, and so the Jacobian, is recomputed at every layer); a scalar "
         "with r^2/S > 2e6 is skipped; Jacobian columns with |H| > 1e4 are zeroed; no update where the "
@@ -4252,7 +4252,7 @@ def _refit_explain_page(res, rep_val, mask, nsig):
         "  innovation  d^2 = r^T (J C J^T + R)^-1 r over (du, dv, dcotAlpha, dcotBeta) -- the track's\n"
         "              projected uncertainty PLUS the cluster's errors, all correlations kept. Nothing is\n"
         "              tuned. A missing angle is dropped from the form and replaced by its mean, 1.\n"
-        "  producer    digiRefit's selection today: (du/sigX)^2 + (dv/sigY)^2 + (dcotA/sigA)^2 +\n"
+        "  producer    seedlessRefit's selection today: (du/sigX)^2 + (dv/sigY)^2 + (dcotA/sigA)^2 +\n"
         "              (dcotB/sigB)^2, each term over the CLUSTER'S error only, unit weights; a missing\n"
         "              angle adds 0, as in the producer. The track's own uncertainty never enters.\n"
         "  tuned       the same terms weighted (1, 2, 16384, 16384) as omnibus study 6's chi2 scan found\n"

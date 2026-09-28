@@ -88,9 +88,9 @@ def main(argv=None):
     p_tq.add_argument("--conifer", action="store_true", help="export conifer model json (+cpp project)")
 
     p_rq = sub.add_parser("train-refitquality",
-                          help="refit-aware track-quality BDT study (SmartPixels digiRefit)")
+                          help="refit-aware track-quality BDT study (SmartPixels seedlessRefit)")
     p_rq.add_argument("-i", "--inputs", nargs="+", required=True,
-                      help="withGen SmartPixels digiRefit nano files")
+                      help="withGen SmartPixels seedlessRefit nano files")
     p_rq.add_argument("-o", "--output", required=True)
     p_rq.add_argument("--tier", choices=["A", "B", "C", "D", "matrix"], default="matrix",
                       help="BDT-input ablation tier: A = classic-7 TrackQuality baseline "
@@ -100,12 +100,12 @@ def main(argv=None):
                            "features + chi2IncRPhiTot; D = C + beta features + "
                            "chi2IncRZTot. 'matrix' runs one A cell + B/C/D per config")
     p_rq.add_argument("--config", choices=["AIII", "AAII", "AAAI", "AAAA"], default="AAAA",
-                      help="digiRefit config (ignored for tier A; used for a single B/C/D run)")
+                      help="seedlessRefit config (ignored for tier A; used for a single B/C/D run)")
     p_rq.add_argument("--track-table", default="L1TTrack",
                       help="reference track table (L1TTrack or L1TExtTrack) for legacy "
                            "single-storage nano; for simultaneous-storage nano the "
                            "SmartPixels scenario track table (e.g. "
-                           "L1TSmartPixelsTrackDigiRefitAAII) together with "
+                           "L1TSmartPixelsTrackSeedlessRefitAAII) together with "
                            "--crossref-track-table")
     p_rq.add_argument("--crossref-track-table", default=None,
                       help="simultaneous-storage nano only: the nominal track table "
@@ -139,10 +139,10 @@ def main(argv=None):
     ):
       _p = sub.add_parser(_name, help=_help)
       _p.add_argument("-i", "--inputs", nargs="+", required=True,
-                      help="withGen SmartPixels digiRefit nano files")
+                      help="withGen SmartPixels seedlessRefit nano files")
       _p.add_argument("-o", "--output", required=True)
       _p.add_argument("--config", choices=["AIII", "AAII", "AAAI", "AAAA"], default="AAII",
-                      help="digiRefit config (selects the variant/hit tables)")
+                      help="seedlessRefit config (selects the variant/hit tables)")
       _p.add_argument("--tier", choices=["A", "B", "C", "D"], default="D",
                       help="feature tier (same construction as train-refitquality; "
                            "D = full refit visibility)")
@@ -205,11 +205,11 @@ def main(argv=None):
                           help="calibrate the per-field refit chi2 delta quantizer "
                                "constants (bits, codes-per-octave) from nano files")
     p_cq.add_argument("-i", "--inputs", nargs="+", required=True,
-                      help="digiRefit nano files; shell globs are expanded internally "
+                      help="seedlessRefit nano files; shell globs are expanded internally "
                            "so quoted patterns work too")
     p_cq.add_argument("-o", "--output", default=None, help="write the full report as JSON")
     p_cq.add_argument("--config", default=None,
-                      help="digiRefit config suffix (e.g. AAAA); default = the last one "
+                      help="seedlessRefit config suffix (e.g. AAAA); default = the last one "
                            "present in the first file")
     p_cq.add_argument("--extended", action="store_true",
                       help="use the Ext (extended-track) tables instead of the prompt ones")
@@ -250,7 +250,7 @@ def main(argv=None):
                           help="per-track resolution-quality MVAs (clean, d0acc, z0acc, "
                                "sigma_hat d0/z0) of SmartPixels refit tracks; frozen bundle")
     p_tm.add_argument("-i", "--inputs", nargs="+", required=True,
-                      help="withGen SmartPixels digiRefit nano files, in the order that "
+                      help="withGen SmartPixels seedlessRefit nano files, in the order that "
                            "defines the event index (and so the fold permutation)")
     p_tm.add_argument("-o", "--output", required=True)
     p_tm.add_argument("--train-only", nargs="*", default=[],
@@ -258,10 +258,10 @@ def main(argv=None):
                            "whose events are in every training set and never evaluated, "
                            "e.g. the files that trained the cluster-angle CNN")
     p_tm.add_argument("--family", choices=["prompt", "ext"], default="prompt",
-                      help="prompt = L1TTrack + L1TSmartPixelsTrackDigiRefit<cfg>; "
-                           "ext = L1TExtTrack + L1TSmartPixelsExtTrackDigiRefit<cfg> (the table "
+                      help="prompt = L1TTrack + L1TSmartPixelsTrackSeedlessRefit<cfg>; "
+                           "ext = L1TExtTrack + L1TSmartPixelsExtTrackSeedlessRefit<cfg> (the table "
                            "jet constituents crossref)")
-    p_tm.add_argument("--config", default="AAAA", help="digiRefit config suffix")
+    p_tm.add_argument("--config", default="AAAA", help="seedlessRefit config suffix")
     p_tm.add_argument("--colls", nargs="+", choices=["refit", "base"], default=["refit"],
                       help="refit = the deliverable; base = the OT-only reference heads")
     p_tm.add_argument("--crossfit", choices=["none", "outer", "nested"], default="nested",
@@ -355,7 +355,7 @@ def main(argv=None):
                                                crossref_track_table=args.crossref_track_table)
             ext = "Ext" if "Ext" in args.track_table else ""
             tables = {"ref": args.crossref_track_table or args.track_table,
-                      "var": f"L1TSmartPixels{ext}TrackDigiRefit{args.config}"}
+                      "var": f"L1TSmartPixels{ext}TrackSeedlessRefit{args.config}"}
             train_one(ref, var, hits, args.tier, args.config, args.output,
                       label=args.label, seed=args.seed, tables=tables)
             if args.tier == "A" and args.crossref_track_table:

@@ -29,7 +29,7 @@ print("crossings per (track,layer): ", dict(zip(*np.unique(cnt, return_counts=Tr
 
 import uproot
 h["hitAccepted"] = ak.to_numpy(ak.flatten(
-    uproot.open(f"{NANO}:Events")["L1TSmartPixelsRefitHitDigiRefitAAAA_hitAccepted"].array()))
+    uproot.open(f"{NANO}:Events")["L1TSmartPixelsRefitHitSeedlessRefitAAAA_hitAccepted"].array()))
 acc = h["hitAccepted"].astype(bool)
 key_acc = key[acc]
 uniq_a, cnt_a = np.unique(key_acc, return_counts=True)

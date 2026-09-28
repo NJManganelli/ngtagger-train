@@ -82,7 +82,7 @@ def load(paths):
         raise SystemExit(
             f"input lacks {CLUSTER_TABLE} columns {miss}. Produce a Clusters-tier file:\n"
             "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
-            "--variant digiRefit:1111 --needs-truth -o <out>.py")
+            "--variant seedlessRefit:1111 --needs-truth -o <out>.py")
     # TBPX only: the traversal target counts distinct barrel layers per TP
     A = uproot.concatenate([f"{f}:Events" for f in files],
                            filter_name=SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL))

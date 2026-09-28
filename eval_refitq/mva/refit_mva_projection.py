@@ -71,11 +71,11 @@ def _discover(path):
     with uproot.open(f"{path}:Events") as t:
         keys = set(t.keys())
     cfgs = sorted({m.group(1) for m in
-                   (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k) for k in keys) if m})
+                   (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k) for k in keys) if m})
     if not cfgs:
         raise SystemExit("no refit hit table in the input")
     cfg = cfgs[-1]
-    return f"L1TSmartPixelsRefitHitDigiRefit{cfg}", f"L1TSmartPixelsTrackDigiRefit{cfg}", cfg, keys
+    return f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}", f"L1TSmartPixelsTrackSeedlessRefit{cfg}", cfg, keys
 
 
 def load(paths):

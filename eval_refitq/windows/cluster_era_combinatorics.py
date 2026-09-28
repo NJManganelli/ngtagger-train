@@ -60,7 +60,7 @@ def robust_sigma(v):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-i", "--inputs", nargs="+", required=True)
-    ap.add_argument("--config", default=None, help="digiRefit config suffix; default: autodetect")
+    ap.add_argument("--config", default=None, help="seedlessRefit config suffix; default: autodetect")
     ap.add_argument("-o", "--output", default=None)
     args = ap.parse_args()
     files = [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])]
@@ -69,12 +69,12 @@ def main():
         keys = list(t.keys())
     import re
     cfgs = sorted({m.group(1) for m in
-                   (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k) for k in keys)
+                   (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k) for k in keys)
                    if m})
     if not cfgs:
-        raise SystemExit("no L1TSmartPixelsRefitHitDigiRefit* tables in the input")
+        raise SystemExit("no L1TSmartPixelsRefitHitSeedlessRefit* tables in the input")
     cfg = args.config or cfgs[-1]
-    HIT = f"L1TSmartPixelsRefitHitDigiRefit{cfg}"
+    HIT = f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}"
     print(f"files={len(files)}  config={cfg}")
 
     want = ["layer", "windowMult", "hitAccepted", "selHitClass",

@@ -10,7 +10,7 @@ from ngtagger.train import trackmva as tm
 from ngtagger.data import trackmva_feature as tf
 
 CFG = "AAAA"
-B, R, H = "L1TTrack", f"L1TSmartPixelsTrackDigiRefit{CFG}", f"L1TSmartPixelsRefitHitDigiRefit{CFG}"
+B, R, H = "L1TTrack", f"L1TSmartPixelsTrackSeedlessRefit{CFG}", f"L1TSmartPixelsRefitHitSeedlessRefit{CFG}"
 TRUTH_BRANCH_MARKERS = ("genuine", "tp_", "tpFromHardInteraction", "spixMatchedTp", "tpIdx", "tpKey",
                         "selClusterIdx", "L1TTP")
 

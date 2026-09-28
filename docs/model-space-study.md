@@ -21,7 +21,7 @@ that are "offline/upper-bound only" today become deployable at T1/T2.
 ## 0. Data, statistics, and method
 
 Single study sample: `nano_pu100_TrkSmartPix_withGen.root` — 100 PU events,
-17 324 reference tracks, **16 845 genuine / 479 fake**, four digiRefit
+17 324 reference tracks, **16 845 genuine / 479 fake**, four seedlessRefit
 layer-config variants (AIII/AAII/AAAI/AAAA) with per-track extension columns
 and per-hit link tables. Verified structural facts:
 
@@ -220,7 +220,7 @@ The study nano is Trk-flavored: it has **no Puppi candidate tables, no
 L1SC4NGJetCands links, no NG jet table** — so no per-candidate refit feature
 can be derived from it, and no tagger training can run on it. First
 dependency for everything in this part: a combined production
-(`@L1PFTrkNano`-withGen + SmartPixels digiRefit tables in ONE nano), which
+(`@L1PFTrkNano`-withGen + SmartPixels seedlessRefit tables in ONE nano), which
 the WF1 coexist machinery already supports. Effort S–M (production config,
 no new code).
 

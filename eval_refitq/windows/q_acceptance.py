@@ -19,7 +19,7 @@ Compares Q-on against Q-off on the same events.
     pixi run python eval_refitq/windows/q_acceptance.py -a <Q-on.root> -b <Q-off.root>
 
 CALIBRATION RESULT (PU200, 25 events, correct-hit pull width in x, target 1.0).
-The scale scanned is digiRefitMultScattTerm; L4 is first-visited under outsideIn
+The scale scanned is seedlessRefitMultScattTerm; L4 is first-visited under outsideIn
 so it gets no Q by construction and is unchanged throughout.
 
     term        L1      L2      L3      L4     |  L1 pT-span
@@ -114,8 +114,8 @@ def load(path):
     with uproot.open(f"{path}:Events") as t:
         keys = set(t.keys())
     cfg = sorted({m.group(1) for m in
-                  (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k) for k in keys) if m})[-1]
-    H, REF = f"L1TSmartPixelsRefitHitDigiRefit{cfg}", "L1TTrack"
+                  (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k) for k in keys) if m})[-1]
+    H, REF = f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}", "L1TTrack"
     hc = ["trackIdx", "layer", "hitAccepted", "selHitClass", "pullX", "pullY"]
     A = uproot.concatenate([f"{path}:Events"], filter_name=[f"{H}_{c}" for c in hc])
     R = uproot.concatenate([f"{path}:Events"], filter_name=[f"{REF}_pt"])

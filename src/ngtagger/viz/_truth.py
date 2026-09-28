@@ -1,7 +1,7 @@
 """Per-track TRUTH for the 5-par prompt resolution-vs-truth columns.
 
 The framing (mem:smartpixels-5par-framing-directive): the comparison is
-5-par OT-only (reference L1TTrack) vs 5-par OT+IT (prompt digiRefit). The metric
+5-par OT-only (reference L1TTrack) vs 5-par OT+IT (prompt seedlessRefit). The metric
 is RESOLUTION TO TRUTH: does adding the inner-tracker hits move the track TOWARD
 the true parameters, param by param.
 

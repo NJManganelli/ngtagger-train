@@ -1,6 +1,6 @@
-"""SmartPixels digiRefit refit-replay VISUALIZER (5-par prompt framing).
+"""SmartPixels seedlessRefit refit-replay VISUALIZER (5-par prompt framing).
 
-Interactive, self-contained (kernel-free) Plotly figure showing a PROMPT digiRefit
+Interactive, self-contained (kernel-free) Plotly figure showing a PROMPT seedlessRefit
 L1Track Kalman refit step-by-step across the 3 angle modes (none / alpha /
 alphaBeta) and the 15 SmartPixels layer configs (1000..1111), for a curated set
 of example tracks.
@@ -11,7 +11,7 @@ prompt track (impact parameter for b-tagging, vertexing). The 4-par pinned-d0 pa
 is DROPPED:
   * SEED  = 5-par OT-only PROMPT track = reference L1TTrack (real d0 + reduced fit
             chi2 chi2XYRed/chi2ZRed).
-  * REFIT = 5-par OT+IT = prompt digiRefit variant L1TSmartPixelsTrackDigiRefit<CFG>.
+  * REFIT = 5-par OT+IT = prompt seedlessRefit variant L1TSmartPixelsTrackSeedlessRefit<CFG>.
   * OT stubs = the REAL OT stubs (L1TTrackStub -> L1TOTStub x/y/z, layer) -- not schematic.
 
 Two-posture faithfulness (see docs/refit-replay-viz.md):
@@ -63,7 +63,7 @@ ILLUSTRATIVE_PARAMS = {"tanL", "z0"}
 
 # Colors
 C_SEED = "#1f77b4"     # 5-par OT-only L1Track seed helix / seed state
-C_REFIT = "#d62728"    # OT+IT digiRefit helix / final state
+C_REFIT = "#d62728"    # OT+IT seedlessRefit helix / final state
 C_LAYER = "#888888"    # IT (SmartPixels TBPX) layer guides
 C_OTLAYER = "#c2b280"  # OT barrel layer guides
 C_OTSTUB = "#17becf"   # REAL OT stubs (L1TTrackStub x/y/z)
@@ -75,9 +75,9 @@ _HIT_COLOR = {0: C_HIT_TRUE, 1: C_HIT_WRONG, 2: C_HIT_NOISE, -1: C_LAYER}
 # Helix labels (round 4: NO user-visible "seed" -- an L1Track is itself built from
 # a seed triplet, so calling it "seed" was confusing): the initial track is the
 # "OT L1Track" = 5-par OT-only L1Track (L1TrackFinder fit on outer-tracker stubs +
-# beamline, promptHnpar=5); refit = OT+IT (prompt digiRefit adds SmartPixels).
+# beamline, promptHnpar=5); refit = OT+IT (prompt seedlessRefit adds SmartPixels).
 LABEL_SEED = "OT L1Track (5-par OT-only)"
-LABEL_REFIT = "5-par OT+IT digiRefit (adds SmartPixels)"
+LABEL_REFIT = "5-par OT+IT seedlessRefit (adds SmartPixels)"
 R_OVERVIEW = 115.0     # overview panel outer radius [cm] (past OT-L6 = 108)
 R_ZOOM = 18.0          # IT-zoom panel outer radius [cm]
 
@@ -975,7 +975,7 @@ def build_figure(data, picks, radii, seed_sigmas):
                     bgcolor="rgba(255,255,255,0.85)", bordercolor="#cccccc",
                     borderwidth=1, font=dict(size=10)),
         annotations=list(fig.layout.annotations) + [
-            dict(text=("<b>SmartPixels digiRefit replay</b>  —  5-par OT-only vs 5-par OT+IT: "
+            dict(text=("<b>SmartPixels seedlessRefit replay</b>  —  5-par OT-only vs 5-par OT+IT: "
                        "does adding SmartPixels improve the prompt track?"),
                  x=0.5, y=1.36, xref="paper", yref="paper", showarrow=False,
                  font=dict(size=15), xanchor="center"),
@@ -1051,7 +1051,7 @@ def _title(pick):
     hard = "hardInt" if truth["fromHard"] else "PU/other"
     # Identity + truth only (the static REAL/REPLAY fidelity key is a caption
     # under the table, so the title stays one clean line clear of the menus).
-    return (f"<b>SmartPixels digiRefit replay</b>  ·  [{arch}] ev{tr.event} trk{tr.idx}"
+    return (f"<b>SmartPixels seedlessRefit replay</b>  ·  [{arch}] ev{tr.event} trk{tr.idx}"
             f"<span style='font-size:12px'>  ·  truth: {badge_true} ({hard}, "
             f"d0={tr.seed['d0']:+.3f}, tpPt={truth['tpPt']:.1f}, nStubs={truth['nStubs']})</span>")
 

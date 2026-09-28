@@ -94,7 +94,7 @@ OUT["payload_bins"] = {v: dict(cotBeta_edges=e, n_cotBeta=len(e) - 1, file_bytes
 
 # ======================= 2. nano =======================
 PC = "L1TSmartPixelsCluster_"
-RT, RH = "L1TSmartPixelsTrackDigiRefitAAAA_", "L1TSmartPixelsRefitHitDigiRefitAAAA_"
+RT, RH = "L1TSmartPixelsTrackSeedlessRefitAAAA_", "L1TSmartPixelsRefitHitSeedlessRefitAAAA_"
 TRK = ["pt", "d0", "z0", "spixRefitPerformed", "spixNAcceptedHits", "spixChi2IncXTot", "spixChi2IncYTot",
        "spixChi2IncAlphaTot", "spixChi2IncBetaTot"]
 HIT = ["hitAccepted", "selHitClass"]

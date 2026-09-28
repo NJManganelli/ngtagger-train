@@ -1,5 +1,5 @@
 """Smoke tests for the refit-quality BDT study on synthetic, row-aligned
-SmartPixels digiRefit tables (mirrors test_trkquality.py conventions).
+SmartPixels seedlessRefit tables (mirrors test_trkquality.py conventions).
 
 Builds a small synthetic sample where genuine tracks have cleaner refit info
 (smaller pulls, smaller kicks, more accepted hits) so every tier is separable

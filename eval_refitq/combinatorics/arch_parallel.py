@@ -20,9 +20,9 @@ Contrast the two designs this exists to compare:
                     on combined tracks, mixed seeds are first class
                     (this is what tp_findability already does)
 
-  DIGIREFIT-LIKE    an OT track projected into the IT, attaching clusters, then
+  SEEDLESSREFIT-LIKE    an OT track projected into the IT, attaching clusters, then
                     refit -- the IT is GUIDED by the OT rather than finding
-                    anything itself. The existing SmartPixels digiRefit is a
+                    anything itself. The existing SmartPixels seedlessRefit is a
                     simplified, hardware-ignorant precursor of the parallel
                     design, and this baseline is obtained for free as the
                     COMBINED mode restricted to OT-only seeds.

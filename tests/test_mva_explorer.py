@@ -425,7 +425,7 @@ def _has_split_chi2(path):
     import uproot
 
     with uproot.open(path) as f:
-        return "L1TSmartPixelsTrackDigiRefitAAAA_spixChi2IncXTot" in f["Events"].keys()
+        return "L1TSmartPixelsTrackSeedlessRefitAAAA_spixChi2IncXTot" in f["Events"].keys()
 
 
 @pytest.mark.skipif(not _has_split_chi2(_COOPT_NANO),

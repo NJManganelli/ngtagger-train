@@ -310,7 +310,7 @@ OUT["payload_nonSP_old_vs_new"] = compare(a.pay_old, a.pay_new, True)
 print("nonSP vs v2", OUT["nonSP_vs_v2"]); print("payload SP", OUT["payload_SP_old_vs_new"]); print("payload nonSP", OUT["payload_nonSP_old_vs_new"])
 
 # ======================= refit: alphaBeta vs alpha, the |cot| cap =======================
-RT, RH = "L1TSmartPixelsTrackDigiRefitAAAA_", "L1TSmartPixelsRefitHitDigiRefitAAAA_"
+RT, RH = "L1TSmartPixelsTrackSeedlessRefitAAAA_", "L1TSmartPixelsRefitHitSeedlessRefitAAAA_"
 TRK = ["pt", "d0", "z0", "spixRefitPerformed", "spixNAcceptedHits", "spixNKFUpdates", "spixMatchedTpKey",
        "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot"]
 HIT = ["trackIdx", "hitAccepted", "hasAlpha", "hasBeta", "selClusterIdx", "selHitClass", "pullAlpha", "pullBeta"]
@@ -377,7 +377,7 @@ for ax, (nm, fn, e) in zip(axes.flat, specs):
         ax.set_xscale("log")
 h_, l_ = axes[0, 0].get_legend_handles_labels()
 fig.legend(h_, l_, loc="outside lower center", ncol=2, fontsize=9, frameon=False)
-fig.suptitle("digiRefit AAAA on the emu nano (file 3, 100 events): useAngles alphaBeta vs alpha, TP-matched refit tracks", fontsize=10)
+fig.suptitle("seedlessRefit AAAA on the emu nano (file 3, 100 events): useAngles alphaBeta vs alpha, TP-matched refit tracks", fontsize=10)
 with PdfPages(FIG("emu_fix_refit.pdf")) as pdf:
     pdf.savefig(fig); plt.close(fig)
     table_pages(pdf, fmt(RF), "Refit residual widths vs the TP (q68 half-width, core RMS, median) and chi2 summaries")

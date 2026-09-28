@@ -38,7 +38,7 @@ for k in sorted([k for k in keys if k.startswith("GenJet_")]):
 
 # refit tables (SmartPixels)
 print("\n=== SmartPixels refit tables ===")
-sp = sorted(set(re.match(r"(L1TSmartPixels\w*?(?:DigiRefit|RefitHitDigiRefit)\w+?)_", k).group(1)
+sp = sorted(set(re.match(r"(L1TSmartPixels\w*?(?:SeedlessRefit|RefitHitSeedlessRefit)\w+?)_", k).group(1)
                for k in keys if k.startswith("L1TSmartPixels")))
 for p in sp:
     n = len([k for k in keys if k.startswith(p + "_")])

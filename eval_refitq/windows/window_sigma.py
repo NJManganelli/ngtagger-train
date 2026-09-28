@@ -20,13 +20,13 @@ import glob as _glob, argparse
 _ap = argparse.ArgumentParser(description=__doc__)
 _ap.add_argument('-i', '--inputs', nargs='+',
                  default=['/Users/nmangane/smartpixels/cmssw/work/spxsmoke/nano/clamp_on_f*.root'],
-                 help='nano files or globs (post-guard digiRefit productions)')
+                 help='nano files or globs (post-guard seedlessRefit productions)')
 _args = _ap.parse_args()
 DEFAULT_FILES = [f for p in _args.inputs for f in (sorted(_glob.glob(p)) or [p])]
 print(f'files: {len(DEFAULT_FILES)}')
 
-REF, VAR = "L1TTrack", "L1TSmartPixelsTrackDigiRefitAAAA"
-HIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
+REF, VAR = "L1TTrack", "L1TSmartPixelsTrackSeedlessRefitAAAA"
+HIT = "L1TSmartPixelsRefitHitSeedlessRefitAAAA"
 WIN_RPHI = {1: 0.05, 2: 0.17, 3: 0.5, 4: 0.9}
 WIN_Z = {1: 0.45, 2: 0.35, 3: 0.25, 4: 0.2}
 

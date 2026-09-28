@@ -12,7 +12,7 @@ f = uproot.open(path)
 t = f["Events"]
 keys = list(t.keys())
 
-for tbl in [f"L1TSmartPixelsExtTrackDigiRefit{cfg}", f"L1TSmartPixelsExtRefitHitDigiRefit{cfg}"]:
+for tbl in [f"L1TSmartPixelsExtTrackSeedlessRefit{cfg}", f"L1TSmartPixelsExtRefitHitSeedlessRefit{cfg}"]:
     cols = sorted(k for k in keys if k.startswith(tbl + "_"))
     print(f"=== {tbl} ({len(cols)}) ===")
     for c in cols:
@@ -23,16 +23,16 @@ for c in sorted(k for k in keys if k.startswith("L1Vertex_")):
     print("   ", c)
 
 # 1:1 alignment check: L1TExtTrack row count == refit variant row count per event
-arrs = t.arrays(["nL1TExtTrack", f"nL1TSmartPixelsExtTrackDigiRefit{cfg}",
-                 "L1TExtTrack_pt", f"L1TSmartPixelsExtTrackDigiRefit{cfg}_spixRefitPerformed",
+arrs = t.arrays(["nL1TExtTrack", f"nL1TSmartPixelsExtTrackSeedlessRefit{cfg}",
+                 "L1TExtTrack_pt", f"L1TSmartPixelsExtTrackSeedlessRefit{cfg}_spixRefitPerformed",
                  "L1Vertex_z0", "L1ExtPuppiCand_l1TrackIdx", "L1ExtPuppiCand_dxy"])
 nExt = ak.to_numpy(arrs["nL1TExtTrack"])
-nVar = ak.to_numpy(arrs[f"nL1TSmartPixelsExtTrackDigiRefit{cfg}"])
+nVar = ak.to_numpy(arrs[f"nL1TSmartPixelsExtTrackSeedlessRefit{cfg}"])
 print("\n=== alignment ===")
 print("per-event nL1TExtTrack == nRefitVar all events:", bool(np.all(nExt == nVar)))
 print("total ExtTrack rows:", int(nExt.sum()), " total refit rows:", int(nVar.sum()))
 
-perf = arrs[f"L1TSmartPixelsExtTrackDigiRefit{cfg}_spixRefitPerformed"]
+perf = arrs[f"L1TSmartPixelsExtTrackSeedlessRefit{cfg}_spixRefitPerformed"]
 perf_flat = ak.to_numpy(ak.flatten(perf))
 print("refitPerformed fraction:", float(perf_flat.mean()))
 

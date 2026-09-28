@@ -11,11 +11,9 @@ Two datasets share one column layout so the page can plot them on the same axes:
                     makes any IT-vs-no-IT conclusion trustworthy.
 
 For the CMSSW source, per-stub truth is joined from L1TOTStub by ot_oracle.
-stub_truth: exactly through L1TTrackStub_otStubIdx on current nanos, else on the
-full stub identity (event, detId, bend, x/y/z within tolerance):
-L1TTrack carries per-track truth but not per-stub truth, and the contamination
-axes the page bins on are per stub. An earlier (event, detId, z) key was
-ambiguous for ~half of PU200 OT stubs and silently attached a neighbour's truth.
+stub_truth, exactly through L1TTrackStub_otStubIdx: L1TTrack carries per-track
+truth but not per-stub truth, and the contamination axes the page bins on are
+per stub.
 """
 from __future__ import annotations
 import sys, json, glob, argparse
@@ -27,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M      # noqa: E402
 import kf_emulation as KF               # noqa: E402
 import tp_findability as TF             # noqa: E402
-from ot_oracle import OT_LINK, load, stub_truth   # noqa: E402
+from ot_oracle import load, stub_truth   # noqa: E402
 
 # THE TP LINK. Both baselines carry, per track, its majority owner's row in the
 # site's own TP census (tp_row) and how many of its hits that owner holds
@@ -91,11 +89,10 @@ def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
     tpidx, flag, hit = stub_truth(S, O)
     bar = S["isBarrel"] > 0
     frac = float(hit[bar].mean()) if bar.any() else 0.0
-    how = "otStubIdx" if OT_LINK in S else "stub identity"
-    print(f"  stub truth join ({how}): {100 * frac:.2f}% of barrel track stubs matched")
+    print(f"  stub truth join (otStubIdx): {100 * frac:.2f}% of barrel track stubs matched")
     if frac < 0.999:
         raise SystemExit(
-            f"the {how} join matched only {100 * frac:.2f}% of barrel stubs; "
+            f"the otStubIdx join matched only {100 * frac:.2f}% of barrel stubs; "
             f"the per-stub counters would be built on a subset and would not be "
             f"comparable to the emulation's")
 
@@ -303,8 +300,7 @@ def build_block(source, *, inputs=None, cache_dir=None, nev=None,
         key, fn = "baseline", "baseline.bin"
         label = "Phase-2 baseline"
         what = ("The L1TTrack collection CMSSW produced, with per-stub truth "
-                "joined from L1TOTStub through otStubIdx, or on older nanos on the "
-                "full stub identity (event, detId, bend, x/y/z within 1e-4 cm).")
+                "joined from L1TOTStub through otStubIdx.")
         extra = ""
     elif source == "census":
         if not cache_dir:

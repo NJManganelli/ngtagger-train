@@ -107,7 +107,7 @@ class _SmartPixelsRefitHitBase(base.NanoCollection):
     """SmartPixels per-hit refit link table: one row per accepted refit hit,
     with a `trackIdx` crossref into the matching variant track table (the same
     row index also indexes the reference L1TTrack/L1TExtTrack, 1:1 aligned).
-    Concrete subclasses bind `_track_target` per digiRefit config/variant."""
+    Concrete subclasses bind `_track_target` per seedlessRefit config/variant."""
 
     _track_target = None
 
@@ -124,9 +124,9 @@ class _SmartPixelsRefitHitBase(base.NanoCollection):
 
 class _TrackStubBase(base.NanoCollection):
     """Track -> stub link table (L1TTrackStub, L1TExtTrackStub,
-    L1TSmartPixels[Ext]TrackStub): one row per stub of a track. Link-only on
-    current nanos (trackIdx, otStubIdx); the stub columns (spix_nano.STUB_COLUMNS)
-    read inline on older nanos and through ``ot_stub`` otherwise."""
+    L1TSmartPixels[Ext]TrackStub): one row per stub of a track, link-only
+    (trackIdx, otStubIdx); the stub columns (spix_nano.STUB_COLUMNS) are read
+    through ``ot_stub``."""
 
     _track_target = None
 
@@ -143,9 +143,9 @@ class _TrackStubBase(base.NanoCollection):
 
 def _stub_column(col):
     def get(self):
-        return self[col] if col in self.fields else self.ot_stub[col]
+        return self.ot_stub[col]
 
-    return property(get, doc=f"stub {col}: inline on older nanos, else L1TOTStub[otStubIdx].{col}")
+    return property(get, doc=f"stub {col} = L1TOTStub[otStubIdx].{col}")
 
 
 for _col in spix_nano.STUB_COLUMNS:
@@ -154,7 +154,7 @@ for _col in spix_nano.STUB_COLUMNS:
 
 class _TrackClusterBase(base.NanoCollection):
     """SmartPixels track -> IT cluster link table (L1TSmartPixels[Ext]TrackCluster):
-    one row per cluster used by a track (digiRefit: the accepted IT hits)."""
+    one row per cluster used by a track (seedlessRefit: the accepted IT hits)."""
 
     _track_target = None
 
@@ -328,7 +328,7 @@ class L1SmartPixelsExtTrack(_SmartPixelsTrackBase):
 
 
 # ---------------------------------------------------------------------------
-# SmartPixels digiRefit variant tables (Phase-3 tier-2 refit study).
+# SmartPixels seedlessRefit variant tables (Phase-3 tier-2 refit study).
 # Track tables L1TSmartPixelsTrack<suffix>/L1TSmartPixelsExtTrack<suffix> are
 # track-like: they carry the same hw track-word columns as L1TTrack (reuse the
 # hw-decode mixin) plus the spix* refit-status extension columns, and are 1:1
@@ -370,24 +370,6 @@ def _link_class(kind, track_table):
 def _hit_link_class(track_table):
     """The refit-hit mixin bound to `track_table`."""
     return _link_class("RefitHit", track_table)
-
-
-# Nanos before 2026-09-27 named the OT-track quantities "seed" (spix_nano.OT_RENAMES):
-# the old branches are read under the new names.
-_OT_OLD_TO_NEW = {old: new for new, old in spix_nano.OT_RENAMES.items()}
-
-
-def with_ot_names(field_names, contents):
-    """(field_names, contents) with every pre-rename OT-track column under its
-    new name (kept as is when the new name already exists)."""
-    names = list(field_names)
-    have = set(names)
-    for i, n in enumerate(names):
-        t, _, col = n.partition("_")
-        new = _OT_OLD_TO_NEW.get(col)
-        if new and f"{t}_{new}" not in have:
-            names[i] = f"{t}_{new}"
-    return names, list(contents)
 
 
 # Key-linked nanos (spix_nano.tp_link_convention != "row"): the row-convention
@@ -615,7 +597,6 @@ _DOC_LINKS = {
 _CAND_TRACK_LINKS = ("L1PuppiCand_l1TrackIdx", "L1ExtPuppiCand_l1TrackIdx")
 # "index of the ... track in the <TABLE> table (...)" (candidate, displaced
 # vertex) / "row of the <TABLE> track this SmartPixels track was built from"
-# (older nanos: "... was seeded from")
 _DOC_TARGET_RE = re.compile(r"\bin the (\w+) table\b|^row of the (\w+) track\b")
 
 
@@ -734,7 +715,7 @@ class L1NanoSchema(NanoAODSchema):
             warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
     def _build_collections(self, field_names, input_contents):
-        return super()._build_collections(*with_tp_rows(*with_ot_names(field_names, input_contents)))
+        return super()._build_collections(*with_tp_rows(field_names, input_contents))
 
     mixins = {
         **NanoAODSchema.mixins,
@@ -896,5 +877,5 @@ def require_clusters_tier(events):
             f"this file has no {CLUSTER_TABLE} table, so it is not the Clusters tier.\n"
             "Produce one with:\n"
             "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
-            "--variant digiRefit:1111 --needs-truth -o <out>.py")
+            "--variant seedlessRefit:1111 --needs-truth -o <out>.py")
     return events[CLUSTER_TABLE]

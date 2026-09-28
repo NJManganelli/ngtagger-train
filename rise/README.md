@@ -1,6 +1,6 @@
 # SmartPixels RISE talk
 
-30-minute internal talk on the Tier-2 `digiRefit` campaign: refit approach, the
+30-minute internal talk on the Tier-2 `seedlessRefit` campaign: refit approach, the
 interactive step-by-step visualizer, the sign-bug story, refit-quality BDT, the
 stage-4 coherent tagger matrix, and vertex-emulator R&D. Dark-sector physics is
 backup-only.
@@ -69,7 +69,7 @@ know). Read them in the reveal speaker view (`S`) or directly in JupyterLab.
 | 0:30 | thesis + R&D-payoff framing (cheat-sheet subslide) |
 | 1:30 | tier model (where Tier-2 came from) |
 | 3:30 | Nano capability now (2 slides: tables/truth; coherent nanos) |
-| 6:30 | digiRefit: the idea |
+| 6:30 | seedlessRefit: the idea |
 | 8:30 | **interactive: refit-replay visualizer** (centerpiece, ~3.5 min) |
 | 12:00 | the sign-bug story (3 fragments) |
 | 14:30 | post-fix resolution (d0 −46%, z0 −56%) |

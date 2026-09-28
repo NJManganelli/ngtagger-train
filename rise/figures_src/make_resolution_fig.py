@@ -3,7 +3,7 @@
 Data source: the post-sign-fix 10-file prime production
   nano_pF_PFTrkSmartPix_withGen_file{1..10}.root  (1000 PU events)
 Selection: L1TTrack rows with a matched TrackingParticle (tp_pt > 0); the
-digiRefit variant tables are row-aligned with L1TTrack (passthrough rows copy
+seedlessRefit variant tables are row-aligned with L1TTrack (passthrough rows copy
 the seed).  Metric: median |param - tp_param| in micrometers.
 
 The computed numbers are cached in resolution_pF.json next to this script so
@@ -59,7 +59,7 @@ def recompute():
             acc["seed"]["d0"].append(np.abs(d0 - tp_d0)[m])
             acc["seed"]["z0"].append(np.abs(z0 - tp_z0)[m])
             for c in CONFIGS:
-                vt = f"L1TSmartPixelsTrackDigiRefit{c}"
+                vt = f"L1TSmartPixelsTrackSeedlessRefit{c}"
                 vd0 = ak.flatten(t[f"{vt}_d0"].array()).to_numpy()
                 vz0 = ak.flatten(t[f"{vt}_z0"].array()).to_numpy()
                 acc[c]["d0"].append(np.abs(vd0 - tp_d0)[m])

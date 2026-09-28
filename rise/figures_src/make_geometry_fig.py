@@ -1,4 +1,4 @@
-"""Schematic for the digiRefit idea slide: OT track projected into TBPX,
+"""Schematic for the seedlessRefit idea slide: OT track projected into TBPX,
 per-layer digi windows, KF update near the vertex.
 
 Pure schematic (no data), drawn to real radii: TBPX layers ~3.0/6.8/10.9/16.0 cm,
@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, os.pardir, "figures", "digirefit_idea.png")
+OUT = os.path.join(HERE, os.pardir, "figures", "seedlessrefit_idea.png")
 
 IT_R = [3.0, 6.8, 10.9, 16.0]
 OT_R = [25.0, 37.2, 52.2, 68.7, 86.0, 108.6]
@@ -87,8 +87,8 @@ def main():
     b.set_aspect("equal")
     b.set_xlabel("x [cm]"); b.set_ylabel("y [cm]")
     b.legend(loc="upper left", fontsize=13)
-    b.set_title("Tier-2 digiRefit: 5-par Kalman update\non SmartPixels hit windows", fontsize=17)
-    fig.suptitle("digiRefit: take the 5-parameter outer-tracker L1 track, add inner-pixel hits near the vertex",
+    b.set_title("Tier-2 seedlessRefit: 5-par Kalman update\non SmartPixels hit windows", fontsize=17)
+    fig.suptitle("seedlessRefit: take the 5-parameter outer-tracker L1 track, add inner-pixel hits near the vertex",
                  fontsize=18)
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig(OUT, dpi=140)

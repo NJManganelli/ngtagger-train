@@ -161,10 +161,10 @@ TP. Older nanos (cnn_nano v1-v4) hold TP KEYS (`tpKey` + `L1TTP_key`; v1 under
 the *Idx names + `L1TTP_idx`): `tp_idx` / `cluster_columns` / `table_columns`
 derive the row convention from them, as does the coffea schema.
 `L1TTP` now holds TPs with 3-momentum |p| > 1 GeV
-(older nanos: pT >= 1 GeV). Track stubs carry `otStubIdx`, their exact row in
-`L1TOTStub`; `ot_oracle.stub_truth` uses it and falls back to the stub-identity
-join on older nanos (`ot_oracle.py --compare-joins -i <nano>` checks the two
-agree).
+(older nanos: pT >= 1 GeV). Track -> stub tables (`L1TTrackStub`,
+`L1TExtTrackStub`, `L1TSmartPixels[Ext]TrackStub`) are link-only: `trackIdx` and
+`otStubIdx`, the stub's exact row in `L1TOTStub`, where its columns are read
+(`spix_nano`, the coffea schema and `ot_oracle.stub_truth` all join on it).
 
 **Every tool takes one or many inputs**: `-i` accepts comma-separated paths
 and/or globs, order preserved. `-n` limits events and is enforced across files

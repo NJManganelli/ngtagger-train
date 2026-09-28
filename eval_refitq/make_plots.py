@@ -1,4 +1,4 @@
-"""Evaluation plots for the SmartPixels digiRefit refit-quality BDT study.
+"""Evaluation plots for the SmartPixels seedlessRefit refit-quality BDT study.
 
 Produces (to eval_refitq/):
   1. ROC curves: one panel per config overlaying tiers A/B/C/D, plus a panel of
@@ -152,7 +152,7 @@ def plot_resolution():
         z0ref = ak.to_numpy(ak.flatten(t["L1TTrack_z0"].array()))
         d0v, z0v = {}, {}
         for c in SMARTPIXELS_CONFIGS:
-            vt = f"L1TSmartPixelsTrackDigiRefit{c}"
+            vt = f"L1TSmartPixelsTrackSeedlessRefit{c}"
             d0v[c] = ak.to_numpy(ak.flatten(t[f"{vt}_d0"].array()))
             z0v[c] = ak.to_numpy(ak.flatten(t[f"{vt}_z0"].array()))
 
@@ -203,7 +203,7 @@ def plot_resolution():
     ax.legend(fontsize=9)
     ax.set_title(r"$z_0$ kick vs hard-interaction vertex")
 
-    fig.suptitle("Refit resolution: reference vs digiRefit variants  —  " + CAVEAT
+    fig.suptitle("Refit resolution: reference vs seedlessRefit variants  —  " + CAVEAT
                  + "\nMethod: robust core over genuine hard-interaction prompt tracks; "
                  "d0 true~0 (prompt TTbar); z0 ref = GenVtx_z (hard-interaction primary vertex z).",
                  fontsize=10)
@@ -246,8 +246,8 @@ def plot_sidecar(cfg):
     import awkward as ak
 
     with uproot.open(f"{NANO}:Events") as t:
-        vt = f"L1TSmartPixelsTrackDigiRefit{cfg}"
-        ht = f"L1TSmartPixelsRefitHitDigiRefit{cfg}"
+        vt = f"L1TSmartPixelsTrackSeedlessRefit{cfg}"
+        ht = f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}"
         perf = ak.to_numpy(ak.flatten(t[f"{vt}_spixRefitPerformed"].array())).astype(bool)
         from ngtagger.data.spix_nano import branch_name
         keys = set(t.keys())

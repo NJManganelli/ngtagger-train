@@ -77,10 +77,10 @@ def _discover(files):
         keys = list(t.keys())
     import re
     cfgs = sorted({m.group(1) for m in
-                   (re.match(r"^L1TSmartPixelsRefitHitDigiRefit([A-Za-z0-9]+)_", k) for k in keys)
+                   (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k) for k in keys)
                    if m})
     if not cfgs:
-        raise SystemExit("no L1TSmartPixelsRefitHitDigiRefit* table in the input")
+        raise SystemExit("no L1TSmartPixelsRefitHitSeedlessRefit* table in the input")
     cfg = cfgs[-1]
     kset = set(keys)
     # Pre-v2.6 nano called the OT-projection residual resX/resY, which was
@@ -88,9 +88,9 @@ def _discover(files):
     # projResX/projResY. There is no back-compat path here on purpose: the
     # ordering question is about v2.6 behaviour and reading a v2.5 file would
     # silently compare against a build that had no layerOrder knob.
-    need = [f"L1TSmartPixelsRefitHitDigiRefit{cfg}_{c}" for c in ("projResX", "projResY")]
+    need = [f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}_{c}" for c in ("projResX", "projResY")]
     if any(n not in kset for n in need):
-        legacy = f"L1TSmartPixelsRefitHitDigiRefit{cfg}_resX" in kset
+        legacy = f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}_resX" in kset
         raise SystemExit(
             f"{files[0]}: missing {[n.split('_')[-1] for n in need if n not in kset]}"
             + (" - this looks like PRE-v2.6 nano (it still carries resX/resY). "
@@ -108,8 +108,8 @@ def _discover(files):
 def load(paths, label):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     cfg, keys = _discover(files)
-    HIT = f"L1TSmartPixelsRefitHitDigiRefit{cfg}"
-    VAR = f"L1TSmartPixelsTrackDigiRefit{cfg}"
+    HIT = f"L1TSmartPixelsRefitHitSeedlessRefit{cfg}"
+    VAR = f"L1TSmartPixelsTrackSeedlessRefit{cfg}"
 
     ref_cols = ["pt", "genuine", "tpFromHardInteraction", "tp_phi", "tp_charge", "tp_vx", "tp_vy"] + \
                [c for _, c, _, _, _ in PARAMS] + [t for _, _, t, _, _ in PARAMS if t != "tp_phi0"]

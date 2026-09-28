@@ -34,8 +34,8 @@ import numpy as np
 import uproot
 from ngtagger.truth_helix import tp_phi0
 
-REF, VAR = "L1TTrack", "L1TSmartPixelsTrackDigiRefitAAAA"
-HIT = "L1TSmartPixelsRefitHitDigiRefitAAAA"
+REF, VAR = "L1TTrack", "L1TSmartPixelsTrackSeedlessRefitAAAA"
+HIT = "L1TSmartPixelsRefitHitSeedlessRefitAAAA"
 
 # (name, reference/variant column, truth column, scale, unit)
 PARAMS = [
