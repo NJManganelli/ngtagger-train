@@ -40,7 +40,7 @@ def _synth(n_events=60, tracks_per_event=30, seed=0):
             # cleaner refit for genuine tracks
             kick = (0.002 if g else 0.05)
             var_rows.append({
-                "spixRefitPerformed": True, "spixSeedCovOK": True,
+                "spixRefitPerformed": True, "spixOTCovOK": True,
                 "spixNCrossings": 2, "spixNAcceptedHits": 2,
                 "spixLayerHitMask": 3, "spixMaxWindowMult": int(rng.integers(2, 6)),
                 "spixAnyWindowTruncated": (not g), "spixNKFUpdates": 2,

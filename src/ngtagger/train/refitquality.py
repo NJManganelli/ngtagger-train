@@ -41,6 +41,8 @@ import awkward as ak
 import numpy as np
 import uproot
 
+from ngtagger.data.spix_nano import branch_name
+
 # Reuse the exact reference-track feature machinery (two's-complement decode,
 # missed-interior-layer counting, bit widths) so Tier A is byte-identical to
 # the deployed TrackQuality GBDT training.
@@ -90,7 +92,7 @@ TIER_DESCRIPTIONS = {
 #  - features 9-10: chi2IncRPhiTot / chi2IncRZTot (post-guard; sentinel -> 0;
 #                   passthrough tracks carry 0 - but passthrough tracks are
 #                   never scored, so we train/parity on refit tracks only)
-#  - features 11-15: refit-minus-seed deltas on (rInv, phi, tanl, z0, d0) =
+#  - features 11-15: refit-minus-OT-track deltas on (rInv, phi, tanl, z0, d0) =
 #                    variant track minus reference track, 1:1 row aligned
 #  - feature 16   : seedTrkMVA1 = the INPUT (reference) track's trkMVA1 column
 #
@@ -175,7 +177,7 @@ _REF_TRUTH = ["genuine", "looselyGenuine", "combinatoric", "unknown",
               "tpPt", "tpPdgId", "tpFromHardInteraction"]
 
 # per-track extension columns from the variant track table (tier B core)
-_VAR_EXT = ["spixRefitPerformed", "spixSeedCovOK", "spixNCrossings", "spixNAcceptedHits",
+_VAR_EXT = ["spixRefitPerformed", "spixOTCovOK", "spixNCrossings", "spixNAcceptedHits",
             "spixLayerHitMask", "spixMaxWindowMult", "spixAnyWindowTruncated", "spixNKFUpdates",
             "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot"]
 # variant-table hw columns for the scenario-hw baseline (classic-7 minus nStubs,
@@ -232,13 +234,16 @@ def load_refit_tables(files: list[str], config: str, track_table: str = "L1TTrac
             "for the Ext scenario tables); scenario and nominal rows are linked "
             "implicitly by index.")
 
+    keys = set(uproot.open(f"{files[0]}:Events").keys())
+
     def _load(prefix, cols):
-        br = [f"{prefix}_{b}" for b in cols]
-        arrs = uproot.concatenate([f"{f}:Events" for f in files], filter_name=br)
+        # branch_name also resolves the pre-rename ("seed") spelling of OT-track columns
+        br = {b: branch_name(keys, prefix, b, required=False) or f"{prefix}_{b}" for b in cols}
+        arrs = uproot.concatenate([f"{f}:Events" for f in files], filter_name=list(br.values()))
         if max_events is not None:
             arrs = arrs[:max_events]
         # rezip into a record keyed by the bare column name (drop the prefix)
-        return ak.zip({b: arrs[f"{prefix}_{b}"] for b in cols}, depth_limit=1)
+        return ak.zip({b: arrs[br[b]] for b in cols}, depth_limit=1)
 
     _require_split_chi2(files, var_tbl)
     ref = _load(ref_tbl, _REF_HW + _REF_FLOAT + _REF_TRUTH)
@@ -722,7 +727,7 @@ def export_conifer(model_dir: str, tag: str, output_dir: str | None = None, back
 
 def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
                        refit_only: bool = True, require_truth: bool = True,
-                       seed_npar: int = 5, track_npar: int | None = None,
+                       ot_npar: int = 5, track_npar: int | None = None,
                        spec_version: int = 0):
     """Build the SPEC-ORDER (RefitSidecarSpec §6a) feature matrix that the
     producer evaluates in-flight. spec_version=0 -> the 17-feature v0 vector;
@@ -736,16 +741,17 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
     refit_only=True, rows are restricted to spixRefitPerformed==1 tracks (the
     producer never scores passthrough tracks - their trkMVA1 passes through).
 
-    seed_npar / track_npar: the producer seeds the KF d0 as
-        aSeed[4] = (seedNPar==5 && track.nFitPars()==5) ? track.d0 : 0.0
-    so feature 15 (dD0 = refit_d0 - aSeed[4]) subtracts 0.0 for 4-par seeds.
+    ot_npar / track_npar: the producer starts the KF d0 from the OT track as
+        aOT[4] = (otNPar==5 && track.nFitPars()==5) ? track.d0 : 0.0
+    (otNPar = digiRefitConfig 'otNPar', formerly 'seedNPar'), so feature 15
+    (dD0 = refit_d0 - aOT[4]) subtracts 0.0 for 4-par OT tracks.
     track_npar defaults to 4 for the prompt L1TTrack collection and 5 for the
     Ext collection (nFitPars is not persisted in nano). Getting this wrong puts
     a constant d0-LSB offset on feature 15 that flips near-threshold tracks.
     """
     if track_npar is None:
         track_npar = 4  # prompt L1TTrack default; callers pass 5 for Ext tables
-    use_ref_d0_as_seed = (seed_npar == 5 and track_npar == 5)
+    use_ref_d0 = (ot_npar == 5 and track_npar == 5)
     counts = ak.to_numpy(ak.num(ref["genuine"]))
     offsets = np.concatenate([[0], np.cumsum(counts)])
     n_tracks = int(offsets[-1])
@@ -812,9 +818,9 @@ def build_spec_dataset(ref, var, hits, config: str, label: str = "genuine",
         (var_flat["phi"] - ref_flat["phi"]).astype(np.float32),    # 12 dPhi
         (var_flat["tanL"] - ref_flat["tanL"]).astype(np.float32),  # 13 dTanl
         (var_flat["z0"] - ref_flat["z0"]).astype(np.float32),      # 14 dZ0
-        # 15 dD0 = refit_d0 - aSeed[4]; aSeed[4] = ref.d0 only for a 5-par seed
-        # (seedNPar==5 && track 5-par), else 0.0 - matches the producer seeding.
-        (var_flat["d0"] - (ref_flat["d0"] if use_ref_d0_as_seed
+        # 15 dD0 = refit_d0 - aOT[4]; aOT[4] = ref.d0 only for a 5-par OT track
+        # (otNPar==5 && track 5-par), else 0.0 - matches the producer.
+        (var_flat["d0"] - (ref_flat["d0"] if use_ref_d0
                            else np.zeros_like(ref_flat["d0"]))).astype(np.float32),  # 15 dD0
         ref_flat["trkMVA1"].astype(np.float32),               # 16 seedTrkMVA1
     ]
@@ -923,7 +929,7 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
                       conifer_name: str = "refitq_conifer_v0",
                       provenance: str = "", scale_pos_weight: bool = True,
                       spec_version: int = 0,
-                      seed_npar: int = 5, track_npar: int | None = None,
+                      ot_npar: int = 5, track_npar: int | None = None,
                       crossref_track_table: str | None = None):
     """Train the SPEC-ORDER refit-quality BDT and export it in conifer JSON
     matching the producer contract. spec_version=0 -> the 17-feature v0 vector;
@@ -947,7 +953,7 @@ def train_refitq_spec(files: list[str], output_dir: str, config: str = "AAAA",
     ref, var, hits = load_refit_tables(files, config, track_table, max_events,
                                        crossref_track_table=crossref_track_table)
     X, y, names, aux = build_spec_dataset(ref, var, hits, config, label=label,
-                                          seed_npar=seed_npar, track_npar=track_npar,
+                                          ot_npar=ot_npar, track_npar=track_npar,
                                           spec_version=spec_version)
     assert len(names) == nfeat_expected, f"spec feature count {len(names)} != {nfeat_expected}"
 

@@ -9,9 +9,10 @@ Re-anchored to the 5-par PROMPT framing (mem:smartpixels-5par-framing-directive)
           ``L1TSmartPixelsTrackDigiRefit{AIII,AAII,AAAI,AAAA}`` (NOT the Ext /
           displaced variants) + their per-hit sidecars
           ``L1TSmartPixelsRefitHitDigiRefit{...}``.
-  OT stubs = the REAL embedded ``L1TTrackStub`` table (x/y/z, r, layer, isBarrel),
-          linked per track by ``trackIdx`` -- replaces the old schematic hitPattern
-          placement.
+  OT stubs = the REAL OT stubs of each track: ``L1TTrackStub`` (trackIdx) joined to
+          ``L1TOTStub`` (x/y/z, r, layer, isBarrel) through otStubIdx, or inline on
+          older nanos (``spix_nano.track_stub_columns``) -- replaces the old
+          schematic hitPattern placement.
   TRUTH = ``GenVtx_{x,y,z}`` (interim, prompt-only) + ``tpPt``/``tpEta``; see
           :mod:`ngtagger.viz._truth`.
 
@@ -30,6 +31,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import uproot
 
+from ngtagger.data.spix_nano import branch_name, track_stub_branches, track_stub_columns
+
 # Variant suffix <-> config string. 'A' = active layer, 'I' = inactive.
 # config bit i (MSB=L1) '1' -> 'A'. So 1000->AIII, 1100->AAII, 1110->AAAI, 1111->AAAA.
 PRODUCED_CONFIGS = {"1000": "AIII", "1100": "AAII", "1110": "AAAI", "1111": "AAAA"}
@@ -45,7 +48,7 @@ ANGLE_MODES = ["none", "alpha", "alphaBeta"]
 REF = "L1TTrack"                                 # 5-par OT-only prompt seed
 SIDE = "L1TSmartPixelsRefitHitDigiRefitAAAA"     # all-layer prompt sidecar
 TRK = "L1TSmartPixelsTrackDigiRefit"             # prompt refit + variant suffix
-STUB = "L1TTrackStub"                            # real embedded OT stubs
+STUB = "L1TTrackStub"                            # track -> OT stub link table
 GENVTX = "GenVtx"                                # interim prompt truth vertex
 
 _REF_COLS = ["rInv", "phi", "tanL", "z0", "d0", "pt", "eta", "genuine",
@@ -72,7 +75,7 @@ _SIDE_COLS = ["trackIdx", "layer", "resX", "resY", "cotAlphaMeas", "cotBetaMeas"
               "hitAccepted", "hasAlpha", "hasBeta", "windowMult", "windowTruncated"]
 _TRK_COLS = ["rInv", "phi", "tanL", "z0", "d0", "pt", "chi2XYRed", "chi2ZRed",
              "spixNAcceptedHits", "spixLayerHitMask", "spixChi2IncRPhiTot",
-             "spixChi2IncRZTot", "spixRefitPerformed", "spixSeedCovOK",
+             "spixChi2IncRZTot", "spixRefitPerformed", "spixOTCovOK",
              "spixParametrizedSeed", "spixMaxWindowMult", "spixNCrossings",
              "spixNKFUpdates"]
 _STUB_COLS = ["trackIdx", "layer", "isBarrel", "r", "x", "y", "z"]
@@ -122,8 +125,10 @@ def load_nano(nano_file, layer_radii=(3.0, 6.8, 10.9, 16.0), max_events=None):
 
     ref = t.arrays([f"{REF}_{c}" for c in _REF_COLS + tp_cols], entry_stop=n_ev)
     side = t.arrays([f"{SIDE}_{c}" for c in _SIDE_COLS], entry_stop=n_ev)
-    stub = t.arrays([f"{STUB}_{c}" for c in _STUB_COLS], entry_stop=n_ev)
-    trk = {v: t.arrays([f"{TRK}{v}_{c}" for c in _TRK_COLS], entry_stop=n_ev)
+    stub = track_stub_columns(t.arrays(track_stub_branches(avail, STUB, _STUB_COLS), entry_stop=n_ev),
+                              STUB, _STUB_COLS)
+    trk = {v: t.arrays([branch_name(avail, f"{TRK}{v}", c) for c in _TRK_COLS],
+                       entry_stop=n_ev)
            for v in PRODUCED_CONFIGS.values()}
     # GenVtx is a per-event singleton (not jagged): read as flat arrays.
     gv = {c: t[f"{GENVTX}_{c}"].array(entry_stop=n_ev, library="np")
@@ -134,8 +139,8 @@ def load_nano(nano_file, layer_radii=(3.0, 6.8, 10.9, 16.0), max_events=None):
         g = _flat(ref[f"{REF}_genuine"], e)
         n_trk = len(g)
         s = {c: _flat(side[f"{SIDE}_{c}"], e) for c in _SIDE_COLS}
-        st = {c: _flat(stub[f"{STUB}_{c}"], e) for c in _STUB_COLS}
-        tv = {v: {c: _flat(trk[v][f"{TRK}{v}_{c}"], e) for c in _TRK_COLS}
+        st = {c: _flat(stub[c], e) for c in _STUB_COLS}
+        tv = {v: {c: _flat(trk[v][branch_name(avail, f"{TRK}{v}", c)], e) for c in _TRK_COLS}
               for v in PRODUCED_CONFIGS.values()}
         rf = {c: _flat(ref[f"{REF}_{c}"], e) for c in _REF_COLS + tp_cols}
         genvtx = dict(x=float(gv["x"][e]), y=float(gv["y"][e]), z=float(gv["z"][e]))

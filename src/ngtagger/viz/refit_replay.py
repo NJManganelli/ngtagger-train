@@ -12,7 +12,7 @@ is DROPPED:
   * SEED  = 5-par OT-only PROMPT track = reference L1TTrack (real d0 + reduced fit
             chi2 chi2XYRed/chi2ZRed).
   * REFIT = 5-par OT+IT = prompt digiRefit variant L1TSmartPixelsTrackDigiRefit<CFG>.
-  * OT stubs = the REAL embedded L1TTrackStub table (x/y/z, layer) -- not schematic.
+  * OT stubs = the REAL OT stubs (L1TTrackStub -> L1TOTStub x/y/z, layer) -- not schematic.
 
 Two-posture faithfulness (see docs/refit-replay-viz.md):
   * chi2 evolution & pulls: for the 4 PRODUCED configs (AIII/AAII/AAAI/AAAA at
@@ -191,7 +191,7 @@ def _combo_payload(track, config, angle_mode, radii, seed_sigmas):
     hits = [track.hits[L] for L in sorted(track.hits) if active[L - 1]]
 
     rep = replay_track(seed, hits, layer_radii=radii, use_angles=angle_mode,
-                       active_layers=active, param_sigmas=seed_sigmas, seed_npar=5)
+                       active_layers=active, param_sigmas=seed_sigmas, ot_npar=5)
 
     variant = PRODUCED_CONFIGS.get(config)
     is_produced = (variant is not None and angle_mode == "alphaBeta"
@@ -554,7 +554,7 @@ def build_figure(data, picks, radii, seed_sigmas):
         pl = _combo_payload(tr, cfg, am, radii, seed_sigmas)
         s = pl["seed"]; f = pl["final"]
 
-        # REAL OT barrel stubs from the embedded L1TTrackStub table (x/y persisted).
+        # REAL OT barrel stubs (L1TTrackStub joined to L1TOTStub, see _dataio).
         otx, oty, ottxt = [], [], []
         for (sxx, syy, srr, lab) in barrel_stub_xy(tr.stubs):
             otx.append(sxx); oty.append(syy)

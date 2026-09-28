@@ -522,7 +522,7 @@ def test_validation_gate_produced_configs():
                 continue
             seed = [tr.seed[k] for k in ["rInv", "phi0", "tanL", "z0", "d0"]]
             r = replay_track(seed, list(tr.hits.values()), layer_radii=_RADII,
-                             use_angles="alphaBeta", active_layers=active, seed_npar=5)
+                             use_angles="alphaBeta", active_layers=active, ot_npar=5)
             drInv.append((real["rInv"] - tr.seed["rInv"], r["delta"][0]))
             dphi.append((real["phi0"] - tr.seed["phi0"], r["delta"][1]))
             dd0.append((real["d0"] - tr.seed["d0"], r["delta"][4]))

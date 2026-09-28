@@ -206,7 +206,7 @@ def reconstruct_hit_globals(seed_params, hit_records, layer_radii=None,
     ps = _REPLAY_SEED_SIGMAS if param_sigmas is None else param_sigmas
     rep = replay_track(seed_params, hit_records, layer_radii=RAD,
                        use_angles="alphaBeta", active_layers=(1, 1, 1, 1),
-                       param_sigmas=ps, seed_npar=5)
+                       param_sigmas=ps, ot_npar=5)
     traj = rep["traj_states"]
     out = {}
     k = 0                                   # pre-update stage index into traj
@@ -291,7 +291,7 @@ _REPLAY_SEED_SIGMAS = (3e-5, 3e-4, 1e-3, 0.02, 0.03)
 
 def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBeta",
                  active_layers=(1, 1, 1, 1), param_sigmas=_REPLAY_SEED_SIGMAS,
-                 seed_npar=5):
+                 ot_npar=5):
     """Offline replay of the digiRefit sequential-scalar Kalman filter.
 
     seed_params : (rInv, phi0, tanL, z0, d0)  -- phi0 from momentum().phi().
@@ -316,10 +316,10 @@ def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBe
     """
     RAD = _DEFAULT_RADII if layer_radii is None else np.asarray(layer_radii, float)
     a = np.asarray(seed_params, float).copy()
-    aSeed = a.copy()
+    aOT = a.copy()
     ps = np.asarray(param_sigmas, float)
     C = np.diag(ps ** 2).astype(float)
-    if seed_npar == 4 or not (C[4, 4] > 0):        # weak d0 prior for 4-par seeds
+    if ot_npar == 4 or not (C[4, 4] > 0):        # weak d0 prior for 4-par seeds
         C[4, 4] = max(C[4, 4], 0.25)               # (0.5 cm)^2
 
     useAlpha = use_angles != "none"
@@ -332,7 +332,7 @@ def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBe
     def _sigma_diag(cov):
         return np.sqrt(np.clip(np.diag(cov), 0.0, None))
 
-    traj_states = [aSeed.copy()]
+    traj_states = [aOT.copy()]
     traj_covs = [C.copy()]
     traj_sigmas = [_sigma_diag(C)]
 
@@ -383,8 +383,8 @@ def replay_track(seed_params, hit_records, layer_radii=None, use_angles="alphaBe
 
     return {
         "final": a.copy(),
-        "delta": a - aSeed,
-        "seed": aSeed.copy(),
+        "delta": a - aOT,
+        "seed": aOT.copy(),
         "states": states,
         "chi2_rphi": chi2_rphi,
         "chi2_rz": chi2_rz,

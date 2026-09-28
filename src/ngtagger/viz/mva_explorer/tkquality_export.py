@@ -61,7 +61,7 @@ def tkq_rows(ref, var, hits, config: str, conifer_json: str,
     X, y, _names, aux = build_spec_dataset(
         ref, var, hits, config, label=label,
         refit_only=True, require_truth=False,
-        seed_npar=5, track_npar=5, spec_version=1)
+        ot_npar=5, track_npar=5, spec_version=1)
     with open(conifer_json) as f:
         model = json.load(f)
     margin = conifer_json_walk(model, X).astype(np.float64)

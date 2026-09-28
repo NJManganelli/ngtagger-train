@@ -22,7 +22,7 @@ One schema serves every tier:
     coopt nano the candidate l1TrackIdx points into L1TSmartPixelsTrack /
     L1TSmartPixelsExtTrack, so matched_track returns SmartPixels tracks
     (SmartPixelsTrackLinkWarning). The canonical SmartPixels track tables get
-    an `ot_track` accessor (via their l1TrackIdx, the seeding OT track), and
+    an `ot_track` accessor (via their l1TrackIdx, the OT track it was built from), and
     L1NanoSchema.candidate_ot_track_via_smartpixels adds the candidate ->
     SmartPixels track -> OT track hop as `matched_ot_track`
 
@@ -123,7 +123,10 @@ class _SmartPixelsRefitHitBase(base.NanoCollection):
 
 
 class _TrackStubBase(base.NanoCollection):
-    """L1TTrackStub / L1TExtTrackStub: one row per stub of a track."""
+    """Track -> stub link table (L1TTrackStub, L1TExtTrackStub,
+    L1TSmartPixels[Ext]TrackStub): one row per stub of a track. Link-only on
+    current nanos (trackIdx, otStubIdx); the stub columns (spix_nano.STUB_COLUMNS)
+    read inline on older nanos and through ``ot_stub`` otherwise."""
 
     _track_target = None
 
@@ -138,14 +141,32 @@ class _TrackStubBase(base.NanoCollection):
         return self._events()["L1TOTStub"]._apply_global_index(self.otStubIdxG)
 
 
-@awkward.mixin_class(behavior)
-class L1TrackStubLink(_TrackStubBase):
-    _track_target = "L1TTrack"
+def _stub_column(col):
+    def get(self):
+        return self[col] if col in self.fields else self.ot_stub[col]
+
+    return property(get, doc=f"stub {col}: inline on older nanos, else L1TOTStub[otStubIdx].{col}")
 
 
-@awkward.mixin_class(behavior)
-class L1ExtTrackStubLink(_TrackStubBase):
-    _track_target = "L1TExtTrack"
+for _col in spix_nano.STUB_COLUMNS:
+    setattr(_TrackStubBase, _col, _stub_column(_col))
+
+
+class _TrackClusterBase(base.NanoCollection):
+    """SmartPixels track -> IT cluster link table (L1TSmartPixels[Ext]TrackCluster):
+    one row per cluster used by a track (digiRefit: the accepted IT hits)."""
+
+    _track_target = None
+
+    @property
+    def track(self):
+        """owning SmartPixels track (via trackIdx)"""
+        return self._events()[self._track_target]._apply_global_index(self.trackIdxG)
+
+    @property
+    def cluster(self):
+        """the L1TSmartPixelsCluster row (via clusterIdx)"""
+        return self._events()[CLUSTER_TABLE]._apply_global_index(self.clusterIdxG)
 
 
 @awkward.mixin_class(behavior)
@@ -285,13 +306,13 @@ class L1TrackWord(L1TrackWordDecoded, _TPLinked):
 
 class _SmartPixelsTrackBase(L1TrackWord):
     """Canonical (coopt) SmartPixels track table, linked back to the OT track
-    it was seeded from via l1TrackIdx."""
+    it was built from via l1TrackIdx."""
 
     _ot_track_target = None
 
     @property
     def ot_track(self):
-        """seeding OT track (via l1TrackIdx; masked where -1, not seeded from
+        """OT track it was built from (via l1TrackIdx; masked where -1, not built from
         an OT track, or -2, OT track product unavailable)"""
         return self._events()[self._ot_track_target]._apply_global_index(self.l1TrackIdxG)
 
@@ -326,25 +347,47 @@ CLUSTER_TABLE = "L1TSmartPixelsCluster"
 _SPIX_HIT_RE = re.compile(r"^L1TSmartPixels(Ext)?RefitHit(\w+)$")
 _SPIX_TRACK_RE = re.compile(r"^L1TSmartPixels(Ext)?Track(\w+)$")
 _OT_STUB_TABLE = "L1TOTStub"
-# track-stub table -> its owning track table
-_TRACK_STUB_TABLES = {"L1TTrackStub": ("L1TTrack", "L1TrackStubLink"),
-                      "L1TExtTrackStub": ("L1TExtTrack", "L1ExtTrackStubLink")}
+# track -> stub / cluster link table: <track table>Stub, <track table>Cluster
+_TRACK_LINK_RE = re.compile(r"^(L1T\w*Track\w*?)(Stub|Cluster)$")
 # canonical SmartPixels track table -> the OT track table its l1TrackIdx
 # points into (default when the branch doc does not name it)
 _SPIX_OT_TRACK_TABLES = {"L1TSmartPixelsTrack": ("L1TTrack", "L1SmartPixelsTrack"),
                          "L1TSmartPixelsExtTrack": ("L1TExtTrack", "L1SmartPixelsExtTrack")}
-_HIT_LINK_CLASSES = {}      # track table -> mixin class name
+_LINK_BASES = {"RefitHit": _SmartPixelsRefitHitBase, "Stub": _TrackStubBase,
+               "Cluster": _TrackClusterBase}
+
+
+def _link_class(kind, track_table):
+    """The `kind` link-table mixin (RefitHit, Stub, Cluster) bound to
+    `track_table`, created once per (kind, name)."""
+    name = f"L1{kind}Link_{track_table}"
+    if name not in globals():
+        cls = type(name, (_LINK_BASES[kind],), {"_track_target": track_table})
+        globals()[name] = awkward.mixin_class(behavior)(cls)
+    return name
 
 
 def _hit_link_class(track_table):
-    """The refit-hit mixin bound to `track_table`, created once per name."""
-    name = _HIT_LINK_CLASSES.get(track_table)
-    if name is None:
-        name = f"L1SmartPixelsRefitHitLink_{track_table}"
-        cls = type(name, (_SmartPixelsRefitHitBase,), {"_track_target": track_table})
-        globals()[name] = awkward.mixin_class(behavior)(cls)
-        _HIT_LINK_CLASSES[track_table] = name
-    return name
+    """The refit-hit mixin bound to `track_table`."""
+    return _link_class("RefitHit", track_table)
+
+
+# Nanos before 2026-09-27 named the OT-track quantities "seed" (spix_nano.OT_RENAMES):
+# the old branches are read under the new names.
+_OT_OLD_TO_NEW = {old: new for new, old in spix_nano.OT_RENAMES.items()}
+
+
+def with_ot_names(field_names, contents):
+    """(field_names, contents) with every pre-rename OT-track column under its
+    new name (kept as is when the new name already exists)."""
+    names = list(field_names)
+    have = set(names)
+    for i, n in enumerate(names):
+        t, _, col = n.partition("_")
+        new = _OT_OLD_TO_NEW.get(col)
+        if new and f"{t}_{new}" not in have:
+            names[i] = f"{t}_{new}"
+    return names, list(contents)
 
 
 # Key-linked nanos (spix_nano.tp_link_convention != "row"): the row-convention
@@ -421,6 +464,14 @@ def smartpixels_links(fields):
             xref[col] = target
 
     for t in sorted(tables):
+        m = _TRACK_LINK_RE.match(t)
+        if m:
+            trk, kind = m.groups()
+            mixins[t] = _link_class(kind, trk)
+            link(f"{t}_trackIdx", trk)
+            link(f"{t}_otStubIdx", _OT_STUB_TABLE)
+            link(f"{t}_clusterIdx", CLUSTER_TABLE)
+            continue
         m = _SPIX_TRACK_RE.match(t)
         if m:
             mixins[t] = "L1TrackWord"
@@ -431,11 +482,6 @@ def smartpixels_links(fields):
             mixins[t] = _hit_link_class(trk)
             link(f"{t}_trackIdx", trk)
             link(f"{t}_selClusterIdx", CLUSTER_TABLE)
-    for stub, (trk, mix) in _TRACK_STUB_TABLES.items():
-        if stub in tables:
-            mixins[stub] = mix
-            link(f"{stub}_trackIdx", trk)
-            link(f"{stub}_otStubIdx", _OT_STUB_TABLE)
     for spx, (trk, mix) in _SPIX_OT_TRACK_TABLES.items():
         if spx in tables:
             mixins[spx] = mix
@@ -568,7 +614,8 @@ _DOC_LINKS = {
 # candidate -> track links, for the SmartPixels warning and the indirect hop
 _CAND_TRACK_LINKS = ("L1PuppiCand_l1TrackIdx", "L1ExtPuppiCand_l1TrackIdx")
 # "index of the ... track in the <TABLE> table (...)" (candidate, displaced
-# vertex) / "row of the <TABLE> track this SmartPixels track was seeded from"
+# vertex) / "row of the <TABLE> track this SmartPixels track was built from"
+# (older nanos: "... was seeded from")
 _DOC_TARGET_RE = re.compile(r"\bin the (\w+) table\b|^row of the (\w+) track\b")
 
 
@@ -687,7 +734,7 @@ class L1NanoSchema(NanoAODSchema):
             warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
 
     def _build_collections(self, field_names, input_contents):
-        return super()._build_collections(*with_tp_rows(field_names, input_contents))
+        return super()._build_collections(*with_tp_rows(*with_ot_names(field_names, input_contents)))
 
     mixins = {
         **NanoAODSchema.mixins,

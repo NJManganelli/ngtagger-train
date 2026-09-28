@@ -95,7 +95,7 @@ import time
 import awkward as ak
 import numpy as np
 
-from ngtagger.data.spix_nano import CLUSTER_TABLE, branch_name, branch_names, tp_idx
+from ngtagger.data.spix_nano import CLUSTER_TABLE, OT_RENAMES, branch_name, branch_names, tp_idx
 from ngtagger.train.trkquality import nlaymiss_interior
 
 SPEC_VERSION = 1
@@ -124,7 +124,7 @@ BASE_COLS = ["pt", "eta", "tanL", "z0", "d0", "trkMVA1", "chi2XYRed", "chi2ZRed"
              "cov_rInv_rInv", "cov_phi_phi", "cov_tanL_tanL", "cov_z0_z0", "cov_d0_d0"]
 REFIT_COLS = ["pt", "tanL", "z0", "d0", "spixRefitPerformed", "spixAnyWindowTruncated",
               "spixNCrossings", "spixNAcceptedHits", "spixLayerHitMask", "spixMaxWindowMult",
-              "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2ITAtSeed",
+              "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2ITAtOT",
               "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio"]
 HIT_COLS = ["hitAccepted", "trackIdx", "hasAlpha", "windowMult", "clusterMerged",
             "pullX", "pullY", "pullAlpha", "chi2IncX", "chi2IncY", "chi2IncAlpha"]
@@ -137,7 +137,7 @@ EVENT_ID = ["run", "luminosityBlock", "event"]
 REFIT_SENTINEL_COLS = ["spixRefitPerformed", "spixAnyWindowTruncated", "spixNCrossings",
                        "spixNAcceptedHits", "spixLayerHitMask", "spixMaxWindowMult",
                        "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot",
-                       "spixChi2ITAtSeed", "spixChi2ITAtRefit", "spixShiftChi2",
+                       "spixChi2ITAtOT", "spixChi2ITAtRefit", "spixShiftChi2",
                        "spixLogDetRatio"]
 HIT_FEATURES = ["h_nangle", "h_chi2_angle_per_cl", "h_chi2_pos_per_hit", "h_mean_wmult",
                 "h_nmerged", "h_max_angle_pull", "h_second_angle_pull", "h_max_pos_pull"]
@@ -725,7 +725,9 @@ class TrackMVA:
         if coll not in self.models:
             raise KeyError(f"bundle has no {coll!r} models (has {self.colls})")
         X, names = feature_matrix(T, coll)
-        if names != self.meta["features"][coll]:
+        # bundles frozen before the OT rename name OT-track features by their "seed" spelling
+        old_to_new = {o: n for n, o in OT_RENAMES.items()}
+        if names != [old_to_new.get(n, n) for n in self.meta["features"][coll]]:
             raise RuntimeError(f"feature order mismatch for {coll}: bundle {self.meta['features'][coll]} "
                                f"vs code {names}")
         out = np.full((len(X), len(EVAL_COLUMNS)), np.nan)

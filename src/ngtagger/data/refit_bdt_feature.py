@@ -50,7 +50,7 @@ def refit_bdt_per_constituent(files, events, cands, nested_idx, link_idx_field,
     X, _y, _names, aux = build_spec_dataset(
         ref, var, hits, config, label="genuine",
         refit_only=False, require_truth=False,
-        seed_npar=5, track_npar=5, spec_version=1,
+        ot_npar=5, track_npar=5, spec_version=1,
     )
     with open(conifer_json) as f:
         model = json.load(f)

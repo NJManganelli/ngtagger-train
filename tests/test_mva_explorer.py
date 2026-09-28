@@ -354,7 +354,7 @@ def _synth_refit_tables(n_events=8, tracks_per_event=12, seed=1):
             })
             var_rows.append({
                 "spixRefitPerformed": bool(it % 4 != 3),  # some passthrough
-                "spixSeedCovOK": True, "spixNCrossings": 2,
+                "spixOTCovOK": True, "spixNCrossings": 2,
                 "spixNAcceptedHits": 2, "spixLayerHitMask": 3,
                 "spixMaxWindowMult": 2, "spixAnyWindowTruncated": False,
                 "spixNKFUpdates": 2,

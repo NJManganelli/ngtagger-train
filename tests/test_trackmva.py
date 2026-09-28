@@ -58,7 +58,7 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), links="row"):
            "spixLayerHitMask": rng.integers(0, 16, N), "spixMaxWindowMult": rng.integers(0, 4, N),
            "spixChi2IncXTot": np.where(refit > 0, rng.exponential(2, N), -999.0),
            "spixChi2IncYTot": rng.exponential(2, N), "spixChi2IncAlphaTot": rng.exponential(2, N),
-           "spixChi2ITAtSeed": rng.exponential(2, N), "spixChi2ITAtRefit": rng.exponential(2, N),
+           "spixChi2ITAtOT": rng.exponential(2, N), "spixChi2ITAtRefit": rng.exponential(2, N),
            "spixShiftChi2": rng.exponential(2, N), "spixLogDetRatio": rng.normal(0, 1, N),
            ("spixMatchedTpKey" if by_key else "spixMatchedTpIdx"): tpkey if by_key else tp_row}
     # hits: 0-4 per track; clusters: one per hit, owned by the track's TP unless "wrong"

@@ -260,7 +260,7 @@ def test_real_file_crossrefs():
                 assert ak.all(abs(tab.tp.pt[ok] - tab[truth_pt][ok]) <= 1e-2 * tab.tp.pt[ok]), col
             checked.append(f"{col} -> {target}: {int(ak.sum(ok))} links")
             continue
-        linked = tab.cluster if idx == "selClusterIdx" else (
+        linked = tab.cluster if idx in ("selClusterIdx", "clusterIdx") else (
             tab.ot_stub if idx == "otStubIdx" else tab.track)
         if idx in ("selClusterIdx", "otStubIdx"):
             assert ak.all(linked.detId[ok] == tab.detId[ok]), col

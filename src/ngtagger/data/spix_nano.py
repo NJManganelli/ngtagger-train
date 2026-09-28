@@ -29,7 +29,8 @@ L1TSmartPixelsCluster, ``spixMatchedTpIdx`` on the refit track tables, with
   >= 0  row in L1TTP
   -1    not truth-matched
   -2    TrackingParticle product unavailable
-  <= -3 matched TP pruned from L1TTP (fails charged |p| > 1 GeV); -3 - tpIdx
+  <= -3 matched TP not written to L1TTP (outside the L1TTP selection, which the
+        L1TTP table doc states; 1 GeV nanos: charged |p| > 1 GeV); -3 - tpIdx
         is its index in the UNPRUNED TrackingParticle collection (not written)
 Two objects share a TP iff their tpIdx are equal. Older nanos stored the TP
 collection KEY instead (convention "key"): cnn_nano v2-v4 as *tpKey /
@@ -55,6 +56,21 @@ The global direction columns (``DIRECTION_COLUMNS``) are built from both
 angles regardless of the flags and are NOT masked by the loader; a consumer
 gates them with ``direction_usable``. ``angle_cap_census`` counts what the cap
 passes and fails (the omnibus reports it on every run as a sentinel).
+
+OT-track terminology. An OT track is the input of the refit, not its "seed"
+(it has its own tracklet seed). Nanos from 2026-09-27 on name its quantities
+"OT": projOT{LocalX,LocalY,CotAlpha,CotBeta,SigX,SigY} on the refit hit tables,
+spixChi2ITAtOT and spixOTCovOK on the refit track extension (``OT_RENAMES``
+holds the pre-rename spellings). ``branch_name`` and everything built on it
+resolve either spelling on any file, keyed by the NEW name.
+
+Track -> stub link tables. L1TTrackStub / L1TExtTrackStub (and the SmartPixels
+L1TSmartPixels[Ext]TrackStub) are link-only on current nanos: trackIdx and
+otStubIdx, the stub's row in L1TOTStub. Older nanos carried the stub columns
+(``STUB_COLUMNS``) inline. ``track_stub_branches`` / ``track_stub_columns``
+return them from either, through the otStubIdx join when not inline, and so
+do ``branch_names`` / ``table_columns`` / ``column`` / ``has_column`` for the
+tables in ``TRACK_STUB_TABLES``.
 
 Mixed generations in one ``uproot.iterate`` call are not supported (uproot
 itself needs the same branches in every file).
@@ -96,6 +112,20 @@ _KEY_RENAMES = {
     None: {"tpKey": "tpIdx", "spixMatchedTpKey": "spixMatchedTpIdx"},
     TP_TABLE: {"key": "idx"},
 }
+
+
+# OT-track quantity -> its pre-2026-09-27 ("seed") spelling, on every table
+OT_RENAMES = {
+    "projOTLocalX": "projSeedLocalX", "projOTLocalY": "projSeedLocalY",
+    "projOTCotAlpha": "projSeedCotAlpha", "projOTCotBeta": "projSeedCotBeta",
+    "projOTSigX": "projSeedSigX", "projOTSigY": "projSeedSigY",
+    "spixChi2ITAtOT": "spixChi2ITAtSeed", "spixOTCovOK": "spixSeedCovOK",
+}
+
+# track -> stub link tables, and the stub columns older nanos carried inline
+TRACK_STUB_TABLES = ("L1TTrackStub", "L1TExtTrackStub",
+                     "L1TSmartPixelsTrackStub", "L1TSmartPixelsExtTrackStub")
+STUB_COLUMNS = ("layer", "isBarrel", "detId", "x", "y", "z", "r", "phi", "bend")
 
 
 def _fields(A):
@@ -190,7 +220,8 @@ def tp_idx(A, table, col="tpIdx"):
 
 
 def branch_name(keys, table, col, required=True):
-    """The branch in `keys` that holds `table`_`col`. Unless the file is
+    """The branch in `keys` that holds `table`_`col`. An OT-track column
+    resolves to its pre-rename spelling (``OT_RENAMES``) and back. Unless the file is
     row-convention, a key spelling also resolves to its v1 / v2-v4 counterpart
     (tpKey <-> tpIdx, L1TTP key <-> idx, spixMatchedTpKey <-> spixMatchedTpIdx);
     on a key-convention file a row-convention link name raises (the branch
@@ -198,6 +229,10 @@ def branch_name(keys, table, col, required=True):
     `required`."""
     keys = set(keys)
     names = [col]
+    for new, old in OT_RENAMES.items():
+        alt = old if col == new else new if col == old else None
+        if alt:
+            names.append(alt)
     conv = tp_link_convention(keys)
     if conv == "key" and col in TP_LINK_COLUMNS:
         raise KeyError(f"{table}_{col}: this file links TrackingParticles by key; "
@@ -219,16 +254,25 @@ def branch_name(keys, table, col, required=True):
 def _branches(keys, table, col):
     if col in TP_LINK_COLUMNS:
         return tp_link_branches(keys, table, col)
+    if _stub_joined(keys, table, col):
+        return track_stub_branches(keys, table, [col])
     return [branch_name(keys, table, col)]
 
 
 def _column(A, f, table, col):
-    return tp_idx(A, table, col) if col in TP_LINK_COLUMNS else A[branch_name(f, table, col)]
+    if col in TP_LINK_COLUMNS:
+        return tp_idx(A, table, col)
+    if _stub_joined(f, table, col):
+        return track_stub_columns(A, table, [col])[col]
+    return A[branch_name(f, table, col)]
 
 
 def has_column(keys, table, col):
     if col in TP_LINK_COLUMNS:
         return tp_link_source(keys, table, col, required=False) is not None
+    if _stub_joined(keys, table, col):
+        keys = set(keys)
+        return f"{table}_otStubIdx" in keys and f"{OT_TABLE}_{col}" in keys
     return branch_name(keys, table, col, required=False) is not None
 
 
@@ -246,6 +290,47 @@ def table_columns(A, table, cols):
     """{col: jagged array} for `cols` of `table`, keyed by the REQUESTED names."""
     f = _fields(A)
     return {c: _column(A, f, table, c) for c in cols}
+
+
+# ---------------------------------------------------------------------------
+# track -> stub link tables (see the module docstring)
+# ---------------------------------------------------------------------------
+def _stub_joined(keys, table, col):
+    """`table`_`col` is a stub column of a link-only track -> stub table."""
+    return table in TRACK_STUB_TABLES and col in STUB_COLUMNS and f"{table}_{col}" not in set(keys)
+
+
+def _stub_inline(keys, table, col):
+    return col not in STUB_COLUMNS or f"{table}_{col}" in keys
+
+
+def track_stub_branches(keys, table, cols):
+    """The branches ``track_stub_columns`` needs for `cols` of the track -> stub
+    link table `table`: inline columns where the file has them, else otStubIdx
+    plus the L1TOTStub column."""
+    keys = set(keys)
+    out = []
+    for c in cols:
+        if _stub_inline(keys, table, c):
+            out.append(branch_name(keys, table, c))
+        else:
+            out += [branch_name(keys, table, "otStubIdx"), branch_name(keys, OT_TABLE, c)]
+    return list(dict.fromkeys(out))
+
+
+def track_stub_columns(A, table, cols):
+    """{col: jagged array, one entry per link row} for `cols` of the track ->
+    stub link table `table`, from an uproot batch read with
+    ``track_stub_branches``. Stub columns come inline (older nanos) or from
+    L1TOTStub[otStubIdx] (current, link-only nanos)."""
+    f = set(_fields(A))
+    out = {}
+    for c in cols:
+        if _stub_inline(f, table, c):
+            out[c] = A[branch_name(f, table, c)]
+        else:
+            out[c] = A[branch_name(f, OT_TABLE, c)][A[branch_name(f, table, "otStubIdx")]]
+    return out
 
 
 # ---------------------------------------------------------------------------
