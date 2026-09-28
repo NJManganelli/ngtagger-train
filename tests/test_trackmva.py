@@ -11,12 +11,14 @@ from ngtagger.data import trackmva_feature as tf
 
 CFG = "AAAA"
 B, R, H = "L1TTrack", f"L1TSmartPixelsTrackDigiRefit{CFG}", f"L1TSmartPixelsRefitHitDigiRefit{CFG}"
-TRUTH_BRANCH_MARKERS = ("genuine", "tp_", "tpFromHardInteraction", "spixMatchedTpKey", "tpKey",
-                        "selClusterIdx")
+TRUTH_BRANCH_MARKERS = ("genuine", "tp_", "tpFromHardInteraction", "spixMatchedTp", "tpIdx", "tpKey",
+                        "selClusterIdx", "L1TTP")
 
 
-def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), key_spelling="Key"):
-    """{table: {col: jagged}} + flat event ids of a small learnable prompt-family nano."""
+def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), links="row"):
+    """{table: {col: jagged}} + flat event ids of a small learnable prompt-family nano.
+    `links`: "row" (tpIdx into L1TTP), "key" (cnn_nano v2-v4: tpKey + L1TTP_key) or
+    "key_no_tp" (keys and no L1TTP table)."""
     rng = np.random.default_rng(seed)
     ntrk = rng.integers(*ntrk_range, size=n_events)
     N = int(ntrk.sum())
@@ -34,6 +36,13 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), key_spelling="Key"):
     r_d0 = np.where(refit > 0, tp_d0 + rng.normal(0, 1, N) * res_scale, d0)
     r_z0 = np.where(refit > 0, tp_z0 + rng.normal(0, 1, N) * res_scale, z0)
     tpkey = np.arange(N) + 1000                       # unique TP key per track
+    evt_of_trk = np.repeat(np.arange(n_events), ntrk)
+    kept = np.arange(N) % 5 != 0                      # the rest fail the L1TTP selection
+    ttp_n = np.bincount(evt_of_trk[kept], minlength=n_events)
+    tp_row = np.full(N, -1)
+    tp_row[kept] = np.arange(kept.sum()) - (np.cumsum(ttp_n) - ttp_n)[evt_of_trk[kept]]
+    tp_row = np.where(kept, tp_row, -3 - tpkey)
+    by_key = links != "row"
     base = {"pt": pt, "eta": np.arcsinh(tanl), "tanL": tanl, "z0": z0, "d0": d0,
             "trkMVA1": rng.random(N), "chi2XYRed": chi2, "chi2ZRed": rng.exponential(1, N),
             "chi2BendRed": rng.exponential(1, N), "nStubs": rng.integers(4, 7, N),
@@ -51,11 +60,10 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), key_spelling="Key"):
            "spixChi2IncYTot": rng.exponential(2, N), "spixChi2IncAlphaTot": rng.exponential(2, N),
            "spixChi2ITAtSeed": rng.exponential(2, N), "spixChi2ITAtRefit": rng.exponential(2, N),
            "spixShiftChi2": rng.exponential(2, N), "spixLogDetRatio": rng.normal(0, 1, N),
-           f"spixMatchedTp{key_spelling}": tpkey}
+           ("spixMatchedTpKey" if by_key else "spixMatchedTpIdx"): tpkey if by_key else tp_row}
     # hits: 0-4 per track; clusters: one per hit, owned by the track's TP unless "wrong"
     nh = rng.integers(0, 5, N)
     trk_of_hit = np.repeat(np.arange(N), nh)
-    evt_of_trk = np.repeat(np.arange(n_events), ntrk)
     toff = np.concatenate([[0], np.cumsum(ntrk)[:-1]])
     evt_of_hit = evt_of_trk[trk_of_hit]
     nh_ev = np.bincount(evt_of_hit, minlength=n_events)
@@ -64,7 +72,9 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), key_spelling="Key"):
     # cluster rows: per event, in hit order (so selClusterIdx = hit's position in the event)
     hoff = np.concatenate([[0], np.cumsum(nh_ev)[:-1]])
     sel = np.arange(Hn) - hoff[evt_of_hit]
-    ctp = np.where(wrong, -5 - np.arange(Hn), tpkey[trk_of_hit])
+    other = 10**6 + np.arange(Hn)                     # a wrong hit's TP: never in L1TTP
+    ctp = (np.where(wrong, other, tpkey[trk_of_hit]) if by_key
+           else np.where(wrong, -3 - other, tp_row[trk_of_hit]))
     hits = {"hitAccepted": (rng.random(Hn) < 0.9).astype(np.int32),
             "trackIdx": trk_of_hit - toff[evt_of_hit], "hasAlpha": rng.integers(0, 2, Hn),
             "windowMult": rng.integers(1, 4, Hn), "clusterMerged": rng.integers(0, 2, Hn),
@@ -74,8 +84,12 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), key_spelling="Key"):
             "selClusterIdx": sel}
     J = lambda cols, n: {c: ak.unflatten(np.asarray(v), n) for c, v in cols.items()}  # noqa: E731
     tables = {B: J(base, ntrk), R: J(ref, ntrk), H: J(hits, nh_ev),
-              "L1TSmartPixelsCluster": J({f"tp{key_spelling}": ctp, "layer": np.ones(Hn, np.int32)},
-                                         nh_ev)}
+              "L1TSmartPixelsCluster": J({("tpKey" if by_key else "tpIdx"): ctp,
+                                          "layer": np.ones(Hn, np.int32)}, nh_ev)}
+    if links == "key":
+        tables["L1TTP"] = J({"key": tpkey[kept]}, ttp_n)
+    elif links == "row":
+        tables["L1TTP"] = J({"pt": np.abs(tp_pt[kept])}, ttp_n)
     ev = {"run": np.ones(n_events, np.int64), "luminosityBlock": np.ones(n_events, np.int64),
           "event": np.arange(n_events, dtype=np.int64) + 100 * seed}
     return tables, ev
@@ -114,8 +128,8 @@ def test_n_it_wrong_and_alignment():
     # brute force per event
     exp = []
     for e in range(len(ntrk)):
-        tk = ak.to_numpy(tables[R]["spixMatchedTpKey"][e])
-        ct = ak.to_numpy(tables["L1TSmartPixelsCluster"]["tpKey"][e])
+        tk = ak.to_numpy(tables[R]["spixMatchedTpIdx"][e])
+        ct = ak.to_numpy(tables["L1TSmartPixelsCluster"]["tpIdx"][e])
         h = {c: ak.to_numpy(tables[H][c][e]) for c in ("trackIdx", "selClusterIdx", "hitAccepted")}
         n = np.zeros(len(tk))
         for ti, si, a in zip(h["trackIdx"], h["selClusterIdx"], h["hitAccepted"]):
@@ -130,10 +144,13 @@ def test_n_it_wrong_and_alignment():
         tm.tracks_from_batch(_batch(bad, ev), "prompt", CFG)
 
 
-def test_old_key_spelling_reads():
-    tables, ev = _synth_tables(n_events=4, seed=2, key_spelling="Idx")
-    T, _ = tm.tracks_from_batch(_batch(tables, ev), "prompt", CFG)
-    assert "t_n_it_wrong" in T
+def test_key_linked_nano_reads_like_row_linked():
+    T, _ = tm.tracks_from_batch(_batch(*_synth_tables(n_events=4, seed=2)), "prompt", CFG)
+    K, _ = tm.tracks_from_batch(_batch(*_synth_tables(n_events=4, seed=2, links="key")), "prompt", CFG)
+    assert T["t_n_it_wrong"].sum() > 0
+    assert np.array_equal(T["t_n_it_wrong"], K["t_n_it_wrong"])
+    with pytest.raises(RuntimeError, match="unavailable"):
+        tm.tracks_from_batch(_batch(*_synth_tables(n_events=4, seed=2, links="key_no_tp")), "prompt", CFG)
 
 
 def test_features_withhold_d0_and_z0_value():

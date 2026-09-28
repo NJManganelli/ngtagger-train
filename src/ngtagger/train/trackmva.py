@@ -28,7 +28,7 @@ fitted d0 is meaningless).
 
 Heads (per window; OUTPUTS order):
   clean    P(track clean): base = genuine; refit = genuine AND no wrong IT hit
-           (an accepted IT hit whose cluster tpKey differs from spixMatchedTpKey)
+           (an accepted IT hit whose cluster tpIdx differs from spixMatchedTpIdx)
   d0acc    P(|d0 - d0_TP| below the 68.3 pct of the CLEAN matched population)
   z0acc    same for z0
   log_sd0  log sigma_hat(d0/um), sigma_hat = max((q84.1 - q15.9)/2, 1 um) from a
@@ -95,7 +95,7 @@ import time
 import awkward as ak
 import numpy as np
 
-from ngtagger.data.spix_nano import CLUSTER_TABLE, branch_name
+from ngtagger.data.spix_nano import CLUSTER_TABLE, branch_name, branch_names, tp_idx
 from ngtagger.train.trkquality import nlaymiss_interior
 
 SPEC_VERSION = 1
@@ -130,7 +130,7 @@ HIT_COLS = ["hitAccepted", "trackIdx", "hasAlpha", "windowMult", "clusterMerged"
             "pullX", "pullY", "pullAlpha", "chi2IncX", "chi2IncY", "chi2IncAlpha"]
 # truth (labels / bookkeeping only; never a model input)
 BASE_TRUTH = ["genuine", "tpFromHardInteraction", "tp_pt", "tp_d0", "tp_z0"]
-REFIT_TRUTH = ["spixMatchedTpKey"]
+REFIT_TRUTH = ["spixMatchedTpIdx"]
 HIT_TRUTH = ["selClusterIdx"]
 EVENT_ID = ["run", "luminosityBlock", "event"]
 
@@ -144,7 +144,7 @@ HIT_FEATURES = ["h_nangle", "h_chi2_angle_per_cl", "h_chi2_pos_per_hit", "h_mean
 
 HEAD_DEFINITIONS = {
     "clean": "P(clean): base = genuine; refit = genuine AND n_it_wrong == 0 "
-             "(accepted IT hit with cluster tpKey != spixMatchedTpKey)",
+             "(accepted IT hit with cluster tpIdx != spixMatchedTpIdx)",
     "d0acc": f"P(|d0 - tp_d0| <= {CLEAN_PCT} pct of |d0 - tp_d0| over clean matched training tracks)",
     "z0acc": f"P(|z0 - tp_z0| <= {CLEAN_PCT} pct of |z0 - tp_z0| over clean matched training tracks)",
     "log_sd0": f"log(max(0.5*(q84.1 - q15.9), {SIGMA_FLOOR_UM})) of d0 - tp_d0 in um "
@@ -170,7 +170,7 @@ def table_names(family: str, config: str) -> dict:
 def nano_branches(keys, family: str = "prompt", config: str = "AAAA",
                   with_truth: bool = True, with_event_id: bool = True) -> list[str]:
     """The branches ``tracks_from_batch`` needs, resolved on a file whose
-    branch names are `keys` (either *Key/*Idx spelling)."""
+    branch names are `keys` (TP links by row or, on older nanos, by key)."""
     tn = table_names(family, config)
     keys = set(keys)
     br = [branch_name(keys, tn["base"], c) for c in BASE_COLS]
@@ -178,9 +178,9 @@ def nano_branches(keys, family: str = "prompt", config: str = "AAAA",
     br += [branch_name(keys, tn["hits"], c) for c in HIT_COLS]
     if with_truth:
         br += [branch_name(keys, tn["base"], c) for c in BASE_TRUTH]
-        br += [branch_name(keys, tn["refit"], c) for c in REFIT_TRUTH]
+        br += branch_names(keys, tn["refit"], REFIT_TRUTH)
         br += [branch_name(keys, tn["hits"], c) for c in HIT_TRUTH]
-        br.append(branch_name(keys, CLUSTER_TABLE, "tpKey"))
+        br += branch_names(keys, CLUSTER_TABLE, ["tpIdx"])
     if with_event_id:
         br += [c for c in EVENT_ID if c in keys]
     return list(dict.fromkeys(br))
@@ -264,11 +264,14 @@ def tracks_from_batch(A, family: str = "prompt", config: str = "AAAA",
     if with_truth:
         for c in BASE_TRUTH:
             T["b_" + c] = _flat(A, bn(tn["base"], c))
-        ttp = _flat(A, bn(tn["refit"], "spixMatchedTpKey"), np.int64)
-        ctp_j = A[bn(CLUSTER_TABLE, "tpKey")]
+        ttp = ak.to_numpy(ak.flatten(tp_idx(A, tn["refit"], "spixMatchedTpIdx"))).astype(np.int64)
+        ctp_j = tp_idx(A, CLUSTER_TABLE)
         nc = ak.to_numpy(ak.num(ctp_j))
         coff = np.concatenate([[0], np.cumsum(nc)[:-1]]).astype(np.int64)
         ctp = ak.to_numpy(ak.flatten(ctp_j)).astype(np.int64)
+        if np.any(ttp == -2) or np.any(ctp == -2):
+            raise RuntimeError("TrackingParticle links unavailable (tpIdx -2, e.g. no L1TTP table in the "
+                               "nano): n_it_wrong cannot be computed")
         sel = _flat(A, bn(tn["hits"], "selClusterIdx"), np.int64)
         if np.any(sel >= nc[evi]):
             raise RuntimeError("selClusterIdx outside the per-event cluster rows")

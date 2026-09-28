@@ -152,11 +152,15 @@ cluster table: every TBPX cluster first (same rows as before, so a refit hit's
 `L1TSmartPixelsDiscCluster` (all 12 disks) or have no discs at all;
 `cluster_columns` returns the unified layout from any of them (disc scope
 ID1-ID4 by default), and `surfaces=BARREL` keeps the barrel prefix, which is
-how every barrel study here reads it. Columns holding a TrackingParticle KEY
-were renamed from *Idx to *Key (`tpKey` on the cluster and OT stub tables,
-`L1TTP_key`, `spixMatchedTpKey` on the refit track tables); `branch_name`
-resolves either spelling. True row indices keep *Idx (`selClusterIdx`,
-`trackIdx`, `otStubIdx`). `L1TTP` now holds TPs with 3-momentum |p| > 1 GeV
+how every barrel study here reads it. TrackingParticle truth links are ROW
+indices into `L1TTP`, like every other link: `tpIdx` on L1TTrack, L1TExtTrack,
+L1TOTStub and L1TSmartPixelsCluster, `spixMatchedTpIdx` on the refit track
+tables; -1 unmatched, -2 truth unavailable, <= -3 matched TP pruned from L1TTP
+(-3 - tpIdx = its index in the unwritten TP collection); equal tpIdx <=> same
+TP. Older nanos (cnn_nano v1-v4) hold TP KEYS (`tpKey` + `L1TTP_key`; v1 under
+the *Idx names + `L1TTP_idx`): `tp_idx` / `cluster_columns` / `table_columns`
+derive the row convention from them, as does the coffea schema.
+`L1TTP` now holds TPs with 3-momentum |p| > 1 GeV
 (older nanos: pT >= 1 GeV). Track stubs carry `otStubIdx`, their exact row in
 `L1TOTStub`; `ot_oracle.stub_truth` uses it and falls back to the stub-identity
 join on older nanos (`ot_oracle.py --compare-joins -i <nano>` checks the two

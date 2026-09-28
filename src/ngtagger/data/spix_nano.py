@@ -23,13 +23,25 @@ original row numbers, so ``selClusterIdx`` (a barrel row index written by the
 refit) stays valid on every layout, and filtering to ``surfaces=BARREL``
 preserves it.
 
-Key columns were renamed from *Idx to *Key where they hold a TrackingParticle
-collection KEY rather than a row index (``tpIdx`` -> ``tpKey`` on the cluster
-and OT stub tables, ``L1TTP_idx`` -> ``L1TTP_key``, ``spixMatchedTpIdx`` ->
-``spixMatchedTpKey`` on the refit track tables). ``branch_name`` resolves
-either spelling in both directions, new name preferred, so a reader written
-against one generation reads the other. True row indices keep *Idx
-(selClusterIdx, trackIdx, genPartIdx, otStubIdx).
+TrackingParticle links. Current nanos link TP truth by ROW into L1TTP, like
+every other nano link: ``tpIdx`` on L1TTrack, L1TExtTrack, L1TOTStub and
+L1TSmartPixelsCluster, ``spixMatchedTpIdx`` on the refit track tables, with
+  >= 0  row in L1TTP
+  -1    not truth-matched
+  -2    TrackingParticle product unavailable
+  <= -3 matched TP pruned from L1TTP (fails charged |p| > 1 GeV); -3 - tpIdx
+        is its index in the UNPRUNED TrackingParticle collection (not written)
+Two objects share a TP iff their tpIdx are equal. Older nanos stored the TP
+collection KEY instead (convention "key"): cnn_nano v2-v4 as *tpKey /
+spixMatchedTpKey with L1TTP_key, cnn_nano v1 under the *Idx names with
+L1TTP_idx. ``tp_idx`` returns the row convention from any generation (the
+key -> row join is done here with the same encoding; with no L1TTP table in
+the file a match reads -2), and ``column``, ``table_columns``,
+``branch_names``, ``has_column`` and ``cluster_columns`` route the two link
+names through it. ``branch_name`` refuses a link name on a key-convention
+file, where that branch holds a key. On any file that is not row-convention
+the key spellings still resolve across v1 and v2-v4 for readers that join on
+keys.
 
 Measured-angle cap. ``hasAlpha``/``hasBeta`` say whether a cluster's
 ``localCotAlpha``/``localCotBeta`` may be used. The payload-mode rec-hit
@@ -77,8 +89,10 @@ ABSENT_BELOW = -900.0
 DIRECTION_COLUMNS = ("globalClusterPhi", "globalClusterCotTheta",
                      "sigGlobalClusterPhi", "sigGlobalClusterCotTheta")
 
-# new spelling -> old spelling; a None table applies to every table
-_RENAMES = {
+# row-convention TP link column -> its cnn_nano v2-v4 key spelling
+TP_LINK_COLUMNS = {"tpIdx": "tpKey", "spixMatchedTpIdx": "spixMatchedTpKey"}
+# key-convention spellings, v2-v4 -> v1 (both hold TP keys); None = every table
+_KEY_RENAMES = {
     None: {"tpKey": "tpIdx", "spixMatchedTpKey": "spixMatchedTpIdx"},
     TP_TABLE: {"key": "idx"},
 }
@@ -88,51 +102,150 @@ def _fields(A):
     return list(A.fields) if hasattr(A, "fields") else list(A.keys())
 
 
-def aliases(table, col):
-    """Every spelling of `table`_`col`, the requested one first."""
-    out = [col]
-    for scope in (table, None):
-        ren = _RENAMES.get(scope, {})
-        for new, old in ren.items():
-            if col == new and old not in out:
-                out.append(old)
-            elif col == old and new not in out:
-                out.append(new)
-    return out
-
-
-def branch_name(keys, table, col, required=True):
-    """The branch in `keys` that holds `table`_`col`, under the requested
-    spelling or its renamed counterpart (tpKey <-> tpIdx, L1TTP key <-> idx,
-    spixMatchedTpKey <-> spixMatchedTpIdx). The requested spelling wins when
-    both exist. KeyError when neither does, or None if not `required`."""
+def tp_link_convention(keys):
+    """How the file with branch names `keys` links TrackingParticles:
+    'key' (TP collection keys: v2-v4 *Key + L1TTP_key, or v1 *Idx + L1TTP_idx),
+    'row' (tpIdx rows into L1TTP) or 'unjoined' (tpIdx-named links and no L1TTP
+    table: current-convention values, or v1 keys; ``tp_idx`` reads a match as
+    -2 either way)."""
     keys = set(keys)
-    for c in aliases(table, col):
+    if (f"{TP_TABLE}_key" in keys or f"{TP_TABLE}_idx" in keys
+            or any(k.endswith(tuple("_" + v for v in TP_LINK_COLUMNS.values())) for k in keys)):
+        return "key"
+    if _tp_table_branch(keys) is not None:
+        return "row"
+    return "unjoined"
+
+
+def _tp_table_branch(keys):
+    """A cheap branch of the L1TTP table (its counter when present), or None."""
+    if f"n{TP_TABLE}" in keys:
+        return f"n{TP_TABLE}"
+    return min((k for k in keys if k.startswith(TP_TABLE + "_")), default=None)
+
+
+def tp_link_source(keys, table, col="tpIdx", required=True):
+    """(link branch, L1TTP key branch or None, convention) behind the row
+    convention `col` (a TP_LINK_COLUMNS name) of `table`. KeyError when the
+    table has no link, or None if not `required`."""
+    keys = set(keys)
+    conv = tp_link_convention(keys)
+    names = (TP_LINK_COLUMNS[col], col) if conv == "key" else (col,)
+    for c in names:
         if f"{table}_{c}" in keys:
-            return f"{table}_{c}"
+            tk = next((f"{TP_TABLE}_{k}" for k in ("key", "idx") if f"{TP_TABLE}_{k}" in keys), None)
+            return f"{table}_{c}", (tk if conv == "key" else None), conv
     if required:
-        raise KeyError(f"no branch {table}_{col} (tried {aliases(table, col)})")
+        raise KeyError(f"no TrackingParticle link {table}_{col} (tried {list(names)})")
     return None
 
 
+def tp_link_branches(keys, table, col="tpIdx"):
+    """The branches ``tp_idx`` needs for `table`_`col`: the link, plus the L1TTP
+    key column (key convention) or one L1TTP branch (row convention), so that
+    the batch alone tells ``tp_idx`` which convention it holds."""
+    keys = set(keys)
+    br, tk, conv = tp_link_source(keys, table, col)
+    extra = tk if tk is not None else _tp_table_branch(keys) if conv == "row" else None
+    return [br] if extra is None else [br, extra]
+
+
+def tp_rows_from_keys(key, tp_key=None):
+    """Row-convention tpIdx (module docstring) from key-convention links: `key`
+    holds jagged TP keys (-1 unmatched), `tp_key` the L1TTP key column of the
+    same events, or None when there is no L1TTP table (a match is then -2)."""
+    counts = ak.num(key)
+    k = ak.to_numpy(ak.flatten(key)).astype(np.int64)
+    if tp_key is None:
+        out = np.where(k >= 0, -2, k)
+    else:
+        n, tn = ak.to_numpy(counts), ak.to_numpy(ak.num(tp_key))
+        if len(n) != len(tn):
+            raise ValueError(f"{len(n)} events of links but {len(tn)} of L1TTP")
+        first = np.cumsum(tn) - tn
+        g = (np.repeat(np.arange(len(tn), dtype=np.int64), tn) << 32) \
+            | ak.to_numpy(ak.flatten(tp_key)).astype(np.int64)
+        order = np.argsort(g, kind="stable")
+        gs = g[order]
+        ev = np.repeat(np.arange(len(n), dtype=np.int64), n)
+        q = (ev << 32) | np.maximum(k, 0)
+        found = np.zeros(len(k), bool)
+        row = np.zeros(len(k), np.int64)
+        if len(gs):
+            pos = np.minimum(np.searchsorted(gs, q), len(gs) - 1)
+            found = (k >= 0) & (gs[pos] == q)
+            row = order[pos] - first[ev]
+        out = np.where(k < 0, k, np.where(found, row, -3 - k))
+    return ak.unflatten(out.astype(np.int32), counts)
+
+
+def tp_idx(A, table, col="tpIdx"):
+    """Row-convention `table`_`col` (tpIdx or spixMatchedTpIdx) from an uproot
+    batch `A` read with (at least) ``tp_link_branches``, whatever the file's
+    convention."""
+    br, tk, conv = tp_link_source(_fields(A), table, col)
+    if conv == "row":
+        return A[br]
+    return tp_rows_from_keys(A[br], None if tk is None else A[tk])
+
+
+def branch_name(keys, table, col, required=True):
+    """The branch in `keys` that holds `table`_`col`. Unless the file is
+    row-convention, a key spelling also resolves to its v1 / v2-v4 counterpart
+    (tpKey <-> tpIdx, L1TTP key <-> idx, spixMatchedTpKey <-> spixMatchedTpIdx);
+    on a key-convention file a row-convention link name raises (the branch
+    holds a key: use ``tp_idx``). KeyError when absent, or None if not
+    `required`."""
+    keys = set(keys)
+    names = [col]
+    conv = tp_link_convention(keys)
+    if conv == "key" and col in TP_LINK_COLUMNS:
+        raise KeyError(f"{table}_{col}: this file links TrackingParticles by key; "
+                       "read it with tp_idx / tp_link_branches")
+    if conv != "row":
+        for scope in (table, None):
+            for new, old in _KEY_RENAMES.get(scope, {}).items():
+                alt = old if col == new else new if col == old else None
+                if alt and alt not in names:
+                    names.append(alt)
+    for c in names:
+        if f"{table}_{c}" in keys:
+            return f"{table}_{c}"
+    if required:
+        raise KeyError(f"no branch {table}_{col} (tried {names})")
+    return None
+
+
+def _branches(keys, table, col):
+    if col in TP_LINK_COLUMNS:
+        return tp_link_branches(keys, table, col)
+    return [branch_name(keys, table, col)]
+
+
+def _column(A, f, table, col):
+    return tp_idx(A, table, col) if col in TP_LINK_COLUMNS else A[branch_name(f, table, col)]
+
+
 def has_column(keys, table, col):
+    if col in TP_LINK_COLUMNS:
+        return tp_link_source(keys, table, col, required=False) is not None
     return branch_name(keys, table, col, required=False) is not None
 
 
 def branch_names(keys, table, cols):
-    """branch_name for each of `cols` (the list to hand uproot)."""
-    return [branch_name(keys, table, c) for c in cols]
+    """The branches to hand uproot for `cols` of `table`."""
+    return list(dict.fromkeys(b for c in cols for b in _branches(keys, table, c)))
 
 
 def column(A, table, col):
-    """`table`_`col` from an uproot batch `A`, by either spelling."""
-    return A[branch_name(_fields(A), table, col)]
+    """`table`_`col` from an uproot batch `A` (TP links in the row convention)."""
+    return _column(A, _fields(A), table, col)
 
 
 def table_columns(A, table, cols):
     """{col: jagged array} for `cols` of `table`, keyed by the REQUESTED names."""
     f = _fields(A)
-    return {c: A[branch_name(f, table, c)] for c in cols}
+    return {c: _column(A, f, table, c) for c in cols}
 
 
 # ---------------------------------------------------------------------------
@@ -188,23 +301,25 @@ def _cap_counts(cot, has, max_abs):
     return c
 
 
-def angle_cap_groups(surface=None, tp_key=None, emu_class=None):
+def angle_cap_groups(surface=None, tp_link=None, emu_class=None):
     """{label: boolean mask or None (= every cluster)} for ``angle_cap_census``:
-    'all'; each surface (IL1.., ID1..); 'linked'/'unlinked' (tpKey >= 0); each
-    tpEmuClass value; and surface x link."""
+    'all'; each surface (IL1.., ID1..); 'linked'/'unlinked' (truth-matched:
+    tpIdx >= 0 or <= -3, which on a key is key >= 0); each tpEmuClass value;
+    and surface x link."""
     g = {"all": None}
     surfs = [] if surface is None else [int(s) for s in np.unique(surface)]
     for s in surfs:
         g[surface_name(s)] = surface == s
-    if tp_key is not None:
-        g["linked"], g["unlinked"] = tp_key >= 0, tp_key < 0
+    linked = None if tp_link is None else (tp_link >= 0) | (tp_link <= -3)
+    if linked is not None:
+        g["linked"], g["unlinked"] = linked, ~linked
     if emu_class is not None:
         for v in np.unique(emu_class):
             g[f"tpEmuClass={int(v)}"] = emu_class == v
-    if tp_key is not None:
+    if linked is not None:
         for s in surfs:
-            g[f"{surface_name(s)}/linked"] = (surface == s) & (tp_key >= 0)
-            g[f"{surface_name(s)}/unlinked"] = (surface == s) & (tp_key < 0)
+            g[f"{surface_name(s)}/linked"] = (surface == s) & linked
+            g[f"{surface_name(s)}/unlinked"] = (surface == s) & ~linked
     return g
 
 
@@ -296,18 +411,17 @@ def cluster_branches(keys, cols, disc_scope="sp", surfaces=None, cap_angles=True
     if cap_angles:
         cols += _cap_partners(keys, cols)
     if lay == "unified":
-        need = cols + ["subdet", "surface"]
-        return list(dict.fromkeys(branch_name(keys, CLUSTER_TABLE, c) for c in need))
+        return branch_names(keys, CLUSTER_TABLE, cols + ["subdet", "surface"])
     plain = [c for c in cols if c not in GEOMETRY]
     need_det = "idxInDet" in cols
     out = [f"{CLUSTER_TABLE}_layer"]
-    out += [branch_name(keys, CLUSTER_TABLE, c) for c in plain]
+    out += branch_names(keys, CLUSTER_TABLE, plain)
     if need_det:
         out.append(f"{CLUSTER_TABLE}_detId")
     if lay == "split" and _wants_disc(disc_scope, surfaces):
         out.append(f"{OLD_DISC_TABLE}_disk")
         out += [f"{OLD_DISC_TABLE}_{c}" for c in ("side", "ring") if c in cols]
-        out += [branch_name(keys, OLD_DISC_TABLE, c) for c in plain]
+        out += branch_names(keys, OLD_DISC_TABLE, plain)
         if need_det:
             out.append(f"{OLD_DISC_TABLE}_detId")
     return list(dict.fromkeys(out))
@@ -358,8 +472,8 @@ def cluster_columns(A, cols, disc_scope="sp", surfaces=None, cap_angles=True):
     """{col: jagged per-event array} of the cluster table in the unified layout.
 
     `A` is an uproot batch read with (at least) ``cluster_branches(...)``.
-    `cols` may name any cluster column under either key spelling, plus the
-    geometry columns (synthesized on split/barrel files).
+    `cols` may name any cluster column (tpIdx in the row convention on every
+    generation), plus the geometry columns (synthesized on split/barrel files).
 
     `disc_scope` keeps discs up to pxfDisk 4 ("sp", default: ID1-ID4 only,
     as the unified producer writes), 8 ("tfpx"), 12 ("all") or none ("none").
@@ -389,14 +503,14 @@ def _cluster_columns(A, cols, disc_scope, surfaces):
     if lay == "unified":
         subdet = A[f"{CLUSTER_TABLE}_subdet"]
         _check_barrel_first(subdet)
-        out = {c: A[branch_name(f, CLUSTER_TABLE, c)] for c in cols}
+        out = {c: _column(A, f, CLUSTER_TABLE, c) for c in cols}
         mask = _surface_mask(A[f"{CLUSTER_TABLE}_surface"], disc_scope, surfaces)
         if not ak.all(mask):
             out = {c: v[mask] for c, v in out.items()}
         return out
 
     blayer = A[f"{CLUSTER_TABLE}_layer"]
-    B = {c: A[branch_name(f, CLUSTER_TABLE, c)] for c in cols if c not in GEOMETRY}
+    B = {c: _column(A, f, CLUSTER_TABLE, c) for c in cols if c not in GEOMETRY}
     B["subdet"] = _const_like(blayer, SUBDET_PXB)
     B["layer"] = ak.values_astype(blayer, np.uint8)
     B["disk"] = B["side"] = B["ring"] = _const_like(blayer, 0)
@@ -405,7 +519,7 @@ def _cluster_columns(A, cols, disc_scope, surfaces):
         B["idxInDet"] = A[f"{CLUSTER_TABLE}_detId"]      # replaced below
     if lay == "split" and _wants_disc(disc_scope, surfaces):
         disk = A[f"{OLD_DISC_TABLE}_disk"]
-        D = {c: A[branch_name(f, OLD_DISC_TABLE, c)] for c in cols if c not in GEOMETRY}
+        D = {c: _column(A, f, OLD_DISC_TABLE, c) for c in cols if c not in GEOMETRY}
         D["subdet"] = _const_like(disk, SUBDET_PXF)
         D["layer"] = _const_like(disk, 0)
         D["disk"] = ak.values_astype(disk, np.uint8)

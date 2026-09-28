@@ -253,9 +253,15 @@ def test_real_file_crossrefs():
     for col, target in sorted(xref.items()):
         src, idx = col.split("_", 1)
         tab = ev[src]
+        ok = tab[idx] >= 0
+        if idx in ("tpIdx", "spixMatchedTpIdx"):
+            truth_pt = next((c for c in ("tp_pt", "tpPt") if c in tab.fields), None)
+            if truth_pt is not None:
+                assert ak.all(abs(tab.tp.pt[ok] - tab[truth_pt][ok]) <= 1e-2 * tab.tp.pt[ok]), col
+            checked.append(f"{col} -> {target}: {int(ak.sum(ok))} links")
+            continue
         linked = tab.cluster if idx == "selClusterIdx" else (
             tab.ot_stub if idx == "otStubIdx" else tab.track)
-        ok = tab[idx] >= 0
         if idx in ("selClusterIdx", "otStubIdx"):
             assert ak.all(linked.detId[ok] == tab.detId[ok]), col
         if idx == "otStubIdx":
@@ -265,3 +271,56 @@ def test_real_file_crossrefs():
         checked.append(f"{col} -> {target}: {int(ak.sum(ok))} links")
     print("\n".join(checked))
     assert checked, "no SmartPixels / track-stub cross-references in this file"
+
+
+def _write_tp_links(tmp_path, name, convention):
+    """Two events of TP-linked tables in one link convention: "row" (tpIdx into
+    L1TTP), "key" (cnn_nano v2-v4: tpKey + L1TTP_key) or "key_v1" (keys under
+    the tpIdx names + L1TTP_idx). L1TTP keeps keys 3, 8 | 9 (5 and 7 pruned)."""
+    keys = {"L1TTrack": [[3, -1], [9]], "L1TOTStub": [[8, 5, -1], [7]],
+            "L1TSmartPixelsCluster": [[3, 3, 5], [9, -1]],
+            "L1TSmartPixelsTrackDigiRefitAAAA": [[3, -1], [7]]}
+    rows = {"L1TTrack": [[0, -1], [0]], "L1TOTStub": [[1, -8, -1], [-10]],
+            "L1TSmartPixelsCluster": [[0, 0, -8], [0, -1]],
+            "L1TSmartPixelsTrackDigiRefitAAAA": [[0, -1], [-10]]}
+    link = rows if convention == "row" else keys
+    tp_col = "key" if convention == "key" else "idx"
+    tree = {"run": np.array([1, 1], dtype=np.uint32),
+            "luminosityBlock": np.array([1, 1], dtype=np.uint32),
+            "event": np.array([1, 2], dtype=np.uint64)}
+    ttp = {"pt": [[30.0, 80.0], [90.0]]}
+    if convention != "row":
+        ttp[tp_col] = [[3, 8], [9]]
+    tree["L1TTP"] = ak.zip(ttp)
+    for t, v in link.items():
+        col = "spixMatchedTp" if t.startswith("L1TSmartPixelsTrack") else "tp"
+        col += "Key" if convention == "key" else "Idx"
+        tree[t] = ak.zip({"pt": [[1.0] * len(e) for e in v], col: v})
+    f = uproot.recreate(tmp_path / name)
+    types = {k: (v.type if isinstance(v, ak.Array) else v.dtype) for k, v in tree.items()}
+    f.mktree("Events", types, counter_name=lambda n: "n" + n,
+             field_name=lambda outer, inner: inner if outer == "" else outer + "_" + inner)
+    f["Events"].extend(tree)
+    f.close()
+    return str(tmp_path / name), rows
+
+
+@pytest.mark.parametrize("convention", ["row", "key", "key_v1"])
+def test_tp_links_every_convention(tmp_path, convention):
+    from coffea.nanoevents import NanoEventsFactory
+
+    from ngtagger.coffea_schema import L1ClustersNanoSchema, smartpixels_links
+
+    path, rows = _write_tp_links(tmp_path, f"tp_{convention}.root", convention)
+    _, xref = smartpixels_links(uproot.open(f"{path}:Events").keys())
+    for t in ("L1TTrack", "L1TOTStub", "L1TSmartPixelsCluster"):
+        assert xref[f"{t}_tpIdx"] == "L1TTP"
+    assert xref["L1TSmartPixelsTrackDigiRefitAAAA_spixMatchedTpIdx"] == "L1TTP"
+    ev = NanoEventsFactory.from_root({path: "Events"}, schemaclass=L1ClustersNanoSchema).events()
+    pt = [[30.0, 80.0], [90.0]]
+    for t, want in rows.items():
+        tab = ev[t]
+        got = tab.spixMatchedTpIdx if t.startswith("L1TSmartPixelsTrack") else tab.tpIdx
+        assert got.tolist() == want, t
+        assert tab.tp.pt.tolist() == [[pt[e][r] if r >= 0 else None for r in ev_rows]
+                                      for e, ev_rows in enumerate(want)], t
