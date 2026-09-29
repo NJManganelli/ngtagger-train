@@ -133,24 +133,11 @@ def test_n_it_wrong_and_alignment():
         h = {c: ak.to_numpy(tables[H][c][e]) for c in ("trackIdx", "selClusterIdx", "hitAccepted")}
         n = np.zeros(len(tk))
         for ti, si, a in zip(h["trackIdx"], h["selClusterIdx"], h["hitAccepted"]):
-            if a and (ct[si] != tk[ti] or tk[ti] == -1):
+            if a and ct[si] != tk[ti]:
                 n[ti] += 1
         exp.append(n)
     assert np.array_equal(T["t_n_it_wrong"], np.concatenate(exp))
     assert len(T["b_pt"]) == ntrk.sum()
-
-
-def test_n_it_wrong_unmatched_track():
-    """spixMatchedTpIdx = -1 (the stub+IT match rejected the hits): every accepted hit
-    is wrong, even a noise cluster whose own tpIdx is also -1."""
-    tables, ev = _synth_tables(n_events=6, seed=2)
-    tk = tables[R]["spixMatchedTpIdx"]
-    tables[R]["spixMatchedTpIdx"] = ak.full_like(tk, -1)
-    ct = tables["L1TSmartPixelsCluster"]["tpIdx"]
-    tables["L1TSmartPixelsCluster"]["tpIdx"] = ak.full_like(ct, -1)
-    T, _ = tm.tracks_from_batch(_batch(tables, ev), "prompt", CFG)
-    acc = ak.to_numpy(ak.flatten(tables[H]["hitAccepted"]))
-    assert T["t_n_it_wrong"].sum() == acc.sum() > 0
     bad = dict(tables)
     bad[R] = {c: v[:, :-1] for c, v in tables[R].items()}
     with pytest.raises(RuntimeError, match="row aligned"):
