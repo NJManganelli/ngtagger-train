@@ -11,8 +11,7 @@ One schema serves every tier:
     derived tagger variables (pt_rel, pt_rel_log, deta, dphi) recomputed
     from the cross-refs
   - TrackingParticle truth links (tpIdx, on every TP-linked table) cross-reference
-    L1TTP, with a `tp` accessor; on older key-linked
-    nanos the row-convention tpIdx is derived from the key and L1TTP_key
+    L1TTP, with a `tp` accessor
   - candidates get matched_track / matched_cluster / matched_jet accessors
     and uniform track-truth access: `trk_genuine` uses the direct column
     (candidate-only L1PFNano tier) or falls back to the l1TrackIdx
@@ -381,65 +380,6 @@ def _hit_link_class(track_table):
     return _link_class("RefitHit", track_table)
 
 
-# Key-linked nanos (spix_nano.tp_link_convention != "row"): the row-convention
-# link is synthesized per file from the key branch (+ L1TTP key column) by these
-# transforms, looked up by name in coffea.nanoevents.transforms. They yield the
-# jagged array, so the list node's key is what local2global indexes with.
-def _tp_rows_from_keys(stack):
-    tp_key = awkward.Array(stack.pop())
-    key = awkward.Array(stack.pop())
-    stack.append(spix_nano.tp_rows_from_keys(key, tp_key))
-
-
-def _tp_rows_unjoined(stack):
-    stack.append(spix_nano.tp_rows_from_keys(awkward.Array(stack.pop())))
-
-
-transforms.ngtagger_tp_rows_from_keys = _tp_rows_from_keys
-transforms.ngtagger_tp_rows_unjoined = _tp_rows_unjoined
-
-
-def tp_links(fields):
-    """[(table_col, (link branch, L1TTP key branch or None, convention))] for
-    every TrackingParticle link of a file with branch names `fields`."""
-    fields = set(fields)
-    out = []
-    for t in sorted({f.split("_")[0] for f in fields}):
-        for col in spix_nano.TP_LINK_COLUMNS:
-            src = spix_nano.tp_link_source(fields, t, col, required=False)
-            if src is not None:
-                out.append((f"{t}_{col}", src))
-    return out
-
-
-def with_tp_rows(field_names, contents):
-    """(field_names, contents) with every TP link in the row convention: on a
-    key-linked file each link gets a form computing tpIdx from its key
-    (replacing a v1 key stored under the *Idx name). Unchanged on row files."""
-    names, contents = list(field_names), list(contents)
-    forms = dict(zip(names, contents))
-    for name, (br, tk, conv) in tp_links(names):
-        if conv == "row":
-            continue
-        form = copy.deepcopy(forms[br])
-        if tk is None:
-            key = concat(forms[br]["form_key"], "!ngtagger_tp_rows_unjoined")
-        else:
-            key = concat(forms[br]["form_key"], forms[tk]["form_key"], "!ngtagger_tp_rows_from_keys")
-        form["form_key"] = key
-        form["content"].update(form_key=concat(key, "!content"), primitive="int32", itemsize=4)
-        form["content"]["parameters"] = {
-            "__doc__": f"tpIdx derived from {br} (a TP key): >= 0 row in L1TTP; -1 not matched; -2 "
-                       "no L1TTP table; <= -3 pruned from L1TTP, -3 - tpIdx = the key",
-            "typename": "int32_t[]"}
-        if name in forms:
-            contents[names.index(name)] = form
-        else:
-            names.append(name)
-            contents.append(form)
-    return names, contents
-
-
 def smartpixels_links(fields):
     """(mixins, cross_references) for the SmartPixels and track-stub tables
     and the TrackingParticle links (tpIdx -> L1TTP) of a file with branch
@@ -477,8 +417,9 @@ def smartpixels_links(fields):
         if spx in tables:
             mixins[spx] = mix
             link(f"{spx}_l1TrackIdx", trk)
-    for name, _ in tp_links(fields):
-        xref[name] = spix_nano.TP_TABLE
+    for f in fields:
+        if f.partition("_")[2] == "tpIdx":
+            xref[f] = spix_nano.TP_TABLE
     for side in ("Inner", "Outer"):
         link(f"{_OT_STUB_TABLE}_tpIdx{side}", spix_nano.TP_TABLE)
     return mixins, xref
@@ -626,7 +567,7 @@ class SmartPixelsTrackLinkWarning(UserWarning):
 
 
 # candidate -> SmartPixels track -> OT track: compose the two global indices
-# (looked up by name in coffea.nanoevents.transforms, like the TP-row ones)
+# (looked up by name in coffea.nanoevents.transforms)
 def _compose_global_index_form(first, second):
     form = copy.deepcopy(first)
     form["content"]["form_key"] = concat(
@@ -724,9 +665,6 @@ class L1NanoSchema(NanoAODSchema):
             if m and m.group(1).split("_")[0] not in present:
                 continue  # whole source collection absent: silent
             warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
-
-    def _build_collections(self, field_names, input_contents):
-        return super()._build_collections(*with_tp_rows(field_names, input_contents))
 
     mixins = {
         **NanoAODSchema.mixins,

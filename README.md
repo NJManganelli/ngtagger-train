@@ -161,9 +161,8 @@ weighted cluster-majority owner (> 50% of the track's weight, 1/2 per stub clust
 accepted IT cluster; owned counts `tpNOTClusters`, `tpNITClusters`, purity
 `(0.5 * tpNOTClusters + tpNITClusters) / (nStubs + spixNAcceptedHits)`); -1 unmatched, -2 truth unavailable, <= -3 matched TP pruned from L1TTP
 (-3 - tpIdx = its index in the unwritten TP collection); equal tpIdx <=> same
-TP. Older nanos (cnn_nano v1-v4) hold TP KEYS (`tpKey` + `L1TTP_key`; v1 under
-the *Idx names + `L1TTP_idx`; refit track tables `spixMatchedTp*`, read as `tpIdx`): `tp_idx` / `cluster_columns` / `table_columns`
-derive the row convention from them, as does the coffea schema.
+TP. Nanos that linked TPs by collection key (cnn_nano v1-v4: `tpKey` /
+`L1TTP_key`) are not supported.
 `L1TTP` now holds TPs with 3-momentum |p| > 1 GeV
 (older nanos: pT >= 1 GeV). Track -> stub tables (`L1TTrackStub`,
 `L1TExtTrackStub`, `L1TSmartPixels[Ext]TrackStub`) are link-only: `trackIdx` and

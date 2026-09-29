@@ -4,8 +4,8 @@ tagger inputs), trained directly from nano.
 Promoted from the vertexing pilot (eval_vertex/track_mvas.py +
 eval_vertex/build_dataset.py; mem:smartpixels-vertexing-pilot). Same targets,
 features, model family and cross-fitting as the pilot, so results close
-against it; what is new is the nano reader (event-batched, either key
-spelling), the frozen-model bundle with metadata, and the loader/scorer used by
+against it; what is new is the nano reader (event-batched), the frozen-model
+bundle with metadata, and the loader/scorer used by
 ``ngtagger.data.trackmva_feature``.
 
 Track families (all 1:1 row aligned per event, validated on read):
@@ -98,7 +98,7 @@ import time
 import awkward as ak
 import numpy as np
 
-from ngtagger.data.spix_nano import CLUSTER_TABLE, branch_name, branch_names, tp_idx
+from ngtagger.data.spix_nano import CLUSTER_TABLE, branch_name, branch_names, column
 from ngtagger.train.trkquality import nlaymiss_interior
 
 SPEC_VERSION = 1
@@ -173,7 +173,7 @@ def table_names(family: str, config: str) -> dict:
 def nano_branches(keys, family: str = "prompt", config: str = "AAAA",
                   with_truth: bool = True, with_event_id: bool = True) -> list[str]:
     """The branches ``tracks_from_batch`` needs, resolved on a file whose
-    branch names are `keys` (TP links by row or, on older nanos, by key)."""
+    branch names are `keys`."""
     tn = table_names(family, config)
     keys = set(keys)
     br = [branch_name(keys, tn["base"], c) for c in BASE_COLS]
@@ -267,14 +267,14 @@ def tracks_from_batch(A, family: str = "prompt", config: str = "AAAA",
     if with_truth:
         for c in BASE_TRUTH:
             T["b_" + c] = _flat(A, bn(tn["base"], c))
-        ttp = ak.to_numpy(ak.flatten(tp_idx(A, tn["refit"]))).astype(np.int64)
-        ctp_j = tp_idx(A, CLUSTER_TABLE)
+        ttp = ak.to_numpy(ak.flatten(column(A, tn["refit"], "tpIdx"))).astype(np.int64)
+        ctp_j = column(A, CLUSTER_TABLE, "tpIdx")
         nc = ak.to_numpy(ak.num(ctp_j))
         coff = np.concatenate([[0], np.cumsum(nc)[:-1]]).astype(np.int64)
         ctp = ak.to_numpy(ak.flatten(ctp_j)).astype(np.int64)
         if np.any(ttp == -2) or np.any(ctp == -2):
-            raise RuntimeError("TrackingParticle links unavailable (tpIdx -2, e.g. no L1TTP table in the "
-                               "nano): n_it_wrong cannot be computed")
+            raise RuntimeError("TrackingParticle links unavailable (tpIdx -2: no TrackingParticle "
+                               "product in the job): n_it_wrong cannot be computed")
         sel = _flat(A, bn(tn["hits"], "selClusterIdx"), np.int64)
         if np.any(sel >= nc[evi]):
             raise RuntimeError("selClusterIdx outside the per-event cluster rows")
