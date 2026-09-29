@@ -1,27 +1,16 @@
-"""SmartPixels nano IO across the disc-unification schema change.
+"""SmartPixels nano IO.
 
-One reader API for three generations of the SmartPixels nano:
-
-  unified   (current) ONE ``L1TSmartPixelsCluster`` table: every barrel cluster
-            (TBPX layers 1-4, in the order of the old barrel table) THEN the
-            disc clusters of the configured scope (default ID1-ID4, both
-            sides), with geometry columns ``subdet`` (1 PXB, 2 PXF), ``layer``
-            (0 on disc), ``disk``/``side``/``ring`` (0 on barrel), ``surface``
-            (1-4 = IL1-IL4, 10 + disk on disc: ID1-ID4 = 11-14, TFPX5-8 =
-            15-18, TEPX = 19-22) and ``idxInDet`` (position within the module;
-            (event, detId, idxInDet) is a stable cluster key).
-  split     (e.g. the itot_cnn_f* nanos) a barrel ``L1TSmartPixelsCluster``
-            with ``layer`` and a separate ``L1TSmartPixelsDiscCluster`` with
-            ``disk``/``side``/``ring`` for EVERY TFPX and TEPX disk.
-  barrel    (e.g. itot_tp_f*) the barrel table alone.
-
-``cluster_columns`` returns the unified layout from any of them: on split files
-it concatenates per event barrel THEN disc and synthesizes the geometry
-columns, and by default keeps only ID1-ID4 (``disc_scope="sp"``) so old files
-look like new ones. Barrel rows are always a per-event PREFIX with their
-original row numbers, so ``selClusterIdx`` (a barrel row index written by the
-refit) stays valid on every layout, and filtering to ``surfaces=BARREL``
-preserves it.
+The cluster table is ONE ``L1TSmartPixelsCluster``: every barrel cluster
+(TBPX layers 1-4) THEN the disc clusters of the configured scope (default
+ID1-ID4, both sides), with geometry columns ``subdet`` (1 PXB, 2 PXF),
+``layer`` (0 on disc), ``disk``/``side``/``ring`` (0 on barrel), ``surface``
+(1-4 = IL1-IL4, 10 + disk on disc: ID1-ID4 = 11-14, TFPX5-8 = 15-18, TEPX =
+19-22) and ``idxInDet`` (position within the module; (event, detId, idxInDet)
+is a stable cluster key). Barrel rows are a per-event PREFIX, so
+``selClusterIdx`` (a barrel row index written by the refit) indexes the table,
+and filtering to ``surfaces=BARREL`` preserves it. Older layouts (a barrel
+table plus ``L1TSmartPixelsDiscCluster``, or a barrel table without the
+geometry columns) are not supported: ``require_unified_clusters`` refuses them.
 
 TrackingParticle links are ROWS into L1TTP, like every other nano link:
 ``tpIdx`` on L1TTrack, L1TExtTrack, L1TOTStub, L1TSmartPixelsCluster and the
@@ -59,8 +48,6 @@ row in L1TOTStub. ``branch_names`` / ``table_columns`` / ``column`` /
 ``TRACK_STUB_TABLES`` through that join (``track_stub_branches`` /
 ``track_stub_columns``).
 
-Mixed generations in one ``uproot.iterate`` call are not supported (uproot
-itself needs the same branches in every file).
 """
 
 from __future__ import annotations
@@ -69,17 +56,14 @@ import awkward as ak
 import numpy as np
 
 CLUSTER_TABLE = "L1TSmartPixelsCluster"
-OLD_DISC_TABLE = "L1TSmartPixelsDiscCluster"
 OT_TABLE = "L1TOTStub"
 TP_TABLE = "L1TTP"
 
-SUBDET_PXB, SUBDET_PXF = 1, 2
 DISC_SURFACE_OFFSET = 10
 BARREL = (1, 2, 3, 4)                       # surfaces IL1-IL4
 SP_DISCS = (11, 12, 13, 14)                 # surfaces ID1-ID4
 # disc_scope -> largest pxfDisk kept (TFPX = disks 1-8, TEPX = 9-12)
 DISC_SCOPES = {"none": 0, "sp": 4, "tfpx": 8, "all": 12}
-GEOMETRY = ("subdet", "layer", "disk", "side", "ring", "surface", "idxInDet")
 
 # Largest |cot| of a measured cluster angle that is used: the default of the
 # CMSSW refit's seedlessRefitMeasAngleMaxAbs (~85 deg from normal incidence).
@@ -313,15 +297,16 @@ def _cap_partners(keys, cols):
 # ---------------------------------------------------------------------------
 # the cluster table
 # ---------------------------------------------------------------------------
-def cluster_layout(keys):
-    """'unified', 'split' or 'barrel' (see the module docstring)."""
+def require_unified_clusters(keys):
+    """KeyError naming the problem unless `keys` hold the unified cluster
+    table (see the module docstring)."""
     keys = set(keys)
     if f"{CLUSTER_TABLE}_surface" in keys:
-        return "unified"
-    if any(k.startswith(OLD_DISC_TABLE + "_") for k in keys):
-        return "split"
+        return
     if f"{CLUSTER_TABLE}_layer" in keys:
-        return "barrel"
+        raise KeyError(f"{CLUSTER_TABLE} has no surface column: a pre-unification nano "
+                       "(barrel table, discs absent or in L1TSmartPixelsDiscCluster), "
+                       "which is not supported")
     raise KeyError(f"no {CLUSTER_TABLE} table")
 
 
@@ -332,54 +317,17 @@ def _max_disk(disc_scope):
         raise ValueError(f"disc_scope {disc_scope!r} not in {sorted(DISC_SCOPES)}") from None
 
 
-def _wants_disc(disc_scope, surfaces):
-    if _max_disk(disc_scope) == 0:
-        return False
-    return surfaces is None or any(int(s) > DISC_SURFACE_OFFSET for s in surfaces)
-
-
 def cluster_branches(keys, cols, disc_scope="sp", surfaces=None, cap_angles=True):
     """The raw branches `cluster_columns` needs for `cols` on a file with
     branch names `keys`. Pass them to uproot alongside any other table's.
-    With `cap_angles` a requested has-flag also reads its angle (for the cap)."""
-    lay = cluster_layout(keys)
+    With `cap_angles` a requested has-flag also reads its angle (for the cap).
+    `disc_scope` and `surfaces` do not change the branches (the filter reads
+    surface either way); they are accepted to mirror ``cluster_columns``."""
+    require_unified_clusters(keys)
     cols = list(cols)
     if cap_angles:
         cols += _cap_partners(keys, cols)
-    if lay == "unified":
-        return branch_names(keys, CLUSTER_TABLE, cols + ["subdet", "surface"])
-    plain = [c for c in cols if c not in GEOMETRY]
-    need_det = "idxInDet" in cols
-    out = [f"{CLUSTER_TABLE}_layer"]
-    out += branch_names(keys, CLUSTER_TABLE, plain)
-    if need_det:
-        out.append(f"{CLUSTER_TABLE}_detId")
-    if lay == "split" and _wants_disc(disc_scope, surfaces):
-        out.append(f"{OLD_DISC_TABLE}_disk")
-        out += [f"{OLD_DISC_TABLE}_{c}" for c in ("side", "ring") if c in cols]
-        out += branch_names(keys, OLD_DISC_TABLE, plain)
-        if need_det:
-            out.append(f"{OLD_DISC_TABLE}_detId")
-    return list(dict.fromkeys(out))
-
-
-def _idx_in_det(event_counts, det):
-    """Position of each row within its run of equal detId, per event.
-
-    The old producers wrote every cluster of a module contiguously, in
-    DetSet order, so this reproduces the unified table's idxInDet."""
-    counts = ak.to_numpy(event_counts)
-    flat = ak.to_numpy(ak.flatten(det)).astype(np.int64)
-    ev = np.repeat(np.arange(len(counts), dtype=np.int64), counts)
-    key = (ev << 32) | flat
-    start = np.r_[True, key[1:] != key[:-1]] if len(key) else np.zeros(0, bool)
-    grp = np.cumsum(start) - 1
-    pos = np.arange(len(key)) - np.flatnonzero(start)[grp] if len(key) else np.zeros(0, np.int64)
-    return ak.unflatten(pos.astype(np.uint16), counts)
-
-
-def _const_like(jag, value, dtype=np.uint8):
-    return ak.values_astype(ak.zeros_like(jag) + value, dtype)
+    return branch_names(keys, CLUSTER_TABLE, cols + ["subdet", "surface"])
 
 
 def _surface_mask(surf, disc_scope, surfaces):
@@ -405,16 +353,14 @@ def _check_barrel_first(subdet):
 
 
 def cluster_columns(A, cols, disc_scope="sp", surfaces=None, cap_angles=True):
-    """{col: jagged per-event array} of the cluster table in the unified layout.
+    """{col: jagged per-event array} of the cluster table.
 
     `A` is an uproot batch read with (at least) ``cluster_branches(...)``.
-    `cols` may name any cluster column, plus the geometry columns
-    (synthesized on split/barrel files).
 
     `disc_scope` keeps discs up to pxfDisk 4 ("sp", default: ID1-ID4 only,
-    as the unified producer writes), 8 ("tfpx"), 12 ("all") or none ("none").
-    On a unified file it can only narrow what the producer wrote.
-    `surfaces` (e.g. BARREL) further keeps only those surface codes.
+    as the producer writes by default), 8 ("tfpx"), 12 ("all") or none
+    ("none"); it can only narrow what the producer wrote. `surfaces` (e.g.
+    BARREL) further keeps only those surface codes.
 
     Row numbers: barrel rows keep their table row number whatever the filter
     (they are a per-event prefix), so ``surfaces=BARREL`` is safe to index
@@ -434,46 +380,13 @@ def cluster_columns(A, cols, disc_scope="sp", surfaces=None, cap_angles=True):
 
 def _cluster_columns(A, cols, disc_scope, surfaces):
     f = _fields(A)
-    lay = cluster_layout(f)
-    cols = list(cols)
-    if lay == "unified":
-        subdet = A[f"{CLUSTER_TABLE}_subdet"]
-        _check_barrel_first(subdet)
-        out = {c: _column(A, f, CLUSTER_TABLE, c) for c in cols}
-        mask = _surface_mask(A[f"{CLUSTER_TABLE}_surface"], disc_scope, surfaces)
-        if not ak.all(mask):
-            out = {c: v[mask] for c, v in out.items()}
-        return out
-
-    blayer = A[f"{CLUSTER_TABLE}_layer"]
-    B = {c: _column(A, f, CLUSTER_TABLE, c) for c in cols if c not in GEOMETRY}
-    B["subdet"] = _const_like(blayer, SUBDET_PXB)
-    B["layer"] = ak.values_astype(blayer, np.uint8)
-    B["disk"] = B["side"] = B["ring"] = _const_like(blayer, 0)
-    B["surface"] = B["layer"]
-    if "idxInDet" in cols:
-        B["idxInDet"] = A[f"{CLUSTER_TABLE}_detId"]      # replaced below
-    if lay == "split" and _wants_disc(disc_scope, surfaces):
-        disk = A[f"{OLD_DISC_TABLE}_disk"]
-        D = {c: _column(A, f, OLD_DISC_TABLE, c) for c in cols if c not in GEOMETRY}
-        D["subdet"] = _const_like(disk, SUBDET_PXF)
-        D["layer"] = _const_like(disk, 0)
-        D["disk"] = ak.values_astype(disk, np.uint8)
-        for c in ("side", "ring"):
-            D[c] = (ak.values_astype(A[f"{OLD_DISC_TABLE}_{c}"], np.uint8)
-                    if c in cols else _const_like(disk, 0))
-        D["surface"] = ak.values_astype(disk + DISC_SURFACE_OFFSET, np.uint8)
-        if "idxInDet" in cols:
-            D["idxInDet"] = A[f"{OLD_DISC_TABLE}_detId"]
-        full = {c: ak.concatenate([B[c], D[c]], axis=1) for c in B}
-    else:
-        full = B
-    if "idxInDet" in cols:
-        full["idxInDet"] = _idx_in_det(ak.num(full["surface"]), full["idxInDet"])
-    mask = _surface_mask(full["surface"], disc_scope, surfaces)
+    require_unified_clusters(f)
+    _check_barrel_first(A[f"{CLUSTER_TABLE}_subdet"])
+    out = {c: _column(A, f, CLUSTER_TABLE, c) for c in cols}
+    mask = _surface_mask(A[f"{CLUSTER_TABLE}_surface"], disc_scope, surfaces)
     if not ak.all(mask):
-        full = {c: v[mask] for c, v in full.items()}
-    return {c: full[c] for c in cols}
+        out = {c: v[mask] for c, v in out.items()}
+    return out
 
 
 def read_clusters(path, cols, disc_scope="sp", surfaces=None,

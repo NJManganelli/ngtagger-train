@@ -1,6 +1,5 @@
-"""The SmartPixels nano compat reader on synthetic batches of each generation:
-unified (one cluster table with geometry columns), split (barrel table plus
-L1TSmartPixelsDiscCluster) and barrel-only."""
+"""The SmartPixels nano reader on synthetic batches of the unified cluster
+table (one table with geometry columns)."""
 
 import awkward as ak
 import numpy as np
@@ -8,26 +7,11 @@ import pytest
 
 from ngtagger.data import spix_nano as S
 
-CL, DC = S.CLUSTER_TABLE, S.OLD_DISC_TABLE
+CL = S.CLUSTER_TABLE
 
 
-# cluster tpIdx (rows into L1TTP; <= -3 pruned) of the unified/split files below
+# cluster tpIdx (rows into L1TTP; <= -3 pruned) of the unified file below
 CLUSTER_TP_IDX = [[0, -1, 0, -8, -8], [-10, 0]]
-
-
-def _split():
-    # event 0: barrel detIds 10,10,11 ; discs: disk 1 (x2, one module), disk 5, disk 9
-    # event 1: barrel 12 ; discs: disk 4
-    return ak.Array({
-        f"{CL}_layer": [[1, 1, 2], [4]],
-        f"{CL}_detId": [[10, 10, 11], [12]],
-        f"{CL}_tpIdx": [[0, -1, 0], [-10]],
-        f"{DC}_disk": [[1, 1, 5, 9], [4]],
-        f"{DC}_side": [[1, 1, 2, 2], [1]],
-        f"{DC}_ring": [[2, 2, 1, 3], [4]],
-        f"{DC}_detId": [[20, 20, 21, 22], [23]],
-        f"{DC}_tpIdx": [[-8, -8, -1, 1], [0]],
-    })
 
 
 def _unified(order_ok=True):
@@ -43,10 +27,15 @@ def _unified(order_ok=True):
     })
 
 
-def test_layouts():
-    assert S.cluster_layout(_split().fields) == "split"
-    assert S.cluster_layout(_unified().fields) == "unified"
-    assert S.cluster_layout([f"{CL}_layer", f"{CL}_tpIdx"]) == "barrel"
+def test_only_unified_layout():
+    S.require_unified_clusters(_unified().fields)
+    # pre-unification layouts: barrel table without geometry (+/- a disc table)
+    for keys in ([f"{CL}_layer", f"{CL}_tpIdx"],
+                 [f"{CL}_layer", "L1TSmartPixelsDiscCluster_disk"]):
+        with pytest.raises(KeyError, match="pre-unification"):
+            S.cluster_branches(keys, ["tpIdx"])
+    with pytest.raises(KeyError, match="no L1TSmartPixelsCluster"):
+        S.require_unified_clusters(["L1TOTStub_x"])
 
 
 def test_branch_name():
@@ -66,50 +55,22 @@ def test_tp_links_read_as_columns():
     assert not S.has_column(A.fields, "Z", "tpIdx")
 
 
-def test_split_becomes_unified_sp_scope():
-    cols = ["detId", "tpIdx"] + list(S.GEOMETRY)
-    A = _split()
+def test_unified_columns_and_scopes():
+    A = _unified()
+    cols = ["detId", "tpIdx", "surface", "idxInDet"]
     assert set(S.cluster_branches(A.fields, cols)) <= set(A.fields)
     J = S.cluster_columns(A, cols)
-    # disk 5 and 9 dropped by the default "sp" scope, barrel first
     assert J["detId"].tolist() == [[10, 10, 11, 20, 20], [12, 23]]
     assert J["tpIdx"].tolist() == CLUSTER_TP_IDX
-    assert J["subdet"].tolist() == [[1, 1, 1, 2, 2], [1, 2]]
-    assert J["layer"].tolist() == [[1, 1, 2, 0, 0], [4, 0]]
-    assert J["disk"].tolist() == [[0, 0, 0, 1, 1], [0, 4]]
-    assert J["side"].tolist() == [[0, 0, 0, 1, 1], [0, 1]]
-    assert J["ring"].tolist() == [[0, 0, 0, 2, 2], [0, 4]]
-    assert J["surface"].tolist() == [[1, 1, 2, 11, 11], [4, 14]]
-    assert J["idxInDet"].tolist() == [[0, 1, 0, 0, 1], [0, 0]]
-    # the split synthesis equals what the unified producer writes
-    U = S.cluster_columns(_unified(), ["detId", "tpIdx", "subdet", "layer", "disk",
-                                       "surface", "idxInDet"])
-    for c in U:
-        assert U[c].tolist() == J[c].tolist(), c
-
-
-def test_scopes_and_barrel_prefix():
-    A = _split()
-    J = S.cluster_columns(A, ["surface"], disc_scope="all")
-    assert J["surface"].tolist() == [[1, 1, 2, 11, 11, 15, 19], [4, 14]]
-    J = S.cluster_columns(A, ["surface"], disc_scope="tfpx")
-    assert J["surface"].tolist() == [[1, 1, 2, 11, 11, 15], [4, 14]]
-    for B in (A, _unified()):
-        J = S.cluster_columns(B, ["detId", "tpIdx"], surfaces=S.BARREL)
-        assert J["detId"].tolist() == [[10, 10, 11], [12]]
-        assert J["tpIdx"].tolist() == [[0, -1, 0], [-10]]
-        J = S.cluster_columns(B, ["detId"], disc_scope="none")
-        assert J["detId"].tolist() == [[10, 10, 11], [12]]
-    # barrel-only request does not read the disc table
-    assert not any(b.startswith(DC) for b in S.cluster_branches(A.fields, ["detId"],
-                                                                 surfaces=S.BARREL))
-
-
-def test_barrel_only_file():
-    A = ak.Array({f"{CL}_layer": [[3, 1]], f"{CL}_tpIdx": [[1, -1]]})
-    J = S.cluster_columns(A, ["tpIdx", "surface", "subdet", "layer"])
-    assert J["surface"].tolist() == [[3, 1]] and J["subdet"].tolist() == [[1, 1]]
-    assert J["tpIdx"].tolist() == [[1, -1]]
+    J = S.cluster_columns(A, ["detId", "tpIdx"], surfaces=S.BARREL)
+    assert J["detId"].tolist() == [[10, 10, 11], [12]]
+    assert J["tpIdx"].tolist() == [[0, -1, 0], [-10]]
+    J = S.cluster_columns(A, ["detId"], disc_scope="none")
+    assert J["detId"].tolist() == [[10, 10, 11], [12]]
+    J = S.cluster_columns(A, ["surface"], surfaces=(14,))
+    assert J["surface"].tolist() == [[], [14]]
+    with pytest.raises(ValueError):
+        S.cluster_columns(A, ["detId"], disc_scope="bogus")
 
 
 def test_unified_barrel_must_be_prefix():
@@ -118,7 +79,7 @@ def test_unified_barrel_must_be_prefix():
 
 
 def test_flat_clusters():
-    D, n = S.flat_clusters(_split(), ["detId"], surfaces=S.BARREL, event_offset=10)
+    D, n = S.flat_clusters(_unified(), ["detId"], surfaces=S.BARREL, event_offset=10)
     assert n.tolist() == [3, 1]
     assert D["event"].tolist() == [10, 10, 10, 11]
     assert isinstance(D["detId"], np.ndarray)

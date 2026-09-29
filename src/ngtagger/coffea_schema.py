@@ -732,10 +732,10 @@ class _SmartPixelsClusterBase(_TPLinked):
     A cluster is a detector object that knows nothing about any track; the
     link runs the other way, from a refit hit's selClusterIdx (``hit.cluster``).
 
-    On current nanos the table holds every TBPX cluster, then the ID1-ID4 disc
-    clusters, with subdet/layer/disk/side/ring/surface/idxInDet. Barrel-only
-    work selects ``surface <= 4``; older files keep the discs in a separate
-    L1TSmartPixelsDiscCluster table (ngtagger.data.spix_nano reads both).
+    The table holds every TBPX cluster, then the ID1-ID4 disc clusters, with
+    subdet/layer/disk/side/ring/surface/idxInDet. Barrel-only work selects
+    ``surface <= 4``. Pre-unification files (discs in a separate
+    L1TSmartPixelsDiscCluster table, or none) are not supported.
 
     The derived accessors below are the ones that are awkward to recompute
     correctly by hand, because both are per-MODULE quantities and the table is

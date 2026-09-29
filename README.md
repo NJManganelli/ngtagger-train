@@ -148,11 +148,10 @@ cluster table: every TBPX cluster first (same rows as before, so a refit hit's
 `selClusterIdx` still indexes it), then the ID1-ID4 disc clusters, with
 `subdet` (1 barrel, 2 disc), `layer` (0 on disc), `disk`/`side`/`ring`,
 `surface` (1-4 = IL1-IL4, 10 + disk on disc) and `idxInDet`
-((event, detId, idxInDet) is a stable key). Older nanos keep the discs in
-`L1TSmartPixelsDiscCluster` (all 12 disks) or have no discs at all;
-`cluster_columns` returns the unified layout from any of them (disc scope
-ID1-ID4 by default), and `surfaces=BARREL` keeps the barrel prefix, which is
-how every barrel study here reads it. TrackingParticle truth links are ROW
+((event, detId, idxInDet) is a stable key). `cluster_columns` keeps disc
+scope ID1-ID4 by default and `surfaces=BARREL` keeps the barrel prefix, which
+is how every barrel study here reads it. Older nanos that keep the discs in
+`L1TSmartPixelsDiscCluster` or have no geometry columns are refused. TrackingParticle truth links are ROW
 indices into `L1TTP`, like every other link: `tpIdx` on L1TTrack, L1TExtTrack,
 L1TOTStub, L1TSmartPixelsCluster and the SmartPixels track tables (plus
 `tpIdxInner` / `tpIdxOuter` on L1TOTStub), each with its table's own definition:
