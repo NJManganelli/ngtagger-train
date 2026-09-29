@@ -260,7 +260,9 @@ def test_real_file_crossrefs():
             checked.append(f"{col} -> {target}: {int(ak.sum(ok))} links")
             continue
         linked = tab.cluster if idx in ("selClusterIdx", "clusterIdx") else (
-            tab.ot_stub if idx == "otStubIdx" else tab.track)
+            tab.ot_stub if idx == "otStubIdx" else tab.ot_track if idx == "l1TrackIdx" else tab.track)
+        if idx == "l1TrackIdx":   # every SmartPixels track has its OT track
+            assert ak.all(ok) and not ak.any(ak.is_none(linked.pt, axis=1)), col
         if idx == "selClusterIdx":
             assert ak.all(linked.detId[ok] == tab.detId[ok]), col
         if idx in ("otStubIdx", "clusterIdx"):   # link-only tables: every link lands on a row
