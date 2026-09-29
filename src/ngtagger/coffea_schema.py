@@ -10,8 +10,8 @@ One schema serves every tier:
   - the jet-constituent link tables get `jet` / `cand` accessors plus the
     derived tagger variables (pt_rel, pt_rel_log, deta, dphi) recomputed
     from the cross-refs
-  - TrackingParticle truth links (tpIdx; spixMatchedTpIdx on refit variant
-    tables) cross-reference L1TTP, with a `tp` accessor; on older key-linked
+  - TrackingParticle truth links (tpIdx, on every TP-linked table) cross-reference
+    L1TTP, with a `tp` accessor; on older key-linked
     nanos the row-convention tpIdx is derived from the key and L1TTP_key
   - candidates get matched_track / matched_cluster / matched_jet accessors
     and uniform track-truth access: `trk_genuine` uses the direct column
@@ -238,15 +238,24 @@ class _TPLinked(base.NanoCollection):
 
     @property
     def tp(self):
-        """matched L1TTP row (via tpIdx, spixMatchedTpIdx on a refit variant
-        table; None unless the link is a row, i.e. >= 0)"""
-        g = "tpIdxG" if "tpIdxG" in self.fields else "spixMatchedTpIdxG"
-        return self._events()[spix_nano.TP_TABLE]._apply_global_index(self[g])
+        """matched L1TTP row (via tpIdx; None unless the link is a row, i.e. >= 0)"""
+        return self._events()[spix_nano.TP_TABLE]._apply_global_index(self.tpIdxG)
 
 
 @awkward.mixin_class(behavior)
 class L1OTStub(_TPLinked):
-    pass
+    """OT stub; `tp` is its principal TP, `tp_inner` / `tp_outer` the owners of its
+    inner- / outer-sensor clusters (TTStub clusterRef 0 / 1)."""
+
+    @property
+    def tp_inner(self):
+        """L1TTP row owning the inner-sensor cluster (via tpIdxInner)"""
+        return self._events()[spix_nano.TP_TABLE]._apply_global_index(self.tpIdxInnerG)
+
+    @property
+    def tp_outer(self):
+        """L1TTP row owning the outer-sensor cluster (via tpIdxOuter)"""
+        return self._events()[spix_nano.TP_TABLE]._apply_global_index(self.tpIdxOuterG)
 
 
 class L1TrackWordDecoded(base.NanoCollection):
@@ -470,6 +479,8 @@ def smartpixels_links(fields):
             link(f"{spx}_l1TrackIdx", trk)
     for name, _ in tp_links(fields):
         xref[name] = spix_nano.TP_TABLE
+    for side in ("Inner", "Outer"):
+        link(f"{_OT_STUB_TABLE}_tpIdx{side}", spix_nano.TP_TABLE)
     return mixins, xref
 
 

@@ -253,7 +253,12 @@ def test_real_file_crossrefs():
         src, idx = col.split("_", 1)
         tab = ev[src]
         ok = tab[idx] >= 0
-        if idx in ("tpIdx", "spixMatchedTpIdx"):
+        if idx.startswith("tpIdx"):
+            if idx != "tpIdx":   # L1TOTStub tpIdxInner / tpIdxOuter: rows of L1TTP
+                acc = tab.tp_inner if idx == "tpIdxInner" else tab.tp_outer
+                assert not ak.any(ak.is_none(acc.pt[ok], axis=1)), col
+                checked.append(f"{col} -> {target}: {int(ak.sum(ok))} links")
+                continue
             truth_pt = next((c for c in ("tp_pt", "tpPt") if c in tab.fields), None)
             if truth_pt is not None:
                 assert ak.all(abs(tab.tp.pt[ok] - tab[truth_pt][ok]) <= 1e-2 * tab.tp.pt[ok]), col
@@ -294,8 +299,9 @@ def _write_tp_links(tmp_path, name, convention):
         ttp[tp_col] = [[3, 8], [9]]
     tree["L1TTP"] = ak.zip(ttp)
     for t, v in link.items():
-        col = "spixMatchedTp" if t.startswith("L1TSmartPixelsTrack") else "tp"
-        col += "Key" if convention == "key" else "Idx"
+        col = "tpIdx" if convention == "row" else "tp" + ("Key" if convention == "key" else "Idx")
+        if convention != "row" and t.startswith("L1TSmartPixelsTrack"):
+            col = "spixMatchedT" + col[1:]
         tree[t] = ak.zip({"pt": [[1.0] * len(e) for e in v], col: v})
     f = uproot.recreate(tmp_path / name)
     types = {k: (v.type if isinstance(v, ak.Array) else v.dtype) for k, v in tree.items()}
@@ -314,15 +320,13 @@ def test_tp_links_every_convention(tmp_path, convention):
 
     path, rows = _write_tp_links(tmp_path, f"tp_{convention}.root", convention)
     _, xref = smartpixels_links(uproot.open(f"{path}:Events").keys())
-    for t in ("L1TTrack", "L1TOTStub", "L1TSmartPixelsCluster"):
+    for t in rows:
         assert xref[f"{t}_tpIdx"] == "L1TTP"
-    assert xref["L1TSmartPixelsTrackSeedlessRefitAAAA_spixMatchedTpIdx"] == "L1TTP"
     ev = NanoEventsFactory.from_root({path: "Events"}, schemaclass=L1ClustersNanoSchema).events()
     pt = [[30.0, 80.0], [90.0]]
     for t, want in rows.items():
         tab = ev[t]
-        got = tab.spixMatchedTpIdx if t.startswith("L1TSmartPixelsTrack") else tab.tpIdx
-        assert got.tolist() == want, t
+        assert tab.tpIdx.tolist() == want, t
         assert tab.tp.pt.tolist() == [[pt[e][r] if r >= 0 else None for r in ev_rows]
                                       for e, ev_rows in enumerate(want)], t
 

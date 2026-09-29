@@ -154,11 +154,14 @@ cluster table: every TBPX cluster first (same rows as before, so a refit hit's
 ID1-ID4 by default), and `surfaces=BARREL` keeps the barrel prefix, which is
 how every barrel study here reads it. TrackingParticle truth links are ROW
 indices into `L1TTP`, like every other link: `tpIdx` on L1TTrack, L1TExtTrack,
-L1TOTStub and L1TSmartPixelsCluster, `spixMatchedTpIdx` on the refit track
-tables; -1 unmatched, -2 truth unavailable, <= -3 matched TP pruned from L1TTP
+L1TOTStub, L1TSmartPixelsCluster and the SmartPixels track tables (plus
+`tpIdxInner` / `tpIdxOuter` on L1TOTStub), each with its table's own definition:
+OT tracks the loosely-genuine TTTrackAssociator match, SmartPixels tracks the
+cluster-majority owner (> 50% of the 2 clusters per stub + accepted IT clusters;
+owned counts `tpNClusters`, `tpNITClusters`); -1 unmatched, -2 truth unavailable, <= -3 matched TP pruned from L1TTP
 (-3 - tpIdx = its index in the unwritten TP collection); equal tpIdx <=> same
 TP. Older nanos (cnn_nano v1-v4) hold TP KEYS (`tpKey` + `L1TTP_key`; v1 under
-the *Idx names + `L1TTP_idx`): `tp_idx` / `cluster_columns` / `table_columns`
+the *Idx names + `L1TTP_idx`; refit track tables `spixMatchedTp*`, read as `tpIdx`): `tp_idx` / `cluster_columns` / `table_columns`
 derive the row convention from them, as does the coffea schema.
 `L1TTP` now holds TPs with 3-momentum |p| > 1 GeV
 (older nanos: pT >= 1 GeV). Track -> stub tables (`L1TTrackStub`,

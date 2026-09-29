@@ -15,9 +15,9 @@ Track families (all 1:1 row aligned per event, validated on read):
 
 The base table (L1TTrack / L1TExtTrack) supplies the OT-only fit, its KF
 covariance and the TP truth (genuine, tp_pt, tp_d0, tp_z0: the OT associator's
-TP); L1TTP is not needed. The refit row's spixMatchedTpIdx is the majority owner of
-its stubs + accepted IT hits: never another TP than a genuine OT track's, but -1 when
-the IT hits leave that TP without a strict majority. Tracks without a refit carry the baseline
+TP); L1TTP is not needed. The refit row's tpIdx is the cluster-majority owner (the TP
+owning > 50% of the 2 clusters of each stub + the accepted IT clusters), -1 when no TP
+has a strict majority. Tracks without a refit carry the baseline
 parameters in the refit table and are kept (spixRefitPerformed is a feature).
 
 Collections (``coll``): "refit" (the default and the deliverable) uses base +
@@ -29,9 +29,9 @@ fitted d0 is meaningless).
 
 Heads (per window; OUTPUTS order):
   clean    P(track clean): base = genuine; refit = genuine AND no wrong IT hit
-           (an accepted IT hit whose cluster tpIdx differs from spixMatchedTpIdx, the
-           majority owner of the stubs + accepted IT hits; every accepted IT hit when
-           spixMatchedTpIdx = -1, so a noise cluster, tpIdx -1 too, counts as wrong)
+           (an accepted IT hit whose cluster tpIdx differs from the refit row's tpIdx, the
+           cluster-majority owner; every accepted IT hit when that tpIdx = -1, so a noise
+           cluster, tpIdx -1 too, counts as wrong)
   d0acc    P(|d0 - d0_TP| below the 68.3 pct of the CLEAN matched population)
   z0acc    same for z0
   log_sd0  log sigma_hat(d0/um), sigma_hat = max((q84.1 - q15.9)/2, 1 um) from a
@@ -133,7 +133,7 @@ HIT_COLS = ["hitAccepted", "trackIdx", "hasAlpha", "windowMult", "clusterMerged"
             "pullX", "pullY", "pullAlpha", "chi2IncX", "chi2IncY", "chi2IncAlpha"]
 # truth (labels / bookkeeping only; never a model input)
 BASE_TRUTH = ["genuine", "tpFromHardInteraction", "tp_pt", "tp_d0", "tp_z0"]
-REFIT_TRUTH = ["spixMatchedTpIdx"]
+REFIT_TRUTH = ["tpIdx"]
 HIT_TRUTH = ["selClusterIdx"]
 EVENT_ID = ["run", "luminosityBlock", "event"]
 
@@ -147,7 +147,7 @@ HIT_FEATURES = ["h_nangle", "h_chi2_angle_per_cl", "h_chi2_pos_per_hit", "h_mean
 
 HEAD_DEFINITIONS = {
     "clean": "P(clean): base = genuine; refit = genuine AND n_it_wrong == 0 "
-             "(accepted IT hit with cluster tpIdx != spixMatchedTpIdx, or spixMatchedTpIdx == -1)",
+             "(accepted IT hit with cluster tpIdx != the refit track's tpIdx, or that tpIdx == -1)",
     "d0acc": f"P(|d0 - tp_d0| <= {CLEAN_PCT} pct of |d0 - tp_d0| over clean matched training tracks)",
     "z0acc": f"P(|z0 - tp_z0| <= {CLEAN_PCT} pct of |z0 - tp_z0| over clean matched training tracks)",
     "log_sd0": f"log(max(0.5*(q84.1 - q15.9), {SIGMA_FLOOR_UM})) of d0 - tp_d0 in um "
@@ -267,7 +267,7 @@ def tracks_from_batch(A, family: str = "prompt", config: str = "AAAA",
     if with_truth:
         for c in BASE_TRUTH:
             T["b_" + c] = _flat(A, bn(tn["base"], c))
-        ttp = ak.to_numpy(ak.flatten(tp_idx(A, tn["refit"], "spixMatchedTpIdx"))).astype(np.int64)
+        ttp = ak.to_numpy(ak.flatten(tp_idx(A, tn["refit"]))).astype(np.int64)
         ctp_j = tp_idx(A, CLUSTER_TABLE)
         nc = ak.to_numpy(ak.num(ctp_j))
         coff = np.concatenate([[0], np.cumsum(nc)[:-1]]).astype(np.int64)

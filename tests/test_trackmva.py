@@ -60,7 +60,7 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30), links="row"):
            "spixChi2IncYTot": rng.exponential(2, N), "spixChi2IncAlphaTot": rng.exponential(2, N),
            "spixChi2ITAtOT": rng.exponential(2, N), "spixChi2ITAtRefit": rng.exponential(2, N),
            "spixShiftChi2": rng.exponential(2, N), "spixLogDetRatio": rng.normal(0, 1, N),
-           ("spixMatchedTpKey" if by_key else "spixMatchedTpIdx"): tpkey if by_key else tp_row}
+           ("spixMatchedTpKey" if by_key else "tpIdx"): tpkey if by_key else tp_row}
     # hits: 0-4 per track; clusters: one per hit, owned by the track's TP unless "wrong"
     nh = rng.integers(0, 5, N)
     trk_of_hit = np.repeat(np.arange(N), nh)
@@ -128,7 +128,7 @@ def test_n_it_wrong_and_alignment():
     # brute force per event
     exp = []
     for e in range(len(ntrk)):
-        tk = ak.to_numpy(tables[R]["spixMatchedTpIdx"][e])
+        tk = ak.to_numpy(tables[R]["tpIdx"][e])
         ct = ak.to_numpy(tables["L1TSmartPixelsCluster"]["tpIdx"][e])
         h = {c: ak.to_numpy(tables[H][c][e]) for c in ("trackIdx", "selClusterIdx", "hitAccepted")}
         n = np.zeros(len(tk))
@@ -145,11 +145,11 @@ def test_n_it_wrong_and_alignment():
 
 
 def test_n_it_wrong_unmatched_track():
-    """spixMatchedTpIdx = -1 (no TP owns a strict majority of the track's hits): every
+    """refit tpIdx = -1 (no TP owns a strict majority of the track's clusters): every
     accepted hit is wrong, even a noise cluster whose own tpIdx is also -1."""
     tables, ev = _synth_tables(n_events=6, seed=2)
-    tk = tables[R]["spixMatchedTpIdx"]
-    tables[R]["spixMatchedTpIdx"] = ak.full_like(tk, -1)
+    tk = tables[R]["tpIdx"]
+    tables[R]["tpIdx"] = ak.full_like(tk, -1)
     ct = tables["L1TSmartPixelsCluster"]["tpIdx"]
     tables["L1TSmartPixelsCluster"]["tpIdx"] = ak.full_like(ct, -1)
     T, _ = tm.tracks_from_batch(_batch(tables, ev), "prompt", CFG)

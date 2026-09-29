@@ -24,8 +24,10 @@ refit) stays valid on every layout, and filtering to ``surfaces=BARREL``
 preserves it.
 
 TrackingParticle links. Current nanos link TP truth by ROW into L1TTP, like
-every other nano link: ``tpIdx`` on L1TTrack, L1TExtTrack, L1TOTStub and
-L1TSmartPixelsCluster, ``spixMatchedTpIdx`` on the refit track tables, with
+every other nano link: ``tpIdx`` on L1TTrack, L1TExtTrack, L1TOTStub,
+L1TSmartPixelsCluster and the SmartPixels track tables (plus ``tpIdxInner`` /
+``tpIdxOuter`` on L1TOTStub), each with its table's own definition (see the
+DPGAnalysis/Phase3SmartPixelsNanoAOD README, "Truth links"), with
   >= 0  row in L1TTP
   -1    not truth-matched
   -2    TrackingParticle product unavailable
@@ -35,7 +37,8 @@ L1TSmartPixelsCluster, ``spixMatchedTpIdx`` on the refit track tables, with
 Two objects share a TP iff their tpIdx are equal. Older nanos stored the TP
 collection KEY instead (convention "key"): cnn_nano v2-v4 as *tpKey /
 spixMatchedTpKey with L1TTP_key, cnn_nano v1 under the *Idx names with
-L1TTP_idx. ``tp_idx`` returns the row convention from any generation (the
+L1TTP_idx; their refit track tables spell the link spixMatchedTp*, read here
+as ``tpIdx`` like the row-convention files. ``tp_idx`` returns the row convention from any generation (the
 key -> row join is done here with the same encoding; with no L1TTP table in
 the file a match reads -2), and ``column``, ``table_columns``,
 ``branch_names``, ``has_column`` and ``cluster_columns`` route the two link
@@ -97,8 +100,10 @@ ABSENT_BELOW = -900.0
 DIRECTION_COLUMNS = ("globalClusterPhi", "globalClusterCotTheta",
                      "sigGlobalClusterPhi", "sigGlobalClusterCotTheta")
 
-# row-convention TP link column -> its cnn_nano v2-v4 key spelling
-TP_LINK_COLUMNS = {"tpIdx": "tpKey", "spixMatchedTpIdx": "spixMatchedTpKey"}
+# row-convention TP link column -> its key-convention spellings: cnn_nano v2-v4, then v1
+# (keys under the *Idx names); the refit track tables spelled it spixMatchedTp*
+TP_LINK_COLUMNS = {"tpIdx": ("tpKey", "spixMatchedTpKey", "tpIdx", "spixMatchedTpIdx")}
+_KEY_LINK_COLUMNS = ("tpKey", "spixMatchedTpKey")
 # key-convention spellings, v2-v4 -> v1 (both hold TP keys); None = every table
 _KEY_RENAMES = {
     None: {"tpKey": "tpIdx", "spixMatchedTpKey": "spixMatchedTpIdx"},
@@ -124,7 +129,7 @@ def tp_link_convention(keys):
     -2 either way)."""
     keys = set(keys)
     if (f"{TP_TABLE}_key" in keys or f"{TP_TABLE}_idx" in keys
-            or any(k.endswith(tuple("_" + v for v in TP_LINK_COLUMNS.values())) for k in keys)):
+            or any(k.endswith(tuple("_" + v for v in _KEY_LINK_COLUMNS)) for k in keys)):
         return "key"
     if _tp_table_branch(keys) is not None:
         return "row"
@@ -144,7 +149,7 @@ def tp_link_source(keys, table, col="tpIdx", required=True):
     table has no link, or None if not `required`."""
     keys = set(keys)
     conv = tp_link_convention(keys)
-    names = (TP_LINK_COLUMNS[col], col) if conv == "key" else (col,)
+    names = TP_LINK_COLUMNS[col] if conv == "key" else (col,)
     for c in names:
         if f"{table}_{c}" in keys:
             tk = next((f"{TP_TABLE}_{k}" for k in ("key", "idx") if f"{TP_TABLE}_{k}" in keys), None)
@@ -194,7 +199,7 @@ def tp_rows_from_keys(key, tp_key=None):
 
 
 def tp_idx(A, table, col="tpIdx"):
-    """Row-convention `table`_`col` (tpIdx or spixMatchedTpIdx) from an uproot
+    """Row-convention `table`_`col` (tpIdx) from an uproot
     batch `A` read with (at least) ``tp_link_branches``, whatever the file's
     convention."""
     br, tk, conv = tp_link_source(_fields(A), table, col)

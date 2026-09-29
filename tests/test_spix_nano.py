@@ -94,12 +94,12 @@ def test_tp_rows_from_keys():
 
 def test_tp_idx_every_convention():
     row = ak.Array({"nL1TTP": [2, 1], f"{CL}_tpIdx": CLUSTER_TP_IDX,
-                    "Y_spixMatchedTpIdx": [[1, -1], [-10]]})
+                    "Y_tpIdx": [[1, -1], [-10]]})
     key = ak.Array({"L1TTP_key": TTP_KEYS, f"{CL}_tpKey": [[3, -1, 3, 5, 5], [7, 9]],
                     "Y_spixMatchedTpKey": [[8, -1], [7]]})
     for A in (row, key):
         assert S.tp_idx(A, CL).tolist() == CLUSTER_TP_IDX
-        assert S.tp_idx(A, "Y", "spixMatchedTpIdx").tolist() == [[1, -1], [-10]]
+        assert S.tp_idx(A, "Y").tolist() == [[1, -1], [-10]]
         assert S.column(A, CL, "tpIdx").tolist() == CLUSTER_TP_IDX
         assert S.has_column(A.fields, CL, "tpIdx")
     assert S.branch_names(key.fields, CL, ["tpIdx"]) == [f"{CL}_tpKey", "L1TTP_key"]
