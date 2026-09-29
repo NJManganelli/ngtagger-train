@@ -15,9 +15,9 @@ Track families (all 1:1 row aligned per event, validated on read):
 
 The base table (L1TTrack / L1TExtTrack) supplies the OT-only fit, its KF
 covariance and the TP truth (genuine, tp_pt, tp_d0, tp_z0: the OT associator's
-TP); L1TTP is not needed. The refit row's tpIdx is the cluster-majority owner (the TP
-owning > 50% of the 2 clusters of each stub + the accepted IT clusters), -1 when no TP
-has a strict majority. Tracks without a refit carry the baseline
+TP); L1TTP is not needed. The refit row's tpIdx is the weighted cluster-majority owner
+(the TP owning > 50% of the track's weight, 1/2 per stub cluster and 1 per accepted IT
+cluster), -1 when no TP has a strict majority. Tracks without a refit carry the baseline
 parameters in the refit table and are kept (spixRefitPerformed is a feature).
 
 Collections (``coll``): "refit" (the default and the deliverable) uses base +
@@ -30,8 +30,8 @@ fitted d0 is meaningless).
 Heads (per window; OUTPUTS order):
   clean    P(track clean): base = genuine; refit = genuine AND no wrong IT hit
            (an accepted IT hit whose cluster tpIdx differs from the refit row's tpIdx, the
-           cluster-majority owner; every accepted IT hit when that tpIdx = -1, so a noise
-           cluster, tpIdx -1 too, counts as wrong)
+           weighted cluster-majority owner; every accepted IT hit when that tpIdx = -1, so
+           a noise cluster, tpIdx -1 too, counts as wrong)
   d0acc    P(|d0 - d0_TP| below the 68.3 pct of the CLEAN matched population)
   z0acc    same for z0
   log_sd0  log sigma_hat(d0/um), sigma_hat = max((q84.1 - q15.9)/2, 1 um) from a

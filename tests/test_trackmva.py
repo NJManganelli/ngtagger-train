@@ -145,7 +145,7 @@ def test_n_it_wrong_and_alignment():
 
 
 def test_n_it_wrong_unmatched_track():
-    """refit tpIdx = -1 (no TP owns a strict majority of the track's clusters): every
+    """refit tpIdx = -1 (no TP owns a strict majority of the track's cluster weight): every
     accepted hit is wrong, even a noise cluster whose own tpIdx is also -1."""
     tables, ev = _synth_tables(n_events=6, seed=2)
     tk = tables[R]["tpIdx"]
