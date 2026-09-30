@@ -76,25 +76,34 @@ def _as_mva(model):
     return model if isinstance(model, TrackMVA) else load_bundle(model)
 
 
+def _coll(mva, coll):
+    """None -> "refit" when the bundle has it, else its only collection."""
+    if coll is None:
+        return "refit" if "refit" in mva.colls else mva.colls[0]
+    return coll
+
+
 def trackmva_branches(keys, model) -> list[str]:
     """The branches ``trackmva_per_track`` needs (online columns only)."""
     from ngtagger.train.trackmva import nano_branches
 
     mva = _as_mva(model)
-    return nano_branches(keys, mva.family, mva.config, with_truth=False, with_event_id=False)
+    return nano_branches(keys, mva.family, mva.config, with_truth=False, with_event_id=False,
+                         base_only=mva.colls == ["base"])
 
 
-def trackmva_per_track(A, model, coll: str = "refit") -> ak.Array:
+def trackmva_per_track(A, model, coll: str | None = None) -> ak.Array:
     """(event, track) record of the heads for every base/refit row of batch `A`."""
     from ngtagger.train.trackmva import OUTPUTS, tracks_from_batch
 
     mva = _as_mva(model)
-    T, ntrk = tracks_from_batch(A, mva.family, mva.config, with_truth=False)
-    P = mva.predict(T, coll)
+    T, ntrk = tracks_from_batch(A, mva.family, mva.config, with_truth=False,
+                                base_only=mva.colls == ["base"])
+    P = mva.predict(T, _coll(mva, coll))
     return ak.unflatten(ak.zip({h: P[h].astype(np.float32) for h in OUTPUTS}), ntrk)
 
 
-def trackmva_scores_from_files(files, model, coll: str = "refit", max_events: int | None = None,
+def trackmva_scores_from_files(files, model, coll: str | None = None, max_events: int | None = None,
                                step_events: int = 50) -> ak.Array:
     """``trackmva_per_track`` over `files` in order, `step_events` at a time."""
     import uproot
@@ -155,8 +164,7 @@ def trackmva_jet_features(files, events, cands, nested_idx, link_idx_field: str,
         raise ValueError(f"the constituent crossref points into {track_table}, but the track-MVA "
                          f"bundle scores {mva.tables['base']} / {mva.tables['refit']} rows (family "
                          f"{mva.family!r}); use the bundle of the matching family")
-    if coll is None:
-        coll = "refit" if "refit" in mva.colls else mva.colls[0]
+    coll = _coll(mva, coll)
     scores = trackmva_scores_from_files(files, mva, coll, max_events)
     n_tracks = ak.num(events[track_table], axis=1) if track_table in events.fields else None
     G = trackmva_per_constituent(scores, cands, nested_idx, link_idx_field, n_tracks=n_tracks)

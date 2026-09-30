@@ -263,9 +263,11 @@ def main(argv=None):
                            "jet constituents crossref); canonical = L1TTrack + L1TSmartPixelsTrack "
                            "(canonical/coopt nano, --config unused); canonical_ext = L1TExtTrack + "
                            "L1TSmartPixelsExtTrack (the table canonical-nano jet constituents crossref)")
-    p_tm.add_argument("--refit-truth", choices=["ot", "sp"], default="ot",
+    p_tm.add_argument("--refit-truth", choices=["ot", "sp", "otlink"], default="ot",
                       help="residual truth of the refit heads: ot = the OT-associator TP of the "
-                           "base row; sp = the refit row's own tpIdx TP via L1TTP")
+                           "base row; sp = the refit row's own tpIdx TP via L1TTP; otlink = the OT "
+                           "TP for the residuals AND the clean label (wrong IT hit = cluster TP != "
+                           "the OT track's TP)")
     p_tm.add_argument("--config", default="AAAA", help="seedlessRefit config suffix")
     p_tm.add_argument("--colls", nargs="+", choices=["refit", "base"], default=["refit"],
                       help="refit = the deliverable; base = the OT-only reference heads")

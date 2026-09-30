@@ -25,7 +25,13 @@ TP). The refit row's tpIdx is the weighted cluster-majority owner
 cluster), -1 when no TP has a strict majority. Residual truth of the refit heads
 (``refit_truth``): "ot" (default) = the base row's OT-associator TP; "sp" = the refit
 row's own tpIdx TP, read from L1TTP (pt, d0, z0; tpIdx < 0 incl. pruned = unmatched),
-which needs L1TTP in the nano. Tracks without a refit carry the baseline
+which needs L1TTP in the nano; "otlink" = the OT track's TP for EVERYTHING, i.e. the
+residuals as "ot" and also the clean label: a wrong IT hit is then an accepted IT hit
+whose cluster tpIdx differs from the base (OT) row's tpIdx (for comparisons against the
+OT baseline under its truth definition; the refit table's tpIdx is not used).
+Base-only reading (``base_only``, automatic when only the "base" collection is trained
+or scored): only the base table is read, so a nano whose SP table carries no refit
+columns (e.g. the OT passthrough mask IIII) still yields the OT-only heads. Tracks without a refit carry the baseline
 parameters in the refit table and are kept (spixRefitPerformed is a feature).
 
 Collections (``coll``): "refit" (the default and the deliverable) uses base +
@@ -143,11 +149,11 @@ REFIT_COLS = ["pt", "tanL", "z0", "d0", "spixRefitPerformed", "spixAnyWindowTrun
 HIT_COLS = ["hitAccepted", "trackIdx", "hasAlpha", "windowMult", "clusterMerged",
             "pullX", "pullY", "pullAlpha", "chi2IncX", "chi2IncY", "chi2IncAlpha"]
 # truth (labels / bookkeeping only; never a model input)
-BASE_TRUTH = ["genuine", "tpFromHardInteraction", "tp_pt", "tp_d0", "tp_z0"]
+BASE_TRUTH = ["genuine", "tpFromHardInteraction", "tp_pt", "tp_d0", "tp_z0", "tpIdx"]
 REFIT_TRUTH = ["tpIdx"]
 HIT_TRUTH = ["selClusterIdx"]
 TP_TRUTH = ["pt", "d0", "z0"]          # L1TTP columns of the refit_truth="sp" residual truth
-REFIT_TRUTH_SOURCES = ("ot", "sp")
+REFIT_TRUTH_SOURCES = ("ot", "sp", "otlink")
 EVENT_ID = ["run", "luminosityBlock", "event"]
 
 REFIT_SENTINEL_COLS = ["spixRefitPerformed", "spixAnyWindowTruncated", "spixNCrossings",
@@ -184,21 +190,24 @@ def table_names(family: str, config: str) -> dict:
 # nano -> flat per-track table
 # ---------------------------------------------------------------------------
 def nano_branches(keys, family: str = "prompt", config: str = "AAAA",
-                  with_truth: bool = True, with_event_id: bool = True) -> list[str]:
+                  with_truth: bool = True, with_event_id: bool = True,
+                  base_only: bool = False) -> list[str]:
     """The branches ``tracks_from_batch`` needs, resolved on a file whose
     branch names are `keys`."""
     tn = table_names(family, config)
     keys = set(keys)
     br = [branch_name(keys, tn["base"], c) for c in BASE_COLS]
-    br += [branch_name(keys, tn["refit"], c) for c in REFIT_COLS]
-    br += [branch_name(keys, tn["hits"], c) for c in HIT_COLS]
+    if not base_only:
+        br += [branch_name(keys, tn["refit"], c) for c in REFIT_COLS]
+        br += [branch_name(keys, tn["hits"], c) for c in HIT_COLS]
     if with_truth:
         br += [branch_name(keys, tn["base"], c) for c in BASE_TRUTH]
-        br += branch_names(keys, tn["refit"], REFIT_TRUTH)
-        br += [branch_name(keys, tn["hits"], c) for c in HIT_TRUTH]
-        br += branch_names(keys, CLUSTER_TABLE, ["tpIdx"])
-        if all(has_column(keys, TP_TABLE, c) for c in TP_TRUTH):  # for refit_truth="sp"
-            br += branch_names(keys, TP_TABLE, TP_TRUTH)
+        if not base_only:
+            br += branch_names(keys, tn["refit"], REFIT_TRUTH)
+            br += [branch_name(keys, tn["hits"], c) for c in HIT_TRUTH]
+            br += branch_names(keys, CLUSTER_TABLE, ["tpIdx"])
+            if all(has_column(keys, TP_TABLE, c) for c in TP_TRUTH):  # for refit_truth="sp"
+                br += branch_names(keys, TP_TABLE, TP_TRUTH)
     if with_event_id:
         br += [c for c in EVENT_ID if c in keys]
     return list(dict.fromkeys(br))
@@ -251,15 +260,24 @@ def hit_aggregates(hits: dict, g: np.ndarray, n_tracks: int) -> dict:
 
 
 def tracks_from_batch(A, family: str = "prompt", config: str = "AAAA",
-                      with_truth: bool = True):
+                      with_truth: bool = True, base_only: bool = False):
     """Flatten one uproot batch (read with ``nano_branches``) to per-track
     numpy columns. Returns (T, ntrk): T keys b_<col>, r_<col>, h_<agg>,
-    b_nmiss_interior and, with truth, the truth columns plus t_n_it_wrong;
-    ntrk = tracks per event. Raises if base and refit tables are not 1:1."""
+    b_nmiss_interior and, with truth, the truth columns plus t_n_it_wrong
+    (vs the refit row's tpIdx) and t_n_it_wrong_ot (vs the base row's tpIdx);
+    ntrk = tracks per event. Raises if base and refit tables are not 1:1.
+    base_only: the base table alone (b_ columns + base truth)."""
     tn = table_names(family, config)
     f = A.fields
     bn = lambda tab, c: branch_name(f, tab, c)  # noqa: E731
     ntrk = ak.to_numpy(ak.num(A[bn(tn["base"], "pt")])).astype(np.int64)
+    if base_only:
+        T = {"b_" + c: _flat(A, bn(tn["base"], c)) for c in BASE_COLS}
+        T["b_nmiss_interior"] = nlaymiss_interior(T["b_hitPattern"].astype(np.int64)).astype(np.float64)
+        if with_truth:
+            for c in BASE_TRUTH:
+                T["b_" + c] = _flat(A, bn(tn["base"], c))
+        return T, ntrk
     nref = ak.to_numpy(ak.num(A[bn(tn["refit"], "pt")]))
     if not np.array_equal(ntrk, nref):
         raise RuntimeError(f"{tn['base']} and {tn['refit']} are not 1:1 row aligned "
@@ -296,6 +314,11 @@ def tracks_from_batch(A, family: str = "prompt", config: str = "AAAA",
         htp = np.where(sel >= 0, ctp[np.where(sel >= 0, coff[evi] + sel, 0)] if len(ctp) else -2, -2)
         wrong = ((htp != ttp[g]) | (ttp[g] == -1)) & (hits["hitAccepted"] > 0)
         T["t_n_it_wrong"] = np.bincount(g[wrong], minlength=N).astype(np.float64)
+        btp = T["b_tpIdx"].astype(np.int64)                # the OT track's TP (refit_truth="otlink")
+        if np.any(btp == -2):
+            raise RuntimeError(f"{tn['base']}.tpIdx -2: no TrackingParticle product in the job")
+        wrong_ot = ((htp != btp[g]) | (btp[g] == -1)) & (hits["hitAccepted"] > 0)
+        T["t_n_it_wrong_ot"] = np.bincount(g[wrong_ot], minlength=N).astype(np.float64)
         T["r_tpIdx"] = ttp
         if all(has_column(f, TP_TABLE, c) for c in TP_TRUTH):
             # the refit row's own TP (refit_truth="sp"); NaN when tpIdx < 0 (none / pruned)
@@ -312,7 +335,7 @@ def tracks_from_batch(A, family: str = "prompt", config: str = "AAAA",
 
 def build_dataset(files, family: str = "prompt", config: str = "AAAA",
                   step_events: int = 25, max_events: int | None = None,
-                  with_truth: bool = True, log=print):
+                  with_truth: bool = True, log=print, base_only: bool = False):
     """Read `files` in order, `step_events` events at a time (bounded RSS),
     into (T, E): T per-track columns (+ 'evt', the global event index), E
     per-event bookkeeping (file index, entry, run/lumi/event, ntrk)."""
@@ -322,11 +345,11 @@ def build_dataset(files, family: str = "prompt", config: str = "AAAA",
     n_done = 0
     for fi, fn in enumerate(files):
         t = uproot.open(fn)["Events"]
-        br = nano_branches(t.keys(), family, config, with_truth)
+        br = nano_branches(t.keys(), family, config, with_truth, base_only=base_only)
         stop = t.num_entries if max_events is None else min(t.num_entries, max_events - n_done)
         for start in range(0, max(stop, 0), step_events):
             A = t.arrays(br, entry_start=start, entry_stop=min(start + step_events, stop))
-            T, ntrk = tracks_from_batch(A, family, config, with_truth)
+            T, ntrk = tracks_from_batch(A, family, config, with_truth, base_only)
             E = {"file": np.full(len(ntrk), fi), "entry": np.arange(start, start + len(ntrk)),
                  "ntrk": ntrk}
             for c in EVENT_ID:
@@ -398,7 +421,8 @@ def d0_features(T, coll: str) -> dict:
 def truth(T, coll: str, refit_truth: str = "ot"):
     """(matched, clean, d0 residual um, z0 residual um); residuals NaN if unmatched.
     refit_truth (coll "refit" only): residual truth = the base row's OT-associator TP
-    ("ot") or the refit row's own tpIdx TP ("sp"; needs the L1TTP columns r_tp_*)."""
+    ("ot") or the refit row's own tpIdx TP ("sp"; needs the L1TTP columns r_tp_*);
+    "otlink": residuals as "ot" and clean with wrong IT hits counted against the OT TP."""
     if refit_truth not in REFIT_TRUTH_SOURCES:
         raise ValueError(f"refit_truth {refit_truth!r} not in {REFIT_TRUTH_SOURCES}")
     p = "r_" if coll == "refit" else "b_"
@@ -409,7 +433,8 @@ def truth(T, coll: str, refit_truth: str = "ot"):
                            "the nano has no L1TTP table")
         tp = "r_tp_"
     matched = np.nan_to_num(T[tp + "pt"], nan=-1.0) > 0
-    clean = (T["b_genuine"] > 0) & ((T["t_n_it_wrong"] == 0) if coll == "refit" else True)
+    n_wrong = "t_n_it_wrong_ot" if refit_truth == "otlink" else "t_n_it_wrong"
+    clean = (T["b_genuine"] > 0) & ((T[n_wrong] == 0) if coll == "refit" else True)
     rd0 = np.where(matched, T[p + "d0"] - T[tp + "d0"], np.nan) * 1e4
     rz0 = np.where(matched, T[p + "z0"] - T[tp + "z0"], np.nan) * 1e4
     return matched, np.asarray(clean, bool), rd0, rz0
@@ -856,7 +881,8 @@ def train_trackmva(files, output_dir, family: str = "prompt", config: str = "AAA
         E = {k[2:]: d[k] for k in d.files if k.startswith("E_")}
         log(f"dataset from cache {dataset_cache}")
     else:
-        T, E = build_dataset(files, family, config, step_events, max_events, True, log)
+        T, E = build_dataset(files, family, config, step_events, max_events, True, log,
+                             base_only=colls == ["base"])
         if dataset_cache:
             np.savez_compressed(dataset_cache, **{"T_" + k: v for k, v in T.items()},
                                 **{"E_" + k: v for k, v in E.items()}, files=np.array(files))

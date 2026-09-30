@@ -47,7 +47,7 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30)):
             "cov_tanL_tanL": rng.random(N) * 1e-4, "cov_z0_z0": rng.random(N) * 1e-2,
             "cov_d0_d0": rng.random(N) * 1e-3,
             "genuine": genuine, "tpFromHardInteraction": (rng.random(N) < 0.2).astype(np.int32),
-            "tp_pt": tp_pt, "tp_d0": tp_d0, "tp_z0": tp_z0}
+            "tp_pt": tp_pt, "tp_d0": tp_d0, "tp_z0": tp_z0, "tpIdx": tp_row}
     ref = {"pt": pt * rng.normal(1, 0.01, N), "tanL": tanl + rng.normal(0, 1e-3, N), "z0": r_z0,
            "d0": r_d0, "spixRefitPerformed": refit, "spixAnyWindowTruncated": rng.integers(0, 2, N),
            "spixNCrossings": rng.integers(0, 5, N), "spixNAcceptedHits": rng.integers(0, 5, N),
@@ -110,6 +110,49 @@ def test_second_largest_matches_bruteforce():
     for k in range(60):
         x = np.sort(v[g == k])[::-1]
         assert got[k] == (x[1] if len(x) > 1 else 0.0)
+
+
+def test_otlink_counts_wrong_hits_against_the_ot_tp():
+    tables, ev = _synth_tables(n_events=6, seed=3)
+    btp = tables[B]["tpIdx"]
+    flat = ak.to_numpy(ak.flatten(btp)).copy()
+    flat[::3] = -1                                    # OT track without a TP: every hit wrong
+    flat[1::7] = 12345                                # OT TP differs from the SP majority owner
+    tables[B]["tpIdx"] = ak.unflatten(flat, ak.num(btp))
+    T, ntrk = tm.tracks_from_batch(_batch(tables, ev), "prompt", CFG)
+    exp = []
+    for e in range(len(ntrk)):
+        ot = ak.to_numpy(tables[B]["tpIdx"][e])
+        ct = ak.to_numpy(tables["L1TSmartPixelsCluster"]["tpIdx"][e])
+        h = {c: ak.to_numpy(tables[H][c][e]) for c in ("trackIdx", "selClusterIdx", "hitAccepted")}
+        n = np.zeros(len(ot))
+        for ti, si, a in zip(h["trackIdx"], h["selClusterIdx"], h["hitAccepted"]):
+            if a and (ct[si] != ot[ti] or ot[ti] == -1):
+                n[ti] += 1
+        exp.append(n)
+    assert np.array_equal(T["t_n_it_wrong_ot"], np.concatenate(exp))
+    assert not np.array_equal(T["t_n_it_wrong_ot"], T["t_n_it_wrong"])
+    _, clean_ot, rd0_ot, _ = tm.truth(T, "refit", "otlink")
+    _, _, rd0, _ = tm.truth(T, "refit", "ot")
+    np.testing.assert_array_equal(clean_ot, (T["b_genuine"] > 0) & (T["t_n_it_wrong_ot"] == 0))
+    np.testing.assert_array_equal(rd0_ot, rd0)        # residuals: the OT TP, as "ot"
+
+
+def test_base_only_reads_a_nano_without_refit_tables(tmp_path):
+    """OT passthrough (IIII): no refit columns / hit table; the base heads still train and score."""
+    tables, ev = _synth_tables(n_events=30, seed=4)
+    paths = []
+    for i in range(2):
+        p = str(tmp_path / f"iiii_f0{i + 1}.root")
+        _write_nano(p, {B: tables[B]}, ev)
+        paths.append(p)
+    out = tmp_path / "bundle"
+    tm.train_trackmva(paths, str(out), colls=["base"], crossfit_mode="none", log=lambda s: None)
+    mva = tm.load_bundle(str(out))
+    assert mva.colls == ["base"]
+    S = tf.trackmva_scores_from_files(paths, mva, step_events=7)
+    assert ak.num(S, axis=0) == 60
+    assert np.isfinite(ak.to_numpy(ak.flatten(S["clean"]))).all()
 
 
 def test_n_it_wrong_and_alignment():
