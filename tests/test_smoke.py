@@ -52,6 +52,9 @@ def test_deepset_hgq2_smoke(tiny_config, tmp_path):
     model.compile()
     model.fit(X, y, pt, validation_split=0.2, seed=1)
     assert model.best_val_loss() < np.inf
+    # per-jet class weights (trainer.run_training passes a bare array)
+    model.fit(X, y, pt, sample_weight=np.linspace(0.5, 2.0, len(X)), validation_split=0.2, seed=1)
+    assert model.best_val_loss() < np.inf
     model.save()
     assert (tmp_path / "out" / "model.keras").exists()
 

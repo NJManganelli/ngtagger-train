@@ -156,6 +156,18 @@ class DeepSetHGQ2(TagModel):
                 )
             targets[self.output_charge_name] = y_charge
         train_model = getattr(self, "_train_model", None) or self.model
+        if sample_weight is not None and train_model is self.model \
+                and not isinstance(sample_weight, (dict, list, tuple)):
+            # one per-jet weight for every output. Keras 3.15 resolves sample weights
+            # against the model's (list) outputs by position, so dict targets fail
+            # (KeyError 0 for a bare array, a structure mismatch for a dict): pass the
+            # targets and weights as lists in the model's output order. (The MDMM
+            # wrapper has its own train_step and takes the dict + array as is.)
+            order = list(train_model.output_names)
+            if set(order) != set(targets):
+                raise ValueError(f"model outputs {order} do not match the targets {sorted(targets)}")
+            targets = [targets[k] for k in order]
+            sample_weight = [sample_weight] * len(order)
         self.history = train_model.fit(
             X,
             targets,
