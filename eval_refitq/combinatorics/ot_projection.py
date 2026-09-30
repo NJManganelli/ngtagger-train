@@ -101,6 +101,8 @@ CL_COLS = ["detId", "layer", "localX", "localY", "localCotAlpha",
            "sigX", "sigY", "sigAlpha", "sigBeta",      # errors: the refit's measurement R
            "sizeX", "sizeY"]                             # cluster size: calibrated R lookup
 CL_TABLE = SPN.CLUSTER_TABLE
+# default refit hit table (a coexist nano's AAAA variant); every reader takes `refit=`
+# so a caller can point it at another variant or at the canonical unsuffixed table
 REFIT = "L1TSmartPixelsRefitHitSeedlessRefitAAAA"
 REFIT_COLS = ["trackIdx", "detId", "layer", "projOTLocalX", "projOTLocalY",
               "projOTCotAlpha", "projOTCotBeta", "projOTSigX", "projOTSigY"]
@@ -386,10 +388,10 @@ def _flat(A, pre, cols):
     return D
 
 
-def _tables(with_refit, cl_extra=()):
+def _tables(with_refit, cl_extra=(), refit=REFIT):
     t = [("L1TTrack", TRK_COLS), ("L1TTrackStub", TST_COLS), ("L1TOTStub", OTS_COLS),
          (CL_TABLE, CL_COLS + [c for c in cl_extra if c not in CL_COLS])]
-    return t + ([(REFIT, REFIT_COLS)] if with_refit else [])
+    return t + ([(refit, REFIT_COLS)] if with_refit else [])
 
 
 def _keys(path):
@@ -397,20 +399,20 @@ def _keys(path):
         return set(t.keys())
 
 
-def branches(with_refit, path, cl_extra=()):
+def branches(with_refit, path, cl_extra=(), refit=REFIT):
     """The branches the study reads from files shaped like `path`; `cl_extra`
     adds cluster columns (read with _flat(A, CL_TABLE, ...))."""
     keys = _keys(path)
     b = [f"L1TTrackStub_{OT_LINK}"]
-    for tbl, cols in _tables(with_refit, cl_extra):
+    for tbl, cols in _tables(with_refit, cl_extra, refit):
         b += (SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL) if tbl == CL_TABLE
               else SPN.branch_names(keys, tbl, cols))
     return b
 
 
-def check_inputs(path, with_refit=False):
+def check_inputs(path, with_refit=False, refit=REFIT):
     keys = _keys(path)
-    miss = [f"{tbl}_{c}" for tbl, cols in _tables(with_refit) for c in cols
+    miss = [f"{tbl}_{c}" for tbl, cols in _tables(with_refit, refit=refit) for c in cols
             if not SPN.has_column(keys, tbl, c)]
     if miss:
         cov = [m for m in miss if "_cov_" in m]
@@ -639,7 +641,7 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
             "ti": ti, "a_in_track": a_in, "cand": cand, "pj": pj, "pm": pm_, "pt": pt_}
 
 
-def process_chunk(A, geo, nsig=4.0, with_refit=False):
+def process_chunk(A, geo, nsig=4.0, with_refit=False, refit=REFIT):
     ctx = prepare_chunk(A, geo)
     cls = ctx["cls"]
     res = {"n_tracks_by_class": np.bincount(cls + 4, minlength=10),
@@ -653,11 +655,11 @@ def process_chunk(A, geo, nsig=4.0, with_refit=False):
         res["rows"].append(ev["rows"])
         res["proj"].append(ev["proj"])
     if with_refit:
-        res["validation"] = validate_against_refit(A, ctx["a"], ctx["C"], geo)
+        res["validation"] = validate_against_refit(A, ctx["a"], ctx["C"], geo, refit)
     return res
 
 
-def validate_against_refit(A, a, C, geo):
+def validate_against_refit(A, a, C, geo, refit=REFIT):
     """Our projection vs the producer's own OT-track projection, same track, same module.
 
     The refit's projOT* is the UNMODIFIED OT-track helix projected by the CMSSW
@@ -665,7 +667,7 @@ def validate_against_refit(A, a, C, geo):
     On those crossings the two implementations must agree on position, angle
     and cone width; any disagreement is a helix, frame or Jacobian bug here.
     """
-    H = _flat(A, REFIT, REFIT_COLS)
+    H = _flat(A, refit, REFIT_COLS)
     ntrk_ev = ak.to_numpy(ak.num(A["L1TTrack_pt"]))
     off = np.concatenate([[0], np.cumsum(ntrk_ev)])
     has = H["projOTLocalX"] > SENTINEL
@@ -687,21 +689,21 @@ def validate_against_refit(A, a, C, geo):
             "n_refit": int(has.sum()), "n_compared": int(g.sum())}
 
 
-def run(files, geometry, nsig=4.0, chunk=10, nev=None, validate=True, log=print):
+def run(files, geometry, nsig=4.0, chunk=10, nev=None, validate=True, log=print, refit=REFIT):
     """Stream the inputs; return concatenated per-cluster rows and per-projection rows."""
     geo = load_geometry(geometry)
-    check_inputs(files[0], with_refit=validate)
+    check_inputs(files[0], with_refit=validate, refit=refit)
     rows, proj, vals = [], [], []
     ncls = np.zeros(10, np.int64)
     bound_ratio = 0.0
     done = 0
-    for A in uproot.iterate([f"{f}:Events" for f in files], branches(validate, files[0]),
+    for A in uproot.iterate([f"{f}:Events" for f in files], branches(validate, files[0], refit=refit),
                             step_size=chunk):
         if nev is not None and done >= nev:
             break
         if nev is not None and done + len(A) > nev:
             A = A[:nev - done]
-        r = process_chunk(A, geo, nsig=nsig, with_refit=validate)
+        r = process_chunk(A, geo, nsig=nsig, with_refit=validate, refit=refit)
         rows += r["rows"]
         proj += r["proj"]
         ncls += r["n_tracks_by_class"]

@@ -321,7 +321,8 @@ def update_on(a, C, sel_c, c, ev, K, geo, state, L):
     return gated
 
 
-def run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal=None, q_form="f629627"):
+def run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal=None, q_form="f629627",
+              refit=OP.REFIT):
     ctx = OP.prepare_chunk(A, geo)
     K, cls, ntrk = ctx["K"], ctx["cls"], ctx["ntrk"]
     use = cls >= 0
@@ -368,11 +369,11 @@ def run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal=None, q_form
             gated += update_on(a, C, sel, c, ev, K, geo, state, L)
         out["by_variant"][v] = {"rows": rows, "proj": proj, "sel": selrec, "gated": gated}
     if replay:
-        out["replay"] = replay_against_refit(ctx, geo, kpt, q_form)
+        out["replay"] = replay_against_refit(ctx, geo, kpt, q_form, refit)
     return out
 
 
-def replay_against_refit(ctx, geo, kpt, q_form="f629627"):
+def replay_against_refit(ctx, geo, kpt, q_form="f629627", refit=OP.REFIT):
     """Feed this update the producer's OWN selections (alpha-only, as the
     production config ran) and compare against its recorded running projection.
 
@@ -381,7 +382,7 @@ def replay_against_refit(ctx, geo, kpt, q_form="f629627"):
     then updates on the producer's selected cluster.
     """
     A, K = ctx["A"], ctx["K"]
-    H = OP._flat(A, OP.REFIT, OP.REFIT_COLS + ["selClusterIdx", "hitAccepted", "projLocalX", "projLocalY",
+    H = OP._flat(A, refit, OP.REFIT_COLS + ["selClusterIdx", "hitAccepted", "projLocalX", "projLocalY",
                                                 "projSigX", "projSigY", "projCotAlpha",
                                                 "projCotBeta"])
     ntrk_ev = ak.to_numpy(ak.num(A["L1TTrack_pt"]))
@@ -445,25 +446,28 @@ def replay_against_refit(ctx, geo, kpt, q_form="f629627"):
 
 def run(files, geometry, mask="AAAA", use_angles="alphaBeta", variants=VARIANTS,
         nsig=4.0, chunk=10, nev=None, replay=True, log=print, calibration=None,
-        producer_q="natural"):
+        producer_q="natural", refit=None):
     """producer_q: which producer wrote the file's refit tables (PRODUCER_Q_FORMS);
-    it sets the replay AND the uncalibrated (producer-covariance) variants."""
+    it sets the replay AND the uncalibrated (producer-covariance) variants.
+    refit: the refit hit table the replay reads; default the coexist table of `mask`
+    (the producer's selections are only meaningful for the build being replayed)."""
+    refit = refit or f"L1TSmartPixelsRefitHitSeedlessRefit{mask}"
     cal = load_calibration(calibration) if calibration else None
     geo = OP.load_geometry(geometry)
-    OP.check_inputs(files[0], with_refit=True)
-    extra = [f"{OP.REFIT}_{c}" for c in ("selClusterIdx", "hitAccepted", "projLocalX", "projLocalY", "projSigX",
+    OP.check_inputs(files[0], with_refit=True, refit=refit)
+    extra = [f"{refit}_{c}" for c in ("selClusterIdx", "hitAccepted", "projLocalX", "projLocalY", "projSigX",
                                          "projSigY", "projCotAlpha", "projCotBeta")]
     acc = {v: {"rows": [], "proj": [], "sel": [], "gated": 0} for v in variants}
     rep = []
     ncls = np.zeros(10, np.int64)
     done = 0
-    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(True, files[0]) + extra,
+    for A in uproot.iterate([f"{f}:Events" for f in files], OP.branches(True, files[0], refit=refit) + extra,
                             step_size=chunk):
         if nev is not None and done >= nev:
             break
         if nev is not None and done + len(A) > nev:
             A = A[:nev - done]
-        r = run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal, producer_q)
+        r = run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal, producer_q, refit)
         ncls += r["n_tracks_by_class"]
         for v in variants:
             for k in ("rows", "proj", "sel"):
