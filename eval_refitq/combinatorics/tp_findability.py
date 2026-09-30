@@ -343,7 +343,9 @@ def _unify(I, O, sigz_ot, bench=None):
          "z0": np.r_[QI["z0"], np.zeros(n)],
          "s_z0": np.r_[QI["s_z0"], np.full(n, 1e9)],
          "ovf_a": np.r_[QI["ovf_a"], np.zeros(n, bool)],
-         "ovf_z": np.r_[QI["ovf_z"], np.zeros(n, bool)]}
+         "ovf_z": np.r_[QI["ovf_z"], np.zeros(n, bool)],
+         # the angle cap gates IT clusters only; a stub's angles are wildcards
+         "dir_ok": np.r_[QI["dir_ok"], np.ones(n, bool)]}
     return U, Q
 
 
