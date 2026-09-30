@@ -243,6 +243,13 @@ def _cap_counts(cot, has, max_abs):
     return c
 
 
+def tp_matched(tp_idx):
+    """Boolean: the object is truth-matched to a TrackingParticle, whether or
+    not that TP is written to L1TTP (tpIdx >= 0 or <= -3; -1 unmatched, -2
+    truth unavailable). Works on numpy, awkward and pandas columns alike."""
+    return (tp_idx >= 0) | (tp_idx <= -3)
+
+
 def angle_cap_groups(surface=None, tp_link=None, emu_class=None):
     """{label: boolean mask or None (= every cluster)} for ``angle_cap_census``:
     'all'; each surface (IL1.., ID1..); 'linked'/'unlinked' (truth-matched:
@@ -252,7 +259,7 @@ def angle_cap_groups(surface=None, tp_link=None, emu_class=None):
     surfs = [] if surface is None else [int(s) for s in np.unique(surface)]
     for s in surfs:
         g[surface_name(s)] = surface == s
-    linked = None if tp_link is None else (tp_link >= 0) | (tp_link <= -3)
+    linked = None if tp_link is None else tp_matched(tp_link)
     if linked is not None:
         g["linked"], g["unlinked"] = linked, ~linked
     if emu_class is not None:

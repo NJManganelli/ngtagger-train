@@ -42,7 +42,7 @@ def _build(per_track_layer_counts, far=50.0):
     """
     xs = {c: [] for c in ("event", "trackIdx", "layer", "detId",
                           "projLocalX", "projLocalY", "projSigX", "projSigY")}
-    ks = {c: [] for c in ("event", "detId", "localX", "localY", "tpKey")}
+    ks = {c: [] for c in ("event", "detId", "localX", "localY", "tpIdx")}
     det = 100
     for trk, counts in enumerate(per_track_layer_counts):
         for lay, n in zip((1, 2, 3, 4), counts):
@@ -55,11 +55,11 @@ def _build(per_track_layer_counts, far=50.0):
             for i in range(n):
                 ks["event"].append(0); ks["detId"].append(det)
                 ks["localX"].append(0.01 * i); ks["localY"].append(0.01 * i)
-                ks["tpKey"].append(-1)
+                ks["tpIdx"].append(-1)
             ks["event"].append(0); ks["detId"].append(det)
-            ks["localX"].append(far); ks["localY"].append(far); ks["tpKey"].append(-1)
+            ks["localX"].append(far); ks["localY"].append(far); ks["tpIdx"].append(-1)
     X = {k: np.asarray(v) for k, v in xs.items()}
-    X["trk_tpKey"] = np.full(len(X["layer"]), -1)
+    X["trk_tpIdx"] = np.full(len(X["layer"]), -1)
     K = {k: np.asarray(v) for k, v in ks.items()}
     K["_evt_base"] = np.array([0, len(K["detId"])])
     return X, K

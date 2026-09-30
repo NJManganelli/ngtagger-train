@@ -22,11 +22,12 @@ import uproot
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
 import kf_emulation as KF            # noqa: E402
+from ngtagger.data import spix_nano as SPN  # noqa: E402
 
 # per-layer OT stub sigma_z, the calibrated values the census installs
 SIGZ_OT = {1: 0.081, 2: 0.113, 3: 0.190, 4: 1.773, 5: 1.771, 6: 1.867}
-IT = ["layer", "globalR", "globalZ", "globalPhi", "sigY", "tpKey", "tpPt"]
-OT = ["layer", "isBarrel", "r", "z", "tpKey", "tpPt", "tpGenuine"]
+IT = ["layer", "globalR", "globalZ", "globalPhi", "sigY", "tpIdx", "tpPt"]
+OT = ["layer", "isBarrel", "r", "z", "tpIdx", "tpPt", "tpGenuine"]
 
 
 def load(spec, nev):
@@ -56,10 +57,13 @@ def main():
     a = ap.parse_args()
 
     I, O, nev = load(a.input, a.nev)
-    ik = I["event"].astype(np.int64) * 100000 + I["tpKey"]
-    ok_i = I["tpKey"] >= 0
-    ob = (O["isBarrel"] > 0) & (O["tpGenuine"] > 0) & (O["tpKey"] >= 0)
-    ok_key = O["event"].astype(np.int64) * 100000 + O["tpKey"]
+    # (event, TP) identity of every matched hit (-1 where unmatched, never read)
+    ok_i = SPN.tp_matched(I["tpIdx"])
+    ik = np.full(len(ok_i), -1, np.int64)
+    ik[ok_i] = M.tp_key(I["event"][ok_i], I["tpIdx"][ok_i])
+    ob = (O["isBarrel"] > 0) & (O["tpGenuine"] > 0) & SPN.tp_matched(O["tpIdx"])
+    ok_key = np.full(len(ob), -1, np.int64)
+    ok_key[ob] = M.tp_key(O["event"][ob], O["tpIdx"][ob])
     print(f"{nev} events, {ok_i.sum():,} IT clusters with truth, "
           f"{ob.sum():,} genuine barrel OT stubs")
 

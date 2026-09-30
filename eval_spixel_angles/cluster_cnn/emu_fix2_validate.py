@@ -21,6 +21,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v2_common import core_fit
 from emu_build_library import load_dump
+from ngtagger.data import spix_nano as SPN
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIG = lambda n: os.path.join(HERE, "figs", n)
@@ -55,7 +56,7 @@ def fmt(df):
 
 
 CCOLS = ["surface", "sizeX", "sizeY", "size", "charge", "globalR", "globalZ", "localX", "localY", "sigX", "sigY", "localCotAlpha",
-         "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta", "satAlpha", "satBeta", "tpKey", "tpLocalCotAlpha",
+         "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta", "satAlpha", "satBeta", "tpIdx", "tpLocalCotAlpha",
          "tpLocalCotBeta", "tpEmuClass", "detId", "idxInDet"]
 
 
@@ -228,7 +229,7 @@ def sig_eval(path, ang, cot):
 def nano_probe(D, label, rows):
     base = ["sizeX", "sizeY", "size", "charge", "surface", "globalR", "globalZ", "localX", "localY", "sigX", "sigY"]
     angc = ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta", "satAlpha", "satBeta"]
-    yn = (D.tpKey.values < 0).astype(int); hn = (D.event.values % 2 == 0)
+    yn = (~SPN.tp_matched(D.tpIdx.values)).astype(int); hn = (D.event.values % 2 == 0)
     for g in GROUPS:
         gm = (D.group == g).values
         b = auc(D[base].values.astype(np.float64)[gm], yn[gm], hn[gm], 5)
@@ -350,7 +351,7 @@ HAS = []
 for lab, D in P.items():
     for g in GROUPS:
         for lk in (True, False):
-            m = (D.group == g).values & ((D.tpKey.values >= 0) == lk)
+            m = (D.group == g).values & (SPN.tp_matched(D.tpIdx.values) == lk)
             HAS.append(dict(run=lab, group=g, linked=lk, n=int(m.sum()), hasAlpha=float(D.hasAlpha.values[m].mean()),
                             hasBeta=float(D.hasBeta.values[m].mean()),
                             frac_abs_cotA_gt12=float(np.mean(np.abs(D.localCotAlpha.values[m & (D.hasAlpha.values == 1)]) > 12)) if (m & (D.hasAlpha.values == 1)).any() else np.nan,
@@ -368,7 +369,7 @@ with PdfPages(FIG("emu_fix2_payload.pdf")) as pdf:
         fig, axes = plt.subplots(1, 4, figsize=(20, 5.8), layout="constrained")
         for ax, s in zip(axes, (1, 2, 3, 4)):
             D5 = P[PAYS[2][0]]
-            m5 = (D5.surface.values == s) & (D5.tpKey.values >= 0) & (D5[f"has{'Alpha' if v == 'A' else 'Beta'}"].values == 1)
+            m5 = (D5.surface.values == s) & SPN.tp_matched(D5.tpIdx.values) & (D5[f"has{'Alpha' if v == 'A' else 'Beta'}"].values == 1)
             tA, tB = deg(D5.tpLocalCotAlpha.values[m5]), deg(D5.tpLocalCotBeta.values[m5])
             pc = np.floor(tA / 5).astype(int) * 1000 + np.floor(tB / 5).astype(int)
             wP = pd.Series(pc).value_counts(normalize=True); wDd = pd.Series(cellD).value_counts(normalize=True)
@@ -378,7 +379,7 @@ with PdfPages(FIG("emu_fix2_payload.pdf")) as pdf:
                       ("dump reweighted to this surface's Phase-2 true-angle mix (5 deg cells)", rD[v], wrow, "#1b1b1b", 1.8, ":")]
             for i, (lab, t) in enumerate(PAYS):
                 D = P[lab]; col = "Alpha" if v == "A" else "Beta"
-                m = (D.surface.values == s) & (D.tpKey.values >= 0) & (D[f"has{col}"].values == 1)
+                m = (D.surface.values == s) & SPN.tp_matched(D.tpIdx.values) & (D[f"has{col}"].values == 1)
                 curves.append((f"CMSSW {lab}: emitted - true", deg(D[f"localCot{col}"].values[m]) - deg(D[f"tpLocalCot{col}"].values[m]),
                                None, PAL[[0, 3, 1][i]], 1.6, ["-", "--", "-"][i]))
             for lab, r, w, col, lw, ls in curves:
@@ -406,7 +407,7 @@ with PdfPages(FIG("emu_fix2_payload.pdf")) as pdf:
         for lab, _ in PAYS:
             D = P[lab]
             for col in ("Alpha", "Beta"):
-                m = (D.surface.values == s) & (D.tpKey.values >= 0) & (D[f"has{col}"].values == 1)
+                m = (D.surface.values == s) & SPN.tp_matched(D.tpIdx.values) & (D[f"has{col}"].values == 1)
                 r = D[f"localCot{col}"].values[m] - D[f"tpLocalCot{col}"].values[m]
                 q16, q84 = np.quantile(r, [0.16, 0.84])
                 rows.append(dict(surface=SNAME[s], run=lab, angle=col.lower(), n=int(m.sum()), q_width_cot=(q84 - q16) / 2,
@@ -415,7 +416,7 @@ with PdfPages(FIG("emu_fix2_payload.pdf")) as pdf:
     CC = pd.DataFrame(rows); OUT["payload_closure_cot"] = CC.to_dict("records")
     table_pages(pdf, fmt(CC), "Payload residuals in cot (the payload's own quantity), TP-linked barrel clusters: q-width, RMS, the published sigma "
                               "(median) and the pull q-width (residual / published sigma)", per=34)
-    table_pages(pdf, fmt(HAS), "hasAlpha / hasBeta, TP-linked (tpKey >= 0) vs unlinked, and the share of reported |cot| > 12", per=34)
+    table_pages(pdf, fmt(HAS), "hasAlpha / hasBeta, TP-linked (TP-matched tpIdx) vs unlinked, and the share of reported |cot| > 12", per=34)
     table_pages(pdf, pd.DataFrame([(k, json.dumps(OUT[k])[:400]) for k in ("payload_cap_change_detail", "payload_v4_oldcode_vs_newcode_SP",
                                                                               "payload_v4_oldcode_vs_newcode_nonSP")], columns=["check", "result"]),
                 "The cap change alone (payload v4, old code vs new code)")

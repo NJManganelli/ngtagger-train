@@ -61,6 +61,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
+from ngtagger.data import spix_nano as SPN   # noqa: E402
 
 # ---- L1Trigger/TrackFindingTMTT + TrackerDTC Setup_cfi.py ----------------
 CBC_PITCH, CBC_LENGTH = 0.009, 5.025        # 2S strip pitch / length, cm
@@ -833,10 +834,11 @@ def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
     # ownership, per hit, against the same majority owner the residuals use
     G = T["GIDX"]
     on = G >= 0
-    tp_of = np.where(on, U["tpKey"][np.clip(G, 0, None)], -1)
+    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
     own, _ = majority_owner(tp_of, on)
-    wrong = on & (tp_of != own[:, None]) | (own[:, None] < 0)
-    n_wrong = (on & ~((tp_of == own[:, None]) & (own[:, None] >= 0))).sum(axis=1)
+    owned = SPN.tp_matched(own)[:, None]
+    wrong = on & (tp_of != own[:, None]) | ~owned
+    n_wrong = (on & ~((tp_of == own[:, None]) & owned)).sum(axis=1)
     ti, li = np.nonzero(use)
     if not len(ti):
         return np.zeros((0, len(ANGLE_COLS)), np.float32)
@@ -899,11 +901,10 @@ def rank_score(fit, chi2s, w_angle=0.0):
 def truth_residuals(U, trip, fit, TP):
     """(dkappa, dd0, dcot, dz0, mask) against the TrackingParticle truth."""
     ga, gb, gc = trip
-    ta = U["tpKey"][ga]
-    real = (ta >= 0) & (ta == U["tpKey"][gb]) & (ta == U["tpKey"][gc]) & fit["ok"]
-    kk = M.tp_key(U["event"][ga], np.maximum(ta, 0))
-    p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
-    real &= (len(TP["key"]) > 0) & (TP["key"][p] == kk)
+    ta = U["tpIdx"][ga]
+    real = SPN.tp_matched(ta) & (ta == U["tpIdx"][gb]) & (ta == U["tpIdx"][gc]) & fit["ok"]
+    p, has = tp_truth_rows(TP, U["event"][ga], ta)
+    real &= has
     if not real.any():
         z = np.zeros(0)
         return z, z, z, z, real
@@ -920,9 +921,10 @@ def truth_residuals(U, trip, fit, TP):
 def majority_owner(tp, valid):
     """Per track: the TP holding the most attached hits, and how many.
 
-    tp < 0 (a cluster belonging to no TrackingParticle) never wins, so a track
-    built entirely from unassociated clusters correctly gets no owner rather
-    than being called clean.
+    An unmatched tp (-1/-2, a cluster belonging to no TrackingParticle) never
+    wins, so a track built entirely from unassociated clusters correctly gets
+    no owner (-1) rather than being called clean. A TP not written to L1TTP
+    (tpIdx <= -3) is a real owner.
 
     WHY THE OWNER AND NOT THE SEED. Truth used to be read off the seed's inner
     cluster. Measured over 200 events, 45.8% of accepted tracks have a majority
@@ -931,35 +933,36 @@ def majority_owner(tp, valid):
     the 2-wrong-hit population: the residual was being taken against a particle
     that owns a minority of the hits.
     """
-    v = np.where(valid & (tp >= 0), tp, -1)
-    S = np.sort(v, axis=1)[:, ::-1]          # real values first, -1 trailing
+    none = np.iinfo(np.int64).min
+    v = np.where(valid & SPN.tp_matched(tp), tp, none).astype(np.int64)
+    S = np.sort(v, axis=1)[:, ::-1]          # real values first, `none` trailing
     cur_v = S[:, 0].copy()
-    cur_n = (S[:, 0] >= 0).astype(np.int64)
+    cur_n = (S[:, 0] != none).astype(np.int64)
     best_v, best_n = cur_v.copy(), cur_n.copy()
     for j in range(1, S.shape[1]):
         col = S[:, j]
-        real = col >= 0
+        real = col != none
         same = real & (col == cur_v)
         cur_n = np.where(same, cur_n + 1, np.where(real, 1, 0))
         cur_v = np.where(same, cur_v, col)
         take = cur_n > best_n
         best_n = np.where(take, cur_n, best_n)
         best_v = np.where(take, cur_v, best_v)
-    return best_v, best_n
+    return np.where(best_n > 0, best_v, -1), best_n
 
 
 def tp_truth_table(U):
     """Per-TrackingParticle truth helix, keyed and sorted for searchsorted.
 
-    One entry per TP with a hit in U and an L1TTP row (charged, pT >= 1 GeV),
+    One entry per TP with a hit in U and an L1TTP row (tpIdx >= 0; charged, |p| > 1 GeV),
     read from the per-hit L1TTP join (M.attach_tp_truth) and so the same for IT
     and OT hits. phi0, d0 [cm], z0 [cm] and cot = tanL are at the POCA to the
     beamline, the perigee this fit's phi(r) = phi0 - d0/r - c*kappa*r uses.
     kappa is UNSIGNED 1/pT [1/GeV]: every consumer compares it with |fitted
     kappa|, so a fit with the wrong charge is scored on curvature magnitude only.
     """
-    m = (U["tpKey"] >= 0) & np.isfinite(U["tp_pt"])
-    k = M.tp_key(U["event"][m], U["tpKey"][m])
+    m = (U["tpIdx"] >= 0) & np.isfinite(U["tp_pt"])
+    k = M.tp_key(U["event"][m], U["tpIdx"][m])
     o = np.argsort(k, kind="stable")
     k = k[o]
     f = np.r_[True, k[1:] != k[:-1]] if len(k) else np.zeros(0, bool)
@@ -967,6 +970,23 @@ def tp_truth_table(U):
     return {"key": k[f], "kappa": 1.0 / U["tp_pt"][sel],
             "d0": U["tp_d0"][sel], "phi0": U["tp_phi0"][sel],
             "cot": U["tp_tanL"][sel], "z0": U["tp_z0"][sel]}
+
+
+def tp_truth_rows(TP, event, tpidx):
+    """(position in the tp_truth_table `TP`, has_truth) of each (event, tpIdx):
+    has_truth only for a TP with an L1TTP row that is in `TP`; position 0
+    otherwise."""
+    tpidx = np.asarray(tpidx)
+    has = tpidx >= 0
+    p = np.zeros(len(tpidx), np.int64)
+    if has.any() and len(TP["key"]):
+        kk = M.tp_key(np.asarray(event)[has], tpidx[has])
+        q = np.clip(np.searchsorted(TP["key"], kk), 0, len(TP["key"]) - 1)
+        p[has] = q
+        has[has] = TP["key"][q] == kk
+    else:
+        has[:] = False
+    return p, has
 
 
 def rs(x):
@@ -1140,7 +1160,8 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
                alpha_scale=1.0, beta_scale=1.0):
     """One row per track, ordered by TRACK_COLS. float32 throughout.
 
-    tp_key is -1 for a fake, which is what lets the exporter sort the table by
+    tp_key (M.tp_key of the owner) is -1 for a track whose owner has no L1TTP
+    truth (no owner, or one not in L1TTP), which is what lets the exporter sort the table by
     TP and keep fakes in a contiguous block: the per-menu duplicate removal in
     the browser is then a linear scan over the sorted region, and fake queries
     skip it entirely.
@@ -1168,9 +1189,10 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     ga = trip[0]
     G = T["GIDX"]
     on = G >= 0
-    tp_of = np.where(on, U["tpKey"][np.clip(G, 0, None)], -1)
+    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
     own, n_own = majority_owner(tp_of, on)
-    right = on & (tp_of == own[:, None]) & (own[:, None] >= 0)
+    owned = SPN.tp_matched(own)
+    right = on & (tp_of == own[:, None]) & owned[:, None]
     n_wrong = (on & ~right).sum(axis=1).astype(np.float64)
     # A WRONG OT STUB IS NOT ONE THING. flg is 1 genuine / 2 combinatoric /
     # 3 unknown from the CMS per-stub flags (see tp_findability._unify), so the
@@ -1181,11 +1203,11 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     # members plus n_it_wrong reproduce n_wrong -- asserted below on real data.
     flg = np.where(on, U["ot_flag"][np.clip(G, 0, None)], 0)
     ot_gen = is_ot & (flg == 1)
-    kk = M.tp_key(U["event"][ga], np.maximum(own, 0))
-    p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
-    # an owner outside L1TTP (neutral or pT < 1 GeV) has no truth helix and
-    # gets no residual
-    hit = (len(TP["key"]) > 0) & (TP["key"][p] == kk) & (own >= 0)
+    # an owner outside L1TTP (tpIdx <= -3: neutral or |p| <= 1 GeV) has no
+    # truth helix and gets no residual
+    p, hit = tp_truth_rows(TP, U["event"][ga], own)
+    kk = np.full(len(ga), -1, np.int64)
+    kk[hit] = M.tp_key(U["event"][ga][hit], own[hit])
     nan = np.full(len(ga), np.nan)
     cols = {
         "seed_idx": np.full(len(ga), float(seed_idx)),
@@ -1225,19 +1247,19 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
         "n_ot_unknown": (is_ot & (flg == 3)).sum(axis=1).astype(np.float64),
         # 0 when the seed cluster belongs to a TP other than the owner, which
         # is what the seed-referenced convention used to hide
-        "own_is_seed": (own == U["tpKey"][ga]).astype(np.float64),
-        # THE EXACT OWNER IDENTITY, and the reason it is stored as a bare tpKey
-        # rather than read off tp_key: the packed (event << 20) | tpKey needs 30
-        # bits, these rows are float32, and at event 999 keys 128 apart collapse
-        # onto one value. tpKey alone is < 2**20 and survives exactly, and the
-        # event is already a column, so the exporter can rebuild the key in
-        # int64 and match each track to its TrackingParticle's row. That link is
-        # what the DELIVERED efficiency needs.
+        "own_is_seed": (own == U["tpIdx"][ga]).astype(np.float64),
+        # THE EXACT OWNER IDENTITY, and the reason it is stored as a bare tpIdx
+        # rather than read off tp_key: the packed key needs 32 bits, these rows
+        # are float32, and keys a few hundred apart collapse onto one value.
+        # tpIdx alone (an L1TTP row >= 0, or <= -3 for an owner not in L1TTP,
+        # -1 for no owner) survives exactly, and the event is already a column,
+        # so the exporter can match each track to its TrackingParticle's row.
+        # That link is what the DELIVERED efficiency needs.
         "own_tpidx": own.astype(np.float64),
         # the fit's CLAIMED error, not a resolution: the covariance never sees
         # the residuals, and is measured 1.6-3.4x optimistic on clean tracks
         "sig_kf_d0": np.sqrt(np.maximum(fit["var_d0"], 1e-30)),
-        "is_clean": ((own >= 0) & (n_wrong == 0)).astype(np.float64),
+        "is_clean": (owned & (n_wrong == 0)).astype(np.float64),
         "tp_pt": np.where(hit, 1.0 / np.maximum(TP["kappa"][p], 1e-6), nan),
         "tp_eta": np.where(hit, np.arcsinh(np.clip(TP["cot"][p], -30, 30)), nan),
         "tp_d0": np.where(hit, TP["d0"][p], nan),

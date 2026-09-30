@@ -30,7 +30,7 @@ def _write(path, oo):
           "y": [[0.5, 0.5, 0.5], [0.5, 0.5]], "z": [[0.1, 0.2, 0.2], [0.3, 0.4]],
           "r": [[1.0] * 3, [1.0] * 2], "phi": [[0.0] * 3, [0.0] * 2],
           "bend": [[1.0, -1.0, -1.0], [0.5, 0.0]],
-          "tpKey": [[11, 12, 13], [21, -1]],
+          "tpIdx": [[0, 1, -5], [0, -1]],
           "tpPt": [[2.0, 3.0, 3.0], [4.0, -1.0]],
           "tpGenuine": [[1, 1, 1], [1, 0]], "tpCombinatoric": [[0, 0, 0], [0, 0]],
           "tpUnknown": [[0, 0, 0], [0, 1]]}
@@ -53,5 +53,5 @@ def test_exact_join(tmp_path, oo):
     T, S, O = oo.load(_write(tmp_path / "f.root", oo), None)
     assert S["x"].tolist() == [1.0, 2.0, 4.0, 3.0]      # the joined L1TOTStub rows
     tk, flag, hit = oo.stub_truth(S, O)
-    assert tk.tolist() == [11, 13, -1, 21] and hit.all()
+    assert tk.tolist() == [0, -5, -1, 0] and hit.all()
     assert flag.tolist() == [1, 1, 3, 1]

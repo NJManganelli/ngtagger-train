@@ -126,7 +126,7 @@ def pool_and_dr(U, per_seed, do_dr=True):
     sel = np.flatnonzero(surv)
     return {"gidx": G[sel], "score": SC[sel], "seed_idx": sidx[sel],
             "gA": ga[sel], "gB": gb[sel], "event": U["event"][ga[sel]],
-            "tpKey": U["tpKey"][ga[sel]],
+            "tpIdx": U["tpIdx"][ga[sel]],
             **{k: F[k][sel] for k in keys}}
 
 

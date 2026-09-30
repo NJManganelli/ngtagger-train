@@ -1,20 +1,22 @@
 """Leak-test decomposition on one nano file: AUC(unlinked vs linked) gain of each angle column group over the no-angle probe,
 for the emu nano (cnn_nano_v3) and, as the reference, the cnn_nano_v2 nano (the rejected factorised CNN alone) of the same events.
-usage: leak_decompose.py V3.root V2.root  -> emu_cmssw/leak_decompose.json"""
+usage: leak_decompose.py V3.root V2.root  -> emu_cmssw/leak_decompose.json
+Inputs must link TPs by tpIdx (unlinked = not SPN.tp_matched); the key-linked cnn_nano v2/v3 files are no longer readable."""
 import sys, os, json, numpy as np, pandas as pd, uproot, awkward as ak
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import roc_auc_score
+from ngtagger.data import spix_nano as SPN
 P = "L1TSmartPixelsCluster_"
 BASE = ["sizeX", "sizeY", "size", "charge", "surface", "globalR", "globalZ", "localX", "localY", "sigX", "sigY"]
 SETS = {"+cot": ["localCotAlpha", "localCotBeta"], "+cot+sig": ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta"],
         "+has": ["hasAlpha", "hasBeta"], "+all angle columns": ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta"]}
 out = {}
 for tag, f in (("emu (v3)", sys.argv[1]), ("cnn (v2, reference)", sys.argv[2])):
-    cols = BASE + ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta", "tpKey"]
+    cols = BASE + ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta", "tpIdx"]
     arr = uproot.open(f)["Events"].arrays([P + c for c in cols] + ["event"], library="ak")
     D = pd.DataFrame({c: ak.to_numpy(ak.flatten(arr[P + c])) for c in cols})
     D["event"] = np.repeat(ak.to_numpy(arr["event"]), ak.to_numpy(ak.num(arr[P + cols[0]])))
-    y = (D.tpKey.values < 0).astype(int); half = D.event.values % 2 == 0
+    y = (~SPN.tp_matched(D.tpIdx.values)).astype(int); half = D.event.values % 2 == 0
     grp = np.where(D.surface > 10, "ID1-4", np.where(D.surface == 1, "IL1", "IL2-4"))
     rng = np.random.default_rng(3); res = {}
     for g in ("IL2-4", "IL1", "ID1-4"):

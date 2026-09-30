@@ -30,6 +30,7 @@ import tp_findability as TF          # noqa: E402
 import seed_arity as SA              # noqa: E402
 import kf_emulation as KF            # noqa: E402
 import arch_parallel as AP           # noqa: E402
+from ngtagger.data import spix_nano as SPN   # noqa: E402
 
 
 def rs(x):
@@ -57,19 +58,17 @@ def scatter_rows(U, IT, OT, ia, ib, TP):
     Both tracks are required TRUTH-CLEAN, every hit from the matched TP: a single
     wrong hit would masquerade as a large deflection and bias the width.
     """
-    ta, tb = IT["tpKey"][ia], OT["tpKey"][ib]
-    ok = (ta >= 0) & (ta == tb)
+    ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
+    ok = SPN.tp_matched(ta) & (ta == tb)
     for S, idx in ((IT, ia), (OT, ib)):
         G = S["gidx"][idx]
         on = G >= 0
-        tp = np.where(on, U["tpKey"][np.clip(G, 0, None)], -2)
+        tp = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -2)
         ok &= (on & (tp == ta[:, None])).sum(1) == on.sum(1)
     if not ok.any():
         return None
     a_, b_ = ia[ok], ib[ok]
-    kk = M.tp_key(IT["event"][a_], IT["tpKey"][a_])
-    p = np.clip(np.searchsorted(TP["key"], kk), 0, max(len(TP["key"]) - 1, 0))
-    good = TP["key"][p] == kk
+    p, good = KF.tp_truth_rows(TP, IT["event"][a_], IT["tpIdx"][a_])
     a_, b_, p = a_[good], b_[good], p[good]
     return {"inv_pt": TP["kappa"][p],
             "abs_eta": np.abs(np.arcsinh(np.clip(TP["cot"][p], -30, 30))),
@@ -228,8 +227,8 @@ def main():
         if IT is None or OT is None:
             continue
         acc["n_it"] += len(IT["gA"]); acc["n_ot"] += len(OT["gA"])
-        acc["n_it_real"] += int((IT["tpKey"] >= 0).sum())
-        acc["n_ot_real"] += int((OT["tpKey"] >= 0).sum())
+        acc["n_it_real"] += int(SPN.tp_matched(IT["tpIdx"]).sum())
+        acc["n_ot_real"] += int(SPN.tp_matched(OT["tpIdx"]).sum())
         for pname, pars in PARSETS.items():
             for cut in CUTS:
                 ia, ib, c2 = AP.match_systems(IT, OT, pars, cut)
@@ -237,9 +236,9 @@ def main():
                 d = mtot.setdefault(k, {"n": 0, "right": 0, "both_real": 0})
                 d["n"] += len(ia)
                 if len(ia):
-                    ta, tb = IT["tpKey"][ia], OT["tpKey"][ib]
-                    d["right"] += int(((ta >= 0) & (ta == tb)).sum())
-                    d["both_real"] += int(((ta >= 0) & (tb >= 0)).sum())
+                    ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
+                    d["right"] += int((SPN.tp_matched(ta) & (ta == tb)).sum())
+                    d["both_real"] += int((SPN.tp_matched(ta) & SPN.tp_matched(tb)).sum())
         # resolutions for the three architectures, at the default cut
         ia, ib, _ = AP.match_systems(IT, OT, ("phi0", "z0", "cot"), 25.0)
         if a.export_tracks:
@@ -266,8 +265,8 @@ def main():
                 for k, v in sr.items():
                     scat.setdefault(k, []).append(v)
         if len(ia):
-            ta, tb = IT["tpKey"][ia], OT["tpKey"][ib]
-            good = (ta >= 0) & (ta == tb)
+            ta, tb = IT["tpIdx"][ia], OT["tpIdx"][ib]
+            good = SPN.tp_matched(ta) & (ta == tb)
             scales = ([float(x) for x in a.ms_scan.split(",") if x.strip()]
                       if a.ms_scan else [0.0])
             for msc, rev in [(m, r) for m in scales for r in (False, True)]:
@@ -294,12 +293,10 @@ def main():
             # cluster: requiring only gA let contaminated tracks in and read the
             # OT-alone resolution as 66 cm in z0, which is contamination and not
             # a measurement of anything.
-            m = (S["tpKey"] >= 0) & (S["tpKey"] == U["tpKey"][S["gB"]])
+            m = SPN.tp_matched(S["tpIdx"]) & (S["tpIdx"] == U["tpIdx"][S["gB"]])
             if m.sum() < 20:
                 continue
-            kk = M.tp_key(S["event"][m], S["tpKey"][m])
-            p = np.clip(np.searchsorted(TP["key"], kk), 0, len(TP["key"]) - 1)
-            hit = TP["key"][p] == kk
+            p, hit = KF.tp_truth_rows(TP, S["event"][m], S["tpIdx"][m])
             r = res.setdefault(lab, [[], [], [], []])
             r[0].append(np.abs(S["kappa"][m][hit]) - TP["kappa"][p[hit]])
             r[1].append(S["d0"][m][hit] - TP["d0"][p[hit]])

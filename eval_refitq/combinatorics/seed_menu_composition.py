@@ -30,6 +30,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
+from ngtagger.data import spix_nano as SPN   # noqa: E402
 
 NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
         11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
@@ -43,7 +44,7 @@ def build(src, nev, ptmin):
     nO = int(bar.sum())
     # OT stub z resolution, measured per layer against the stub's L1TTP helix
     # z0 + r*tanL, used as the z-search target sigma
-    ob = {c: O[c][bar] for c in ("layer", "tpKey", "tpPt", "z", "r", "tp_z0", "tp_tanL")}
+    ob = {c: O[c][bar] for c in ("layer", "tpIdx", "tpPt", "z", "r", "tp_z0", "tp_tanL")}
 
     def rs(x):
         q = np.percentile(x, [15.865, 84.135])
@@ -51,7 +52,7 @@ def build(src, nev, ptmin):
     sig = np.full(nO, 0.2)
     for L in range(1, 7):
         m = ob["layer"] == L
-        g = m & (ob["tpKey"] >= 0) & (ob["tpPt"] >= ptmin) & np.isfinite(ob["tp_z0"])
+        g = m & SPN.tp_matched(ob["tpIdx"]) & (ob["tpPt"] >= ptmin) & np.isfinite(ob["tp_z0"])
         if g.sum() < 200:
             continue
         sig[m] = rs(ob["z"][g] - (ob["tp_z0"][g] + ob["r"][g] * ob["tp_tanL"][g]))
@@ -61,7 +62,7 @@ def build(src, nev, ptmin):
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
          "globalPhi": np.r_[I["globalPhi"], O["phi"][bar]],
          "sigY": np.r_[I["sigY"], sig],
-         "tpKey": np.r_[I["tpKey"], O["tpKey"][bar]],
+         "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
     QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, None)
@@ -100,8 +101,8 @@ def main():
     # remaining instrumented layer with the largest acceptance
     FP = {}
     for L in use:
-        m = (U["layer"] == L) & (U["tpKey"] >= 0) & (U["tpPt"] >= a.ptmin)
-        FP[L] = np.unique(M.tp_key(U["event"][m], U["tpKey"][m]))
+        m = (U["layer"] == L) & SPN.tp_matched(U["tpIdx"]) & (U["tpPt"] >= a.ptmin)
+        FP[L] = np.unique(M.tp_key(U["event"][m], U["tpIdx"][m]))
     cands = []
     for i, la in enumerate(use):
         for lb in use[i + 1:]:

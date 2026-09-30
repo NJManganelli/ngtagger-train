@@ -4,7 +4,7 @@ WHAT THIS PRODUCES. One entry for EVERY TrackingParticle that left at least one
 SmartPixels cluster or OT stub -- 9.52 million of them in the 1000-event PU200
 ttbar set, 9,515 per event -- carrying
 
-    key            (event << 20) | tpKey, globally unique across the input set
+    key            M.tp_key(event, tpIdx), globally unique across the input set
     pt eta phi     TP truth kinematics; phi [rad] is the azimuth at PRODUCTION
     d0 z0 vr       L1TTP d0 and z0 [cm] at the POCA to the beamline, production radius [cm]
     hit_it hit_ot  bitmasks of which IL1-IL4 / OL1-OL6 the TP actually hit
@@ -30,9 +30,10 @@ sigma) and the per-layer median radius (which picks each doublet's adjacent
 target layers). Both are measured ONCE on a calibration pass and written into
 the cache manifest, so every chunk and every later run sees the same numbers.
 
-TRUTH KINEMATICS COME FROM THE L1TTP TABLE, joined on (event, tpKey) for IT
-clusters and OT stubs alike. L1TTP holds charged TPs with pT >= 1 GeV only, so a
-TP below 1 GeV has pT (the hit's own tpPt) and hit pattern but NaN kinematics. So
+TRUTH KINEMATICS COME FROM THE L1TTP TABLE, read from the hit's tpIdx row for IT
+clusters and OT stubs alike. L1TTP holds charged TPs with |p| > 1 GeV only (older
+nanos pT >= 1 GeV), so a TP outside it (tpIdx <= -3, matched but not written) has
+pT (the hit's own tpPt) and hit pattern but NaN kinematics. So
 does a NEUTRAL TP: the cluster producer credits a cluster to the PARENT of its
 dominant contributor, which for a Geant4 secondary without its own TP (e.g. a
 conversion electron) can be a photon; ~1.8% of the >= 1 GeV TPs with an IT
@@ -47,6 +48,7 @@ import uproot
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
+from ngtagger.data import spix_nano as SPN  # noqa: E402
 import kf_emulation as KF           # noqa: E402
 import seed_arity as SA             # noqa: E402
 
@@ -55,15 +57,18 @@ NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
 CODE = {v: k for k, v in NAME.items()}
 ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
 # tpGenuine/tpCombinatoric/tpUnknown are the per-stub CMS truth flags, needed
-# because tpKey = -1 cannot distinguish a merged cluster from noise. bend is the
+# because tpIdx = -1 cannot distinguish a merged cluster from noise. bend is the
 # stub's own curvature estimate, which the seed and projection gates want and
 # could not use while it was not loaded at all.
-OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpKey", "tpPt",
+OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
            "tpGenuine", "tpCombinatoric", "tpUnknown", "bend"]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 20   # 20: the IT seeder vetoes clusters whose global direction
+FORMAT_VERSION = 21   # 21: TPs identified by tpIdx (L1TTP row; <= -3 matched but not in
+                      # L1TTP), census key = M.tp_key(event, tpIdx) with the 22-bit low
+                      # word; key-era shards are not comparable.
+                      # 20: the IT seeder vetoes clusters whose global direction
                       # fails the angle cap (SPN.direction_usable) from angle-using
                       # seeds. 19: TP truth (census d0/z0/eta/phi/vr, qual_* and
                       # track-row residuals, OT sigma z) from L1TTP at the POCA
@@ -187,7 +192,7 @@ def calibrate(spec, nev, ptmin):
 
     sigz = {}
     for L in range(1, 7):
-        g = (bar & (O["layer"] == L) & (O["tpKey"] >= 0) & (O["tpPt"] >= ptmin)
+        g = (bar & (O["layer"] == L) & SPN.tp_matched(O["tpIdx"]) & (O["tpPt"] >= ptmin)
              & np.isfinite(O["tp_z0"]))
         sigz[L] = rs(O["z"][g] - (O["tp_z0"][g] + O["r"][g] * O["tp_tanL"][g])) \
             if g.sum() >= 200 else 0.2
@@ -257,7 +262,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
     they are fitted.
 
     Event numbering carries a running offset across chunks AND across files, so
-    (event, tpKey) stays globally unique and chunk censuses concatenate.
+    (event, tpIdx) stays globally unique and chunk censuses concatenate.
     """
     paths = M.expand_inputs(spec)
     M.require_tp_table(paths)
@@ -297,20 +302,21 @@ def _unify(I, O, sigz_ot, bench=None):
     ol = O["layer"][bar]
     for L in range(1, 7):
         sig[ol == L] = sigz_ot.get(L, sigz_ot.get(str(L), 0.2))
-    # PER-STUB TRUTH IS THREE-VALUED AND tpKey ALONE CANNOT EXPRESS IT.
-    # An OT stub carries tpKey >= 0 only when the producer called it GENUINE.
+    # PER-STUB TRUTH IS THREE-VALUED AND tpIdx ALONE CANNOT EXPRESS IT.
+    # An OT stub carries a matched tpIdx (SPN.tp_matched) only when the producer
+    # called it GENUINE.
     # A COMBINATORIC stub is a real merge of this particle's cluster with
     # another particle's, and an UNKNOWN stub is not linked to any particle;
-    # both carry tpKey = -1 and so were indistinguishable, which made every
+    # both carry tpIdx = -1 and so were indistinguishable, which made every
     # "wrong OT hit" look like noise when a quarter of them still carry this
     # track's position. Required, not inferred: guessing the split from the
-    # sign of tpKey would reproduce exactly the miscount being removed.
+    # sign of tpIdx would reproduce exactly the miscount being removed.
     need = ("tpGenuine", "tpCombinatoric", "tpUnknown")
     miss = [c for c in need if c not in O]
     if miss:
         raise SystemExit(
             f"L1TOTStub is missing {miss}: the OT truth counters need the "
-            f"per-stub CMS flags, and inferring them from tpKey would silently "
+            f"per-stub CMS flags, and inferring them from tpIdx would silently "
             f"merge combinatoric stubs into noise. Re-make the ntuple with "
             f"these branches.")
     ot_flag = np.where(O["tpGenuine"][bar] > 0, 1,
@@ -326,7 +332,7 @@ def _unify(I, O, sigz_ot, bench=None):
          "globalClusterCotTheta": np.r_[I["globalClusterCotTheta"], np.zeros(n)],
          "sigGlobalClusterCotTheta": np.r_[I["sigGlobalClusterCotTheta"],
                                            np.full(n, 1e9)],
-         "tpKey": np.r_[I["tpKey"], O["tpKey"][bar]],
+         "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          # 0 on every IT cluster: the code is only defined for an OT stub, and
          # track_rows gates on is_ot before reading it
@@ -356,9 +362,10 @@ def chunk_census(U):
     """One entry per TP with >= 1 hit in this chunk, plus its hit pattern.
 
     Kinematics are the L1TTP truth every hit of the TP carries identically
-    (M.attach_tp_truth); NaN for TPs not in L1TTP (neutral or below 1 GeV).
+    (M.attach_tp_truth); NaN for TPs not in L1TTP (tpIdx <= -3: neutral or
+    below the L1TTP momentum cut).
     """
-    m = U["tpKey"] >= 0
+    m = SPN.tp_matched(U["tpIdx"])
     if not m.any():
         z = np.zeros(0)
         return {"key": z.astype(np.int64), "event": z.astype(np.int32),
@@ -367,7 +374,7 @@ def chunk_census(U):
                 "z0": z.astype(np.float32), "vr": z.astype(np.float32),
                 "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8)}
     gi = np.flatnonzero(m)
-    key = M.tp_key(U["event"][gi], U["tpKey"][gi])
+    key = M.tp_key(U["event"][gi], U["tpIdx"][gi])
     lay = U["layer"][gi]
     order = np.argsort(key, kind="stable")
     key_s, gi_s = key[order], gi[order]
@@ -382,7 +389,7 @@ def chunk_census(U):
     np.bitwise_or.at(hit_it, pos[it], (1 << (ls[it] - 1)).astype(np.uint8))
     np.bitwise_or.at(hit_ot, pos[~it], (1 << (ls[~it] - 11)).astype(np.uint8))
     return {"key": uk.astype(np.int64),
-            "event": (uk >> M.TP_KEY_SHIFT).astype(np.int32),
+            "event": M.tp_key_parts(uk)[0].astype(np.int32),
             "pt": U["tpPt"][rep].astype(np.float32),
             "eta": U["tp_eta"][rep].astype(np.float32),
             "phi": U["tp_phi_prod"][rep].astype(np.float32),
@@ -511,10 +518,10 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         gck = o_keep.get("_gC")
         tripk = (o_keep["_gA"], o_keep["_gB"],
                  gck if gck is not None else o_keep["_gB"])
-        ta = U["tpKey"][o_keep["_gA"]]
-        real = (ta >= 0) & (ta == U["tpKey"][o_keep["_gB"]])
+        ta = U["tpIdx"][o_keep["_gA"]]
+        real = SPN.tp_matched(ta) & (ta == U["tpIdx"][o_keep["_gB"]])
         if gck is not None:
-            real &= ta == U["tpKey"][gck]
+            real &= ta == U["tpIdx"][gck]
         base.update({
             "fit": float(o_keep["tracks_to_fit"]),
             "found_standalone": float(len(rk0)),

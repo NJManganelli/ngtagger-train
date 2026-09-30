@@ -51,6 +51,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
+from ngtagger.data import spix_nano as SPN   # noqa: E402
 
 IL = (1, 2, 3, 4)
 OT_BARREL = (11, 12, 13, 14, 15, 16)
@@ -381,10 +382,10 @@ def recovered_keys(U, out):
     different thing -- purity of the whole track rather than of the seed.
     """
     ga, gb = out["_gA"], out["_gB"]
-    ta = U["tpKey"][ga]
-    real = (ta >= 0) & (ta == U["tpKey"][gb])
+    ta = U["tpIdx"][ga]
+    real = SPN.tp_matched(ta) & (ta == U["tpIdx"][gb])
     if out.get("_gC") is not None:
-        real &= ta == U["tpKey"][out["_gC"]]
+        real &= ta == U["tpIdx"][out["_gC"]]
     if not real.any():
         return np.empty(0, np.int64)
     return np.unique(M.tp_key(U["event"][ga][real], ta[real]))

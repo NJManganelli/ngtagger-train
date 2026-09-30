@@ -67,6 +67,7 @@ from ngtagger.truth_helix import KPT_CMSSW, tp_phi0
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ot_oracle import OT_LINK, stub_truth   # noqa: E402
+import tracklet_topology_cost as M          # noqa: E402
 
 HPAR = ("rInv", "phi", "tanL", "z0", "d0")          # TTTrack::Hpar order
 COV_COLS = [f"cov_{HPAR[i]}_{HPAR[j]}" for i in range(5) for j in range(i, 5)]
@@ -93,10 +94,10 @@ ON_PLANE_CM = 1e-4        # |distance to plane| accepted as converged (1 um)
 
 TRK_COLS = list(HPAR) + ["pt", "eta", "nStubs"] + COV_COLS
 TST_COLS = ["trackIdx", "detId", "x", "y", "z", "bend", "layer", "isBarrel"]
-OTS_COLS = ["detId", "x", "y", "z", "bend", "layer", "isBarrel", "tpKey",
+OTS_COLS = ["detId", "x", "y", "z", "bend", "layer", "isBarrel", "tpIdx",
             "tpGenuine", "tpCombinatoric", "tpUnknown"]
 CL_COLS = ["detId", "layer", "localX", "localY", "localCotAlpha",
-           "localCotBeta", "hasAlpha", "hasBeta", "tpKey",
+           "localCotBeta", "hasAlpha", "hasBeta", "tpIdx",
            "sigX", "sigY", "sigAlpha", "sigBeta",      # errors: the refit's measurement R
            "sizeX", "sizeY"]                             # cluster size: calibrated R lookup
 CL_TABLE = SPN.CLUSTER_TABLE
@@ -115,7 +116,7 @@ SENTINEL = -900.0
 #   majority owner -- a real piece of another particle.
 # fake stub: a stub that is not genuine at all -- stub-level combinatoric (its
 #   two clusters come from different TPs) or unknown (no TP: noise, out-of-time
-#   pileup). Its TPs are not recorded (L1TOTStub_tpKey = -1), so a fake stub
+#   pileup). Its TPs are not recorded (L1TOTStub_tpIdx = -1), so a fake stub
 #   cannot name a co-owner.
 # NB "combinatoric" is avoided as a TRACK class name on purpose: CMSSW uses it
 #   for tracks, L1TOTStub for stubs, and they mean different things.
@@ -147,7 +148,8 @@ EXCLUDED = ("tie", "no-owner", "unjoined")
 # B1  -- inside the ellipse, owned by a TP that also owns a foreign stub of
 #        this track: the trap a contaminated track sets for itself.
 # B2  -- inside the ellipse, owned by any other TP.
-# B3  -- inside the ellipse, no TP (tpKey = -1): noise / unlinked.
+# B3  -- inside the ellipse, no TP (tpIdx -1/-2): noise / unlinked. A TP not
+#        written to L1TTP (tpIdx <= -3) is a TP: B1/B2.
 CATEGORIES = ("A-in", "A-out", "B1", "B2", "B3")
 
 
@@ -430,10 +432,11 @@ def classify_tracks(T, S, O):
     gtrk = off[S["event"]] + S["trackIdx"].astype(np.int64)
     tp, flag, hit = stub_truth(S, O)
     n_unj = np.bincount(gtrk, weights=~hit, minlength=ntrk).astype(int)
-    gen = hit & (flag == 1) & (tp >= 0)
-    key = gtrk[gen] * (1 << 24) + tp[gen]
+    gen = hit & (flag == 1) & SPN.tp_matched(tp)
+    # (global track, tpIdx) packed with M.tp_key (the track in the high word)
+    key = M.tp_key(gtrk[gen], tp[gen])
     u, c = np.unique(key, return_counts=True)
-    ut, utp = u >> 24, u & ((1 << 24) - 1)
+    ut, utp = M.tp_key_parts(u)
     o = np.lexsort((-c, ut))
     ut, utp, c = ut[o], utp[o], c[o]
     first = np.r_[True, ut[1:] != ut[:-1]] if len(ut) else np.zeros(0, bool)
@@ -459,7 +462,7 @@ def classify_tracks(T, S, O):
     assert (cls != -99).all()
     # foreign-stub TPs, as packed (global track, tp) keys, for the B1 test
     fr = gen & (tp != maj_tp[gtrk])
-    foreign_keys = np.unique(gtrk[fr] * (1 << 24) + tp[fr])
+    foreign_keys = np.unique(M.tp_key(gtrk[fr], tp[fr]))
     return cls, maj_tp, foreign_keys
 
 
@@ -534,9 +537,11 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
     cand_ratio = (dist / bound)[it_, im_]
     # target modules: every IT module on this layer holding a cluster of
     # the majority-owner TP, even if it is not among the candidates
-    tgt = kin & (klay == L) & (K["tpKey"] >= 0)
-    tk = kev[tgt].astype(np.int64) * (1 << 24) + K["tpKey"][tgt].astype(np.int64)
-    want = tev[ti].astype(np.int64) * (1 << 24) + maj_tp[ti]
+    tgt = kin & (klay == L) & SPN.tp_matched(K["tpIdx"])
+    tk = M.tp_key(kev[tgt], K["tpIdx"][tgt])
+    has_maj = SPN.tp_matched(maj_tp[ti])      # no owner: -1, matches no tk
+    want = np.full(len(ti), -1, np.int64)
+    want[has_maj] = M.tp_key(tev[ti][has_maj], maj_tp[ti][has_maj])
     order = np.argsort(tk, kind="stable")
     lo = np.searchsorted(tk[order], want, "left")
     hi = np.searchsorted(tk[order], want, "right")
@@ -585,11 +590,14 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
     m2 = np.where(det > 0, m2, np.inf)
     inside = m2 < nsig * nsig
     t_of = pt_[pq]
-    ctp = K["tpKey"][ci].astype(np.int64)
+    ctp = K["tpIdx"][ci].astype(np.int64)
     isA = ctp == maj_tp[t_of]
-    isB1 = ~isA & np.isin(t_of * (1 << 24) + ctp, foreign_keys)
+    cm = SPN.tp_matched(ctp)
+    ck = np.full(len(ctp), -1, np.int64)
+    ck[cm] = M.tp_key(t_of[cm], ctp[cm])
+    isB1 = ~isA & cm & np.isin(ck, foreign_keys)
     cat = np.where(isA, np.where(inside, 0, 1),
-                   np.where(~inside, -1, np.where(isB1, 2, np.where(ctp >= 0, 3, 4))))
+                   np.where(~inside, -1, np.where(isB1, 2, np.where(cm, 3, 4))))
     sel = cat >= 0
     hasA = K["hasAlpha"][ci] > 0
     hasB = K["hasBeta"][ci] > 0

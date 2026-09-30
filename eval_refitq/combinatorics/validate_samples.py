@@ -62,7 +62,7 @@ def main():
             bad.append((p, miss))
         print(f"{Path(p).name[:33]:<34}{t.num_entries:>7}"
               f"{ncl.mean():>9.0f}+-{ncl.std():<3.0f}{nst.mean():>10.0f}"
-              f"{'Y' if M.SPN.has_column(keys, M.OT_TABLE, 'tpKey') else 'N':>9}"
+              f"{'Y' if M.SPN.has_column(keys, M.OT_TABLE, 'tpIdx') else 'N':>9}"
               f"{(','.join(miss) if miss else 'none'):>18}")
 
     tot = sum(len(v) for v in ids.values())

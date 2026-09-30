@@ -90,9 +90,9 @@ def load(paths):
              "spixAnyWindowTruncated", "spixNKFUpdates",
              "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot",
              "spixChi2ITAtOT", "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio",
-             "spixRefitPerformed", "spixMatchedTpKey"]
+             "spixRefitPerformed", "tpIdx"]
     ccols = ["layer", "detId", "localX", "localY", "sigX", "sigY", "charge",
-             "sizeX", "sizeY", "tpKey"]
+             "sizeX", "sizeY", "tpIdx"]
     copt = ["size", "localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta"]
 
     miss = [c for c in vcols if not SPN.has_column(keys, VAR, c)]
@@ -255,10 +255,11 @@ def main():
         cols["hasAlpha"] = K["hasAlpha"][ci].astype(float)
         cols["hasBeta"] = K["hasBeta"][ci].astype(float)
 
-    valid = (px > SENTINEL) & (K["tpKey"][ci] >= -1)
-    tp_of_trk = T["spixMatchedTpKey"]
-    yB = (K["tpKey"][ci] >= 0) & (tp_of_trk[X["gtrk"][xi]] >= 0) \
-         & (K["tpKey"][ci] == tp_of_trk[X["gtrk"][xi]])
+    # tpIdx -2: truth unavailable, so the pair has no label
+    valid = (px > SENTINEL) & (K["tpIdx"][ci] != -2)
+    # the track's TP is its weighted cluster-majority owner (the track table's tpIdx)
+    tp_of_trk = T["tpIdx"]
+    yB = SPN.tp_matched(K["tpIdx"][ci]) & (K["tpIdx"][ci] == tp_of_trk[X["gtrk"][xi]])
     names = list(cols)
     FB = np.nan_to_num(np.column_stack([cols[c].astype(np.float64) for c in names]),
                        nan=0., posinf=1e12, neginf=-1e12)[valid]

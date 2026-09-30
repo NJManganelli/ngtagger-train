@@ -30,7 +30,7 @@ from ot_oracle import load, stub_truth   # noqa: E402
 # THE TP LINK. Both baselines carry, per track, its majority owner's row in the
 # site's own TP census (tp_row) and how many of its hits that owner holds
 # (n_own), which is exactly what the page's DELIVERED efficiency needs: a TP is
-# found when a surviving track is owned by it. Keyed on (event << 20) | tpKey,
+# found when a surviving track is owned by it. Keyed on M.tp_key(event, tpIdx),
 # the same int64 key the census and export_site's own track table use, so all
 # three collections share one denominator. The seed-truthful efficiency stays
 # undefined for a baseline: its tracks never entered our seed bitmaps.
@@ -44,16 +44,19 @@ LINK_PT_RTOL = 1e-3
 
 
 def link_tp_rows(event, tpidx, tp_keys):
-    """Row of (event, tpKey) in the site's TP table, or -1. The one definition
-    of the track -> TP link, shared by export_site's track table."""
+    """Row of (event, tpIdx) in the site's TP table, or -1 (also for an
+    unmatched owner, tpIdx -1/-2). The one definition of the track -> TP
+    link, shared by export_site's track table."""
     keys = np.asarray(tp_keys, np.int64)
     assert np.all(np.diff(keys) > 0), \
         "TP table keys are not strictly ascending; tp_row would be wrong"
     ev = np.asarray(event).astype(np.int64)
     ti = np.asarray(tpidx).astype(np.int64)
-    kk = (ev << 20) | np.maximum(ti, 0)
+    m = M.SPN.tp_matched(ti)
+    kk = np.full(len(ti), -1, np.int64)
+    kk[m] = M.tp_key(ev[m], ti[m])
     pos = np.clip(np.searchsorted(keys, kk), 0, max(len(keys) - 1, 0))
-    ok = (len(keys) > 0) & (keys[pos] == kk) & (ti >= 0)
+    ok = (len(keys) > 0) & (keys[pos] == kk) & m
     return np.where(ok, pos, -1)
 
 
@@ -105,7 +108,7 @@ def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
 
     # majority owner over the track's genuine stubs -- the same rule
     # KF.track_rows applies, so "wrong" means the same thing on both sides
-    gen = ok & (flag == 1) & (tpidx >= 0)
+    gen = ok & (flag == 1) & M.SPN.tp_matched(tpidx)
     owner = np.full(ntrk, -1, np.int64)
     order = np.lexsort((tpidx[gen], gid[gen]))
     g_s, t_s = gid[gen][order], tpidx[gen][order]

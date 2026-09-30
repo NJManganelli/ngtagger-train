@@ -31,6 +31,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tp_findability as TF   # noqa: E402
 import kf_emulation as KF     # noqa: E402
+from ngtagger.data import spix_nano as SPN   # noqa: E402
 
 # label -> (residual column, scale, unit) ; None = the cleanliness target
 TARGETS = {
@@ -72,7 +73,8 @@ def make_target(T, c, name, win):
     """Boolean label plus the rows it is defined on, inside one variant window."""
     if name == "clean":
         y = (T[:, c["n_wrong"]] <= 1)
-        ok = win & (T[:, c["own_tpidx"]] >= 0)
+        # an owner at all (an L1TTP row or a TP not written to L1TTP)
+        ok = win & SPN.tp_matched(T[:, c["own_tpidx"]])
         return y, ok, None
     col, scale, unit = TARGETS[name]
     r = np.abs(T[:, c[col]]) * scale

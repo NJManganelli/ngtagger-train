@@ -34,7 +34,7 @@ TRK = ["pt", "eta", "phi", "d0", "z0", "rInv", "tanL", "nStubs", "chi2XYRed",
        "combinatoric", "unknown", "tp_pt", "tp_eta", "tp_phi", "tp_d0",
        "tp_z0", "tp_charge", "tp_vx", "tp_vy", "tp_vz"]
 TST = ["layer", "isBarrel", "trackIdx", "detId", "x", "y", "z", "r", "phi", "bend"]
-OTS = ["layer", "isBarrel", "detId", "x", "y", "z", "bend", "tpKey", "tpPt",
+OTS = ["layer", "isBarrel", "detId", "x", "y", "z", "bend", "tpIdx", "tpPt",
        "tpGenuine", "tpCombinatoric", "tpUnknown"]
 OT_LINK = "otStubIdx"      # track-stub table -> L1TOTStub row (current nanos)
 
@@ -74,14 +74,15 @@ def load(spec, nev, stub_table="L1TTrackStub"):
 
 
 def _truth_of_rows(O, src):
-    """(tpKey, flag, matched) of the OT rows `src` (-1 = unmatched). flag is
+    """(tpIdx, flag, matched) of the OT rows `src` (tpIdx -1 where `src` is -1).
+    `matched` is True where the row join succeeded (not TP-matched). flag is
     1 genuine / 2 combinatoric / 3 unknown, 0 unmatched, matching
     tp_findability._unify's code so the counters mean the same on both sides."""
     hit = src >= 0
     r = np.where(hit, src, 0)
-    tpkey = np.where(hit, O["tpKey"][r], -1)
+    tpidx = np.where(hit, O["tpIdx"][r], -1)
     flag = np.where(O["tpGenuine"][r] > 0, 1, np.where(O["tpCombinatoric"][r] > 0, 2, 3))
-    return tpkey, np.where(hit, flag, 0), hit
+    return tpidx, np.where(hit, flag, 0), hit
 
 
 def exact_stub_rows(S, O):
@@ -96,7 +97,7 @@ def exact_stub_rows(S, O):
 
 
 def stub_truth(S, O):
-    """(tpKey, flag, matched) of every track stub, exact via otStubIdx. Aligned to S."""
+    """(tpIdx, flag, matched) of every track stub, exact via otStubIdx. Aligned to S."""
     return _truth_of_rows(O, exact_stub_rows(S, O))
 
 
@@ -136,7 +137,7 @@ def main():
     np.add.at(nst, gid[ok], 1)
 
     # majority owner per track over its GENUINE stubs
-    gen = ok & (flag == 1) & (tpidx >= 0)
+    gen = ok & (flag == 1) & SPN.tp_matched(tpidx)
     owner = np.full(ntrk, -1, np.int64)
     n_own = np.zeros(ntrk, np.int32)
     order = np.lexsort((tpidx[gen], gid[gen]))

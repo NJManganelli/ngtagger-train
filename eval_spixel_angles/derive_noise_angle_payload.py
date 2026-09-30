@@ -61,7 +61,7 @@ SIZEY_BINS = [1, 2, 3, 4, 5, 6, 8, 12]   # upper edges; last bucket is "12 or mo
 def build(paths, layers=(1, 2, 3, 4), use_truth=False):
     files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
     src = "truthCot" if use_truth else "recoCot"
-    cols = ["layer", f"{src}Alpha", f"{src}Beta", "hasAlpha", "hasBeta", "tpKey", "sizeY"]
+    cols = ["layer", f"{src}Alpha", f"{src}Beta", "hasAlpha", "hasBeta", "tpIdx", "sizeY"]
     with uproot.open(f"{files[0]}:Events") as t:
         keys = set(t.keys())
     miss = [c for c in cols if not SPN.has_column(keys, CLUSTER_TABLE, c)]

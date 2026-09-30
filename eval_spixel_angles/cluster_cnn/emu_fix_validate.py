@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from v2_common import core_fit
 from emu_common import load_library, emulate
 from emu_build_library import load_dump
+from ngtagger.data import spix_nano as SPN
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIG = lambda n: os.path.join(HERE, "figs", n)
@@ -70,12 +71,12 @@ def stats(r, w=None):
 
 # ======================= nano: clusters =======================
 COLS = ["surface", "sizeX", "sizeY", "size", "charge", "globalR", "globalZ", "localX", "localY", "sigX", "sigY", "localCotAlpha",
-        "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta", "satAlpha", "satBeta", "tpKey", "tpLocalCotAlpha",
+        "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "hasBeta", "satAlpha", "satBeta", "tpIdx", "tpLocalCotAlpha",
         "tpLocalCotBeta", "tpEmuClass"]
 D = read_clusters(a.nano, COLS)
 D["group"] = grp(D.surface.values)
 T = (D.tpEmuClass == 1).values; C = (D.tpEmuClass == 0).values
-L = (D.tpKey >= 0).values
+L = SPN.tp_matched(D.tpIdx.values)   # linked: tpIdx >= 0, or a TP not written to L1TTP (<= -3)
 OUT["n_events_nano"] = int(D.event.nunique()); OUT["n_clusters_nano"] = int(len(D))
 OUT["class_fractions"] = [dict(group=g, fracT=float(T[D.group == g].mean()), prototype=PROTO_FRAC_T[g],
                                fracC_linked=float((C & L)[D.group == g].mean()), fracC_unlinked=float((C & ~L)[D.group == g].mean()),
@@ -241,7 +242,7 @@ with PdfPages(FIG("emu_fix_leak.pdf")) as pdf:
     table_pages(pdf, fmt(LK), "Leak test (ntuple, file 3, 20 events): AUC(unlinked vs linked) gain of the emitted angles over each probe; "
                               "HGB trained on even events, tested on odd (and swapped)")
     table_pages(pdf, fmt(LN), "Leak test (nano, file 3): gain of ALL emu angle columns (cot, sigma, has, sat) over the nano probe")
-    table_pages(pdf, fmt(pd.DataFrame(OUT["has_linked_vs_unlinked"])), "hasAlpha / hasBeta, linked (tpKey >= 0) vs unlinked (must be exactly 1)")
+    table_pages(pdf, fmt(pd.DataFrame(OUT["has_linked_vs_unlinked"])), "hasAlpha / hasBeta, linked (TP-matched tpIdx) vs unlinked (must be exactly 1)")
     table_pages(pdf, fmt(pd.DataFrame(OUT["class_fractions"])), "Class fractions (TRUTH-ONLY tpEmuClass) vs the prototype (no pT cut)")
 
 # ======================= sigma LUT =======================
@@ -311,7 +312,7 @@ print("nonSP vs v2", OUT["nonSP_vs_v2"]); print("payload SP", OUT["payload_SP_ol
 
 # ======================= refit: alphaBeta vs alpha, the |cot| cap =======================
 RT, RH = "L1TSmartPixelsTrackSeedlessRefitAAAA_", "L1TSmartPixelsRefitHitSeedlessRefitAAAA_"
-TRK = ["pt", "d0", "z0", "spixRefitPerformed", "spixNAcceptedHits", "spixNKFUpdates", "spixMatchedTpKey",
+TRK = ["pt", "d0", "z0", "spixRefitPerformed", "spixNAcceptedHits", "spixNKFUpdates", "tpIdx",
        "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IncBetaTot"]
 HIT = ["trackIdx", "hitAccepted", "hasAlpha", "hasBeta", "selClusterIdx", "selHitClass", "pullAlpha", "pullBeta"]
 

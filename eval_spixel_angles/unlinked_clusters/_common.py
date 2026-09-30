@@ -10,7 +10,13 @@ Two PU200 D121 ttbar samples are used, because no single nano has everything:
      inclusive inverse CDF. No L1TTP table.
 
 Everything is read-only; the flat per-cluster frame is cached in a scratch dir
-(env UNLINKED_CACHE, default below), never next to the inputs.
+(env UNLINKED_CACHE, default below), never next to the inputs. The cache names
+carry CACHE_VERSION: the frames of the key-linked era (raw_<sample>.parquet,
+combined.parquet; TP links joined by collection key) are never reused.
+
+TP links are tpIdx rows into L1TTP (<= -3: matched TP not in L1TTP; unlinked =
+not SPN.tp_matched). Key-linked nanos (an L1TTP key column) are refused by
+spix_nano.
 """
 from __future__ import annotations
 
@@ -37,6 +43,8 @@ SAMPLES = {
     "N": [(WORK / "spix_sweep15_500.root", 200)],
 }
 CL = SPN.CLUSTER_TABLE
+# bump when the cached frames change meaning (tpidx1: TP links are L1TTP rows)
+CACHE_VERSION = "tpidx1"
 
 # Training / payload coverage, SPEC convention (alpha = r-phi bending, beta = along z).
 # Conv1D_Full-2bit NN eval dump (the sample the adopted payload is built from):
@@ -58,9 +66,7 @@ ANGLE = ["localCotAlpha", "localCotBeta", "sigAlpha", "sigBeta", "hasAlpha", "ha
 def _read_file(path: Path, nev: int, with_tp: bool) -> pd.DataFrame:
     t = uproot.open(path)["Events"]
     # every cluster column, TBPX only (the study is per barrel layer)
-    # under their current names (tpIdx on older files is read as tpKey)
     cols = [k[len(CL) + 1:] for k in t.keys() if k.startswith(CL + "_")]
-    cols = ["tpKey" if c == "tpIdx" else c for c in cols]
     a = t.arrays(SPN.cluster_branches(t.keys(), cols, surfaces=SPN.BARREL) + ["event"],
                  entry_stop=nev)
     J = SPN.cluster_columns(a, cols, surfaces=SPN.BARREL)
@@ -68,24 +74,25 @@ def _read_file(path: Path, nev: int, with_tp: bool) -> pd.DataFrame:
     df = pd.DataFrame({c: ak.flatten(J[c]).to_numpy() for c in cols})
     df["event"] = np.repeat(a["event"].to_numpy(), counts)
     df["ientry"] = np.repeat(np.arange(len(counts)), counts)
-    if with_tp and SPN.has_column(t.keys(), "L1TTP", "key"):
-        tk = ["key", "bx", "evt", "pdgId", "pt"]
+    if with_tp and SPN.has_column(t.keys(), "L1TTP", "bx"):
+        # the cluster's L1TTP row is its tpIdx (>= 0); other codes match no row
+        tk = ["bx", "evt", "pdgId", "pt"]
         b = SPN.table_columns(t.arrays(SPN.branch_names(t.keys(), "L1TTP", tk), entry_stop=nev),
                               "L1TTP", tk)
-        nt = ak.num(b["key"]).to_numpy()
+        nt = ak.num(b["bx"]).to_numpy()
         tp = pd.DataFrame({k: ak.flatten(b[k]).to_numpy() for k in tk})
         tp["ientry"] = np.repeat(np.arange(len(nt)), nt)
-        tp = tp.rename(columns={"key": "tpKey", "bx": "tpBx", "evt": "tpEvt", "pdgId": "tpPdgId",
-                                "pt": "tpPtTab"})
-        df = df.merge(tp, on=["ientry", "tpKey"], how="left")
+        tp["tpIdx"] = (np.arange(len(tp)) - np.repeat(np.cumsum(nt) - nt, nt)).astype(df["tpIdx"].dtype)
+        tp = tp.rename(columns={"bx": "tpBx", "evt": "tpEvt", "pdgId": "tpPdgId", "pt": "tpPtTab"})
+        df = df.merge(tp, on=["ientry", "tpIdx"], how="left", validate="many_to_one")
     return df
 
 
 def _load_raw(sample: str) -> pd.DataFrame:
     CACHE.mkdir(parents=True, exist_ok=True)
-    cpath = CACHE / f"raw_{sample}.parquet"
-    if cpath.exists():   # caches written before the tpIdx -> tpKey rename
-        return pd.read_parquet(cpath).rename(columns={"tpIdx": "tpKey"})
+    cpath = CACHE / f"raw_{sample}_{CACHE_VERSION}.parquet"
+    if cpath.exists():
+        return pd.read_parquet(cpath)
     parts = []
     for i, (p, nev) in enumerate(SAMPLES[sample]):
         d = _read_file(p, nev, with_tp=(sample == "T"))
@@ -106,7 +113,7 @@ def load() -> pd.DataFrame:
     """Combined frame = what the CURRENT producer emits with noiseSet=smarthit_noise_v6.
 
     T and N hold the SAME 200 events and the SAME 5.4M clusters (verified: outer join on
-    (event, detId, localX, localY, charge) matches every row, tpKey agrees 100%), in a
+    (event, detId, localX, localY, charge) matches every row, the TP link agrees 100%), in a
     different row order. TP-linked angles are bit-identical between them; only sigAlpha/
     sigBeta differ for ~19% of linked clusters, because the Sep-5 producer (N) looked the
     sigma up at the TRUE angle and the current one (T) at the RECO angle. So: every column
@@ -114,14 +121,14 @@ def load() -> pd.DataFrame:
     from N (the noise-v6 synthetic draw; its sigma was always keyed on the drawn angle).
     The T-sample angle block is kept as *_T for the no-noiseSet comparison.
     """
-    cpath = CACHE / "combined.parquet"
+    cpath = CACHE / f"combined_{CACHE_VERSION}.parquet"
     if cpath.exists():
-        return pd.read_parquet(cpath).rename(columns={"tpIdx": "tpKey"})
+        return pd.read_parquet(cpath)
     T = _load_raw("T")
     N = _load_raw("N")
     df = T.merge(N[KEY + ANGLE_COLS], on=KEY, how="left", suffixes=("", "_N"), validate="one_to_one")
     assert df["localCotAlpha_N"].notna().all()
-    u = df["tpKey"].to_numpy() < 0
+    u = ~SPN.tp_matched(df["tpIdx"].to_numpy())
     for k in ANGLE_COLS:
         df[k + "_T"] = df[k]
         df.loc[u, k] = df.loc[u, k + "_N"].to_numpy()
@@ -133,10 +140,10 @@ def load() -> pd.DataFrame:
 
 
 def derive(df: pd.DataFrame) -> pd.DataFrame:
-    df["unlinked"] = (df["tpKey"] < 0).astype(np.int8)
+    df["unlinked"] = (~SPN.tp_matched(df["tpIdx"])).astype(np.int8)
     df["qPerPix"] = df["charge"] / np.maximum(df["size"], 1)
     df["absZ"] = np.abs(df["globalZ"])
-    df["tpVr"] = np.where(df["tpKey"] >= 0, np.hypot(df["tpVx"], df["tpVy"]), np.nan)
+    df["tpVr"] = np.where(SPN.tp_matched(df["tpIdx"]), np.hypot(df["tpVx"], df["tpVy"]), np.nan)
     # Implied longitudinal origin of the cluster's reported direction (straight line in r-z,
     # exact for a helix in s-z, s ~ r at these radii): z0 = z - r * cot(theta_dir)
     ok = df["globalClusterCotTheta"] > -900

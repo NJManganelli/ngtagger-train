@@ -138,6 +138,7 @@ def test_angle_cap_census():
     g = S.angle_cap_groups(surf, key, emu_class=np.array([1, 0, 0, 1, 1]))
     assert list(g)[:3] == ["all", "IL1", "ID1"] and "ID1/unlinked" in g and "tpEmuClass=0" in g
     # a pruned TP (tpIdx <= -3) is linked; -2 (truth unavailable) is not
+    assert S.tp_matched(np.array([0, -1, -2, -3, 7])).tolist() == [True, False, False, True, True]
     rows = S.angle_cap_groups(surf, np.array([0, -1, -2, -7, 1]))
     assert rows["linked"].tolist() == [True, False, False, True, True]
     assert g["linked"].tolist() == [True, False, False, True, True]
