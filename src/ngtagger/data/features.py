@@ -27,6 +27,9 @@ FEATURE_GROUPS = {
         "trk_rInv", "trk_tanL", "trk_z0", "trk_d0",
         "trk_chi2XYRed", "trk_chi2ZRed", "trk_chi2BendRed",
     ],
+    # the constituent track's fit resolution + accepted IT hits (nano.TRACKRES_*; the same
+    # slots for OT-only and SmartPixels tracks, 0 IT hits for OT-only)
+    "trackres": ["trk_sig_d0", "trk_sig_z0", "trk_nITHits"],
     # the track-quality GBDT score as a separate, composable input option
     "trkquality": ["trk_trkMVA1"],
     "cluster": ["cl_hOverE", "cl_sigmaRRTot", "cl_absZBarycenter", "cl_eMax", "cl_sigmaZZ"],

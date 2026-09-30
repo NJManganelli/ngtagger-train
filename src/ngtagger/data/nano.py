@@ -37,6 +37,12 @@ TRACK_BRANCHES = ["rInv", "tanL", "z0", "d0", "chi2XYRed", "chi2ZRed", "chi2Bend
 # extra track branches needed only by the "vertexdxy" feature group (global
 # fastHisto PV (dx, dy) estimate; requires the 5-par extended track table)
 VTX_TRACK_BRANCHES = ["pt", "phi", "z0", "d0"]
+# "trackres" group: the track fit's own resolution (KF covariance; for a SmartPixels track
+# the refit posterior) + the number of accepted IT hits. The hit count is OPTIONAL: an
+# OT-only track table (L1TTrack/L1TExtTrack, or the passthrough SP table of mask IIII)
+# has no such column and gets 0, the physical value for a track without IT hits.
+TRACKRES_BRANCHES = ["cov_d0_d0", "cov_z0_z0"]
+TRACKRES_OPTIONAL = {"spixNAcceptedHits": "trk_nITHits"}
 CLUSTER_BRANCHES = ["hOverE", "sigmaRRTot", "zBarycenter", "eMax", "sigmaZZ"]
 JET_BRANCHES = ["pt", "eta", "phi", "et"]
 GEN_BRANCHES = {
@@ -192,6 +198,8 @@ def load_jets(
         constituent's SmartPixels-refit track (needs refit_config + refit_bdt_json).
       - "vertexdxy_pv": the transverse IP (dxy) of the constituent track w.r.t.
         the emulated primary vertex (L1Vertex z0 + track d0/z0/phi).
+      - "trackres": the track fit's sigma(d0), sigma(z0) (sqrt of the covariance) and the
+        number of accepted IT hits (0 when the track table has none: OT-only tracks).
       - "trackmva": the per-track resolution-quality MVA heads of the
         constituent's track (ngtagger.data.trackmva_feature; needs
         trackmva_model, a bundle of the family whose base table is track_table).
@@ -201,7 +209,14 @@ def load_jets(
     """
     groups = feature_groups or ["baseline"]
     need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv",
-                                                "trackmva"))
+                                                "trackmva", "trackres"))
+    extra_trk = list(VTX_TRACK_BRANCHES) if "vertexdxy" in groups else []
+    trackres_present = []
+    if "trackres" in groups:
+        with uproot.open(files[0]) as f:
+            keys0 = set(f["Events"].keys())
+        trackres_present = [c for c in TRACKRES_OPTIONAL if f"{track_table}_{c}" in keys0]
+        extra_trk += TRACKRES_BRANCHES + trackres_present
     if "trackmva" in groups:
         from ngtagger.data.trackmva_feature import require_jet_tables
 
@@ -218,7 +233,7 @@ def load_jets(
         cluster_table=cluster_table,
         with_gen=with_gen,
         max_events=max_events,
-        extra_track_branches=(VTX_TRACK_BRANCHES if "vertexdxy" in groups else None),
+        extra_track_branches=extra_trk or None,
         link_cand_table=link_cand_table if need_trk_gather else None,
         vertex_table=vertex_table if "vertexdxy_pv" in groups else None,
     )
@@ -251,6 +266,13 @@ def load_jets(
         tracks = events[track_table]
         for name in TRACK_BRANCHES:
             const[f"trk_{name}"] = crossref_gather(cands, tracks, nested_idx, link_idx_field, name)
+    if "trackres" in groups:
+        tracks = events[track_table]
+        for c, name in (("cov_d0_d0", "trk_sig_d0"), ("cov_z0_z0", "trk_sig_z0")):
+            const[name] = np.sqrt(np.abs(crossref_gather(cands, tracks, nested_idx, link_idx_field, c)))
+        for c, name in TRACKRES_OPTIONAL.items():
+            const[name] = (crossref_gather(cands, tracks, nested_idx, link_idx_field, c)
+                           if c in trackres_present else ak.zeros_like(const["pt"]))
     if "cluster" in groups:
         clusters = events[cluster_table]
         for name in CLUSTER_BRANCHES:

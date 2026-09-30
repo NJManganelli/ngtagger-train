@@ -108,3 +108,28 @@ def test_nano_pipeline(jet_nano_path):
     ds = prepare_dataset([jet_nano_path], max_events=200)
     assert ds["X_train"].shape[1:] == (16, len(ds["feature_names"]))
     assert ds["y_train"].shape[1] == 8
+
+
+def test_trackres_group(jet_nano_path):
+    """trackres: sigma(d0/z0) >= 0 on charged constituents, 0 IT hits when the track table
+    has no spixNAcceptedHits column (OT-only), non-negative integers otherwise."""
+    import awkward as ak
+    import uproot
+
+    from ngtagger.data.features import build_features
+    from ngtagger.data.nano import load_jets
+
+    keys = set(uproot.open(jet_nano_path)["Events"].keys())
+    table = "L1TSmartPixelsExtTrack" if "L1TSmartPixelsExtTrack_pt" in keys else "L1TExtTrack"
+    jets, const, _ = load_jets([jet_nano_path], feature_groups=["baseline", "trackres"],
+                               max_events=20, track_table=table)
+    X, names = build_features(jets, const, feature_groups=["baseline", "trackres"])
+    assert names[-3:] == ["trk_sig_d0", "trk_sig_z0", "trk_nITHits"]
+    charged = ak.to_numpy(ak.flatten(const.charge, axis=None)) != 0
+    sd0 = ak.to_numpy(ak.flatten(const.trk_sig_d0, axis=None))
+    nit = ak.to_numpy(ak.flatten(const.trk_nITHits, axis=None))
+    assert (sd0 >= 0).all() and (sd0[charged] > 0).mean() > 0.9
+    if f"{table}_spixNAcceptedHits" in keys:
+        assert (nit >= 0).all() and (nit == np.round(nit)).all()
+    else:
+        assert (nit == 0).all()
