@@ -46,6 +46,19 @@ def test_branch_name():
         S.branch_name(keys, CL, "layer")
 
 
+@pytest.mark.parametrize("tp_branch", S.KEY_LINKED_TP_BRANCHES)
+def test_key_linked_nano_refused(tp_branch):
+    keys = [f"{CL}_tpIdx", f"{CL}_surface", f"{CL}_subdet", "nL1TTP", tp_branch]
+    for call in (lambda: S.branch_name(keys, CL, "tpIdx"),
+                 lambda: S.branch_names(keys, CL, ["tpIdx"]),
+                 lambda: S.has_column(keys, CL, "tpIdx"),
+                 lambda: S.has_column(keys + ["L1TTrackStub_otStubIdx"], "L1TTrackStub", "x"),
+                 lambda: S.cluster_branches(keys, ["tpIdx"])):
+        with pytest.raises(S.KeyLinkedNanoError, match=tp_branch):
+            call()
+    S.require_row_tp_links(keys[:-1])
+
+
 def test_tp_links_read_as_columns():
     A = ak.Array({"nL1TTP": [2, 1], f"{CL}_tpIdx": CLUSTER_TP_IDX, "Y_tpIdx": [[1, -2], [-10]]})
     assert S.column(A, CL, "tpIdx").tolist() == CLUSTER_TP_IDX

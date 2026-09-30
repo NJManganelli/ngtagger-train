@@ -279,8 +279,9 @@ def test_real_file_crossrefs():
     assert checked, "no SmartPixels / track-stub cross-references in this file"
 
 
-def _write_tp_links(tmp_path, name):
-    """Two events of tables linked by tpIdx rows into L1TTP (<= -3: pruned)."""
+def _write_tp_links(tmp_path, name, key_linked_col=None):
+    """Two events of tables linked by tpIdx rows into L1TTP (<= -3: pruned);
+    `key_linked_col` adds that L1TTP column (a cnn_nano v1-v4 key column)."""
     rows = {"L1TTrack": [[0, -1], [0]], "L1TOTStub": [[1, -8, -1], [-10]],
             "L1TSmartPixelsCluster": [[0, 0, -8], [0, -1]],
             "L1TSmartPixelsTrackSeedlessRefitAAAA": [[0, -1], [-10]]}
@@ -288,6 +289,8 @@ def _write_tp_links(tmp_path, name):
             "luminosityBlock": np.array([1, 1], dtype=np.uint32),
             "event": np.array([1, 2], dtype=np.uint64),
             "L1TTP": ak.zip({"pt": [[30.0, 80.0], [90.0]]})}
+    if key_linked_col:
+        tree["L1TTP"] = ak.zip({"pt": [[30.0, 80.0], [90.0]], key_linked_col: [[4, 9], [2]]})
     for t, v in rows.items():
         tree[t] = ak.zip({"pt": [[1.0] * len(e) for e in v], "tpIdx": v})
     f = uproot.recreate(tmp_path / name)
@@ -315,6 +318,19 @@ def test_tp_links(tmp_path):
         assert tab.tpIdx.tolist() == want, t
         assert tab.tp.pt.tolist() == [[pt[e][r] if r >= 0 else None for r in ev_rows]
                                       for e, ev_rows in enumerate(want)], t
+
+
+@pytest.mark.parametrize("col", ["key", "idx"])
+def test_key_linked_nano_refused(tmp_path, col):
+    from coffea.nanoevents import NanoEventsFactory
+
+    from ngtagger.coffea_schema import L1ClustersNanoSchema, L1NanoSchema
+    from ngtagger.data.spix_nano import KeyLinkedNanoError
+
+    path, _ = _write_tp_links(tmp_path, f"v4_{col}.root", key_linked_col=col)
+    for schema in (L1NanoSchema, L1ClustersNanoSchema):
+        with pytest.raises(KeyLinkedNanoError, match=f"L1TTP_{col}"):
+            NanoEventsFactory.from_root({path: "Events"}, schemaclass=schema).events()
 
 
 _TRK_DOC = ("index of the underlying track in the {} table (-1 if this candidate has no "

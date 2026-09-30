@@ -25,8 +25,9 @@ README, "Truth links"), with
         is its index in the UNPRUNED TrackingParticle collection (not written)
 Two objects share a TP iff their tpIdx are equal. They are read as ordinary
 columns. Nanos that linked TPs by collection key (cnn_nano v1-v4: tpKey /
-spixMatchedTpKey + L1TTP_key, or keys under the *Idx names + L1TTP_idx) are not
-supported.
+spixMatchedTpKey + L1TTP_key, or keys under the *Idx names + L1TTP_idx) are
+refused (``KeyLinkedNanoError`` from every branch lookup here and from the
+coffea schema), so their keys can never be read as rows.
 
 Measured-angle cap. ``hasAlpha``/``hasBeta`` say whether a cluster's
 ``localCotAlpha``/``localCotBeta`` may be used. The payload-mode rec-hit
@@ -58,6 +59,8 @@ import numpy as np
 CLUSTER_TABLE = "L1TSmartPixelsCluster"
 OT_TABLE = "L1TOTStub"
 TP_TABLE = "L1TTP"
+# L1TTP columns of the key-linked nanos (cnn_nano v1-v4); their presence refuses the file
+KEY_LINKED_TP_BRANCHES = (f"{TP_TABLE}_key", f"{TP_TABLE}_idx")
 
 DISC_SURFACE_OFFSET = 10
 BARREL = (1, 2, 3, 4)                       # surfaces IL1-IL4
@@ -86,11 +89,29 @@ def _fields(A):
     return list(A.fields) if hasattr(A, "fields") else list(A.keys())
 
 
+class KeyLinkedNanoError(ValueError):
+    """The file links TrackingParticles by collection key, not by L1TTP row."""
+
+
+def require_row_tp_links(keys):
+    """KeyLinkedNanoError if the branch names `keys` belong to a key-linked
+    nano (an L1TTP_key or L1TTP_idx branch): its TP links are collection
+    keys, and reading them as L1TTP rows would silently mis-assign truth."""
+    bad = [b for b in KEY_LINKED_TP_BRANCHES if b in keys]
+    if bad:
+        raise KeyLinkedNanoError(
+            f"branch {', '.join(bad)} present: this nano links TrackingParticles by "
+            "collection key (cnn_nano v1-v4), not by L1TTP row (tpIdx); it is not "
+            "supported. Regenerate it with the tpIdx-linked CMSSW producers.")
+
+
 def branch_name(keys, table, col, required=True):
     """The branch `table`_`col` if `keys` holds it. KeyError when absent, or
-    None if not `required`."""
+    None if not `required`; KeyLinkedNanoError on a key-linked nano."""
     name = f"{table}_{col}"
-    if name in set(keys):
+    keys = set(keys)
+    require_row_tp_links(keys)
+    if name in keys:
         return name
     if required:
         raise KeyError(f"no branch {name}")
@@ -112,6 +133,7 @@ def _column(A, f, table, col):
 def has_column(keys, table, col):
     if _stub_joined(table, col):
         keys = set(keys)
+        require_row_tp_links(keys)
         return f"{table}_otStubIdx" in keys and f"{OT_TABLE}_{col}" in keys
     return branch_name(keys, table, col, required=False) is not None
 

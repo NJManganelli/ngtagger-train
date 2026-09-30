@@ -11,7 +11,8 @@ One schema serves every tier:
     derived tagger variables (pt_rel, pt_rel_log, deta, dphi) recomputed
     from the cross-refs
   - TrackingParticle truth links (tpIdx, on every TP-linked table) cross-reference
-    L1TTP, with a `tp` accessor
+    L1TTP, with a `tp` accessor; a key-linked nano (L1TTP_key or L1TTP_idx
+    branch, cnn_nano v1-v4) is refused with spix_nano.KeyLinkedNanoError
   - candidates get matched_track / matched_cluster / matched_jet accessors
     and uniform track-truth access: `trk_genuine` uses the direct column
     (candidate-only L1PFNano tier) or falls back to the l1TrackIdx
@@ -617,6 +618,7 @@ class L1NanoSchema(NanoAODSchema):
 
     def __init__(self, base_form, *args, **kwargs):
         fields = base_form.get("fields", [])
+        spix_nano.require_row_tp_links(set(fields))
         forms = dict(zip(fields, base_form.get("contents", [])))
         present = {f.split("_")[0] for f in fields}
         # per-file SmartPixels/track-stub links, on top of the class tables
