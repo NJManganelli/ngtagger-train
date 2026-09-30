@@ -1,4 +1,5 @@
-"""Shared pieces of the E2E NNVtx study on SmartPixels refit tracks (canon_v1 AAAA, PU200 ttbar).
+"""Shared pieces of the E2E NNVtx study on SmartPixels refit tracks (mask AAAA, PU200 ttbar;
+input set canon_v1 = barrel-only refit, canon_v2 = refit with the discs; ``configure``).
 
 Same data, variants, truth and FastHisto reference as the sub-2 GeV study
 (eval_refitq/sub2gev; its offline float GTT fastHisto, selections, TVA windows and
@@ -38,17 +39,43 @@ def _load_sub2gev_common():
 
 s2 = _load_sub2gev_common()  # eval_refitq/sub2gev/common.py
 
-CANON = s2.CANON
 FILES_ALL = s2.FILES_ALL
-FILES = [CANON.format(f) for f in FILES_ALL]
 TRAIN_ONLY = ["_f01_", "_f02_"]  # in-sample for the cluster CNN: training only, never evaluated
-OUTDIR = "/Volumes/WDMac/smartpixels_scratch/nnvtx_sp"
-DATASET = OUTDIR + "/dataset.npz"
-MVA_DIR = OUTDIR + "/trackmva_canon"          # train-trackmva output (oof scores, report, frozen bundle)
-MVA_STEM = MVA_DIR + "/trackmva_canonical_AAAA"
-PRED = OUTDIR + "/pred_{variant}.npz"
+OUTDIRS = {"canon_v1": s2.SCRATCH + "/nnvtx_sp", "canon_v2": s2.SCRATCH + "/vtx_canon_v2/nnvtx"}
 N_FOLDS = 5
 FOLD_SEED = 0
+# module state, set by configure(); read as nvcommon.<NAME> (not by value at import)
+INPUT_SET = CANON = FILES = OUTDIR = DATASET = MVA_DIR = MVA_STEM = PRED = None
+
+
+def configure(input_set: str = "canon_v1", outdir: str | None = None):
+    """Select the input set (sub2gev INPUT_SETS) and this study's output directory."""
+    global INPUT_SET, CANON, FILES, OUTDIR, DATASET, MVA_DIR, MVA_STEM, PRED
+    s2.configure(input_set)
+    INPUT_SET, CANON = input_set, s2.CANON
+    FILES = [CANON.format(f) for f in FILES_ALL]
+    OUTDIR = outdir or OUTDIRS[input_set]
+    DATASET = OUTDIR + "/dataset.npz"
+    MVA_DIR = OUTDIR + "/trackmva_canon"      # train-trackmva output (oof scores, report, frozen bundle)
+    MVA_STEM = MVA_DIR + "/trackmva_canonical_AAAA"
+    PRED = OUTDIR + "/pred_{variant}{tag}.npz"
+
+
+configure()
+
+# E2E histogram configurations: tag "" = the stock layer (256 bins of 0.16 cm, soft-histogram
+# sigma = one bin, Conv1D kernel 3); binning study: 512 / 1024 bins over the same range.
+E2E_BASE = (256, 3)
+
+
+def e2e_tag(nbins: int = 256, kernel: int = 3) -> str:
+    return "" if (nbins, kernel) == E2E_BASE else f"_b{nbins}_k{kernel}"
+
+
+def pred_path(variant: str, nbins: int = 256, kernel: int = 3) -> str:
+    return PRED.format(variant=variant, tag=e2e_tag(nbins, kernel))
+
+
 VARIANTS = ("V0", "V1", "V3")
 VLABEL = {"V0": "V0 OT tracks", "V1": "V1 SP tracks, 2 GeV floor (diagnostic)",
           "V3": "V3 SP tracks, sub-2 GeV refit tracks admitted"}
@@ -58,8 +85,8 @@ PV_WINDOW = s2.PV_WINDOW
 core_rms, full_rms, fasthisto, tva_dzmax = s2.core_rms, s2.full_rms, s2.fasthisto, s2.tva_dzmax
 
 
-def load_dataset(path=DATASET):
-    d = np.load(path, allow_pickle=False)
+def load_dataset(path=None):
+    d = np.load(path or DATASET, allow_pickle=False)
     T = {k[2:]: d[k] for k in d.files if k.startswith("T_")}
     E = {k[2:]: d[k] for k in d.files if k.startswith("E_")}
     return T, E

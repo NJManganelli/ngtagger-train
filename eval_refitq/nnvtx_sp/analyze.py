@@ -12,13 +12,18 @@ Metrics (per method and variant):
   WP           E2E: association score > 0.5; FH: inside the GTT TVA window
   assoc eff    sum(HS associated) / sum(HS selected); purity = sum(HS associated) / sum(associated)
   HS/ev        HS tracks associated per event
+  pur@FH       purity with the score threshold moved to the association efficiency of the same
+               variant's FastHisto + TVA (like-for-like operating point)
+|eta| breakdown: association metrics per |eta| bin of the variant's track (< 1.1, 1.1-1.8,
+1.8-2.4) and the track-MVA head performance per |eta| bin.
 Errors: event bootstrap (N_BOOT replicas, the SAME replicas for every method/variant, so differences
 are paired). E2E values are the mean over seeds; the seed spread (std over seeds) is quoted separately.
 
-  pixi run python eval_refitq/nnvtx_sp/analyze.py
+  pixi run python eval_refitq/nnvtx_sp/analyze.py [--input-set canon_v2] [--compare-summary <summary.json>]
 """
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import os
@@ -33,8 +38,9 @@ from matplotlib.backends.backend_pdf import PdfPages  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from nvcommon import (MVA_STEM, OUTDIR, PRED, PV_WINDOW, VARIANTS, VLABEL, core_rms, event_folds,  # noqa: E402
-                      fasthisto, full_rms, load_dataset, selections, tva_dzmax)
+import nvcommon as nvc  # noqa: E402
+from nvcommon import (PV_WINDOW, VARIANTS, VLABEL, core_rms, event_folds, fasthisto, load_dataset,  # noqa: E402
+                      selections, tva_dzmax)
 
 N_BOOT = 1000
 UM = 1e4
@@ -42,12 +48,16 @@ WP = 0.5
 ARMS = ("stock", "mva")
 METHODS = ("FH", "stock", "mva")
 MLABEL = {"FH": "FastHisto + GTT TVA", "stock": "E2E NNVtx (stock inputs)", "mva": "E2E NNVtx + track-MVA scores"}
-METRICS = ("eff", "core_um", "out_frac", "full_um", "auc", "assoc_eff", "purity", "hs_per_ev")
+METRICS = ("eff", "core_um", "out_frac", "full_um", "auc", "assoc_eff", "purity", "hs_per_ev", "pur_fh")
+ASSOC_METRICS = ("auc", "assoc_eff", "purity", "hs_per_ev", "pur_fh")
 MFMT = {"eff": (100, "{:.1f}"), "core_um": (1, "{:.0f}"), "out_frac": (100, "{:.1f}"), "full_um": (1, "{:.0f}"),
-        "auc": (1, "{:.4f}"), "assoc_eff": (100, "{:.1f}"), "purity": (100, "{:.1f}"), "hs_per_ev": (1, "{:.2f}")}
+        "auc": (1, "{:.4f}"), "assoc_eff": (100, "{:.1f}"), "purity": (100, "{:.1f}"), "hs_per_ev": (1, "{:.2f}"),
+        "pur_fh": (100, "{:.1f}")}
 MHDR = {"eff": "PV eff %", "core_um": "dz core RMS [um]", "out_frac": "% outside core", "full_um": "dz full RMS [um]",
         "auc": "assoc AUC", "assoc_eff": "assoc eff % (WP)", "purity": "assoc purity % (WP)",
-        "hs_per_ev": "HS assoc / ev (WP)"}
+        "hs_per_ev": "HS assoc / ev (WP)", "pur_fh": "purity % at FH assoc eff"}
+ETA_BINS = ((0.0, 1.1), (1.1, 1.8), (1.8, 2.4))
+ETA_LABEL = tuple(f"|eta| {lo:g}-{hi:g}" for lo, hi in ETA_BINS)
 C = {"V0": "#0072B2", "V1": "#009E73", "V3": "#D55E00", "FH": "#000000", "stock": "#0072B2", "mva": "#D55E00"}
 LS = {"FH": ":", "stock": "--", "mva": "-"}
 
@@ -61,6 +71,7 @@ def _load_sub2gev_analyze():
 
 S2A = _load_sub2gev_analyze()  # legend_below / selections / run_pv / load_cache of the sub2gev study
 legend_below = S2A.legend_below
+eta_bin = S2A.eta_bin
 
 
 def table_page(pdf, title, header, rows, notes=()):
@@ -87,7 +98,8 @@ def table_page(pdf, title, header, rows, notes=()):
 class Cfg:
     """One (variant, method[, seed]) on the test events: per-event z, per-track association."""
 
-    def __init__(self, z, rows, ev, score, passed, y, genz):
+    def __init__(self, z, rows, ev, score, passed, y, genz, ref_eff=None):
+        self.ref_eff = ref_eff                        # association efficiency of the matched operating point
         self.dz = z - genz                            # per test event
         self.found = np.abs(self.dz) < PV_WINDOW
         n = len(genz)
@@ -98,7 +110,25 @@ class Cfg:
         s = score[o]
         self.gid = np.concatenate([[0], np.cumsum(s[1:] != s[:-1])])
         self.y_s, self.ev_s, self.ng = y[o].astype(float), ev[o], int(self.gid[-1]) + 1 if len(s) else 0
-        self.score, self.y, self.passed = score, y, passed
+        self.score, self.y, self.passed, self.ev, self.rows = score, y, passed, ev, rows
+        self.o_desc = o[::-1]
+
+    def pur_at_eff(self, c):
+        """Purity at the score threshold where the (weighted) association efficiency first reaches ref_eff."""
+        if self.ref_eff is None:
+            return np.nan
+        w = c[self.ev[self.o_desc]].astype(float)
+        yy = self.y[self.o_desc]
+        tp = np.cumsum(w * yy)
+        n = np.cumsum(w)
+        i = min(int(np.searchsorted(tp / tp[-1], self.ref_eff)), len(tp) - 1)
+        return float(tp[i] / n[i])
+
+    def assoc_stats(self, c):
+        n = c.sum()
+        return {"auc": self.auc(c), "assoc_eff": float(c @ self.n_hs_assoc / max(c @ self.n_hs_sel, 1)),
+                "purity": float(c @ self.n_hs_assoc / max(c @ self.n_assoc, 1)),
+                "hs_per_ev": float(c @ self.n_hs_assoc / n), "pur_fh": self.pur_at_eff(c)}
 
     def auc(self, c):
         w = c[self.ev_s].astype(float)
@@ -115,60 +145,101 @@ class Cfg:
                 "full_um": float(np.sqrt(c @ (self.dz * UM) ** 2 / n)), "auc": self.auc(c),
                 "assoc_eff": float(c @ self.n_hs_assoc / (c @ self.n_hs_sel)),
                 "purity": float(c @ self.n_hs_assoc / max(c @ self.n_assoc, 1)),
-                "hs_per_ev": float(c @ self.n_hs_assoc / n)}
+                "hs_per_ev": float(c @ self.n_hs_assoc / n), "pur_fh": self.pur_at_eff(c)}
+
+
+def fh_z(T, n_ev, sel, pre, nbins=256, window=3, zmode="bins"):
+    """Offline float fastHisto z per event (the sub2gev code path)."""
+    ev_all = T["evt"]
+    sl = np.searchsorted(ev_all, np.arange(n_ev + 1))
+    z = np.full(n_ev, np.nan)
+    for i in range(n_ev):
+        s = slice(sl[i], sl[i + 1])
+        m = sel[s]
+        z[i] = fasthisto(T[pre + "z0"][s][m], T[pre + "pt"][s][m], nbins=nbins, window=window, zmode=zmode)[0]
+    return z
+
+
+def fh_cfg(T, test, genz, v, z, ref_eff=None):
+    """FastHisto + GTT TVA association Cfg of variant v for per-event z (all events)."""
+    sel, pre, hs = selections(T)[v]
+    pos = np.full(len(test), -1)
+    pos[test] = np.arange(test.sum())
+    ev_all = T["evt"]
+    rows = np.flatnonzero(sel & test[ev_all])
+    dzt = np.abs(T[pre + "z0"][rows] - z[ev_all[rows]])
+    win = tva_dzmax(T[pre + "eta"][rows])
+    return Cfg(z[test], rows, pos[ev_all[rows]], -dzt / win, dzt < win, hs[rows], genz[test], ref_eff)
+
+
+def e2e_cfgs(T, test, genz, folds, v, path, ref_eff):
+    """[Cfg per seed] for every arm in a pred file: {arm: [Cfg]}, epochs, idx."""
+    sel, pre, hs = selections(T)[v]
+    pos = np.full(len(test), -1)
+    pos[test] = np.arange(test.sum())
+    ev_all = T["evt"]
+    rows = np.flatnonzero(sel & test[ev_all])
+    ev = pos[ev_all[rows]]
+    P = np.load(path)
+    idx = P["idx"]
+    assert np.array_equal(P["folds"], folds), f"{path}: other folds"
+    out, epochs = {}, {}
+    for arm in ARMS:
+        seeds = sorted({int(k.split("_s")[1].split("_")[0]) for k in P.files if k.startswith(arm + "_s")})
+        if not seeds:
+            continue
+        out[arm] = []
+        for sd in seeds:
+            flat = np.zeros(len(ev_all), np.float32)
+            ok = idx >= 0
+            flat[idx[ok]] = P[f"{arm}_s{sd}_assoc"][ok]
+            sc = flat[rows]
+            out[arm].append(Cfg(P[f"{arm}_s{sd}_z"][test], rows, ev, sc, sc > WP, hs[rows], genz[test], ref_eff))
+            epochs[f"{arm}_s{sd}"] = P[f"{arm}_s{sd}_epochs"].tolist()
+    return out, epochs, idx
+
+
+def eta_sub(cf, eta, b):
+    """The Cfg restricted to tracks in |eta| bin b (eta: per-track array of the dataset); same events
+    and PV z, same matched operating point (use the association metrics only)."""
+    m = eta_bin(eta[cf.rows]) == b
+    return Cfg(cf.dz, cf.rows[m], cf.ev[m], cf.score[m], cf.passed[m], cf.y[m], np.zeros_like(cf.dz), cf.ref_eff)
 
 
 def build_configs(T, E, test):
-    genz = E["genz"][test]
-    pos = np.full(len(test), -1)
-    pos[test] = np.arange(test.sum())
     S = selections(T)
-    ev_all = T["evt"]
-    sl = np.searchsorted(ev_all, np.arange(len(test) + 1))
     cfgs, zfh_all, extra = {}, {}, {}
     for v in VARIANTS:
         sel, pre, hs = S[v]
-        zfh = np.full(len(test), np.nan)
-        for i in range(len(test)):
-            s = slice(sl[i], sl[i + 1])
-            m = sel[s]
-            zfh[i] = fasthisto(T[pre + "z0"][s][m], T[pre + "pt"][s][m])[0]
+        zfh = fh_z(T, len(test), sel, pre)
         zfh_all[v] = zfh
-        rows = np.flatnonzero(sel & test[ev_all])
-        ev = pos[ev_all[rows]]
-        y = hs[rows]
-        dzt = np.abs(T[pre + "z0"][rows] - zfh[ev_all[rows]])
-        win = tva_dzmax(T[pre + "eta"][rows])
-        cfgs[(v, "FH")] = [Cfg(zfh[test], rows, ev, -dzt / win, dzt < win, y, genz)]
-        P = np.load(PRED.format(variant=v))
-        idx = P["idx"]
-        assert np.array_equal(P["folds"], event_folds(E))
-        extra[v] = {"sel_per_ev": float(sel[test[ev_all]].sum() / test.sum()),
-                    "clipped_tracks": int(sel[test[ev_all]].sum() - (idx[test] >= 0).sum()), "epochs": {}}
+        fh = fh_cfg(T, test, E["genz"], v, zfh)
+        fh.ref_eff = float(fh.passed[fh.y.astype(bool)].mean())
+        cfgs[(v, "FH")] = [fh]
+        e2e, epochs, idx = e2e_cfgs(T, test, E["genz"], event_folds(E), v, nvc.pred_path(v), fh.ref_eff)
         for arm in ARMS:
-            seeds = sorted({int(k.split("_s")[1].split("_")[0]) for k in P.files if k.startswith(arm + "_s")})
-            cfgs[(v, arm)] = []
-            for sd in seeds:
-                flat = np.zeros(len(ev_all), np.float32)
-                ok = idx >= 0
-                flat[idx[ok]] = P[f"{arm}_s{sd}_assoc"][ok]
-                sc = flat[rows]
-                cfgs[(v, arm)].append(Cfg(P[f"{arm}_s{sd}_z"][test], rows, ev, sc, sc > WP, y, genz))
-                extra[v]["epochs"][f"{arm}_s{sd}"] = P[f"{arm}_s{sd}_epochs"].tolist()
+            cfgs[(v, arm)] = e2e[arm]
+        extra[v] = {"sel_per_ev": float(sel[test[T["evt"]]].sum() / test.sum()),
+                    "clipped_tracks": int(sel[test[T["evt"]]].sum() - (idx[test] >= 0).sum()), "epochs": epochs,
+                    "fh_assoc_eff_ref": fh.ref_eff}
     return cfgs, zfh_all, extra
 
 
-def bootstrap_all(cfgs, n_test):
-    """{key: {metric: (1 + N_BOOT,) seed-mean values}} (index 0 = central), + per-seed centrals."""
+def bootstrap_all(cfgs, n_test, metrics=METRICS, method="stats", verbose=True):
+    """{key: {metric: (1 + N_BOOT,) seed-mean values}} (index 0 = central), + per-seed centrals.
+    The replicas are the same in every call (fixed seed), so any two keys, from any call, are paired.
+    method: the Cfg method giving the metrics ("stats", or "assoc_stats" for the association only)."""
     rng = np.random.default_rng(12345)
     reps = [np.ones(n_test, np.int64)] + [np.bincount(rng.integers(0, n_test, n_test), minlength=n_test)
                                           for _ in range(N_BOOT)]
     B, seeds = {}, {}
     for key, lst in cfgs.items():
-        per = np.array([[[cf.stats(c)[m] for m in METRICS] for c in reps] for cf in lst])  # (seed, rep, metric)
-        B[key] = {m: per[:, :, j].mean(0) for j, m in enumerate(METRICS)}
-        seeds[key] = {m: per[:, 0, j].tolist() for j, m in enumerate(METRICS)}
-        print(f"bootstrap {key} done", flush=True)
+        per = np.array([[[st[m] for m in metrics] for st in (getattr(cf, method)(c) for c in reps)]
+                        for cf in lst])  # (seed, rep, metric)
+        B[key] = {m: per[:, :, j].mean(0) for j, m in enumerate(metrics)}
+        seeds[key] = {m: per[:, 0, j].tolist() for j, m in enumerate(metrics)}
+        if verbose:
+            print(f"bootstrap {key} done", flush=True)
     return B, seeds
 
 
@@ -241,7 +312,7 @@ def closure(T, E, test, zfh, B):
         d = np.abs(zfh[v][mine] - z2[j])
         out[v] = {"n_events": int(len(mine)), "max_abs_dz_cm": float(np.nanmax(d)),
                   "n_differ_gt_1um": int(np.sum(d > 1e-4)), "nan_mismatch": int(np.sum(np.isnan(zfh[v][mine]) != np.isnan(z2[j])))}
-    ref = json.load(open(os.path.join(S2A.OUTDIR, "summary.json")))["f03-f10"]["q3_bootstrap"]
+    ref = json.load(open(os.path.join(S2A.common.OUTDIR, "summary.json")))["f03-f10"]["q3_bootstrap"]
     rows = []
     for v in VARIANTS:
         for m, m2 in (("eff", "eff"), ("core_um", "core_um"), ("full_um", "full_um"), ("hs_per_ev", "hs_assoc_per_ev"),
@@ -352,18 +423,80 @@ def fig_deltas(pdf, B, seeds):
 
 
 # ----------------------------------------------------------------------------- main
+def fold_scheme(folds, n_folds):
+    """Exact per-model training-event counts of the cross-fit (E2E outer folds; nested MVA scores)."""
+    out = []
+    for k in range(n_folds):
+        n_tr = int(np.sum(folds != k))
+        n_va = int(round(0.15 * n_tr))
+        mva_j = [int(np.sum((folds != k) & (folds != j))) for j in range(n_folds) if j != k]
+        out.append({"fold": k, "test_events": int(np.sum(folds == k)), "e2e_train_plus_val": n_tr,
+                    "e2e_fit": n_tr - n_va, "e2e_earlystop_val": n_va,
+                    "mva_model_for_test_fold": n_tr, "mva_models_for_other_folds": mva_j,
+                    "mva_model_for_train_only": int(np.sum((folds >= 0) & (folds != k)))})
+    return out
+
+
+def eta_association(T, cfgs, n_test):
+    """Association metrics per |eta| bin of the variant's own track (paired bootstrap)."""
+    S = selections(T)
+    sub = {}
+    for (v, m), lst in cfgs.items():
+        eta = T[S[v][1] + "eta"]
+        for b in range(len(ETA_BINS)):
+            sub[(v, m, b)] = [eta_sub(cf, eta, b) for cf in lst]
+    return bootstrap_all(sub, n_test, ASSOC_METRICS, "assoc_stats", verbose=False)
+
+
+def mva_eta(T, E, folds):
+    """Track-MVA head performance (outer out-of-sample scores) per |eta| bin of the track."""
+    from ngtagger.train import trackmva as tm
+    d = np.load(nvc.MVA_STEM + "_oof.npz", allow_pickle=False)
+    assert np.array_equal(d["track_evt"], T["evt"])
+    tf = folds[T["evt"]]
+    out = {}
+    for coll, eta in (("base", T["b_eta"]), ("refit", T["r_eta"])):
+        eb = eta_bin(eta)
+        for b, lab in enumerate(ETA_LABEL):
+            r = tm.evaluate(T, coll, d[f"{coll}_outer"].astype(float), np.where(eb == b, tf, -1), "sp")
+            out[f"{coll} | {lab}"] = {w: {k: x[k] for k in ("n_tracks", "clean_frac", "auc_clean", "auc_d0acc",
+                                                            "auc_z0acc", "z0acc_target_um", "sd0_coverage_68",
+                                                            "sd0_pull68_all", "sz0_rank_sigma68_best_frac")}
+                                      for w, x in r.items()}
+    return out
+
+
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input-set", choices=sorted(nvc.OUTDIRS), default="canon_v1")
+    ap.add_argument("--outdir", default=None, help="study directory (dataset, MVA scores, predictions)")
+    ap.add_argument("--report-dir", default=None, help="where the PDF and summary.json go (default: --outdir)")
+    ap.add_argument("--compare-summary", default=None,
+                    help="summary.json of this study on another input set (side-by-side page); default for canon_v2: "
+                         "the canon_v1 one")
+    args = ap.parse_args()
+    nvc.configure(args.input_set, args.outdir)
+    S2A.common.configure(args.input_set)
+    OUTDIR, label = args.report_dir or nvc.OUTDIR, S2A.common.INPUT_LABEL
+    cmp_path = args.compare_summary or (os.path.join(nvc.OUTDIRS["canon_v1"], "summary.json")
+                                     if args.input_set == "canon_v2" else None)
     T, E = load_dataset()
     folds = event_folds(E)
     test = folds >= 0
+    n_test = int(test.sum())
     cfgs, zfh, extra = build_configs(T, E, test)
-    B, seeds = bootstrap_all(cfgs, int(test.sum()))
+    B, seeds = bootstrap_all(cfgs, n_test)
     clo, clo_rows = closure(T, E, test, zfh, B)
-    rep = json.load(open(MVA_STEM + "_report.json"))
+    rep = json.load(open(nvc.MVA_STEM + "_report.json"))
     mop = matched_operating_points(cfgs)
+    BE, seeds_e = eta_association(T, cfgs, n_test)
+    meta = mva_eta(T, E, folds)
+    scheme = fold_scheme(folds, nvc.N_FOLDS)
 
-    summ = {"n_test_events": int(test.sum()), "n_boot": N_BOOT, "wp_e2e": WP, "pv_window_cm": PV_WINDOW,
-            "inputs": extra, "closure": clo, "matched_operating_points": mop, "values": {}, "seed_values": {}, "diffs": {}}
+    summ = {"input_set": args.input_set, "input_label": label, "n_test_events": n_test, "n_boot": N_BOOT, "wp_e2e": WP,
+            "pv_window_cm": PV_WINDOW, "fold_scheme": scheme,
+            "inputs": extra, "closure": clo, "matched_operating_points": mop, "values": {}, "seed_values": {}, "diffs": {},
+            "eta": {"bins": ETA_LABEL, "values": {}, "diffs": {}}, "track_mva_eta": meta}
     for key in cfgs:
         k = f"{key[0]}:{key[1]}"
         summ["values"][k] = {m: dict(zip(("value", "boot_err"), val(B, key, m)),
@@ -375,16 +508,28 @@ def main():
         comps[f"{v}: stock - FH"] = ((v, "stock"), (v, "FH"))
         comps[f"{v}: mva - FH"] = ((v, "mva"), (v, "FH"))
     for m in METHODS:
-        for a, b in (("V3", "V0"), ("V1", "V0"), ("V3", "V1")):
-            comps[f"{m}: {a} - {b}"] = ((a, m), (b, m))
-    for name, (a, b) in comps.items():
-        summ["diffs"][name] = {m: dict(zip(("value", "boot_err"), diff(B, a, b, m)),
-                                       seed_err=seed_err_of_diff(seeds, a, b, m)) for m in METRICS}
+        for a_, b_ in (("V3", "V0"), ("V1", "V0"), ("V3", "V1")):
+            comps[f"{m}: {a_} - {b_}"] = ((a_, m), (b_, m))
+    for name, (a_, b_) in comps.items():
+        summ["diffs"][name] = {m: dict(zip(("value", "boot_err"), diff(B, a_, b_, m)),
+                                       seed_err=seed_err_of_diff(seeds, a_, b_, m)) for m in METRICS}
+    eta_comps = {f"{v}: mva - stock": ((v, "mva"), (v, "stock")) for v in ("V0", "V3")}
+    eta_comps.update({f"{m}: V3 - V0": (("V3", m), ("V0", m)) for m in METHODS})
+    for b, lab in enumerate(ETA_LABEL):
+        for key in cfgs:
+            summ["eta"]["values"][f"{lab} | {key[0]}:{key[1]}"] = {
+                m: dict(zip(("value", "boot_err"), val(BE, key + (b,), m)), seed_sd=seed_sd(seeds_e, key + (b,), m))
+                for m in ASSOC_METRICS}
+        for name, (x, y) in eta_comps.items():
+            summ["eta"]["diffs"][f"{lab} | {name}"] = {
+                m: dict(zip(("value", "boot_err"), diff(BE, x + (b,), y + (b,), m)),
+                        seed_err=seed_err_of_diff(seeds_e, x + (b,), y + (b,), m)) for m in ASSOC_METRICS}
+    ref_summ = json.load(open(cmp_path)) if cmp_path and os.path.exists(cmp_path) else None
 
     os.makedirs(OUTDIR, exist_ok=True)
     with PdfPages(f"{OUTDIR}/nnvtx_sp.pdf") as pdf:
         table_page(pdf, "E2E NNVtx on SmartPixels refit tracks: definitions", ["item", "definition"], [
-            ["sample", f"canon_v1 mask AAAA, PU200 ttbar; {int(test.sum())} test events (f03-f10), f01/f02 training only"],
+            ["sample", f"{label}, PU200 ttbar; {n_test} test events (f03-f10), f01/f02 training only"],
             ["V0", VLABEL["V0"] + ": L1TTrack, GTT prompt selection (pT >= 2 GeV, |eta| <= 2.4, ...)"],
             ["V1", VLABEL["V1"] + ": L1TSmartPixelsTrack, same selection"],
             ["V3", VLABEL["V3"] + ": refitted tracks have no pT floor"],
@@ -394,11 +539,26 @@ def main():
             ["stock inputs", "min(pT,128), trkMVA1, |eta|  (+ |z0 - z_PV| for the association net)"],
             ["+MVA inputs", "P(clean), P(d0acc), P(z0acc), log sigma_hat(d0), log sigma_hat(z0); OT heads (V0), "
                             "SP heads (V1/V3); nested cross-fitted (always out of sample)"],
-            ["CV", "5 event folds on f03-f10 (+ f01/f02 in every training set); seeds 0,1,2 (init + early-stop split)"],
+            ["CV", "5 event folds on f03-f10 (+ f01/f02 in every training set); seeds 0,1,2 (init + early-stop split); "
+                   "per-model training counts on the next page"],
             ["truth", "PV = GenVtx_z; HS track = its TP has (evt,bx)=(0,0): V0 via L1TTrack_tpIdx, V1/V3 via "
                       "L1TSmartPixelsTrack_tpIdx (cluster majority)"],
             ["WP", "E2E association score > 0.5; FH: inside the TVA window"],
             ["errors", f"+- event bootstrap ({N_BOOT}, paired); [ ] = std over seeds (E2E)"]])
+        rows = [[r["fold"], r["test_events"], r["e2e_train_plus_val"], r["e2e_fit"], r["e2e_earlystop_val"],
+                 r["mva_model_for_test_fold"], ", ".join(map(str, r["mva_models_for_other_folds"])),
+                 r["mva_model_for_train_only"]] for r in scheme]
+        table_page(pdf, "Event-level cross-fitting: exact training-event counts per model", [
+            "outer fold k", "test events", "E2E train+val events", "E2E gradient events", "E2E early-stop events",
+            "MVA model scoring fold k", "MVA models scoring folds j != k", "MVA model scoring f01/f02"], rows,
+            notes=["1000 events: f01/f02 (200, cluster-CNN in-sample) are in every training set and never tested; f03-f10 "
+                   "(800) are permuted into 5 folds of 160. E2E model k trains on all events not in fold k (840; 15% of them, "
+                   "per seed, for early stopping) and predicts fold k. Its MVA-score inputs are scores[k] of the NESTED "
+                   "cross-fit: fold-k tracks scored by an MVA trained on the same 840 events, fold-j tracks (j != k) by an "
+                   "MVA trained on the 680 events outside {k, j}, f01/f02 tracks by an MVA trained on the 640 test-eligible "
+                   "events outside fold k. So no score is ever in-sample for the event it describes, and every MVA model "
+                   "sees >= 640 events, every E2E model >= 714 gradient events. One MVA model per (fold, window: SP "
+                   "prompt/displaced, OT all) and head."])
         table_page(pdf, "Closure: FastHisto path vs the sub-2 GeV study (same events, f03-f10)",
                    ["variant", "metric", "this study", "sub2gev summary.json", "difference"], clo_rows,
                    notes=["Per-event z_PV identical to the sub2gev code path: " + "; ".join(
@@ -412,7 +572,7 @@ def main():
                              f"{r['auc_z0acc']:.3f}", f"{r['z0acc_target_um']:.0f}", f"{r['sd0_coverage_68']:.3f}",
                              f"{r['sd0_pull68_all']:.2f}",
                              f"{r['sz0_rank_sigma68_best_frac']['1.0']:.0f} / {r['sz0_rank_sigma68_best_frac']['0.1']:.0f}"])
-        table_page(pdf, "Track MVA heads retrained on canon_v1 (outer out-of-sample scores, test events)",
+        table_page(pdf, f"Track MVA heads retrained on {args.input_set} (outer out-of-sample scores, test events)",
                    ["tracks", "window", "N", "clean frac", "AUC clean", "AUC d0acc", "AUC z0acc", "z0acc target [um]",
                     "sd0 68% coverage", "d0 pull sigma68", "z0 sigma68 all / best 10% by sigma_hat [um]"], rows,
                    notes=["ngtagger train-trackmva --family canonical --refit-truth sp --colls refit base --train-only "
@@ -423,11 +583,13 @@ def main():
             for m in METHODS:
                 rows.append([MLABEL[m]] + [fmt(*val(B, (v, m), k), k, None if m == "FH" else seed_sd(seeds, (v, m), k))
                                            for k in METRICS])
-            table_page(pdf, f"{VLABEL[v]}: PV finding and association ({int(test.sum())} test events)",
+            table_page(pdf, f"{VLABEL[v]}: PV finding and association ({n_test} test events; {label})",
                        ["method"] + [MHDR[k] for k in METRICS], rows,
                        notes=[f"{extra[v]['sel_per_ev']:.1f} selected tracks / event; {extra[v]['clipped_tracks']} "
                               f"selected tracks beyond the E2E input size (not scored by E2E, counted as not associated).",
-                              "+- event bootstrap; [ ] std over the 3 seeds. E2E rows are seed means."])
+                              "+- event bootstrap; [ ] std over the 3 seeds. E2E rows are seed means. purity at FH assoc eff: "
+                              f"score threshold moved to the FH + TVA association efficiency of {v} "
+                              f"({100 * extra[v]['fh_assoc_eff_ref']:.1f}%)."])
         rows = []
         for name, (a, b) in comps.items():
             rows.append([name] + [fmt(*diff(B, a, b, k), k, seed_err_of_diff(seeds, a, b, k)) for k in METRICS])
@@ -450,6 +612,56 @@ def main():
                           "window, so the WP columns of the other tables are not like-for-like with FH. Here the E2E "
                           "threshold is moved to the FH purity (or efficiency) of the same variant. Central values, "
                           "seed mean [std over seeds]; no bootstrap."])
+        for b, lab in enumerate(ETA_LABEL):
+            rows = []
+            for v in VARIANTS:
+                for m in METHODS:
+                    k = (v, m, b)
+                    rows.append([VLABEL[v], MLABEL[m]] + [fmt(*val(BE, k, x), x, None if m == "FH" else seed_sd(seeds_e, k, x))
+                                                         for x in ASSOC_METRICS])
+            for name, (x, y) in eta_comps.items():
+                rows.append([name, "paired difference"] + [fmt(*diff(BE, x + (b,), y + (b,), mm), mm,
+                                                                 seed_err_of_diff(seeds_e, x + (b,), y + (b,), mm))
+                                                             for mm in ASSOC_METRICS])
+            table_page(pdf, f"Track-to-PV association, tracks with {lab} (variant's own track eta; {n_test} test events)",
+                       ["variant", "method"] + [MHDR[x] for x in ASSOC_METRICS], rows,
+                       notes=["Same events and PV as the inclusive tables; only the selected tracks in this |eta| bin enter. "
+                              "The matched operating point is the INCLUSIVE FH association efficiency of the variant (one "
+                              "threshold for all bins). +- paired event bootstrap; [ ] std over seeds / seed error."])
+        rows = []
+        for key_, r_ in meta.items():
+            coll, lab = key_.split(" | ")
+            for w, x in r_.items():
+                rows.append([{"base": "OT", "refit": "SP"}[coll], lab, w, x["n_tracks"], f"{x['clean_frac']:.3f}",
+                             f"{x['auc_clean']:.3f}", f"{x['auc_d0acc']:.3f}", f"{x['auc_z0acc']:.3f}",
+                             f"{x['z0acc_target_um']:.0f}", f"{x['sd0_coverage_68']:.3f}",
+                             f"{x['sz0_rank_sigma68_best_frac']['1.0']:.0f} / {x['sz0_rank_sigma68_best_frac']['0.1']:.0f}"])
+        table_page(pdf, "Track MVA heads per |eta| bin of the track (outer out-of-sample scores, test events)",
+                   ["tracks", "track |eta|", "window", "N", "clean frac", "AUC clean", "AUC d0acc", "AUC z0acc",
+                    "z0acc target [um]", "sd0 68% coverage", "z0 sigma68 all / best 10% by sigma_hat [um]"], rows,
+                   notes=["Targets (d0acc/z0acc thresholds) are recomputed per bin (the best 10% of clean tracks in the "
+                          "bin), so AUCs compare the ranking inside a bin, not across bins."])
+        if ref_summ is not None:
+            rows = []
+            for v in VARIANTS:
+                for m in METHODS:
+                    k = f"{v}:{m}"
+                    if k not in ref_summ["values"]:
+                        continue
+                    for x in ("eff", "core_um", "full_um", "auc", "purity", "hs_per_ev"):
+                        mine, ref = summ["values"][k][x], ref_summ["values"][k][x]
+                        sc, f_ = MFMT[x]
+                        rows.append([VLABEL[v], MLABEL[m], MHDR[x],
+                                     (f_ + " +- " + f_).format(mine["value"] * sc, mine["boot_err"] * sc),
+                                     (f_ + " +- " + f_).format(ref["value"] * sc, ref["boot_err"] * sc),
+                                     f_.format((mine["value"] - ref["value"]) * sc)])
+            table_page(pdf, f"{args.input_set} vs {ref_summ.get('input_set', 'canon_v1')} (same 800 events, same OT tracks; "
+                            "256-bin E2E)", ["variant", "method", "metric", args.input_set,
+                                             ref_summ.get("input_set", "canon_v1 (barrel-only refit)"), "difference"], rows,
+                       notes=["Side by side from the two summary.json files (not re-bootstrapped): the events are identical, "
+                              "so the quoted per-set errors overstate the error of the difference. V0 FH must agree exactly "
+                              "(same OT tracks); V0 E2E differs only by training noise; paired FH differences are in the "
+                              "sub2gev pages (V3 vs V3ref)."])
         rows = []
         for key in cfgs:
             if key[1] == "FH":
@@ -466,6 +678,8 @@ def main():
     with open(f"{OUTDIR}/summary.json", "w") as fh:
         json.dump(summ, fh, indent=1)
     print(f"wrote {OUTDIR}/nnvtx_sp.pdf and summary.json", flush=True)
+
+
 
 
 if __name__ == "__main__":

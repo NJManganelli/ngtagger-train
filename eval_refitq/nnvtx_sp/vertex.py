@@ -17,7 +17,13 @@ scores[k] of the NESTED cross-fit, so every score is out of sample. Seeds vary t
 initialisation and the 15% early-stopping split. Weight-output bias starts at +1
 (the pilot's warm start; the zero bias collapsed 2/3 seeds there).
 
-  pixi run python eval_refitq/nnvtx_sp/vertex.py [--variants V0,V1,V3] [--arms stock,mva] [--seeds 0,1,2]
+  pixi run python eval_refitq/nnvtx_sp/vertex.py [--input-set canon_v2] [--variants V0,V1,V3] [--arms stock,mva]
+      [--seeds 0,1,2] [--nbins 256 --kernel 3]
+
+Binning study (--nbins / --kernel): the soft-histogram layer gets nbins bins over the same z
+range (bin width 0.16 cm * 256 / nbins, Gaussian sigma = one bin) and every Conv1D of the
+pattern net gets kernel size --kernel; nothing else changes (no pooling, same filters, same
+training protocol). Predictions go to pred_<variant>_b<nbins>_k<kernel>.npz (stock: pred_<variant>.npz).
 """
 from __future__ import annotations
 
@@ -29,10 +35,10 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nvcommon import (DATASET, FILES, MVA_COLL, MVA_STEM, N_FOLDS, PRED, event_folds, load_dataset,  # noqa: E402
-                    selections)
+import nvcommon as nvc  # noqa: E402
+from nvcommon import MVA_COLL, N_FOLDS, event_folds, load_dataset, selections  # noqa: E402
 
-MAXT = 300  # >= the largest selected-track count per event (297, V3): nothing is clipped
+MAXT = 300  # >= the largest selected-track count per event (canon_v1 V3: 297): checked, logged
 PT_CAP = 128.0
 N_MVA = 5
 
@@ -48,15 +54,15 @@ def tf_setup(threads):
 class Padded:
     """(event, slot) view of the selected tracks of one variant, pT-descending."""
 
-    def __init__(self, T, n_ev, sel, pre):
+    def __init__(self, T, n_ev, sel, pre, maxt=MAXT):
         rows = np.flatnonzero(sel)
         ev = T["evt"][rows]
         order = np.lexsort((-T[pre + "pt"][rows], ev))
         rows, ev = rows[order], ev[order]
         start = np.searchsorted(ev, np.arange(n_ev))
         rank = np.arange(len(rows)) - start[ev]
-        keep = rank < MAXT
-        self.idx = np.full((n_ev, MAXT), -1, np.int64)
+        keep = rank < maxt
+        self.idx = np.full((n_ev, maxt), -1, np.int64)
         self.idx[ev[keep], rank[keep]] = rows[keep]
         self.mask = (self.idx >= 0).astype(np.float32)
         self.n_clipped = int((~keep).sum())
@@ -86,8 +92,8 @@ def split_val(tr_ev, seed):
 
 def load_scores(T, E):
     """{coll: (N_FOLDS, n_tracks, 5)} nested cross-fitted scores, checked row-aligned."""
-    d = np.load(MVA_STEM + "_oof.npz", allow_pickle=False)
-    assert [str(f) for f in d["files"]] == FILES, "oof scores from other files"
+    d = np.load(nvc.MVA_STEM + "_oof.npz", allow_pickle=False)
+    assert [str(f) for f in d["files"]] == nvc.FILES, "oof scores from other files"
     assert np.array_equal(d["ev_file"], E["file"]) and np.array_equal(d["ev_entry"], E["entry"])
     assert np.array_equal(d["track_evt"], T["evt"])
     folds = event_folds(E)
@@ -96,24 +102,26 @@ def load_scores(T, E):
     return {c: d[f"{c}_scores"] for c in ("base", "refit")}, folds
 
 
-def run_variant(T, E, v, arms, seeds, epochs, patience, scores, folds, pred_path, log):
+def run_variant(T, E, v, arms, seeds, epochs, patience, scores, folds, pred_path, log, nbins=256, kernel=3,
+                maxt=MAXT):
     import keras
     from ngtagger.train.nnvtx import build_e2e_model
 
     n_ev = len(E["evt"])
     sel, pre, hs = selections(T)[v]
-    P = Padded(T, n_ev, sel, pre)
-    log(f"[{v}] {int(sel.sum())} selected tracks ({sel.sum() / n_ev:.1f}/ev), clipped at MAXT={MAXT}: "
+    P = Padded(T, n_ev, sel, pre, maxt)
+    log(f"[{v}] {int(sel.sum())} selected tracks ({sel.sum() / n_ev:.1f}/ev), clipped at MAXT={maxt}: "
         f"{P.n_clipped} tracks in {P.n_clipped_events} events")
     z0 = P.g(T[pre + "z0"]).astype(np.float32)
     y = P.g(hs.astype(np.float32)).astype(np.float32)
     gz = E["genz"].astype(np.float32).reshape(-1, 1)
     stock = np.stack([P.g(np.minimum(T[pre + "pt"], PT_CAP)), P.g(T["b_trkMVA1"]), P.g(np.abs(T[pre + "eta"]))], -1)
     S = scores[MVA_COLL[v]]
-    out = {"idx": P.idx, "mask": P.mask, "folds": folds}
+    out = {"idx": P.idx, "mask": P.mask, "folds": folds, "nbins": np.array(nbins), "kernel": np.array(kernel)}
     if os.path.exists(pred_path):  # merge with earlier invocations (same inputs required)
         old = dict(np.load(pred_path))
-        assert all(np.array_equal(old[k], out[k]) for k in ("idx", "folds")), f"{pred_path}: other inputs"
+        assert all(np.array_equal(old[k], out[k]) for k in ("idx", "folds", "nbins", "kernel") if k in old), \
+            f"{pred_path}: other inputs"
         out = {**old, **out}
     for arm in arms:
         for seed in seeds:
@@ -129,7 +137,7 @@ def run_variant(T, E, v, arms, seeds, epochs, patience, scores, folds, pred_path
                 assert np.isfinite(X[P.mask > 0]).all(), "non-finite input"
                 X = standardize(X, P.mask, np.concatenate([tr, va]))
                 keras.utils.set_random_seed(seed * 100 + k)
-                m = build_e2e_model(X.shape[-1], 0, max_tracks=MAXT)
+                m = build_e2e_model(X.shape[-1], 0, max_tracks=maxt, n_bins=nbins, pattern_kernel=kernel)
                 warm_bias(m)
                 m.compile(optimizer=keras.optimizers.Adam(1e-3),
                           loss=[keras.losses.Huber(delta=0.5), keras.losses.BinaryCrossentropy()],
@@ -151,7 +159,8 @@ def run_variant(T, E, v, arms, seeds, epochs, patience, scores, folds, pred_path
             from sklearn.metrics import roc_auc_score
             mk = (P.mask[t] > 0)
             auc = roc_auc_score(y[t][mk], ap[t][mk])
-            log(f"[{v}/{arm}/s{seed}] {time.perf_counter() - t0:.0f}s epochs {ep} eff {eff:.3f} auc {auc:.4f}")
+            log(f"[{v}/{arm}/s{seed}/b{nbins}k{kernel}] {time.perf_counter() - t0:.0f}s epochs {ep} eff {eff:.3f} "
+                f"auc {auc:.4f}")
             np.savez_compressed(pred_path, **out)  # checkpoint after every seed
     return out
 
@@ -165,11 +174,16 @@ def main():
     ap.add_argument("--patience", type=int, default=40)
     ap.add_argument("--threads", type=int, default=4)
     ap.add_argument("--max-events", type=int, default=None, help="smoke test only")
-    ap.add_argument("--pred", default=PRED, help="output pattern with {variant}")
+    ap.add_argument("--input-set", choices=sorted(nvc.OUTDIRS), default="canon_v1")
+    ap.add_argument("--nbins", type=int, default=256, help="soft-histogram bins over the fixed z range")
+    ap.add_argument("--kernel", type=int, default=3, help="Conv1D kernel size of the pattern net")
+    ap.add_argument("--max-tracks", type=int, default=MAXT)
+    ap.add_argument("--pred", default=None, help="output file (default: nvcommon.pred_path)")
     a = ap.parse_args()
+    nvc.configure(a.input_set)
     tf_setup(a.threads)
     log = lambda s: print(s, flush=True)  # noqa: E731
-    T, E = load_dataset(DATASET)
+    T, E = load_dataset()
     scores, folds = load_scores(T, E)
     if a.max_events:  # smoke test: keep events < max_events (tracks are event-ordered)
         keep_t = T["evt"] < a.max_events
@@ -179,7 +193,8 @@ def main():
         folds = folds[:a.max_events]
     for v in a.variants.split(","):
         run_variant(T, E, v, a.arms.split(","), [int(s) for s in a.seeds.split(",")], a.epochs, a.patience,
-                    scores, folds, a.pred.format(variant=v), log)
+                    scores, folds, a.pred or nvc.pred_path(v, a.nbins, a.kernel), log, a.nbins, a.kernel,
+                    a.max_tracks)
 
 
 if __name__ == "__main__":

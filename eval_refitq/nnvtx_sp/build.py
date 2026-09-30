@@ -1,4 +1,4 @@
-"""Flatten canon_v1 AAAA f01..f10 into one per-track dataset for the NNVtx study.
+"""Flatten one input set (canon_vN AAAA f01..f10) into one per-track dataset for the NNVtx study.
 
 The per-track columns are exactly the ones ngtagger.train.trackmva reads for the
 "canonical" family (tracks_from_batch: b_ = L1TTrack, r_ = L1TSmartPixelsTrack,
@@ -10,10 +10,11 @@ checked in vertex.py), plus the vertexing extras:
   ot_hs, sp_hs       HS truth: TP (evt, bx) == (0, 0) via L1TTrack_tpIdx / L1TSmartPixelsTrack_tpIdx
   E: file, entry, event, genz, ntrk
 
-  pixi run python eval_refitq/nnvtx_sp/build.py
+  pixi run python eval_refitq/nnvtx_sp/build.py [--input-set canon_v2]
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -22,7 +23,7 @@ import numpy as np
 import uproot
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from nvcommon import DATASET, FILES  # noqa: E402
+import nvcommon as nvc  # noqa: E402
 
 from ngtagger.train import trackmva as tm  # noqa: E402
 
@@ -44,6 +45,10 @@ def _hs(tpidx, evt, bx, ntrk):
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input-set", choices=sorted(nvc.OUTDIRS), default="canon_v1")
+    nvc.configure(ap.parse_args().input_set)
+    DATASET, FILES = nvc.DATASET, nvc.FILES
     Ts, Es = [], []
     for fi, fn in enumerate(FILES):
         t = uproot.open(fn)["Events"]
