@@ -3007,6 +3007,9 @@ def _confusion_side_artifacts(out, labels, mats, res):
     print(f"    wrote {p}\n    wrote {t}")
 
 
+SEED_COMPOSITION_CHUNK_EV = 10   # events per seeding pass in study (13)
+
+
 def study_seed_composition(X, K, P, ax_row, out):
     """(13) Can the doublets be aimed at what the TRIPLET misses, in parallel?
 
@@ -3059,33 +3062,43 @@ def study_seed_composition(X, K, P, ax_row, out):
     PTMIN = 2.0
     KMINS = (0.0, 0.25, 0.30, 0.35, 0.40, 0.45)
     Q = M.it_prepare(D, None)
-    allidx = np.arange(len(D["layer"]))
     nev = int(D["event"].max()) + 1 if len(D["event"]) else 1
     COST = ("tracklets", "match_cand", "tracks_to_fit")
+    # EVENT BATCHES. One pass over 100 PU200 events exceeds the seeder's candidate
+    # ceiling (TooWide), so seed SEED_COMPOSITION_CHUNK_EV events at a time, summing
+    # costs and uniting recovered TP keys. Candidates never pair across events (the
+    # pair keys carry the event), so efficiencies are unchanged; costs move at the
+    # 1e-5 level (measured, 10 events, batches of 3 vs one pass) because the
+    # seeder's z0 "wildcard" routing depends on the batch's widest sigma(z0).
+    chunks = [np.flatnonzero((D["event"] >= e0) & (D["event"] < e0 + SEED_COMPOSITION_CHUNK_EV))
+              for e0 in range(0, nev, SEED_COMPOSITION_CHUNK_EV)]
+
+    def seed(la, lb, lc, displaced, kmin=0.0):
+        cost, keys = dict.fromkeys(COST, 0.0), [np.empty(0, np.int64)]
+        for idx in chunks:
+            o = M.it_pair_seed(D, Q, idx, la, lb, lc, PTMIN, True, displaced, 0.0, kap_min=kmin)
+            for c in COST:
+                cost[c] += float(o.get(c, 0))
+            if "_trip" in o:
+                keys.append(M.recovered_keys(D, *o["_trip"]))
+        return cost, np.unique(np.concatenate(keys))
     res = {}
     for cname, cfg in M.IT_CONFIGS.items():
         (pa, la_), (pb, lb_) = cfg["pairs"]
         tri = cfg["triplet"]
         fk = M.findable_keys(D, tri[0], tri[1], tri[2], PTMIN)
-        ot = M.it_pair_seed(D, Q, allidx, tri[0], tri[1], tri[2], PTMIN, True, True, 0.0)
-        kt = (M.recovered_keys(D, *ot["_trip"]) if "_trip" in ot
-              else np.empty(0, np.int64))
-        ct = {c: float(ot.get(c, 0)) / nev for c in COST}
+        cost_t, kt = seed(tri[0], tri[1], tri[2], True)
+        ct = {c: cost_t[c] / nev for c in COST}
         scan = []
         for kmin in KMINS:
-            oa = M.it_pair_seed(D, Q, allidx, pa[0], pa[1], la_, PTMIN, True,
-                                False, 0.0, kap_min=kmin)
-            ob = M.it_pair_seed(D, Q, allidx, pb[0], pb[1], lb_, PTMIN, True,
-                                False, 0.0, kap_min=kmin)
-            ka = M.recovered_keys(D, *oa["_trip"]) if "_trip" in oa else np.empty(0, np.int64)
-            kb = M.recovered_keys(D, *ob["_trip"]) if "_trip" in ob else np.empty(0, np.int64)
+            cost_a, ka = seed(pa[0], pa[1], la_, False, kmin)
+            cost_b, kb = seed(pb[0], pb[1], lb_, False, kmin)
             uni = np.unique(np.concatenate([kt, ka, kb]))
             scan.append({"kap_min": kmin,
                          "pt_max": (None if kmin == 0 else 1.0 / kmin),
                          "eff_union": float(np.isin(fk, uni).mean()),
                          "beyond_triplet": int(len(np.setdiff1d(np.union1d(ka, kb), kt))),
-                         "cost": {c: (float(oa.get(c, 0)) + float(ob.get(c, 0))) / nev
-                                  for c in COST}})
+                         "cost": {c: (cost_a[c] + cost_b[c]) / nev for c in COST}})
         res[cname] = {"n_findable": int(len(fk)), "n_events": nev,
                       "eff_triplet": float(np.isin(fk, kt).mean()),
                       "triplet_cost": ct, "scan": scan}
