@@ -14,6 +14,9 @@ Track families (all 1:1 row aligned per event, validated on read):
   ext        L1TExtTrack + L1TSmartPixelsExtTrackSeedlessRefit<cfg> + ...ExtRefitHitSeedlessRefit<cfg>
   canonical  L1TTrack    + L1TSmartPixelsTrack + L1TSmartPixelsRefitHit (the canonical/coopt
              nano: its one wired refit variant, unsuffixed; <cfg> is not used)
+  canonical_ext  L1TExtTrack + L1TSmartPixelsExtTrack + L1TSmartPixelsExtRefitHit (the same,
+             extended/displaced collection; in a canonical nano the jet constituents'
+             l1TrackIdx points into L1TSmartPixelsExtTrack)
 
 The base table (L1TTrack / L1TExtTrack) supplies the OT-only fit, its KF
 covariance and the TP truth (genuine, tp_pt, tp_d0, tp_z0: the OT associator's
@@ -125,6 +128,8 @@ FAMILIES = {
     "ext": {"base": "L1TExtTrack", "refit": "L1TSmartPixelsExtTrackSeedlessRefit{cfg}",
             "hits": "L1TSmartPixelsExtRefitHitSeedlessRefit{cfg}"},
     "canonical": {"base": "L1TTrack", "refit": "L1TSmartPixelsTrack", "hits": "L1TSmartPixelsRefitHit"},
+    "canonical_ext": {"base": "L1TExtTrack", "refit": "L1TSmartPixelsExtTrack",
+                      "hits": "L1TSmartPixelsExtRefitHit"},
 }
 
 # online (model-input) columns

@@ -257,11 +257,12 @@ def main(argv=None):
                       help="files (path, basename, or a basename substring such as _f01_) "
                            "whose events are in every training set and never evaluated, "
                            "e.g. the files that trained the cluster-angle CNN")
-    p_tm.add_argument("--family", choices=["prompt", "ext", "canonical"], default="prompt",
+    p_tm.add_argument("--family", choices=["prompt", "ext", "canonical", "canonical_ext"], default="prompt",
                       help="prompt = L1TTrack + L1TSmartPixelsTrackSeedlessRefit<cfg>; "
                            "ext = L1TExtTrack + L1TSmartPixelsExtTrackSeedlessRefit<cfg> (the table "
                            "jet constituents crossref); canonical = L1TTrack + L1TSmartPixelsTrack "
-                           "(canonical/coopt nano, --config unused)")
+                           "(canonical/coopt nano, --config unused); canonical_ext = L1TExtTrack + "
+                           "L1TSmartPixelsExtTrack (the table canonical-nano jet constituents crossref)")
     p_tm.add_argument("--refit-truth", choices=["ot", "sp"], default="ot",
                       help="residual truth of the refit heads: ot = the OT-associator TP of the "
                            "base row; sp = the refit row's own tpIdx TP via L1TTP")

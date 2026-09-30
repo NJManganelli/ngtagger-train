@@ -25,8 +25,13 @@ the producer never evaluates on them).
 
 The constituent crossref points into the jet pipeline's track table
 (load_jets' track_table, L1TExtTrack by default), so the bundle's family must
-be the one whose base table that is (family "ext" for L1TExtTrack); a
-mismatch raises rather than gathering scores of unrelated rows.
+be the one whose base OR refit table that is (family "ext" for L1TExtTrack;
+"canonical_ext" for L1TSmartPixelsExtTrack, where a canonical/coopt nano's
+constituents point); a mismatch raises rather than gathering scores of
+unrelated rows. Base and refit rows are 1:1 per event (tracks_from_batch
+checks the counts), so the scores of either collection index either table:
+a bundle holding only the "base" (OT-only) heads, e.g. for the OT-passthrough
+mask IIII, is gathered through the same link.
 
 Jet tables. The current SmartPixels nanos carry no jet / jet-constituent
 tables. ``missing_jet_tables`` names what is absent; ``require_jet_tables``
@@ -139,16 +144,19 @@ def trackmva_per_constituent(track_scores: ak.Array, cands: ak.Array, nested_idx
 
 
 def trackmva_jet_features(files, events, cands, nested_idx, link_idx_field: str, model,
-                          track_table: str = "L1TExtTrack", coll: str = "refit",
+                          track_table: str = "L1TExtTrack", coll: str | None = None,
                           max_events: int | None = None, prefix: str = "trkmva_") -> dict:
     """The load_jets 'trackmva' group: {prefix + head: (event, jet, constituent)}.
     `events` is load_jets' event record (for the per-event track counts);
-    load_jets checks the jet tables exist (``require_jet_tables``) first."""
+    load_jets checks the jet tables exist (``require_jet_tables``) first.
+    `coll` None = "refit" when the bundle has it, else its only collection."""
     mva = _as_mva(model)
-    if mva.tables["base"] != track_table:
+    if track_table not in (mva.tables["base"], mva.tables["refit"]):
         raise ValueError(f"the constituent crossref points into {track_table}, but the track-MVA "
-                         f"bundle scores {mva.tables['base']} rows (family {mva.family!r}); use the "
-                         f"bundle of the matching family")
+                         f"bundle scores {mva.tables['base']} / {mva.tables['refit']} rows (family "
+                         f"{mva.family!r}); use the bundle of the matching family")
+    if coll is None:
+        coll = "refit" if "refit" in mva.colls else mva.colls[0]
     scores = trackmva_scores_from_files(files, mva, coll, max_events)
     n_tracks = ak.num(events[track_table], axis=1) if track_table in events.fields else None
     G = trackmva_per_constituent(scores, cands, nested_idx, link_idx_field, n_tracks=n_tracks)

@@ -316,6 +316,16 @@ def test_family_mismatch_raises():
     with pytest.raises(ValueError, match="matching family"):
         tf.trackmva_jet_features(["x.root"], None, cands, nested, "l1TrackIdx", mva,
                                  track_table="L1TExtTrack")
+    # canonical_ext: the constituents' SP table (the family's refit table) is accepted
+    mva = tm.TrackMVA({"base": {}}, {"family": "canonical_ext", "config": "",
+                                     "tables": tm.table_names("canonical_ext", "")})
+    with pytest.raises(ValueError, match="matching family"):
+        tf.trackmva_jet_features(["x.root"], None, cands, nested, "l1TrackIdx", mva,
+                                 track_table="L1TSmartPixelsTrack")
+    with pytest.raises(Exception) as e:  # passes the family check, then fails reading x.root
+        tf.trackmva_jet_features(["x.root"], None, cands, nested, "l1TrackIdx", mva,
+                                 track_table="L1TSmartPixelsExtTrack")
+    assert not isinstance(e.value, ValueError) or "matching family" not in str(e.value)
 
 
 def test_cli_parses():
