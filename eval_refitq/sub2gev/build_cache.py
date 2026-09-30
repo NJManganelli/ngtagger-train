@@ -1,14 +1,15 @@
-"""Flatten canon_v1 AAAA (+ the coexist OT-fed L1Vertex) into per-file numpy caches.
+"""Flatten one input set (canon_vN AAAA + the coexist OT-fed L1Vertex) into per-file numpy caches.
 
 One row per L1TSmartPixelsTrack (== one per L1TTrack; l1TrackIdx is checked to be the row
 index). Prefixes: ot_ (L1TTrack), sp_ (L1TSmartPixelsTrack), ottp_/sptp_ (L1TTP row of the
 OT loosely-genuine truth / the SmartPixels weighted cluster-majority truth), ev_ (per event).
 Events are ordered by event number in both files (the NANO output order differs).
 
-  pixi run python eval_refitq/sub2gev/build_cache.py [file numbers, default 1..10]
+  pixi run python eval_refitq/sub2gev/build_cache.py [--input-set canon_v2] [file numbers, default 1..10]
 """
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -17,11 +18,11 @@ import numpy as np
 import uproot
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import CACHE, CANON, COEXIST, FILES_ALL  # noqa: E402
+import common  # noqa: E402
 
 OT_COLS = ["pt", "eta", "z0", "nStubs", "chi2XYRed", "chi2ZRed", "chi2BendRed", "tpIdx", "hwZ0"]
 SP_COLS = ["pt", "eta", "z0", "hwZ0", "hwRinv", "l1TrackIdx", "spixRefitPerformed", "spixNAcceptedHits",
-           "tpIdx", "tpNOTClusters", "tpNITClusters"]
+           "tpIdx", "tpNOTClusters", "tpNITClusters", "spixLayerHitMask"]
 HIT_COLS = ["trackIdx", "hitAccepted", "selHitClass"]
 TP_COLS = ["pt", "eta", "z0", "evt", "bx", "pdgId"]
 
@@ -32,13 +33,13 @@ def _flat(a, dtype=None):
 
 
 def build(fnum: int):
-    ev = uproot.open(CANON.format(fnum) + ":Events")
+    ev = uproot.open(common.CANON.format(fnum) + ":Events")
     br = (["event", "GenVtx_z", "L1Vertex_z0"] + [f"L1TTrack_{c}" for c in OT_COLS]
           + [f"L1TSmartPixelsTrack_{c}" for c in SP_COLS] + [f"L1TSmartPixelsRefitHit_{c}" for c in HIT_COLS]
           + [f"L1TTP_{c}" for c in TP_COLS])
     a = ev.arrays(br)
     a = a[np.argsort(ak.to_numpy(a.event))]
-    x = uproot.open(COEXIST.format(fnum) + ":Events").arrays(["event", "L1Vertex_z0"])
+    x = uproot.open(common.COEXIST.format(fnum) + ":Events").arrays(["event", "L1Vertex_z0"])
     x = x[np.argsort(ak.to_numpy(x.event))]
     assert np.array_equal(ak.to_numpy(a.event), ak.to_numpy(x.event)), "canon/coexist events differ"
     nev = len(a)
@@ -88,12 +89,17 @@ def build(fnum: int):
     out["ev_l1v_sp"] = ak.to_numpy(ak.firsts(a.L1Vertex_z0)).astype(float)
     out["ev_l1v_ot"] = ak.to_numpy(ak.firsts(x.L1Vertex_z0)).astype(float)
     out["ev_file"] = np.full(nev, fnum)
-    os.makedirs(os.path.dirname(CACHE.format(fnum)), exist_ok=True)
-    np.savez_compressed(CACHE.format(fnum), **out)
+    os.makedirs(os.path.dirname(common.CACHE.format(fnum)), exist_ok=True)
+    np.savez_compressed(common.CACHE.format(fnum), **out)
     print(f"f{fnum:02d}: {nev} events, {ntot} tracks, "
           f"refit {out['sp_spixRefitPerformed'].mean():.3f}, SP<2 {np.sum(out['sp_pt'] < 2)}", flush=True)
 
 
 if __name__ == "__main__":
-    for f in [int(v) for v in sys.argv[1:]] or FILES_ALL:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--input-set", choices=sorted(common.INPUT_SETS), default="canon_v1")
+    ap.add_argument("files", nargs="*", type=int, default=common.FILES_ALL)
+    a = ap.parse_args()
+    common.configure(a.input_set)
+    for f in a.files:
         build(f)

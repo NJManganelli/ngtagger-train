@@ -1,17 +1,20 @@
-"""Shared pieces of the sub-2 GeV SmartPixels refit study (canon_v1 AAAA, PU200 ttbar).
+"""Shared pieces of the sub-2 GeV SmartPixels refit study (mask AAAA, PU200 ttbar).
 
 Inputs (canonical L1TSPStudyNano, one row of L1TSmartPixelsTrack per L1TTrack row,
-L1TSmartPixelsTrack_l1TrackIdx -> L1TTrack):
-  canon_v1/spstudy_AAAA_fNN_100ev.root   GTT fed by the SmartPixels (refit) tracks
-  coexist_v1/coexist15_fNN_100ev.root    same events, GTT fed by the OT tracks (L1TTrack)
+L1TSmartPixelsTrack_l1TrackIdx -> L1TTrack), one INPUT SET (``configure``):
+  canon_vN/spstudy_AAAA_fNN_100ev.root   GTT fed by the SmartPixels (refit) tracks
+  coexist_vN/coexist15_fNN_100ev.root    same events, GTT fed by the OT tracks (L1TTrack)
 so L1Vertex of the canonical file is the CMSSW vertex on SmartPixels tracks with the
 stock 2 GeV floor, and L1Vertex of the coexist file is the CMSSW OT-only vertex.
+  canon_v1   build ae495bb04e8, barrel-only refit (the first study; default)
+  canon_v2   build 92bad91b2ba, refit with the discs + one physical material rule
 
 The PV finder here is an OFFLINE FLOAT version of the GTT fastHistoEmulation
 (L1Trigger/VertexFinder VertexFinder::fastHistoEmulation, l1tVertexProducer_cfi):
 256 z bins of 0.15991504 cm over [-20.46912512, 20.46912512] cm, pT-weighted, sliding
 window of 3 bins, highest window sum wins, z = window bin centres weighted by the bin
-pT sums. The float version skips the word quantisation (z0 word, pT word, integer
+pT sums. The bin count and window are parameters (binning study: same range, 512 / 1024
+bins, wider windows). The float version skips the word quantisation (z0 word, pT word, integer
 truncation of bin sums, 1/x LUT); `quantised=True` re-applies the dominant pieces for the
 closure diagnostic only.
 """
@@ -19,10 +22,32 @@ from __future__ import annotations
 
 import numpy as np
 
-CANON = "/Volumes/WDMac/smartpixels_scratch/canon_v1/spstudy_AAAA_f{:02d}_100ev.root"
-COEXIST = "/Volumes/WDMac/smartpixels_scratch/coexist_v1/coexist15_f{:02d}_100ev.root"
-OUTDIR = "/Volumes/WDMac/smartpixels_scratch/sub2gev"
-CACHE = OUTDIR + "/cache/tracks_f{:02d}.npz"
+SCRATCH = "/Volumes/WDMac/smartpixels_scratch"
+INPUT_SETS = {
+    "canon_v1": dict(canon=SCRATCH + "/canon_v1/spstudy_AAAA_f{:02d}_100ev.root",
+                     coexist=SCRATCH + "/coexist_v1/coexist15_f{:02d}_100ev.root",
+                     outdir=SCRATCH + "/sub2gev",
+                     label="canon_v1 AAAA (build ae495bb04e8, barrel-only refit)"),
+    "canon_v2": dict(canon=SCRATCH + "/canon_v2/spstudy_AAAA_f{:02d}_100ev.root",
+                     coexist=SCRATCH + "/coexist_v2/coexist15_f{:02d}_100ev.root",
+                     outdir=SCRATCH + "/vtx_canon_v2/sub2gev",
+                     label="canon_v2 AAAA (build 92bad91b2ba, refit with discs)"),
+}
+# module state, set by configure(); read as common.<NAME> (not by value at import)
+INPUT_SET = CANON = COEXIST = OUTDIR = CACHE = INPUT_LABEL = None
+
+
+def configure(input_set: str = "canon_v1", outdir: str | None = None):
+    """Select the input set; the per-file caches live in <the set's default outdir>/cache
+    (shared by every analysis outdir of that set)."""
+    global INPUT_SET, CANON, COEXIST, OUTDIR, CACHE, INPUT_LABEL
+    s = INPUT_SETS[input_set]
+    INPUT_SET, CANON, COEXIST, INPUT_LABEL = input_set, s["canon"], s["coexist"], s["label"]
+    CACHE = s["outdir"] + "/cache/tracks_f{:02d}.npz"
+    OUTDIR = outdir or s["outdir"]
+
+
+configure()
 FILES_ALL = list(range(1, 11))
 FILES_CLEAN = list(range(3, 11))  # f01/f02 are in-sample for the cluster CNN
 
@@ -66,8 +91,12 @@ def full_rms(r):
     return float(np.sqrt(np.mean(r ** 2))) if r.size else np.nan
 
 
-def fasthisto(z0, pt, quantised=False):
+def fasthisto(z0, pt, quantised=False, nbins=FH_NBINS, window=FH_WINDOW, zmode="bins"):
     """Float GTT fastHisto on one event's selected tracks -> (z_pv, window_sum, b_max).
+    nbins z bins over the fixed GTT range (bin width FH_W * 256 / nbins), window = number of
+    consecutive bins summed by the peak finder (FH_WindowSize).
+    zmode "bins" (GTT): z = the window's bin centres weighted by the bin pT sums;
+    "tracks" (diagnostic, not GTT): z = pT-weighted mean z0 of the tracks in the window bins.
 
     quantised=True (closure diagnostic): z0 rounded to the 12-bit word LSB, pT truncated to
     the 1/32 GeV GTT pT-word LSB, bin sums truncated to integers and saturated at 511
@@ -77,18 +106,23 @@ def fasthisto(z0, pt, quantised=False):
     if quantised:
         z0 = np.floor(z0 / Z0_LSB) * Z0_LSB
         pt = np.floor(pt * 32.0) / 32.0
-    idx = np.floor((z0 - FH_MIN) / FH_W).astype(int)
-    ok = (idx >= 0) & (idx < FH_NBINS)
-    h = np.bincount(idx[ok], weights=pt[ok], minlength=FH_NBINS)
+    w = FH_W * FH_NBINS / nbins
+    idx = np.floor((z0 - FH_MIN) / w).astype(int)
+    ok = (idx >= 0) & (idx < nbins)
+    h = np.bincount(idx[ok], weights=pt[ok], minlength=nbins)
     if quantised:
         h = np.minimum(np.floor(h), 511.0)
-    s = h[:-2] + h[1:-1] + h[2:]
+    n = nbins - window + 1
+    s = sum(h[i:i + n] for i in range(window))  # for window 3: h[:-2] + h[1:-1] + h[2:]
     if not np.any(s > 0):
         return np.nan, 0.0, -1
     b = int(np.argmax(s))  # first maximum, as the strict '>' scan in CMSSW
-    wb = h[b:b + FH_WINDOW]
-    frac = float(np.dot(wb, np.arange(FH_WINDOW)) / wb.sum())
-    return FH_MIN + (b + 0.5 + frac) * FH_W, float(s[b]), b
+    if zmode == "tracks":
+        t = ok & (idx >= b) & (idx < b + window)
+        return float(np.average(z0[t], weights=pt[t])), float(s[b]), b
+    wb = h[b:b + window]
+    frac = float(np.dot(wb, np.arange(window)) / wb.sum())
+    return FH_MIN + (b + 0.5 + frac) * w, float(s[b]), b
 
 
 def standard_selection(pt, eta, z0, nstub, chi2bend, chi2rz, chi2rphi, pt_min=SEL["ptMin"]):
