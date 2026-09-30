@@ -24,7 +24,14 @@ uncertainty and excludes the measurement term, which is the right choice here:
 we are asking how big the search region must be, not how well a hit fits.
 
     pixi run python eval_refitq/combinatorics/spix_combinatorics_omnibus.py \
-        -i <clusters-tier nano.root> -o eval_refitq/combinatorics/
+        -i <clusters-tier nano.root> -o eval_refitq/combinatorics/ [--variants ...]
+
+WHICH REFIT. --variants picks the refit variants to study: activeSP masks of a
+COEXIST nano (tables ...SeedlessRefit<mask>), "canonical" for the unsuffixed
+tables of a one-build nano (mask from its ParameterSets, or --canonical-mask),
+or "all". Omitted, the input must carry exactly one. Several variants: the
+per-variant studies write one page each into <outdir>/<variant>/, the shared
+ones (incl. the activeSP sweep (10) over the selected set) one page in <outdir>.
 """
 from __future__ import annotations
 
@@ -40,6 +47,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import textwrap
+from typing import NamedTuple
 
 import numpy as np
 from statistics import NormalDist
@@ -512,30 +520,152 @@ def write_angle_cap_reference(files, ref_path=ANGLE_CAP_REFERENCE):
 # --------------------------------------------------------------------------
 # loading + the (event, detId) join
 # --------------------------------------------------------------------------
-def _discover(path):
+# A nano carries one or more SmartPixels REFIT VARIANTS: a prompt SP track table
+# plus its per-crossing refit hit table.
+#   COEXIST   several activeSP builds refitted side by side in one job; tables
+#             L1TSmartPixels{RefitHit,Track}SeedlessRefit<mask>, variant named by
+#             its mask (AAIA = IL1, IL2, IL4 instrumented).
+#   CANONICAL one build per job (L1TSPStudyNano + @SPActiveLayers<mask>); the
+#             unsuffixed L1TSmartPixels{RefitHit,Track}, variant named "canonical".
+#             Its mask comes from the job's ParameterSets (the SP track producer's
+#             smartPixelsActiveLayers) or from --canonical-mask.
+# The study runs on the variants chosen with --variants, never on an implicit
+# pick. Only the PROMPT tables are read; the Ext (extended) twins are not used.
+CANONICAL = "canonical"
+CANONICAL_HIT = "L1TSmartPixelsRefitHit"
+COEXIST_HIT_PREFIX = "L1TSmartPixelsRefitHitSeedlessRefit"
+MASK_RE = re.compile(r"^[AI]{4}$")
+NEED_HIT = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
+            "projOTLocalX", "projOTLocalY", "projOTSigX", "projOTSigY",
+            "projOTCotAlpha", "projOTCotBeta", "projLocalX", "projLocalY",
+            "projCotAlpha", "projCotBeta", "projSigX", "projSigY",
+            "recoLocalX", "recoLocalY", "selClusterIdx"]
+
+
+class Variant(NamedTuple):
+    name: str   # the mask (coexist) or CANONICAL
+    mask: str   # activeSP mask; character i describes TBPX layer i + 1
+    hit: str    # the refit hit table
+
+    @property
+    def track(self):
+        """The variant's SP track table (L1TSmartPixels[...]Track[<suffix>])."""
+        return self.hit.replace("RefitHit", "Track")
+
+    @property
+    def label(self):
+        return self.name if self.name == self.mask else f"{self.name} ({self.mask})"
+
+
+def _keys(path):
     with uproot.open(f"{path}:Events") as t:
-        keys = set(t.keys())
-    cfgs = sorted({m.group(1) for m in
-                   (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([A-Za-z0-9]+)_", k) for k in keys) if m})
-    if not cfgs:
-        raise SystemExit("no L1TSmartPixelsRefitHitSeedlessRefit* table in the input")
-    # PICK THE MOST-INSTRUMENTED CONFIG, not the alphabetically last one. On a
-    # multi-variant file (an activeSP sweep) sorted()[-1] is "IIIA" -- the build with
-    # only L4 instrumented -- so every single-config study silently ran on the least
-    # informative configuration in the file and reported three empty layers as
-    # though that were the result. Sorting by count of "A" fixes it; ties break
-    # alphabetically for reproducibility.
-    chosen = sorted(cfgs, key=lambda c: (c.count("A"), c))[-1]
-    if len(cfgs) > 1:
-        print(f"  {len(cfgs)} activeSP variants present {cfgs}; single-config studies "
-              f"use {chosen} (most instrumented). Study (10) covers all of them.")
-    hit = f"L1TSmartPixelsRefitHitSeedlessRefit{chosen}"
-    need_hit = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
-                "projOTLocalX", "projOTLocalY", "projOTSigX", "projOTSigY",
-                "projOTCotAlpha", "projOTCotBeta", "projLocalX", "projLocalY",
-                "projCotAlpha", "projCotBeta", "projSigX", "projSigY",
-                "recoLocalX", "recoLocalY", "selClusterIdx"]
-    miss_h = [c for c in need_hit if not SPN.has_column(keys, hit, c)]
+        return set(t.keys())
+
+
+def _variant_names(keys):
+    """Refit variants present in a file's branch set: coexist masks, then CANONICAL."""
+    sfx = {k[len(COEXIST_HIT_PREFIX):].split("_", 1)[0] for k in keys
+           if k.startswith(COEXIST_HIT_PREFIX)}
+    odd = sorted(s for s in sfx if not MASK_RE.match(s))
+    if odd:
+        print(f"  WARNING: ignoring refit tables with a non-mask suffix: {odd}")
+    names = [m for m in SWEEP_ORDER if m in sfx]
+    if any(k.startswith(CANONICAL_HIT + "_") for k in keys):
+        names.append(CANONICAL)
+    return names
+
+
+def canonical_mask_from_psets(path):
+    """activeSP mask of the producer behind the unsuffixed L1TSmartPixelsTrack table.
+
+    Read from the file's ParameterSets tree: the L1TTTrackFlatTableProducer
+    writing name=L1TSmartPixelsTrack names its src producer, whose
+    smartPixelsActiveLayers ("1110" = IL1-IL3 on) is the mask. None when the
+    tree is absent or does not give exactly one answer.
+    """
+    with uproot.open(path) as F:
+        if "ParameterSets" not in F:
+            return None
+        br = F["ParameterSets"]["IdToParameterSetsBlobs"]
+        blob = b"".join(bytes(br.basket(i).data) for i in range(br.num_baskets))
+    end = rb"[\x00 ]?\);"          # a string parameter's terminator in the blob
+    srcs = set(re.findall(rb"@module_type=\+Z\(L1TTTrackFlatTableProducer" + end
+                          + rb"[^>]*?name=\+Z\(L1TSmartPixelsTrack" + end
+                          + rb"[^>]*?src=\+t\(([^:)]+)", blob))
+    masks = {m for lab in srcs for m in re.findall(
+        rb"@module_label=\+Z\(" + re.escape(lab) + end
+        + rb"@module_type=\+Z\(L1SmartPixelsTrackProducer" + end
+        + rb"[^>]*?smartPixelsActiveLayers=\+Z\(([01]{4})" + end, blob)}
+    if len(masks) != 1:
+        return None
+    return masks.pop().decode().replace("1", "A").replace("0", "I")
+
+
+def select_variants(files, spec=None, canonical_mask=None):
+    """The refit variants to study, as Variant objects, in SWEEP_ORDER.
+
+    spec: None (the input must then carry exactly one variant), "all", or a
+    comma list of masks and/or "canonical". Every file must carry the same
+    variants, and canonical files the same mask; a requested variant that is
+    absent is an error, not a fallback.
+    """
+    per_file = {f: _variant_names(_keys(f)) for f in files}
+    names = per_file[files[0]]
+    bad = [f for f, n in per_file.items() if n != names]
+    if bad:
+        raise SystemExit(f"inputs disagree on their refit variants: {files[0]} has {names}, "
+                         f"{bad[0]} has {per_file[bad[0]]}")
+    if not names:
+        raise SystemExit(f"no SmartPixels refit hit table ({CANONICAL_HIT} or "
+                         f"{COEXIST_HIT_PREFIX}<mask>) in {files[0]}")
+    if spec is None:
+        if len(names) > 1:
+            raise SystemExit(f"{len(names)} refit variants in the input: {','.join(names)}.\n"
+                             "Choose with --variants: a comma list of them, 'all', or 'canonical'.")
+        want = names
+    elif spec.strip().lower() == "all":
+        want = names
+    else:
+        want = [CANONICAL if s.strip().lower() == CANONICAL else s.strip()
+                for s in spec.split(",") if s.strip()]
+        odd = [s for s in want if s != CANONICAL and not MASK_RE.match(s)]
+        if odd:
+            raise SystemExit(f"--variants: {odd} are neither 'all', 'canonical' nor a "
+                             "4-character A/I mask")
+        if len(set(want)) != len(want):
+            raise SystemExit(f"--variants lists a variant twice: {spec}")
+        miss = [s for s in want if s not in names]
+        if miss:
+            raise SystemExit(f"--variants: {','.join(miss)} not in the input "
+                             f"(it carries {','.join(names)})")
+        want = [n for n in names if n in want]
+    if canonical_mask is not None and not MASK_RE.match(canonical_mask):
+        raise SystemExit(f"--canonical-mask must be 4 characters of A/I, got {canonical_mask!r}")
+    out = []
+    for n in want:
+        if n != CANONICAL:
+            out.append(Variant(n, n, COEXIST_HIT_PREFIX + n))
+            continue
+        meta = {f: canonical_mask_from_psets(f) for f in files}
+        found = set(meta.values()) - {None}
+        if len(found) > 1:
+            raise SystemExit(f"canonical inputs mix activeSP builds: {meta}")
+        mask = found.pop() if found else None
+        if canonical_mask and mask and canonical_mask != mask:
+            raise SystemExit(f"--canonical-mask {canonical_mask} contradicts the input's "
+                             f"ParameterSets ({mask})")
+        mask = mask or canonical_mask
+        if mask is None:
+            raise SystemExit("cannot read the canonical refit's activeSP mask from the "
+                             "input's ParameterSets; give it with --canonical-mask")
+        out.append(Variant(CANONICAL, mask, CANONICAL_HIT))
+    if canonical_mask and CANONICAL not in want:
+        print("  NOTE: --canonical-mask ignored (canonical not selected)")
+    return out
+
+
+def _check_hit_columns(keys, v):
+    miss_h = [c for c in NEED_HIT if not SPN.has_column(keys, v.hit, c)]
     miss_c = ([CLUSTER_TABLE] if not any(k.startswith(CLUSTER_TABLE + "_") for k in keys)
               else [c for c in ("layer", "detId", "localX", "localY", "charge",
                                 "tpPt", "tpLocalCotAlpha", "tpLocalCotBeta", "tpIdx")
@@ -543,21 +673,19 @@ def _discover(path):
     if miss_h or miss_c:
         raise SystemExit(
             "input cannot support this study.\n"
-            f"  missing from {hit}: {miss_h or 'none'}\n"
+            f"  missing from {v.hit}: {miss_h or 'none'}\n"
             f"  missing from {CLUSTER_TABLE}: {miss_c or 'none'}\n\n"
             "Produce a Clusters-tier file:\n"
             "  test/makeSpixConfig.py --pu 200 --tier clusters-truth "
             "--variant seedlessRefit:1111 --needs-truth -o <out>.py")
-    return hit, chosen, need_hit
 
 
-def _matched_tp_branch(files, hit):
-    """The variant track table's TP link branch for refit hit table `hit`:
-    L1TSmartPixels[Ext]Track<suffix>_tpIdx, the track's weighted
-    cluster-majority TP (strict majority of 1/2 per stub cluster + 1 per
-    accepted IT cluster; -1 unmatched or tied, <= -3 a TP not in L1TTP)."""
-    with uproot.open(f"{files[0]}:Events") as t:
-        return SPN.branch_name(t.keys(), hit.replace("RefitHit", "Track"), "tpIdx")
+def _matched_tp_branch(files, v):
+    """Variant v's track TP link branch, L1TSmartPixels[Ext]Track<suffix>_tpIdx:
+    the track's weighted cluster-majority TP (strict majority of 1/2 per stub
+    cluster + 1 per accepted IT cluster; -1 unmatched or tied, <= -3 a TP not in
+    L1TTP)."""
+    return SPN.branch_name(_keys(files[0]), v.track, "tpIdx")
 
 
 def _ttc():
@@ -569,9 +697,9 @@ def _ttc():
     return M
 
 
-def load(paths):
-    files = [f for p in paths for f in (sorted(_glob.glob(p)) or [p])]
-    hit, cfg, need_hit = _discover(files[0])
+def load_clusters(files):
+    """Variant-independent inputs: the TBPX cluster table K, the OT tracks' pt/eta
+    (flat, with per-event offsets) and the event count."""
     ccols = ["layer", "detId", "localX", "localY", "charge", "tpPt",
              "tpLocalCotAlpha", "tpLocalCotBeta", "sizeX", "sizeY", "tpIdx"]
     # sensor angle + CPE sigma, present once the cluster table reads SmartPixelsRecHit
@@ -591,11 +719,7 @@ def load(paths):
                 "hasBeta": "clHasBeta"}
     rcols = ["pt", "eta"]
 
-    with uproot.open(f"{files[0]}:Events") as t:
-        avail = set(t.keys())
-    H = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=SPN.branch_names(avail, hit, need_hit))
-    H = SPN.table_columns(H, hit, need_hit)
+    avail = _keys(files[0])
     got = [c for c in optional if SPN.has_column(avail, CLUSTER_TABLE, c)]
     # TBPX only: every study here is per barrel layer, and selClusterIdx indexes
     # the barrel rows, which stay a per-event prefix of the unified table
@@ -605,24 +729,10 @@ def load(paths):
     R = uproot.concatenate([f"{f}:Events" for f in files],
                            filter_name=[f"{REF}_{c}" for c in rcols])
     n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
-
-    # flatten crossings, tagging event index and the owning track's pt/eta
-    ncross = ak.to_numpy(ak.num(H["layer"]))
-    ev_x = np.repeat(np.arange(len(ncross)), ncross)
-    X = {c: ak.to_numpy(ak.flatten(H[c])) for c in need_hit}
-    X["event"] = ev_x
     ntrk = ak.to_numpy(ak.num(R[f"{REF}_pt"]))
-    off = np.concatenate([[0], np.cumsum(ntrk)])
+    T = {"off": np.concatenate([[0], np.cumsum(ntrk)])}
     for c in rcols:
-        flat = ak.to_numpy(ak.flatten(R[f"{REF}_{c}"]))
-        X[f"trk_{c}"] = flat[off[ev_x] + X["trackIdx"].astype(np.int64)]
-
-    vname = _matched_tp_branch(files, hit)
-    vtrk = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[vname])
-    mtp = ak.to_numpy(ak.flatten(vtrk[vname]))
-    nmt = ak.to_numpy(ak.num(vtrk[vname]))
-    offm = np.concatenate([[0], np.cumsum(nmt)])
-    X["trk_tpIdx"] = mtp[offm[ev_x] + X["trackIdx"].astype(np.int64)]
+        T[c] = ak.to_numpy(ak.flatten(R[f"{REF}_{c}"]))
 
     ncl = ak.to_numpy(ak.num(C["layer"]))
     ev_c = np.repeat(np.arange(len(ncl)), ncl)
@@ -655,10 +765,33 @@ def load(paths):
         TPA = uproot.concatenate([f"{f}:Events" for f in files],
                                  filter_name=M.tp_branches(files[0]))
         M.attach_tp_truth(K, M.tp_table(TPA, np.arange(len(ncl))))
+    print(f"files={len(files)} events={n_ev} clusters={len(K['layer'])}")
+    return K, T, n_ev
 
-    print(f"files={len(files)} config={cfg} events={n_ev} "
-          f"crossings={len(X['layer'])} clusters={len(K['layer'])}")
-    return hit, cfg, X, K, n_ev
+
+def load_crossings(files, v, T):
+    """Variant v's refit crossings, tagged with event index, the owning OT
+    track's pt/eta (T from load_clusters) and the SP track's matched TP."""
+    avail = _keys(files[0])
+    _check_hit_columns(avail, v)
+    H = uproot.concatenate([f"{f}:Events" for f in files],
+                           filter_name=SPN.branch_names(avail, v.hit, NEED_HIT))
+    H = SPN.table_columns(H, v.hit, NEED_HIT)
+    ncross = ak.to_numpy(ak.num(H["layer"]))
+    ev_x = np.repeat(np.arange(len(ncross)), ncross)
+    X = {c: ak.to_numpy(ak.flatten(H[c])) for c in NEED_HIT}
+    X["event"] = ev_x
+    for c in ("pt", "eta"):
+        X[f"trk_{c}"] = T[c][T["off"][ev_x] + X["trackIdx"].astype(np.int64)]
+
+    vname = _matched_tp_branch(files, v)
+    vtrk = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[vname])
+    mtp = ak.to_numpy(ak.flatten(vtrk[vname]))
+    nmt = ak.to_numpy(ak.num(vtrk[vname]))
+    offm = np.concatenate([[0], np.cumsum(nmt)])
+    X["trk_tpIdx"] = mtp[offm[ev_x] + X["trackIdx"].astype(np.int64)]
+    print(f"variant={v.label} table={v.hit} crossings={len(X['layer'])}")
+    return X
 
 
 def join_on_module(X, K):
@@ -1623,9 +1756,9 @@ SWEEP_ORDER = ["AIII", "IAII", "IIAI", "IIIA",
 SWEEP_TABLE_CONES = [0.99, 0.999, 0.9999]
 
 
-def _variant_crossings(files, suffix):
+def _variant_crossings(files, v):
     """Crossings for ONE activeSP variant. Only the columns the sweep needs."""
-    hit = f"L1TSmartPixelsRefitHitSeedlessRefit{suffix}"
+    hit = v.hit
     cols = ["trackIdx", "layer", "detId", "projLocalX", "projLocalY", "projSigX", "projSigY",
             "hitAccepted"]
     H = uproot.concatenate([f"{f}:Events" for f in files],
@@ -1635,8 +1768,8 @@ def _variant_crossings(files, suffix):
     ev = np.repeat(np.arange(len(ncross)), ncross)
     X["event"] = ev
     # The matched TP is per TRACK and per VARIANT (each variant refits separately),
-    # so it has to come from THIS variant's track table, not the one load() picked.
-    tname = _matched_tp_branch(files, hit)
+    # so it has to come from THIS variant's track table.
+    tname = _matched_tp_branch(files, v)
     V = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tname])
     mtp = ak.to_numpy(ak.flatten(V[tname]))
     offm = np.concatenate([[0], np.cumsum(ak.to_numpy(ak.num(V[tname])))])
@@ -1739,6 +1872,7 @@ def _write_sweep_table(res, sfx, out, n_ev):
     lines = [
         "activeSP refit search cost vs CONE WIDTH",
         f"  sample        : {n_ev} events, PU200, {ntrk_ref:,} tracks per config",
+        *([f"  {res['partial']}"] if res.get("partial") else []),
         "  cone          : nominal per-axis two-sided Gaussian, k = Phi^-1((1+q)/2)",
         "                  " + " | ".join(
             f"{l} k={res['table_k_sigma'][i]:.3f}" for i, l in enumerate(labs)),
@@ -1857,16 +1991,30 @@ def study_combination_sweep(X, K, P, ax_row, out):
     files = out.get("_inputs")
     if not files:
         return
-    with uproot.open(f"{files[0]}:Events") as t:
-        keys = set(t.keys())
-    sfx = sorted({m.group(1) for m in
-                  (re.match(r"^L1TSmartPixelsRefitHitSeedlessRefit([AI]{4})_", k) for k in keys) if m})
+    # THE SELECTED VARIANTS (--variants), keyed by mask. The full sweep is all 15
+    # non-trivial builds; a subset of >= 2 still compares like with like and runs,
+    # flagged PARTIAL; one build has nothing to compare against and is skipped.
+    vmap = {v.mask: v for v in out["_variants"]}
+    if len(vmap) != len(out["_variants"]):
+        raise SystemExit("(10) two selected variants share an activeSP mask: "
+                         f"{[v.label for v in out['_variants']]}")
+    sfx = sorted(vmap)
     if len(sfx) < 2:
-        print(f"   (10) SKIPPED: input has {len(sfx)} activeSP variant(s); the sweep needs the "
-              "15 non-trivial masks. Regenerate with a repeated --variant seedlessRefit:XXXX.")
+        msg = (f"{len(sfx)} activeSP variant selected ({', '.join(v.label for v in vmap.values())}); "
+               "the sweep compares builds and needs >= 2 (all 15 non-trivial masks for the full "
+               "sweep): pass --variants all on a coexist nano")
+        print(f"   (10) SKIPPED: {msg}")
+        out["combination_sweep"] = {"skipped": msg}
         for a in ax_row:
             a.axis("off")
+        ax_row[0].text(0.02, 0.5, "(10) combination sweep SKIPPED:\n" + textwrap.fill(msg, 60),
+                       fontsize=7, va="center")
         return
+    missing = [m for m in SWEEP_ORDER if m not in vmap]
+    partial = (f"PARTIAL sweep: {len(sfx)} of {len(SWEEP_ORDER)} builds (missing "
+               f"{','.join(missing)})") if missing else ""
+    if partial:
+        print(f"   (10) {partial}")
 
     kvals = [NormalDist().inv_cdf(0.5 * (1.0 + q)) for q in SWEEP_Q]
     tabq = [q for q in SWEEP_TABLE_CONES]
@@ -1879,7 +2027,7 @@ def study_combination_sweep(X, K, P, ax_row, out):
                     "table_k_sigma": [float(k) for k in ktab]}, {}
     n_ev_local = max(int(out.get("n_events", 0)), 1)
     for s in sfx:
-        Xv = _variant_crossings(files, s)
+        Xv = _variant_crossings(files, vmap[s])
         combos, ntrk, cont, n_have = _combinations_per_track(Xv, K, allk)
         per_cfg[s] = combos
         # Viability: an uninstrumented layer yields no L1 hit at all, so a build can
@@ -1969,7 +2117,7 @@ def study_combination_sweep(X, K, P, ax_row, out):
             "activeSP  /  A  /  I", "qX  (cone quantile)", "combinations / track"]),
             transform=a.transAxes, va="top", ha="left", fontsize=5.4, family="monospace")
     f2.suptitle("(10) refit search space: L1xL2xL3xL4 combinations vs cone quantile, "
-                "per activeSP configuration", y=1.002)
+                "per activeSP configuration" + (f"\n{partial}" if partial else ""), y=1.002)
     f2.tight_layout()
     p2 = os.path.join(out["_outdir"], "spix_combination_sweep.png")
     f2.savefig(p2, dpi=130, bbox_inches="tight")
@@ -1997,8 +2145,12 @@ def study_combination_sweep(X, K, P, ax_row, out):
                marker=mk, ms=4, label=f"$\\geq${j} hits")
     a.set_xticks(xs); a.set_xticklabels(order, rotation=90, fontsize=6)
     a.set_ylabel("tracks [fraction]"); a.set_ylim(0, 1.02)
-    a.set_title("(10) can this build even refit?")
+    a.set_title("(10) can this build even refit?" + ("\n" + partial if partial else ""),
+                **({"fontsize": 7} if partial else {}))
     a.grid(alpha=.3); a.legend(fontsize=7)
+    res["variants"] = {s: vmap[s].hit for s in sfx}
+    if partial:
+        res["partial"] = partial
     _write_sweep_table(res, sfx, out, out.get("n_events", -1))
     out["combination_sweep"] = res
 
@@ -2199,8 +2351,7 @@ def study_sector_binning(X, K, P, ax_row, out):
     tcols = ["rInv", "phi", "tanL", "z0", "pt"]
     T = uproot.concatenate([f"{f}:Events" for f in files],
                            filter_name=[f"{REF}_{c}" for c in tcols])
-    hitname = out.get("_hit_table", "")
-    tpname = _matched_tp_branch(files, hitname)
+    tpname = _matched_tp_branch(files, out["_variant"])
     MT = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tpname])
     ntr = ak.to_numpy(ak.num(T[f"{REF}_rInv"]))
     tr = {c: ak.to_numpy(ak.flatten(T[f"{REF}_{c}"])) for c in tcols}
@@ -3287,8 +3438,12 @@ def _menu_by_build_table(out, builds):
 # ---------------------------------------------------------------------------
 # SECTIONS. The studies fall into four questions, and the figure is now grouped
 # and banner-labelled by them rather than being one undifferentiated stack. Each
-# entry is (title, function, n_panels); a section is a title plus a one-line
+# entry is (title, function, n_panels, scope); a section is a title plus a one-line
 # statement of what the section is for, printed on the figure and in the log.
+# SCOPE: VARIANT studies read one refit variant's crossings (X, P, its tables) and
+# run once per selected variant; SHARED studies read only the variant-independent
+# inputs (clusters, OT tracks, TPs) or, like the sweep (10), all selected variants
+# at once, and run once.
 # ---------------------------------------------------------------------------
 # ---- the two IT-only L1L2L3 designs, named so they cannot be conflated -------
 # BASELINE DOUBLETS   triplet + L1L2->L3 + L2L3->L1, both doublets ungated.
@@ -3950,10 +4105,22 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
     if not geom or not os.path.exists(geom):
         return _skip("no module geometry JSON (--geometry); produce it with "
                      "L1Trigger/Phase3SmartPixels/test/dumpModuleGeometry_cfg.py")
+    # THE VALIDATION GATE'S REFIT TABLE. projOT* is the OT track's own projection,
+    # identical in every variant, so any refit table of the (possibly separate)
+    # projection inputs validates it: a selected variant first, and among those the
+    # most instrumented (projOT* is stored on more layers there).
+    have = _variant_names(_keys(files[0]))
+    sel = {v.name: v for v in out["_variants"]}
+    cand = sorted(have, key=lambda n: (n not in sel, -(sel[n].mask if n in sel else n).count("A")))
+    if not cand:
+        return _skip(f"no SmartPixels refit table in {files[0]} to validate against")
+    c = cand[0]
+    refit = sel[c].hit if c in sel else CANONICAL_HIT if c == CANONICAL else COEXIST_HIT_PREFIX + c
     try:
-        OPJ.check_inputs(files[0], with_refit=True)
+        OPJ.check_inputs(files[0], with_refit=True, refit=refit)
     except SystemExit as e:
         return _skip(str(e))
+    print(f"    validating against {refit}")
     nsig = 4.0
     step = [0]
 
@@ -3962,7 +4129,7 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
         if step[0] % 10 == 0:
             print(msg)
     r = OPJ.run(files, geom, nsig=nsig, chunk=out.get("_proj_chunk", 10),
-                nev=out.get("_proj_nev"), validate=True, log=_log)
+                nev=out.get("_proj_nev"), validate=True, log=_log, refit=refit)
     pulls = OPJ.param_pulls(files, nev=out.get("_proj_nev"))
     R, PR, V = r["rows"], r["proj"], r["validation"]
     classes = OPJ.TRACK_CLASSES
@@ -4161,7 +4328,7 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
             for L in Ls))
     out["ot_projection_targets"] = {
         "n_events": r["n_events"], "nsig": nsig, "tracks_by_class": tbc, "excluded": excl,
-        "ot_fit_pulls": pulls, "validation_vs_refit": val,
+        "ot_fit_pulls": pulls, "validation_vs_refit": val, "validation_refit_table": refit,
         "candidate_bound_ratio_max": r["bound_ratio_max"], "per_class_layer": table,
         "perfect_crosscut": crosscut["table"],
         "figures": pngs + [pdf_path]}
@@ -4400,11 +4567,14 @@ def study_ot_refit_projection(X, K, P, ax_row, out):
     geom = out.get("_geometry")
     if not geom or not os.path.exists(geom):
         return _skip("no module geometry JSON (--geometry)")
+    # this page's variant: its mask drives the emulated visit order, its refit
+    # table the replay of the producer's own selections
+    v = out["_variant"]
+    mask = v.mask
     try:
-        OPJ.check_inputs(files[0], with_refit=True)
+        OPJ.check_inputs(files[0], with_refit=True, refit=v.hit)
     except SystemExit as e:
         return _skip(str(e))
-    mask = out.get("_refit_mask", "AAAA")
     nsig = 4.0
     step = [0]
 
@@ -4414,7 +4584,8 @@ def study_ot_refit_projection(X, K, P, ax_row, out):
             print(msg)
     res = RPJ.run(files, geom, mask=mask, use_angles="alphaBeta", nsig=nsig,
                   chunk=out.get("_proj_chunk", 10), nev=out.get("_proj_nev"), replay=True, log=_log,
-                  producer_q=out.get("_producer_q", "natural"), calibration=out.get("_refit_calibration"))
+                  producer_q=out.get("_producer_q", "natural"), calibration=out.get("_refit_calibration"),
+                  refit=v.hit)
     variants = list(res["variants"])
     classes = OPJ.TRACK_CLASSES
 
@@ -4521,47 +4692,49 @@ def study_ot_refit_projection(X, K, P, ax_row, out):
         "figures": pngs + [pdf_path]}
 
 
+VARIANT, SHARED = "variant", "shared"
+
 SECTIONS = [
     ("A. Cluster cones: how much is in reach of a track?",
      "Occupancy and containment around a projected track -- the raw material every"
      " later stage draws on, and the cost floor nothing can go below.",
-     [("cone occupancy", study_cone_occupancy, 3),
-      ("refit-order cone", study_refit_cone_occupancy, 3),
-      ("cone containment + size", study_cone_containment, 2)]),
+     [("cone occupancy", study_cone_occupancy, 3, VARIANT),
+      ("refit-order cone", study_refit_cone_occupancy, 3, VARIANT),
+      ("cone containment + size", study_cone_containment, 2, VARIANT)]),
 
     ("B. What the SmartPixels angles buy",
      "Whether the per-cluster alpha/beta angles and the charge readout actually"
      " discriminate, and what the longitudinal angle delivers as a z0 estimate.",
-     [("angle discrimination", study_angle_discrimination, 2),
-      ("charge readout gate", study_charge_gate, 2),
-      ("unbiased containment", study_true_containment, 2),
-      ("z0 resolution (seeding)", study_z0_resolution, 2),
-      ("cluster angles per layer", study_cluster_angles_by_layer, 2),
-      ("MVA score correlation per build", study_mva_score_correlation, 2)]),
+     [("angle discrimination", study_angle_discrimination, 2, VARIANT),
+      ("charge readout gate", study_charge_gate, 2, VARIANT),
+      ("unbiased containment", study_true_containment, 2, VARIANT),
+      ("z0 resolution (seeding)", study_z0_resolution, 2, SHARED),
+      ("cluster angles per layer", study_cluster_angles_by_layer, 2, SHARED),
+      ("MVA score correlation per build", study_mva_score_correlation, 2, SHARED)]),
 
     ("C. Fitting and cluster-combination choices",
      "How hits should be weighted in the refit, and which activeSP combinations"
      " are worth reading out.",
-     [("chi2 weight scan", study_chi2_weight_scan, 2),
-      ("combination sweep (activeSP)", study_combination_sweep, 3)]),
+     [("chi2 weight scan", study_chi2_weight_scan, 2, VARIANT),
+      ("combination sweep (activeSP)", study_combination_sweep, 3, SHARED)]),
 
     ("D. Seeding: binning, transforms, and which seeds to build",
      "The seeding design itself -- sector sizing, the Hough picture, what each"
      " seed mode recovers that the others do not, and whether the doublets can be"
      " aimed at the triplet's failures instead of duplicating its successes.",
-     [("sector bin sizing", study_sector_binning, 2),
-      ("hough examples", study_hough_examples, 2),
-      ("seed-mode confusion", study_seed_mode_confusion, 3),
-      ("seed composition", study_seed_composition, 3),
-      ("combined IT+OT seeding", study_combined_it_ot, 3),
-      ("seed menu per build", study_seed_menu_by_build, 3)]),
+     [("sector bin sizing", study_sector_binning, 2, VARIANT),
+      ("hough examples", study_hough_examples, 2, SHARED),
+      ("seed-mode confusion", study_seed_mode_confusion, 3, SHARED),
+      ("seed composition", study_seed_composition, 3, SHARED),
+      ("combined IT+OT seeding", study_combined_it_ot, 3, SHARED),
+      ("seed menu per build", study_seed_menu_by_build, 3, SHARED)]),
 
     ("E. OT-only projection: what a refit is offered, by track class",
      "The OT track's own helix and covariance projected onto every IT barrel module"
      " its 4-sigma ellipse overlaps, with no KF update: the majority-owner TP's"
      " cluster (target) against every other cluster in reach, per layer.",
-     [("OT-only projection targets vs background", study_ot_projection_targets, 3),
-      ("OT refit-update projection", study_ot_refit_projection, 4)]),
+     [("OT-only projection targets vs background", study_ot_projection_targets, 3, SHARED),
+      ("OT refit-update projection", study_ot_refit_projection, 4, VARIANT)]),
 ]
 
 # Flat view, kept because the figure is still one grid and several studies index
@@ -4569,10 +4742,69 @@ SECTIONS = [
 STUDIES = [t for _, _, group in SECTIONS for t in group]
 
 
+def run_page(sections, X, K, P, out, title):
+    """One report page: the studies of `sections` on one set of inputs, drawn as
+    one banner-grouped grid, with its JSON sidecar, into out["_outdir"]."""
+    od = out["_outdir"]
+    os.makedirs(od, exist_ok=True)
+    ncols = max(n for _, _, grp in sections for _, _, n, _ in grp)
+    # one extra row per section for its banner
+    nrows = sum(len(g) for _, _, g in sections) + len(sections)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.2 * nrows))
+    axes = np.atleast_2d(axes)
+    row = 0
+    for stitle, sdesc, group in sections:
+        print(f"\n{stitle}\n    {sdesc}")
+        for c in range(ncols):
+            axes[row][c].axis("off")
+        axes[row][0].text(0.0, 0.45, stitle, fontsize=15, fontweight="bold",
+                          va="center", ha="left", transform=axes[row][0].transAxes)
+        axes[row][0].text(0.0, 0.12, sdesc, fontsize=9, color="#52514e", va="center",
+                          ha="left", wrap=True, transform=axes[row][0].transAxes)
+        axes[row][0].axhline(0.78, color="#0b0b0b", lw=1.4,
+                             xmin=0.0, xmax=ncols * 0.98)
+        row += 1
+        for (name, fn, n, _) in group:
+            print(f"  study: {name}")
+            fn(X, K, P, axes[row], out)
+            for c in range(n, ncols):
+                axes[row][c].axis("off")
+            row += 1
+    fig.suptitle(title, y=1.005)
+    # qX vs pXX is the confusion most likely to survive into a slide, so it is
+    # stamped on the figure itself rather than only in the glossary file.
+    fig.text(0.5, -0.004,
+             "qX = cone WIDTH chosen (input; k = Phi^-1((1+X/100)/2), nominal, assumes unit pulls)   |   "
+             "pXX = percentile over TRACKS (output)   |   containment = MEASURED, conditional on the "
+             "hit existing   |   see spix_glossary.txt",
+             ha="center", va="top", fontsize=7.5)
+    fig.tight_layout()
+    png = os.path.join(od, "spix_combinatorics_omnibus.png")
+    fig.savefig(png, dpi=130, bbox_inches="tight")
+    plt.close(fig)
+    js = os.path.join(od, "spix_combinatorics_omnibus.json")
+    for k in ("_outdir", "_inputs", "_variant", "_variants"):
+        out.pop(k, None)
+    with open(js, "w") as fh:
+        json.dump(out, fh, indent=2)
+    print(f"\nwrote {png}\nwrote {js}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-i", "--inputs", nargs="+", required=True)
     ap.add_argument("-o", "--outdir", default="eval_refitq/combinatorics")
+    ap.add_argument("--variants", default=None,
+                    help="refit variants to study: a comma list of activeSP masks (coexist "
+                         "tables L1TSmartPixels{RefitHit,Track}SeedlessRefit<mask>) and/or "
+                         "'canonical' (the unsuffixed tables), or 'all'. Default: the input's "
+                         "only variant (an error if it carries several). With more than one, "
+                         "per-variant studies write one page each into <outdir>/<variant>/ and "
+                         "the shared studies (incl. the sweep over the selected set) one page "
+                         "into <outdir>")
+    ap.add_argument("--canonical-mask", default=None,
+                    help="activeSP mask of the canonical tables (e.g. AAAI); read from the "
+                         "input's ParameterSets when omitted, and checked against it when given")
     ap.add_argument("--only", default=None,
                     help="run only studies whose name contains this substring")
     ap.add_argument("--menu-inputs", default=None,
@@ -4609,9 +4841,6 @@ def main():
                          "its inputs; defaults to -i")
     ap.add_argument("--proj-nev", type=int, default=None,
                     help="event cap for study 19 (default: all)")
-    ap.add_argument("--refit-mask", default="AAAA",
-                    help="activeSP mask for study 20's refit-update projection "
-                         "(character i = layer i+1; visited outermost first)")
     ap.add_argument("--refit-calibration", default=None,
                     help="v3 refit calibration JSON (refit_calibration_fit.export_refit_calibration) "
                          "for study 20; default: the producer's covariance model")
@@ -4633,79 +4862,66 @@ def main():
         return
     os.makedirs(args.outdir, exist_ok=True)
 
+    variants = select_variants(files, args.variants, args.canonical_mask)
+    print(f"  refit variants: {', '.join(f'{v.label} [{v.hit}]' for v in variants)}")
+
     sentinel = angle_cap_sentinel(files, args.outdir, args.angle_cap_reference)
-    hit, cfg, X, K, n_ev = load(args.inputs)
-    P = prepare(X, K)
-    out = {"config": cfg, "n_events": n_ev, "n_crossings": int(len(X["layer"])),
-           "n_clusters": int(len(K["layer"])),
-           "angle_cap_sentinel": sentinel,
-           # side-artefact directory for studies that write their own files;
-           # stripped before the JSON is dumped
-           "_outdir": args.outdir,
-           # studies that need to re-read the file for OTHER activeSP variants
-           "_inputs": files,
-           "_hit_table": hit,
-           "_menu_inputs": args.menu_inputs, "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
-           "_menu_budget_gb": args.menu_budget_gb,
-           "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
-           "_site": args.site,
-           "_menu_cache_mode": args.menu_cache_mode,
-           "_menu_export_tracks": args.menu_export_tracks,
-           "_geometry": args.geometry, "_proj_nev": args.proj_nev,
-           "_proj_chunk": args.proj_chunk, "_refit_mask": args.refit_mask,
-           "_producer_q": args.producer_q, "_refit_calibration": args.refit_calibration,
-           "_proj_inputs": ([f for g in args.proj_inputs.split(",") for f in
-                             (sorted(_glob.glob(g)) or [g])] if args.proj_inputs else None)}
+    K, T, n_ev = load_clusters(files)
+    base = {"n_events": n_ev, "n_clusters": int(len(K["layer"])),
+            "angle_cap_sentinel": sentinel,
+            # side-artefact directory for studies that write their own files;
+            # stripped before the JSON is dumped
+            "_outdir": args.outdir,
+            # studies that re-read the file, and the variants the run selected
+            "_inputs": files, "_variants": variants,
+            "_menu_inputs": args.menu_inputs, "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
+            "_menu_budget_gb": args.menu_budget_gb,
+            "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
+            "_site": args.site,
+            "_menu_cache_mode": args.menu_cache_mode,
+            "_menu_export_tracks": args.menu_export_tracks,
+            "_geometry": args.geometry, "_proj_nev": args.proj_nev,
+            "_proj_chunk": args.proj_chunk,
+            "_producer_q": args.producer_q, "_refit_calibration": args.refit_calibration,
+            "_proj_inputs": ([f for g in args.proj_inputs.split(",") for f in
+                              (sorted(_glob.glob(g)) or [g])] if args.proj_inputs else None)}
 
     gp = write_glossary(args.outdir)
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
 
-    SEL = [(t, d, [g for g in grp if not args.only or args.only in g[0]])
-           for t, d, grp in SECTIONS]
-    SEL = [(t, d, g) for t, d, g in SEL if g]
-    if not SEL:
+    def pick(scopes):
+        sel = [(t, d, [g for g in grp if g[3] in scopes and (not args.only or args.only in g[0])])
+               for t, d, grp in SECTIONS]
+        return [(t, d, g) for t, d, g in sel if g]
+    if not pick((VARIANT, SHARED)):
         raise SystemExit(f"--only {args.only!r} matched no study")
-    ncols = max(n for _, _, grp in SEL for _, _, n in grp)
-    # one extra row per section for its banner
-    nrows = sum(len(g) for _, _, g in SEL) + len(SEL)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.2 * nrows))
-    axes = np.atleast_2d(axes)
-    row = 0
-    for stitle, sdesc, group in SEL:
-        print(f"\n{stitle}\n    {sdesc}")
-        for c in range(ncols):
-            axes[row][c].axis("off")
-        axes[row][0].text(0.0, 0.45, stitle, fontsize=15, fontweight="bold",
-                          va="center", ha="left", transform=axes[row][0].transAxes)
-        axes[row][0].text(0.0, 0.12, sdesc, fontsize=9, color="#52514e", va="center",
-                          ha="left", wrap=True, transform=axes[row][0].transAxes)
-        axes[row][0].axhline(0.78, color="#0b0b0b", lw=1.4,
-                             xmin=0.0, xmax=ncols * 0.98)
-        row += 1
-        for (name, fn, n) in group:
-            print(f"  study: {name}")
-            fn(X, K, P, axes[row], out)
-            for c in range(n, ncols):
-                axes[row][c].axis("off")
-            row += 1
-    fig.suptitle(f"SmartPixels combinatorics omnibus — {cfg}, {n_ev} events", y=1.005)
-    # qX vs pXX is the confusion most likely to survive into a slide, so it is
-    # stamped on the figure itself rather than only in the glossary file.
-    fig.text(0.5, -0.004,
-             "qX = cone WIDTH chosen (input; k = Phi^-1((1+X/100)/2), nominal, assumes unit pulls)   |   "
-             "pXX = percentile over TRACKS (output)   |   containment = MEASURED, conditional on the "
-             "hit existing   |   see spix_glossary.txt",
-             ha="center", va="top", fontsize=7.5)
-    fig.tight_layout()
-    png = os.path.join(args.outdir, "spix_combinatorics_omnibus.png")
-    fig.savefig(png, dpi=130, bbox_inches="tight")
-    js = os.path.join(args.outdir, "spix_combinatorics_omnibus.json")
-    out.pop("_outdir", None)
-    out.pop("_inputs", None)
-    out.pop("_hit_table", None)
-    with open(js, "w") as fh:
-        json.dump(out, fh, indent=2)
-    print(f"\nwrote {png}\nwrote {js}")
+    # PAGES. One variant: a single page with every study, as before. Several: the
+    # shared studies once on <outdir>'s page, the variant studies on one page per
+    # variant in <outdir>/<variant>/ -- one grid per build stays readable.
+    if len(variants) == 1:
+        pages = [(args.outdir, variants[0], pick((VARIANT, SHARED)))]
+    else:
+        pages = ([(args.outdir, None, pick((SHARED,)))]
+                 + [(os.path.join(args.outdir, v.name), v, pick((VARIANT,))) for v in variants])
+    for od, v, sections in pages:
+        if not sections:
+            continue
+        out = dict(base, _outdir=od)
+        if v is None:
+            X = P = None
+            out["variants"] = [v_.label for v_ in variants]
+            title = (f"SmartPixels combinatorics omnibus — shared studies, variants "
+                     f"{','.join(v_.name for v_ in variants)}, {n_ev} events")
+        else:
+            print(f"\n######## refit variant {v.label}")
+            X = load_crossings(files, v, T)
+            P = prepare(X, K)
+            out.update({"config": v.mask, "n_crossings": int(len(X["layer"])), "_variant": v,
+                        "variant": {"name": v.name, "mask": v.mask, "hit_table": v.hit,
+                                    "track_table": v.track}})
+            title = f"SmartPixels combinatorics omnibus — {v.label}, {n_ev} events"
+        run_page(sections, X, K, P, out, title)
+        del X, P
 
 
 if __name__ == "__main__":
