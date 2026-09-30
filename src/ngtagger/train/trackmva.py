@@ -10,14 +10,19 @@ bundle with metadata, and the loader/scorer used by
 
 Track families (all 1:1 row aligned per event, validated on read):
 
-  prompt  L1TTrack    + L1TSmartPixelsTrackSeedlessRefit<cfg>    + ...RefitHitSeedlessRefit<cfg>
-  ext     L1TExtTrack + L1TSmartPixelsExtTrackSeedlessRefit<cfg> + ...ExtRefitHitSeedlessRefit<cfg>
+  prompt     L1TTrack    + L1TSmartPixelsTrackSeedlessRefit<cfg>    + ...RefitHitSeedlessRefit<cfg>
+  ext        L1TExtTrack + L1TSmartPixelsExtTrackSeedlessRefit<cfg> + ...ExtRefitHitSeedlessRefit<cfg>
+  canonical  L1TTrack    + L1TSmartPixelsTrack + L1TSmartPixelsRefitHit (the canonical/coopt
+             nano: its one wired refit variant, unsuffixed; <cfg> is not used)
 
 The base table (L1TTrack / L1TExtTrack) supplies the OT-only fit, its KF
 covariance and the TP truth (genuine, tp_pt, tp_d0, tp_z0: the OT associator's
-TP); L1TTP is not needed. The refit row's tpIdx is the weighted cluster-majority owner
+TP). The refit row's tpIdx is the weighted cluster-majority owner
 (the TP owning > 50% of the track's weight, 1/2 per stub cluster and 1 per accepted IT
-cluster), -1 when no TP has a strict majority. Tracks without a refit carry the baseline
+cluster), -1 when no TP has a strict majority. Residual truth of the refit heads
+(``refit_truth``): "ot" (default) = the base row's OT-associator TP; "sp" = the refit
+row's own tpIdx TP, read from L1TTP (pt, d0, z0; tpIdx < 0 incl. pruned = unmatched),
+which needs L1TTP in the nano. Tracks without a refit carry the baseline
 parameters in the refit table and are kept (spixRefitPerformed is a feature).
 
 Collections (``coll``): "refit" (the default and the deliverable) uses base +
@@ -98,7 +103,7 @@ import time
 import awkward as ak
 import numpy as np
 
-from ngtagger.data.spix_nano import CLUSTER_TABLE, branch_name, branch_names, column
+from ngtagger.data.spix_nano import CLUSTER_TABLE, TP_TABLE, branch_name, branch_names, column, has_column
 from ngtagger.train.trkquality import nlaymiss_interior
 
 SPEC_VERSION = 1
@@ -119,6 +124,7 @@ FAMILIES = {
                "hits": "L1TSmartPixelsRefitHitSeedlessRefit{cfg}"},
     "ext": {"base": "L1TExtTrack", "refit": "L1TSmartPixelsExtTrackSeedlessRefit{cfg}",
             "hits": "L1TSmartPixelsExtRefitHitSeedlessRefit{cfg}"},
+    "canonical": {"base": "L1TTrack", "refit": "L1TSmartPixelsTrack", "hits": "L1TSmartPixelsRefitHit"},
 }
 
 # online (model-input) columns
@@ -135,6 +141,8 @@ HIT_COLS = ["hitAccepted", "trackIdx", "hasAlpha", "windowMult", "clusterMerged"
 BASE_TRUTH = ["genuine", "tpFromHardInteraction", "tp_pt", "tp_d0", "tp_z0"]
 REFIT_TRUTH = ["tpIdx"]
 HIT_TRUTH = ["selClusterIdx"]
+TP_TRUTH = ["pt", "d0", "z0"]          # L1TTP columns of the refit_truth="sp" residual truth
+REFIT_TRUTH_SOURCES = ("ot", "sp")
 EVENT_ID = ["run", "luminosityBlock", "event"]
 
 REFIT_SENTINEL_COLS = ["spixRefitPerformed", "spixAnyWindowTruncated", "spixNCrossings",
@@ -184,6 +192,8 @@ def nano_branches(keys, family: str = "prompt", config: str = "AAAA",
         br += branch_names(keys, tn["refit"], REFIT_TRUTH)
         br += [branch_name(keys, tn["hits"], c) for c in HIT_TRUTH]
         br += branch_names(keys, CLUSTER_TABLE, ["tpIdx"])
+        if all(has_column(keys, TP_TABLE, c) for c in TP_TRUTH):  # for refit_truth="sp"
+            br += branch_names(keys, TP_TABLE, TP_TRUTH)
     if with_event_id:
         br += [c for c in EVENT_ID if c in keys]
     return list(dict.fromkeys(br))
@@ -281,6 +291,17 @@ def tracks_from_batch(A, family: str = "prompt", config: str = "AAAA",
         htp = np.where(sel >= 0, ctp[np.where(sel >= 0, coff[evi] + sel, 0)] if len(ctp) else -2, -2)
         wrong = ((htp != ttp[g]) | (ttp[g] == -1)) & (hits["hitAccepted"] > 0)
         T["t_n_it_wrong"] = np.bincount(g[wrong], minlength=N).astype(np.float64)
+        T["r_tpIdx"] = ttp
+        if all(has_column(f, TP_TABLE, c) for c in TP_TRUTH):
+            # the refit row's own TP (refit_truth="sp"); NaN when tpIdx < 0 (none / pruned)
+            ntp = ak.to_numpy(ak.num(column(A, TP_TABLE, TP_TRUTH[0])))
+            toff = np.repeat(np.concatenate([[0], np.cumsum(ntp)[:-1]]).astype(np.int64), ntrk)
+            if np.any(ttp >= np.repeat(ntp, ntrk)):
+                raise RuntimeError(f"{tn['refit']}.tpIdx outside the per-event L1TTP rows")
+            ok = ttp >= 0
+            for c in TP_TRUTH:
+                v = ak.to_numpy(ak.flatten(column(A, TP_TABLE, c))).astype(np.float64)
+                T["r_tp_" + c] = np.where(ok, v[np.where(ok, toff + ttp, 0)] if len(v) else np.nan, np.nan)
     return T, ntrk
 
 
@@ -369,13 +390,23 @@ def d0_features(T, coll: str) -> dict:
     return G
 
 
-def truth(T, coll: str):
-    """(matched, clean, d0 residual um, z0 residual um); residuals NaN if unmatched."""
+def truth(T, coll: str, refit_truth: str = "ot"):
+    """(matched, clean, d0 residual um, z0 residual um); residuals NaN if unmatched.
+    refit_truth (coll "refit" only): residual truth = the base row's OT-associator TP
+    ("ot") or the refit row's own tpIdx TP ("sp"; needs the L1TTP columns r_tp_*)."""
+    if refit_truth not in REFIT_TRUTH_SOURCES:
+        raise ValueError(f"refit_truth {refit_truth!r} not in {REFIT_TRUTH_SOURCES}")
     p = "r_" if coll == "refit" else "b_"
-    matched = T["b_tp_pt"] > 0
+    tp = "b_tp_"
+    if coll == "refit" and refit_truth == "sp":
+        if "r_tp_d0" not in T:
+            raise KeyError("refit_truth='sp' needs the L1TTP pt/d0/z0 columns (r_tp_*): "
+                           "the nano has no L1TTP table")
+        tp = "r_tp_"
+    matched = np.nan_to_num(T[tp + "pt"], nan=-1.0) > 0
     clean = (T["b_genuine"] > 0) & ((T["t_n_it_wrong"] == 0) if coll == "refit" else True)
-    rd0 = np.where(matched, T[p + "d0"] - T["b_tp_d0"], np.nan) * 1e4
-    rz0 = np.where(matched, T[p + "z0"] - T["b_tp_z0"], np.nan) * 1e4
+    rd0 = np.where(matched, T[p + "d0"] - T[tp + "d0"], np.nan) * 1e4
+    rz0 = np.where(matched, T[p + "z0"] - T[tp + "z0"], np.nan) * 1e4
     return matched, np.asarray(clean, bool), rd0, rz0
 
 
@@ -472,14 +503,14 @@ def fit_predict(X, lab, tr, sc, seed: int = SEED, params: dict | None = None):
 
 
 def crossfit(T, coll: str, track_folds, mode: str = "nested", n_folds: int = N_FOLDS,
-             seed: int = SEED, params: dict | None = None, log=print):
+             seed: int = SEED, params: dict | None = None, refit_truth: str = "ot", log=print):
     """Cross-fitted scores (see the module docstring). Returns scores of shape
     (n_folds, n_tracks, len(EVAL_COLUMNS)) for 'nested'; (1, n_tracks, ...)
     holding the outer scores for 'outer'."""
     if mode not in ("outer", "nested"):
         raise ValueError(f"crossfit mode {mode!r}")
     X, _ = feature_matrix(T, coll)
-    lab = truth(T, coll)
+    lab = truth(T, coll, refit_truth)
     tf = np.asarray(track_folds)
     W = windows(T, coll)
     nk = n_folds if mode == "nested" else 1
@@ -536,15 +567,20 @@ def _nll(r, s):
     return float(np.mean(0.5 * np.log(2 * np.pi * s ** 2) + 0.5 * (r / s) ** 2))
 
 
-def evaluate(T, coll: str, outer, track_folds) -> dict:
+def _true_abs_d0_um(T, coll: str, refit_truth: str):
+    tp = "r_tp_d0" if coll == "refit" and refit_truth == "sp" else "b_tp_d0"
+    return np.abs(T[tp]) * 1e4
+
+
+def evaluate(T, coll: str, outer, track_folds, refit_truth: str = "ot") -> dict:
     """Per-track performance of the OUTER (fully out-of-sample) scores on the
     test-eligible tracks (fold >= 0), per window."""
     from scipy.stats import spearmanr
     from sklearn.metrics import roc_auc_score
 
-    matched, clean, rd0, rz0 = truth(T, coll)
+    matched, clean, rd0, rz0 = truth(T, coll, refit_truth)
     tested = np.asarray(track_folds) >= 0
-    tp_d0 = np.abs(T["b_tp_d0"]) * 1e4
+    tp_d0 = _true_abs_d0_um(T, coll, refit_truth)
     res = {}
     for wname, w in windows(T, coll).items():
         win = w & tested
@@ -594,17 +630,17 @@ def evaluate(T, coll: str, outer, track_folds) -> dict:
 
 
 def trap_ablation(T, coll: str, track_folds, n_folds: int = N_FOLDS, seed: int = SEED,
-                  params: dict | None = None, log=print) -> dict:
+                  params: dict | None = None, refit_truth: str = "ot", log=print) -> dict:
     """d0acc with vs without the withheld d0-derived features (K-fold
     out-of-sample): documents why they are withheld. Not a deployable head."""
     from sklearn.metrics import roc_auc_score
 
     params = dict(HGB_PARAMS if params is None else params)
-    matched, clean, rd0, _ = truth(T, coll)
+    matched, clean, rd0, _ = truth(T, coll, refit_truth)
     X0, _ = feature_matrix(T, coll)
     X1 = np.column_stack([X0] + list(d0_features(T, coll).values()))
     tf = np.asarray(track_folds)
-    tp_d0 = np.abs(T["b_tp_d0"]) * 1e4
+    tp_d0 = _true_abs_d0_um(T, coll, refit_truth)
     out = {}
     for wname, w in windows(T, coll).items():
         m = w & (tf >= 0) & matched
@@ -672,13 +708,14 @@ def _sha256(path, chunk=1 << 20):
     return h.hexdigest()
 
 
-def fit_frozen(T, colls=("refit",), seed: int = SEED, params: dict | None = None, log=print):
+def fit_frozen(T, colls=("refit",), seed: int = SEED, params: dict | None = None,
+               refit_truth: str = "ot", log=print):
     """Final models on ALL events (train-only included), per coll and window.
     Returns ({coll: {window: heads}}, {coll: {window: {n_train, thresholds_um}}})."""
     models, info = {}, {}
     for coll in colls:
         X, _ = feature_matrix(T, coll)
-        lab = truth(T, coll)
+        lab = truth(T, coll, refit_truth)
         models[coll], info[coll] = {}, {}
         for wname, w in windows(T, coll).items():
             t0 = time.perf_counter()
@@ -790,7 +827,8 @@ def train_trackmva(files, output_dir, family: str = "prompt", config: str = "AAA
                    crossfit_mode: str = "nested", fold_seed: int = 0, seed: int = SEED,
                    hgb_params: dict | None = None, step_events: int = 25,
                    max_events: int | None = None, trap: bool = False,
-                   dataset_cache: str | None = None, freeze: bool = True, log=print):
+                   dataset_cache: str | None = None, freeze: bool = True,
+                   refit_truth: str = "ot", log=print):
     """Build the dataset from nano, cross-fit + evaluate, fit and save the
     frozen bundle. `files` is the full ordered input list; `train_only`
     selects the subset whose events are training-only (see ``train_only_mask``).
@@ -821,7 +859,7 @@ def train_trackmva(files, output_dir, family: str = "prompt", config: str = "AAA
     tf = folds_ev[T["evt"]]
     log(f"{len(E['evt'])} events ({int((folds_ev >= 0).sum())} test-eligible), {len(tf)} tracks")
 
-    report = {"family": family, "config": config, "n_events": int(len(E["evt"])),
+    report = {"family": family, "config": config, "refit_truth": refit_truth, "n_events": int(len(E["evt"])),
               "n_tracks": int(len(tf)), "n_folds": n_folds, "crossfit": crossfit_mode,
               "n_test_events": int((folds_ev >= 0).sum()),
               "train_only_files": [os.path.basename(f) for f, t in zip(files, to_mask) if t]}
@@ -833,27 +871,28 @@ def train_trackmva(files, output_dir, family: str = "prompt", config: str = "AAA
     for coll in colls:
         rep = {"features": list(features(T, coll))}
         if crossfit_mode != "none":
-            scores = crossfit(T, coll, tf, crossfit_mode, n_folds, seed, params, log)
+            scores = crossfit(T, coll, tf, crossfit_mode, n_folds, seed, params, refit_truth, log)
             outer = outer_scores(scores, tf, crossfit_mode)
-            rep["perf"] = evaluate(T, coll, outer, tf)
+            rep["perf"] = evaluate(T, coll, outer, tf, refit_truth)
             oof[f"{coll}_scores"] = scores[:, :, :len(OUTPUTS)].astype(np.float32)
             oof[f"{coll}_outer"] = outer.astype(np.float32)
             log(json.dumps({w: {k: v for k, v in r.items() if k.startswith(("auc", "sd0_cov", "sd0_pull68_all"))}
                             for w, r in rep["perf"].items()}))
         if trap:
-            rep["trap_ablation"] = trap_ablation(T, coll, tf, n_folds, seed, params, log)
+            rep["trap_ablation"] = trap_ablation(T, coll, tf, n_folds, seed, params, refit_truth, log)
         report[coll] = rep
     if crossfit_mode != "none":
         np.savez_compressed(stem + "_oof.npz", **oof)
 
     if freeze:
-        models, info = fit_frozen(T, colls, seed, params, log)
+        models, info = fit_frozen(T, colls, seed, params, refit_truth, log)
         meta = {
             "what": "SmartPixels per-track resolution-quality MVAs (ngtagger.train.trackmva)",
             "spec_version": SPEC_VERSION, "family": family, "config": config,
             "tables": table_names(family, config), "colls": colls,
             "features": {c: report[c]["features"] for c in colls},
             "outputs": OUTPUTS, "head_definitions": HEAD_DEFINITIONS, "withheld_features": WITHHELD,
+            "refit_truth": refit_truth,
             "windows": {c: window_names(c) for c in colls},
             "window_rule": f"refit: |d0_refit| <= {D0_SPLIT} cm -> prompt, else displaced; base: all",
             "sigma_floor_um": SIGMA_FLOOR_UM, "quantiles": list(QUANTILES),

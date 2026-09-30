@@ -80,7 +80,7 @@ def _synth_tables(n_events=40, seed=0, ntrk_range=(15, 30)):
     J = lambda cols, n: {c: ak.unflatten(np.asarray(v), n) for c, v in cols.items()}  # noqa: E731
     tables = {B: J(base, ntrk), R: J(ref, ntrk), H: J(hits, nh_ev),
               "L1TSmartPixelsCluster": J({"tpIdx": ctp, "layer": np.ones(Hn, np.int32)}, nh_ev),
-              "L1TTP": J({"pt": np.abs(tp_pt[kept])}, ttp_n)}
+              "L1TTP": J({"pt": np.abs(tp_pt[kept]), "d0": tp_d0[kept], "z0": tp_z0[kept]}, ttp_n)}
     ev = {"run": np.ones(n_events, np.int64), "luminosityBlock": np.ones(n_events, np.int64),
           "event": np.arange(n_events, dtype=np.int64) + 100 * seed}
     return tables, ev
@@ -146,6 +146,31 @@ def test_n_it_wrong_unmatched_track():
     T, _ = tm.tracks_from_batch(_batch(tables, ev), "prompt", CFG)
     acc = ak.to_numpy(ak.flatten(tables[H]["hitAccepted"]))
     assert T["t_n_it_wrong"].sum() == acc.sum() > 0
+
+
+def test_canonical_family_and_sp_truth():
+    """The canonical (unsuffixed) tables read like the prompt family; refit_truth='sp' takes
+    the refit row's own tpIdx TP from L1TTP (pruned / unmatched -> unmatched)."""
+    tables, ev = _synth_tables(n_events=6, seed=5)
+    canon = {"L1TTrack": tables[B], "L1TSmartPixelsTrack": tables[R], "L1TSmartPixelsRefitHit": tables[H],
+             "L1TSmartPixelsCluster": tables["L1TSmartPixelsCluster"], "L1TTP": tables["L1TTP"]}
+    T, ntrk = tm.tracks_from_batch(_batch(canon, ev), "canonical", CFG)
+    Tp, _ = tm.tracks_from_batch(_batch(tables, ev), "prompt", CFG)
+    for k in Tp:
+        np.testing.assert_array_equal(T[k], Tp[k])
+    ok = T["r_tpIdx"] >= 0
+    assert ok.any() and (~ok).any()
+    # the synthetic L1TTP rows are the kept tracks' own TPs
+    np.testing.assert_allclose(T["r_tp_d0"][ok], T["b_tp_d0"][ok])
+    assert np.isnan(T["r_tp_z0"][~ok]).all()
+    m_sp, _, rd0_sp, _ = tm.truth(T, "refit", "sp")
+    m_ot, _, rd0_ot, _ = tm.truth(T, "refit", "ot")
+    assert np.array_equal(m_sp, ok) and np.array_equal(m_ot, T["b_tp_pt"] > 0)
+    both = ok & m_ot
+    np.testing.assert_allclose(rd0_sp[both], rd0_ot[both])
+    del T["r_tp_d0"]
+    with pytest.raises(KeyError, match="L1TTP"):
+        tm.truth(T, "refit", "sp")
 
 
 def test_tp_links_unavailable_refused():

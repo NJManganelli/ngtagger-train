@@ -257,10 +257,14 @@ def main(argv=None):
                       help="files (path, basename, or a basename substring such as _f01_) "
                            "whose events are in every training set and never evaluated, "
                            "e.g. the files that trained the cluster-angle CNN")
-    p_tm.add_argument("--family", choices=["prompt", "ext"], default="prompt",
+    p_tm.add_argument("--family", choices=["prompt", "ext", "canonical"], default="prompt",
                       help="prompt = L1TTrack + L1TSmartPixelsTrackSeedlessRefit<cfg>; "
                            "ext = L1TExtTrack + L1TSmartPixelsExtTrackSeedlessRefit<cfg> (the table "
-                           "jet constituents crossref)")
+                           "jet constituents crossref); canonical = L1TTrack + L1TSmartPixelsTrack "
+                           "(canonical/coopt nano, --config unused)")
+    p_tm.add_argument("--refit-truth", choices=["ot", "sp"], default="ot",
+                      help="residual truth of the refit heads: ot = the OT-associator TP of the "
+                           "base row; sp = the refit row's own tpIdx TP via L1TTP")
     p_tm.add_argument("--config", default="AAAA", help="seedlessRefit config suffix")
     p_tm.add_argument("--colls", nargs="+", choices=["refit", "base"], default=["refit"],
                       help="refit = the deliverable; base = the OT-only reference heads")
@@ -415,7 +419,7 @@ def main(argv=None):
                        hgb_params={"max_iter": args.max_iter, "learning_rate": args.learning_rate},
                        step_events=args.step_events, max_events=args.max_events,
                        trap=args.trap_ablation, dataset_cache=args.dataset_cache,
-                       freeze=not args.no_freeze)
+                       freeze=not args.no_freeze, refit_truth=args.refit_truth)
     elif args.cmd == "inspect-nano":
         import uproot
 
