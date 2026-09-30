@@ -50,9 +50,9 @@ def log(*a):
     print(time.strftime("%H:%M:%S"), f"[{rss:.2f} GB]", *a, flush=True)
 
 
-def n_entries(fn):
+def event_ids(fn):
     with uproot.open(fn) as f:
-        return f["Events"].num_entries
+        return np.column_stack([f["Events"][c].array(library="np").astype(np.int64) for c in EVENT_ID])
 
 
 # ---------------------------------------------------------------- 1. tracks
@@ -167,14 +167,14 @@ def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask):
     nj = ak.to_numpy(ak.num(jets.pt, axis=1))
     entry = np.repeat(np.arange(len(nj)), nj)
     k = ak.to_numpy(ak.flatten(keep))
-    with uproot.open(fn) as f:
-        evid = np.column_stack([f["Events"][c].array(library="np").astype(np.int64) for c in EVENT_ID])
+    evid = event_ids(fn)
     np.savez_compressed(
         out, X=X[k], feature_names=np.array(names), label=ak.to_numpy(ak.flatten(label))[k],
         target_pt=target_pt[k], truth_pt=ak.to_numpy(ak.flatten(target_pt_phys))[k],
         pt=ak.to_numpy(ak.flatten(jets.pt))[k], eta=ak.to_numpy(ak.flatten(jets.eta))[k],
         nconst=ak.to_numpy(ak.flatten(ak.num(const.pt, axis=2)))[k],
-        entry=entry[k], is_test=test_mask[entry[k]], evid=evid, n_jets_all=int(len(k)),
+        entry=entry[k], is_test=test_mask[entry[k]], evid=evid, test_entries=test_mask,
+        n_jets_all=int(len(k)),
         bundle_sha=np.array(sha))
     log(f"jets {C.tag(sample, mask, n)}: {int(k.sum())} labelled of {len(k)}")
     return out
@@ -190,9 +190,9 @@ def main():
         fs = C.files(s, a.mask, require_all=(s == "ttbar"))
         if not fs:
             raise FileNotFoundError(f"no {s} files for {a.mask}")
-        ne = {n: n_entries(p) for n, p in fs}
-        splits[s] = C.split_table(s, ne)
-        log(f"{s} {a.mask}: {len(fs)} files, {sum(ne.values())} ev, "
+        ev = {n: event_ids(p) for n, p in fs}
+        splits[s] = C.split_table(s, ev)
+        log(f"{s} {a.mask}: {len(fs)} files, {sum(len(e) for e in ev.values())} ev, "
             f"{sum(int(v.sum()) for v in splits[s].values())} test")
         for n, p in fs:
             fileset.append((s, n, p, build_tracks(s, a.mask, n, p)))

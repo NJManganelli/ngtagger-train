@@ -18,7 +18,8 @@ Event split (identical for every mask; events are the same across masks):
   ttbar: 20% of ALL ttbar events (200) are test, drawn only from f03..f10 -- f01/f02
          trained the cluster-angle CNN (IT angles in-sample), so they are always train.
   htt:   20% of each file's events are test.
-Chosen once with SPLIT_SEED; `split_table` returns it per (sample, file, entry).
+Chosen once with SPLIT_SEED on the EVENT IDENTITY (run, lumi, event): the entry order of a
+file differs between masks (multithreaded output), so entries are never used as keys.
 """
 from __future__ import annotations
 
@@ -89,24 +90,33 @@ def files(sample: str, mask: str, require_all: bool = False) -> list[tuple[int, 
     return out
 
 
-def split_table(sample: str, n_entries: dict[int, int]) -> dict[int, np.ndarray]:
-    """{file number: bool test mask over entries}. Deterministic in SPLIT_SEED and the
-    per-file entry counts (identical across masks by construction)."""
-    rng = np.random.default_rng([SPLIT_SEED, 0 if sample == "ttbar" else 1])
-    test = {n: np.zeros(k, bool) for n, k in n_entries.items()}
+def split_table(sample: str, evids: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
+    """{file number: bool test mask in the file's entry order}, from each file's (n, 3)
+    (run, lumi, event) array. The choice is made on the events sorted by identity, so it
+    is the same set of events in every mask whatever the entry order."""
+    order = {n: np.lexsort(e.T[::-1]) for n, e in evids.items()}      # entry indices, sorted by id
+    test = {n: np.zeros(len(e), bool) for n, e in evids.items()}
     if sample == "ttbar":
-        total = sum(n_entries.values())
-        pool = [(n, e) for n in sorted(n_entries) if n not in TTBAR_TRAIN_ONLY
-                for e in range(n_entries[n])]
-        pick = rng.permutation(len(pool))[:int(round(TEST_FRACTION * total))]
-        for i in pick:
-            n, e = pool[i]
-            test[n][e] = True
+        rng = np.random.default_rng([SPLIT_SEED, 0])
+        total = sum(len(e) for e in evids.values())
+        pool = [(n, i) for n in sorted(evids) if n not in TTBAR_TRAIN_ONLY for i in order[n]]
+        for j in rng.permutation(len(pool))[:int(round(TEST_FRACTION * total))]:
+            n, i = pool[j]
+            test[n][i] = True
     else:
-        for n in sorted(n_entries):
-            k = n_entries[n]
-            test[n][np.random.default_rng([SPLIT_SEED, 1, n]).permutation(k)[:int(round(TEST_FRACTION * k))]] = True
+        for n in sorted(evids):
+            k = len(evids[n])
+            pick = np.random.default_rng([SPLIT_SEED, 1, n]).permutation(k)[:int(round(TEST_FRACTION * k))]
+            test[n][order[n][pick]] = True
     return test
+
+
+def event_key(sample_idx, fileno, evid):
+    """int64 key of (sample, file, lumi, event) -- unique within the study."""
+    evid = np.asarray(evid, np.int64)
+    if (evid[:, 2] >= 10**7).any() or (evid[:, 1] >= 10**6).any():
+        raise ValueError("event / lumi number beyond the key range")
+    return ((np.asarray(sample_idx, np.int64) * 100 + fileno) * 10**6 + evid[:, 1]) * 10**7 + evid[:, 2]
 
 
 def tag(sample: str, mask: str, n: int) -> str:

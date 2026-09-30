@@ -31,7 +31,7 @@ CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp.yam
 
 def load_mask(mask, samples):
     """Concatenate the jet caches of `mask` over `samples` (study acceptance applied)."""
-    parts = []
+    parts, test_keys = [], []
     names = None
     for si, s in enumerate(samples):
         fs = C.files(s, mask)
@@ -44,6 +44,7 @@ def load_mask(mask, samples):
                 names = fn
             elif fn != names:
                 raise RuntimeError("feature names differ between caches")
+            test_keys.append(C.event_key(si, n, d["evid"][d["test_entries"]]))
             acc = (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX)
             ev = d["evid"][d["entry"][acc]]
             parts.append({
@@ -53,6 +54,7 @@ def load_mask(mask, samples):
                 "entry": d["entry"][acc], "evid": ev,
             })
     D = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
+    D["test_event_keys"] = np.sort(np.concatenate(test_keys))
     return D, names
 
 
@@ -111,7 +113,7 @@ def main():
             fileno=D["file"][te], entry=D["entry"][te], evid=D["evid"][te],
             samples=np.array(a.samples), classes=np.array(CLASS_LABELS), features=np.array(cols),
             val_loss=np.array(h.get("val_loss", [])), loss=np.array(h.get("loss", [])),
-            train_counts=json.dumps(counts), seed=seed)
+            train_counts=json.dumps(counts), seed=seed, test_event_keys=D["test_event_keys"])
         print(f"{name}: {len(h.get('loss', []))} epochs, best val_loss {model.best_val_loss():.4f}, "
               f"{time.time() - t0:.0f}s", flush=True)
 

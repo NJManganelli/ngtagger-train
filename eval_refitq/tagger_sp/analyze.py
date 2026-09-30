@@ -156,15 +156,24 @@ def load_preds():
         P.setdefault((m.group(2), m.group(1)), {})[int(m.group(3))] = {
             "prob": d["prob"].astype(np.float64), "label": d["label"], "pt": d["pt"], "eta": d["eta"],
             "sample": d["sample"], "samples": [str(x) for x in d["samples"]],
-            "key": d["sample"].astype(np.int64) * 10**7 + d["fileno"].astype(np.int64) * 10**4 + d["entry"],
+            "key": C.event_key(d["sample"], d["fileno"].astype(np.int64), d["evid"]),
             "train_counts": json.loads(str(d["train_counts"])), "n_epochs": len(d["loss"]),
-            "features": [str(x) for x in d["features"]]}
+            "features": [str(x) for x in d["features"]], "test_event_keys": d["test_event_keys"]}
     return P
 
 
 def compute(P, n_boot, seed=12345):
     """{cell: {"seeds": {s: {reg: {metric: nominal}}}, "avg": {reg: {metric: (1+n_boot,)}}}}."""
-    ev = np.unique(np.concatenate([d["key"] for seeds in P.values() for d in seeds.values()]))
+    # the test EVENTS (from the split, incl. events without an accepted labelled jet) must be
+    # identical in every cell: the pairing of the bootstrap relies on it
+    ev = next(iter(next(iter(P.values())).values()))["test_event_keys"]
+    for c, s in P.items():
+        for d in s.values():
+            if not np.array_equal(d["test_event_keys"], ev):
+                raise RuntimeError(f"{c}: test events differ from the other cells")
+            if np.setdiff1d(d["key"], ev).size:
+                raise RuntimeError(f"{c}: jets outside the test events")
+    print(f"  {len(ev)} test events, identical in all cells", flush=True)
     rng = np.random.default_rng(seed)
     cnt = np.vstack([np.ones(len(ev))] + [rng.multinomial(len(ev), np.full(len(ev), 1 / len(ev)))
                                           for _ in range(n_boot)]).astype(np.float64)
