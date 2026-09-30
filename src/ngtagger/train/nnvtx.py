@@ -336,10 +336,17 @@ def vertex_dxy_features(tracks, pt_field: str = "pt", z0_field: str = "z0",
 # --------------------------------------------------------------------------
 def build_e2e_model(n_weight_feats: int, n_assoc_extra: int, max_tracks: int = MAX_TRACKS,
                     weight_layers=(10, 10), pattern_filters=(16, 16), assoc_layers=(20, 20),
-                    soft_sigma: float = HISTO_WIDTH):
+                    soft_sigma: float | None = None, n_bins: int = N_BINS, pattern_kernel: int = 3):
     """Weight NN + differentiable soft histogram + pattern NN + assoc NN,
     joined end-to-end. Inputs: track features (n_weight_feats, first column
-    MUST be z0 is NOT included there - z0 enters via a dedicated input), mask."""
+    MUST be z0 is NOT included there - z0 enters via a dedicated input), mask.
+
+    Histogram: n_bins Gaussian-kernel bins over [HISTO_MIN, HISTO_MAX]; bin width
+    HISTO_WIDTH * N_BINS / n_bins (the defaults reproduce the 256 x 0.16 cm layer).
+    soft_sigma: Gaussian width of each track's contribution [cm]; None = one bin width.
+    pattern_kernel: kernel size of every Conv1D of the pattern net (the hidden layers and
+    the logits layer; the stock 3 bins is the analogue of the fastHisto 3-bin window).
+    No pooling: the soft-argmax runs over all n_bins."""
     import keras
     from keras import layers, ops
 
@@ -355,23 +362,25 @@ def build_e2e_model(n_weight_feats: int, n_assoc_extra: int, max_tracks: int = M
     trk_weight = layers.Lambda(lambda t: t[0][..., 0] * t[1], name="masked_weight")([trk_weight, mask_in])
 
     # ---- differentiable soft histogram over z0
-    centers = np.linspace(HISTO_MIN + HISTO_WIDTH / 2, HISTO_MAX - HISTO_WIDTH / 2, N_BINS).astype("float32")
+    width = HISTO_WIDTH * N_BINS / n_bins
+    soft_sigma = width if soft_sigma is None else soft_sigma
+    centers = np.linspace(HISTO_MIN + width / 2, HISTO_MAX - width / 2, n_bins).astype("float32")
 
     def soft_hist(args):
         z0, wgt = args
-        d = ops.expand_dims(z0, -1) - centers[None, None, :]           # (B, T, N_BINS)
+        d = ops.expand_dims(z0, -1) - centers[None, None, :]           # (B, T, n_bins)
         k = ops.exp(-0.5 * (d / soft_sigma) ** 2)
-        return ops.sum(ops.expand_dims(wgt, -1) * k, axis=1)           # (B, N_BINS)
+        return ops.sum(ops.expand_dims(wgt, -1) * k, axis=1)           # (B, n_bins)
 
     hist = layers.Lambda(soft_hist, name="soft_histogram")([z0_in, trk_weight])
-    hist = layers.Reshape((N_BINS, 1))(hist)
+    hist = layers.Reshape((n_bins, 1))(hist)
 
     # ---- pattern network -> soft-argmax z0
     p = hist
     for i, f in enumerate(pattern_filters):
-        p = layers.Conv1D(f, 3, padding="same", activation="relu", name=f"pattern_conv_{i}")(p)
-    logits = layers.Conv1D(1, 3, padding="same", name="pattern_logits")(p)
-    logits = layers.Reshape((N_BINS,))(logits)
+        p = layers.Conv1D(f, pattern_kernel, padding="same", activation="relu", name=f"pattern_conv_{i}")(p)
+    logits = layers.Conv1D(1, pattern_kernel, padding="same", name="pattern_logits")(p)
+    logits = layers.Reshape((n_bins,))(logits)
     probs = layers.Softmax(name="pattern_softmax")(logits)
     z0_pred = layers.Lambda(lambda pr: ops.sum(pr * centers[None, :], axis=-1, keepdims=True),
                             name="pv_z0")(probs)

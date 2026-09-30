@@ -125,3 +125,26 @@ def test_e2e_training_smoke(tmp_path):
     # separable-by-construction synthetic: association learnable in a few epochs
     assert metrics["assoc_auc"] > 0.8, metrics
     assert (tmp_path / "out" / "e2e_nnvtx.keras").exists()
+
+
+@pytest.mark.parametrize("n_bins,kernel", [(256, 3), (512, 5), (1024, 13)])
+def test_e2e_histogram_binning(n_bins, kernel):
+    """Soft-histogram size and pattern-net kernel are parameters; the defaults are the stock
+    256 x 0.16 cm layer with kernel-3 convolutions."""
+    pytest.importorskip("keras")
+    from ngtagger.train.nnvtx import HISTO_WIDTH, N_BINS, build_e2e_model
+
+    m = build_e2e_model(3, 0, max_tracks=8, n_bins=n_bins, pattern_kernel=kernel)
+    assert m.get_layer("pattern_logits").output.shape[1] == n_bins
+    for name in ("pattern_conv_0", "pattern_conv_1", "pattern_logits"):
+        assert m.get_layer(name).kernel_size == (kernel,)
+    z0 = np.zeros((2, 8), np.float32)
+    z0[:, :3] = 5.0  # three tracks at z = 5 cm
+    mask = np.zeros((2, 8), np.float32)
+    mask[:, :3] = 1.0
+    zp, assoc = m.predict([z0, np.ones((2, 8, 3), np.float32), mask], verbose=0)
+    assert zp.shape == (2, 1) and assoc.shape == (2, 8)
+    default = build_e2e_model(3, 0, max_tracks=8)
+    assert default.get_layer("pattern_logits").output.shape[1] == N_BINS == 256
+    assert default.get_layer("pattern_conv_0").kernel_size == (3,)
+    assert HISTO_WIDTH == 0.16
