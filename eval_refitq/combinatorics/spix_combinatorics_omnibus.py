@@ -32,6 +32,24 @@ tables of a one-build nano (mask from its ParameterSets, or --canonical-mask),
 or "all". Omitted, the input must carry exactly one. Several variants: the
 per-variant studies write one page each into <outdir>/<variant>/, the shared
 ones (incl. the activeSP sweep (10) over the selected set) one page in <outdir>.
+
+SURFACES. The refit visits the barrel layers IL1-IL4 AND the discs ID1-ID4 (TFPX
+disks 1-4, both sides; build 92bad91b2ba onward). Every per-layer quantity here is
+per SURFACE, with the nano's codes: 1-4 = IL1-IL4, 11-14 = ID1-ID4 (the refit hit
+table's `layer` column and the cluster table's `surface` column carry them). An
+activeSP mask character k instruments ILk AND IDk ("AIAI" = IL1, IL3, ID1, ID3).
+On a disc module local x is r-phi and local y the RADIUS. The seeding studies
+(12-15, 17, 18) are BARREL-ONLY BY DESIGN: the seeders they run
+(tracklet_topology_cost, tp_findability) implement the barrel IT seeds only (the
+disc seed menu is designed, not implemented), so they get the barrel clusters.
+
+REFIT MONITOR (section F). R1 track-parameter resolution and pulls, R2 hit
+selection per surface, R3 the angle-estimate monitor against the emulator's sigma
+table, R4 the refit-covariance calibration check, R5 the track MVAs (optional).
+Every run writes spix_monitor_summary.json (key numbers + provenance) into
+<outdir>; compare two runs with monitor_diff.py.
+
+FIGURES are vector PDF (legends off the data, statistics on table pages).
 """
 from __future__ import annotations
 
@@ -40,6 +58,8 @@ import glob as _glob
 import json
 import os
 import re
+import resource
+import time
 
 import awkward as ak
 import matplotlib
@@ -55,8 +75,14 @@ import uproot
 
 from ngtagger.data import spix_nano as SPN
 
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import omnibus_support as OSU   # noqa: E402
+
 SENTINEL = -900.0
-LAYERS = (1, 2, 3, 4)
+LAYERS = SPN.BARREL                    # IL1-IL4: the barrel-only (seeding) studies
+SURFACES = SPN.SP_SURFACES             # IL1-IL4, ID1-ID4: every per-surface study
+SNAME = {s: SPN.surface_name(s) for s in SURFACES}
 CONES = {"q68": 1.0, "q95": 1.959964}
 PT_EDGES = np.array([2, 3, 4, 6, 10, 20, 1e9])
 ETA_EDGES = np.array([-2.4, -1.6, -0.8, 0.0, 0.8, 1.6, 2.4])
@@ -79,9 +105,14 @@ Z_HALF_RANGE_CM = 15.0   # +-z0 span a seeding stage would have to slice
 GLOSSARY = [
     ("crossing",
      "One track's PREDICTED intersection with one instrumented module. The unit "
-     "most per-layer quantities are counted in -- not a track, not a cluster. One "
-     "track normally has one crossing per instrumented layer, occasionally two "
-     "where it clips overlapping modules."),
+     "most per-surface quantities are counted in -- not a track, not a cluster. One "
+     "track normally has one crossing per instrumented surface it reaches."),
+    ("surface  (IL1-IL4, ID1-ID4)",
+     "An inner-tracker surface the refit visits: the barrel layers IL1-IL4 (codes "
+     "1-4) and the discs ID1-ID4 (codes 11-14; TFPX disks 1-4, both sides). The "
+     "refit visits the surfaces in PATH order along the OT track, outermost first: "
+     "e.g. IL4, IL3, IL2, IL1 for a central track, ID4, ID3, ID2, ID1, IL1 for a "
+     "forward one. On a disc module local x is r-phi and local y the RADIUS."),
     ("cluster",
      "A reconstructed group of adjacent fired pixels: one measurement. NOT a single "
      "pixel -- an inclined track fires several pixels and they form one cluster."),
@@ -115,8 +146,9 @@ GLOSSARY = [
     ("local frame  /  local x, local y",
      "The module's own coordinate system. LOCAL X is the FINE-pitch axis (25 um) and "
      "points along r-phi, i.e. the BENDING plane; LOCAL Y is the coarse axis (100 um) "
-     "and points along z. Verified from the CPE resolutions: median sigX = 3.0 um "
-     "against sigY = 12.5 um. Local z is the module NORMAL."),
+     "and points along z on a barrel module, along the RADIUS (inward) on a disc "
+     "module. Verified from the CPE resolutions: median sigX = 3.0 um against sigY "
+     "= 12.5 um (barrel). Local z is the module NORMAL."),
     ("cotAlpha  (ALPHA = BENDING)",
      "p_x_local / p_z_local, PixelAV convention -- the track's angle in the local x "
      "direction, hence the BENDING-PLANE (r-phi) angle. NOTE it carries almost no pT "
@@ -153,18 +185,20 @@ GLOSSARY = [
      "The cluster whose DOMINANT TrackingParticle is the TP the track was matched "
      "to. Dominance is by charge, winner-takes-pixel."),
     ("combinations / track",
-     "The number of (L1,L2,L3,L4) hit tuples one refit must test = PRODUCT of the "
-     "candidate counts over INSTRUMENTED layers. A layer with no candidate "
-     "contributes a factor of 1, not 0, because the refit skips it and carries on. "
+     "The number of hit tuples (one cluster per crossed surface) one refit must "
+     "test = PRODUCT of the candidate counts over the INSTRUMENTED surfaces it "
+     "crosses (IL1-IL4 and ID1-ID4). A surface with no candidate contributes a "
+     "factor of 1, not 0, because the refit skips it and carries on. "
      "Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 -> 6. Pinned by "
      "tests/test_combination_counting.py."),
     ("activeSP  /  A  /  I",
-     "Four-character mask, one character per TBPX layer L1,L2,L3,L4. A = that layer "
-     "IS instrumented with smart pixels; I = it is not. An uninstrumented layer "
-     "delivers NO data at L1 latency at all -- conventional pixels are read out only "
-     "after an L1 accept -- so it contributes nothing to L1 track building, not even "
-     "a position. Each mask is therefore a candidate DETECTOR BUILD, not an "
-     "algorithm setting. Example: AAII = L1 and L2 instrumented, L3 and L4 not."),
+     "Four-character mask; character k describes the barrel layer ILk AND the disc "
+     "IDk together. A = that pair IS instrumented with smart pixels; I = it is not. "
+     "An uninstrumented surface delivers NO data at L1 latency at all -- "
+     "conventional pixels are read out only after an L1 accept -- so it contributes "
+     "nothing to L1 track building, not even a position. Each mask is therefore a "
+     "candidate DETECTOR BUILD, not an algorithm setting. Example: AAII = IL1, IL2, "
+     "ID1, ID2 instrumented, IL3, IL4, ID3, ID4 not."),
     ("nSP", "Number of instrumented layers = count of 'A' in the mask."),
     (">=2hit / >=3hit  (viability)",
      "Fraction of tracks to which the refit actually attached that many hits. 0% for "
@@ -234,15 +268,16 @@ GLOSSARY = [
     # ---- OT-only projection study (ot_projection.py) ---------------------
     ("OT-only projection",
      "The OT track's own helix and fit covariance projected onto the inner-tracker "
-     "barrel with NO Kalman update and NO multiple-scattering term: what a refit "
-     "knows before it has included any IT cluster. Each layer is projected "
-     "independently from the OT fit, so IL1 is not informed by IL4. Computed "
+     "surfaces (IL1-IL4, ID1-ID4) with NO Kalman update and NO multiple-scattering "
+     "term: what a refit knows before it has included any IT cluster. Each surface "
+     "is projected independently from the OT fit, so IL1 is not informed by IL4. Computed "
      "outside the refit (ot_projection.py) and cross-checked against the "
      "producer's own OT-track projection (projOT*) on every shared crossing."),
-    ("layer projection",
-     "One OT track projected to one IT barrel layer. It may span SEVERAL modules: "
-     "the ellipse is evaluated on every module it overlaps, not only on the one the "
-     "helix lands in, which removes the 'module boundary' bias above."),
+    ("surface projection",
+     "One OT track projected to one IT surface (a barrel layer, or the disc on the "
+     "side it heads to). It may span SEVERAL modules: the ellipse is evaluated on "
+     "every module it overlaps, not only on the one the helix lands in, which "
+     "removes the 'module boundary' bias above."),
     ("4-sigma ellipse",
      "Mahalanobis distance d < 4 in the module's local (x, y), with the 2x2 "
      "covariance J C J^T: C is the OT fit's helix covariance (L1TTrack_cov_*), J the "
@@ -275,23 +310,51 @@ GLOSSARY = [
      "genuine stub. unjoined: a stub whose truth could not be joined. covariance "
      "absent: L1TTrack_cov_* all zero."),
     ("A  (target)  /  A-in  /  A-out",
-     "A cluster of the majority-owner TP anywhere on the layer. A-in lies inside the "
+     "A cluster of the majority-owner TP anywhere on the surface. A-in lies inside the "
      "4-sigma ellipse, A-out outside; A-out residuals are taken on the target's own "
-     "module, so they are frame-consistent too. Containment = fraction of layer "
+     "module, so they are frame-consistent too. Containment = fraction of surface "
      "projections with at least one A-in, among those where an A cluster exists."),
     ("B1 / B2 / B3  (background inside the ellipse)",
      "Every other cluster inside the 4-sigma ellipse. B1: owned by a TP that also "
      "owns a foreign stub of this track (the trap a contaminated track sets for "
      "itself). B2: owned by any other TP. B3: no TP (unlinked: mostly soft "
-     "sub-0.1 GeV deposits, delta rays, curlers). CAVEAT: in these nanos (no "
-     "noise-angle payload) B3 clusters carry NO angle estimate, so angle-using "
-     "metrics never charge them an angle mismatch. Once angles are attached to "
-     "them (a sensor-ADC angle regressor, or a smart-pixels estimate), B3 is a "
-     "potential contaminant that these purities do not yet represent."),
+     "sub-0.1 GeV deposits, delta rays, curlers). With the emulator angle source "
+     "(angleSource emu: every cluster gets an angle, class C for those without a "
+     "trustworthy truth helix) B3 clusters carry an angle like any other, so the "
+     "angle-using metrics charge them their mismatch; on payload-era nanos they "
+     "carried none, and purities against B3 were not representative there."),
+    # ---- the refit monitor (section F) ------------------------------------
+    ("core RMS / full RMS",
+     "The project's resolution convention: the core RMS is the RMS about ZERO of "
+     "the residuals kept by an iterative 3-sigma clip about the mean (so a bias "
+     "counts), quoted with the fraction outside the core; the full RMS is the plain "
+     "RMS of all residuals."),
+    ("pull / coverage",
+     "Residual over the uncertainty the fit or table claims for it; width 1 = honest. "
+     "Coverage = fraction of |pull| < 1, 2, 3 (Gaussian 0.683, 0.954, 0.997)."),
+    ("width68",
+     "(q84 - q16) / 2 of a distribution: the emulator sigma table's own definition of "
+     "an angle resolution, used wherever a measured width is compared with it."),
+    ("class T / class C  (tpEmuClass)",
+     "The emulator's two routes. T: the cluster has a TP whose helix passes within "
+     "1 cm (truth-consistent) and its angle is the SmartPixels response on the truth. "
+     "C: everything else (no TP, delta rays, loopers) -- angle from a CNN plus a donor "
+     "residual; its 'true' angle (the dominant TP's helix) is unreliable."),
+    ("sigma table",
+     "The emulator's angle-resolution lookup (emuSigmaSet, e.g. spix_emu_sigma_v2.json): "
+     "sigma per surface and |reported cot|, the error the refit gives every emitted "
+     "angle. Read from the nano's ParameterSets, its sha256 recorded in the monitor."),
+    ("correct hit / wrong hit",
+     "An accepted refit hit whose cluster belongs to the OT track's TP "
+     "(L1TTrack_tpIdx; the producer's selHitClass 0) / to another TP or none (1, 2)."),
+    ("innovation pull",
+     "(cluster - running projection) / sqrt(track projected variance + cluster "
+     "variance): the KF's own consistency test on a surface (pullX/Y/Alpha/Beta)."),
     ("residual  (du, dv, dcotAlpha, dcotBeta)",
      "Cluster minus OT-only projection, in the local frame of the module the "
      "cluster is on, after projecting the track onto THAT module's plane: du, dv in "
-     "um; dcotAlpha, dcotBeta unitless, cluster = the sensor's angle estimate "
+     "um (on a disc: r-phi, radius); dcotAlpha, dcotBeta unitless, cluster = the "
+     "sensor's angle estimate "
      "(localCotAlpha/Beta), track = the helix direction taken through the same "
      "GeomDet::toLocal. Clusters without an angle estimate enter the position "
      "panels only."),
@@ -360,6 +423,9 @@ def angle_cap_census_files(files, step=10):
     cols = _SENTINEL_COLS + (["tpEmuClass"] if SPN.has_column(keys, CLUSTER_TABLE, "tpEmuClass") else [])
     br = SPN.cluster_branches(keys, cols, disc_scope="sp", cap_angles=False)
     for A in uproot.iterate([f"{f}:Events" for f in files], br, step_size=step):
+        if MAX_EVENTS is not None and n_ev >= MAX_EVENTS:
+            break
+        A = A[:MAX_EVENTS - n_ev] if MAX_EVENTS is not None else A
         D, n = SPN.flat_clusters(A, cols, disc_scope="sp", cap_angles=False)
         n_ev += len(n)
         g = SPN.angle_cap_groups(D["surface"], D["tpIdx"], D.get("tpEmuClass"))
@@ -539,7 +605,7 @@ NEED_HIT = ["trackIdx", "layer", "detId", "hitAccepted", "selHitClass",
             "projOTLocalX", "projOTLocalY", "projOTSigX", "projOTSigY",
             "projOTCotAlpha", "projOTCotBeta", "projLocalX", "projLocalY",
             "projCotAlpha", "projCotBeta", "projSigX", "projSigY",
-            "recoLocalX", "recoLocalY", "selClusterIdx"]
+            "recoLocalX", "recoLocalY", "selClusterIdx", "windowMult", "windowTruncated"]
 
 
 class Variant(NamedTuple):
@@ -555,6 +621,28 @@ class Variant(NamedTuple):
     @property
     def label(self):
         return self.name if self.name == self.mask else f"{self.name} ({self.mask})"
+
+
+# --max-events: a DEVELOPMENT cap on the events every in-memory read takes (the
+# first N events over the inputs, in order). The streamed studies (19, 20) take
+# --proj-nev (defaulted to it); the seeding studies that read their own inputs
+# whole (12's OT part, 14) refuse to run under it rather than mix event ranges.
+MAX_EVENTS = None
+
+
+def _concat(files, filter_name):
+    """uproot.concatenate of the Events trees, capped at MAX_EVENTS."""
+    if MAX_EVENTS is None:
+        return uproot.concatenate([f"{f}:Events" for f in files], filter_name=filter_name)
+    parts, left = [], MAX_EVENTS
+    for f in files:
+        if left <= 0:
+            break
+        with uproot.open(f"{f}:Events") as t:
+            n = min(t.num_entries, left)
+            parts.append(t.arrays(filter_name=filter_name, entry_stop=n))
+        left -= n
+    return ak.concatenate(parts)
 
 
 def _keys(path):
@@ -698,9 +786,9 @@ def _ttc():
 
 
 def load_clusters(files):
-    """Variant-independent inputs: the TBPX cluster table K, the OT tracks' pt/eta
-    (flat, with per-event offsets) and the event count."""
-    ccols = ["layer", "detId", "localX", "localY", "charge", "tpPt",
+    """Variant-independent inputs: the cluster table K (barrel AND discs), the OT
+    tracks' pt/eta (flat, with per-event offsets) and the event count."""
+    ccols = ["surface", "layer", "detId", "localX", "localY", "charge", "tpPt",
              "tpLocalCotAlpha", "tpLocalCotBeta", "sizeX", "sizeY", "tpIdx"]
     # sensor angle + CPE sigma, present once the cluster table reads SmartPixelsRecHit
     optional = {"localCotAlpha": "clLocalCotAlpha", "localCotBeta": "clLocalCotBeta",
@@ -716,19 +804,18 @@ def load_clusters(files):
                 "sigGlobalClusterCotTheta": "gSigCotTheta",
                 "tpGlobalClusterPhi": "tpGClPhi",
                 "tpGlobalClusterCotTheta": "tpGClCotTheta",
-                "hasBeta": "clHasBeta"}
-    rcols = ["pt", "eta"]
+                "hasBeta": "clHasBeta", "tpEmuClass": "tpEmuClass"}
+    rcols = ["pt", "eta", "tpIdx"]
 
     avail = _keys(files[0])
     got = [c for c in optional if SPN.has_column(avail, CLUSTER_TABLE, c)]
-    # TBPX only: every study here is per barrel layer, and selClusterIdx indexes
-    # the barrel rows, which stay a per-event prefix of the unified table
-    C = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=SPN.cluster_branches(avail, ccols + got, surfaces=SPN.BARREL))
-    C = SPN.cluster_columns(C, ccols + got, surfaces=SPN.BARREL)
-    R = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{REF}_{c}" for c in rcols])
-    n_ev = sum(uproot.open(f"{f}:Events").num_entries for f in files)
+    # The WHOLE table (disc_scope "all": nothing filtered), so selClusterIdx -- the
+    # refit's row of the file's table, barrel or disc -- indexes K directly. The
+    # surfaces are IL1-IL4 then ID1-ID4 on a discScope-sp nano; layer is 0 on a disc.
+    C = _concat(files, SPN.cluster_branches(avail, ccols + got, disc_scope="all"))
+    C = SPN.cluster_columns(C, ccols + got, disc_scope="all")
+    R = _concat(files, [f"{REF}_{c}" for c in rcols])
+    n_ev = len(R)
     ntrk = ak.to_numpy(ak.num(R[f"{REF}_pt"]))
     T = {"off": np.concatenate([[0], np.cumsum(ntrk)])}
     for c in rcols:
@@ -754,7 +841,7 @@ def load_clusters(files):
             if optional.get(c) in K:
                 K[optional[c]] = np.where(dir_ok, K[optional[c]], np.float32(-999.0))
         print(f"  angle cap: global direction unusable on {int((~dir_ok).sum())} of "
-              f"{len(dir_ok)} TBPX clusters (alpha or beta fails |cot| <= "
+              f"{len(dir_ok)} clusters (alpha or beta fails |cot| <= "
               f"{SPN.MEAS_ANGLE_MAX_ABS:g} or is absent); set to -999")
     K["event"] = ev_c
     K["_evt_base"] = np.concatenate([[0], np.cumsum(ncl)])
@@ -762,11 +849,34 @@ def load_clusters(files):
     # study (12) facets on tp_d0 and skips without it
     M = _ttc()
     if all(SPN.has_column(avail, M.TP_TABLE, c) for c in M.TP_COLS):
-        TPA = uproot.concatenate([f"{f}:Events" for f in files],
-                                 filter_name=M.tp_branches(files[0]))
+        TPA = _concat(files, M.tp_branches(files[0]))
         M.attach_tp_truth(K, M.tp_table(TPA, np.arange(len(ncl))))
-    print(f"files={len(files)} events={n_ev} clusters={len(K['layer'])}")
+    sc = np.bincount(K["surface"].astype(np.int64), minlength=23)
+    print(f"files={len(files)} events={n_ev} clusters={len(K['layer'])} ("
+          + ", ".join(f"{SPN.surface_name(s)} {sc[s]}" for s in np.flatnonzero(sc)) + ")")
     return K, T, n_ev
+
+
+def barrel_view(K):
+    """The barrel rows of K (IL1-IL4), every column but the row-index bookkeeping:
+    the input of the barrel-only seeding studies, whose seeders key on the layer
+    (0 on a disc) and implement the barrel IT seeds only."""
+    m = ~SPN.is_disc_surface(K["surface"])
+    return {k: (v[m] if isinstance(v, np.ndarray) and len(v) == len(m) and not k.startswith("_") else v)
+            for k, v in K.items()}
+
+
+def surface_axis(ax, surfaces=SURFACES, label="surface"):
+    """Categorical x axis IL1..IL4, ID1..ID4 (values are drawn at 0..n-1)."""
+    ax.set_xticks(range(len(surfaces)))
+    ax.set_xticklabels([SPN.surface_name(s) for s in surfaces], fontsize=7)
+    ax.set_xlabel(label)
+
+
+def per_surface(values, surfaces=SURFACES):
+    """{IL1: v, ..., ID4: v} for a list aligned with `surfaces` (NaN -> None in JSON)."""
+    return {SPN.surface_name(s): (None if v is None or (isinstance(v, float) and not np.isfinite(v))
+                                  else float(v)) for s, v in zip(surfaces, values)}
 
 
 def load_crossings(files, v, T):
@@ -774,18 +884,21 @@ def load_crossings(files, v, T):
     track's pt/eta (T from load_clusters) and the SP track's matched TP."""
     avail = _keys(files[0])
     _check_hit_columns(avail, v)
-    H = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=SPN.branch_names(avail, v.hit, NEED_HIT))
+    H = _concat(files, SPN.branch_names(avail, v.hit, NEED_HIT))
     H = SPN.table_columns(H, v.hit, NEED_HIT)
+    # NB the hit table's `layer` is the SURFACE code: 1-4 IL1-IL4, 11-14 ID1-ID4
     ncross = ak.to_numpy(ak.num(H["layer"]))
     ev_x = np.repeat(np.arange(len(ncross)), ncross)
     X = {c: ak.to_numpy(ak.flatten(H[c])) for c in NEED_HIT}
     X["event"] = ev_x
     for c in ("pt", "eta"):
         X[f"trk_{c}"] = T[c][T["off"][ev_x] + X["trackIdx"].astype(np.int64)]
+    # the OT track's own truth link (TTTrackAssociator, loosely genuine): the TP the
+    # producer's selHitClass is relative to
+    X["ot_tpIdx"] = T["tpIdx"][T["off"][ev_x] + X["trackIdx"].astype(np.int64)]
 
     vname = _matched_tp_branch(files, v)
-    vtrk = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[vname])
+    vtrk = _concat(files, [vname])
     mtp = ak.to_numpy(ak.flatten(vtrk[vname]))
     nmt = ak.to_numpy(ak.num(vtrk[vname]))
     offm = np.concatenate([[0], np.cumsum(nmt)])
@@ -883,39 +996,55 @@ def selected_global_index(X, K):
 # --------------------------------------------------------------------------
 # studies
 # --------------------------------------------------------------------------
+REGIONS = ("barrel", "disc")
+
+
+def _region(surf, region):
+    """Crossing/cluster mask of a region: barrel (IL1-IL4), disc (ID1-ID4) or all."""
+    d = SPN.is_disc_surface(surf)
+    return ~d if region == "barrel" else d if region == "disc" else np.ones(len(surf), bool)
+
+
+def _surface_means(vals, surf, surfaces=SURFACES):
+    return [float(vals[surf == S].mean()) if (surf == S).any() else float("nan") for S in surfaces]
+
+
 def study_cone_occupancy(X, K, P, ax_row, out):
-    """(1) clusters inside the seed cone, per layer and vs pT / eta."""
-    xlay = X["layer"]
+    """(1) clusters inside the seed cone, per surface and vs pT / eta (barrel and
+    disc crossings separately)."""
+    xs = X["layer"]
+    xpos = np.arange(len(SURFACES))
     res = {}
     ax = ax_row[0]
     for cname, k in CONES.items():
         m = in_cone(P, k)
-        cnt = np.bincount(P["xi"][m], minlength=len(xlay)).astype(float)
-        per_layer = [cnt[xlay == L].mean() if (xlay == L).any() else np.nan for L in LAYERS]
-        res[cname] = {"per_layer_mean": [float(v) for v in per_layer]}
-        ax.plot(LAYERS, per_layer, marker="o", label=f"seed cone {cname}")
+        cnt = np.bincount(P["xi"][m], minlength=len(xs)).astype(float)
+        per = _surface_means(cnt, xs)
+        res[cname] = {"per_surface_mean": per_surface(per)}
+        ax.plot(xpos, per, marker="o", label=f"seed cone {cname}")
         P[f"cnt_{cname}"] = cnt
-    tot = np.bincount(P["xi"], minlength=len(xlay)).astype(float)
-    ax.plot(LAYERS, [tot[xlay == L].mean() for L in LAYERS], marker="s", ls="--",
-            color="k", label="all on module")
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel("clusters per crossing [count]")
+    tot = np.bincount(P["xi"], minlength=len(xs)).astype(float)
+    ax.plot(xpos, _surface_means(tot, xs), marker="s", ls="--", color="k", label="all on module")
+    ax.set_yscale("log"); surface_axis(ax); ax.set_ylabel("clusters per crossing [count]")
     ax.set_title("(1) candidates per crossing"); ax.legend(fontsize=7); ax.grid(alpha=.3)
-    res["all_on_module_per_layer"] = [float(tot[xlay == L].mean()) for L in LAYERS]
+    res["all_on_module_per_surface"] = per_surface(_surface_means(tot, xs))
 
     for ax, var, edges, lab in ((ax_row[1], "trk_pt", PT_EDGES, r"track $p_T$ [GeV]"),
                                 (ax_row[2], "trk_eta", ETA_EDGES, r"track $\eta$")):
         v = X[var]
         idx = np.digitize(v, edges) - 1
+        ctr = [0.5 * (edges[i] + min(edges[i + 1], 40)) for i in range(len(edges) - 1)]
         for cname in CONES:
             cnt = P[f"cnt_{cname}"]
-            ys = [cnt[idx == i].mean() if (idx == i).any() else np.nan
-                  for i in range(len(edges) - 1)]
-            ctr = [0.5 * (edges[i] + min(edges[i + 1], 40)) for i in range(len(edges) - 1)]
-            ax.plot(ctr, ys, marker="o", label=cname)
-            res.setdefault(f"vs_{var}", {})[cname] = {
-                "bin_centres": [float(c) for c in ctr], "mean": [float(y) for y in ys]}
+            for reg, ls in (("barrel", "-"), ("disc", "--")):
+                r = _region(xs, reg)
+                ys = [cnt[r & (idx == i)].mean() if (r & (idx == i)).any() else np.nan
+                      for i in range(len(edges) - 1)]
+                ax.plot(ctr, ys, marker="o", ls=ls, label=f"{cname} {reg}")
+                res.setdefault(f"vs_{var}", {}).setdefault(cname, {"bin_centres": [float(c) for c in ctr]})[reg] = \
+                    [float(y) for y in ys]
         ax.set_xlabel(lab); ax.set_ylabel("clusters in cone per crossing [count]")
-        ax.set_title(f"(1) cone occupancy vs {lab}"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+        ax.set_title(f"(1) cone occupancy vs {lab}"); ax.legend(fontsize=6); ax.grid(alpha=.3)
     out["cone_occupancy"] = res
 
 
@@ -937,10 +1066,10 @@ def study_cone_containment(X, K, P, ax_row, out):
         nx = np.abs(X["recoLocalX"] - X["projOTLocalX"]) / np.where(X["projOTSigX"] > 0, X["projOTSigX"], np.nan)
         ny = np.abs(X["recoLocalY"] - X["projOTLocalY"]) / np.where(X["projOTSigY"] > 0, X["projOTSigY"], np.nan)
         inside = ok & (nx < k) & (ny < k)
-        eff = [inside[ok & (X["layer"] == L)].mean() if (ok & (X["layer"] == L)).any() else np.nan
-               for L in LAYERS]
-        ax.plot(LAYERS, eff, marker="o", label=cname)
-        res[cname] = {"per_layer_eff": [float(e) for e in eff],
+        eff = [inside[ok & (X["layer"] == S)].mean() if (ok & (X["layer"] == S)).any() else np.nan
+               for S in SURFACES]
+        ax.plot(range(len(SURFACES)), eff, marker="o", label=cname)
+        res[cname] = {"per_surface_eff": per_surface(eff),
                       "overall_eff": float(inside[ok].mean()) if ok.any() else float("nan")}
     # The cone is a per-coordinate BOX cut at k sigma, so for an ideal Gaussian
     # projection the JOINT containment is (2*Phi(k)-1)^2, not 2*Phi(k)-1. Drawing
@@ -948,20 +1077,20 @@ def study_cone_containment(X, K, P, ax_row, out):
     from math import erf, sqrt
     for k, c in ((CONES["q68"], "grey"), (CONES["q95"], "grey")):
         ideal = erf(k / sqrt(2.0)) ** 2
-        ax.axhline(ideal, color=c, ls=":", lw=1)
-        ax.text(4.05, ideal, f" ideal {ideal:.3f}", fontsize=6, va="center", color=c)
+        ax.axhline(ideal, color=c, ls=":", lw=1, label=f"ideal box {ideal:.3f} (k={k:.2f})")
         res.setdefault("ideal_box_containment", {})[f"k={k:.2f}"] = float(ideal)
-    ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel("containment efficiency [fraction]")
+    surface_axis(ax); ax.set_ylabel("containment efficiency [fraction]")
     ax.set_title("(2) correct hit inside the seed cone"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     ax.set_ylim(0, 1.05)
 
     # cone size itself, the thing that drives (1) and (2) together
     ax = ax_row[1]
-    for nm, key in (("$\\sigma_x$", "projOTSigX"), ("$\\sigma_y$", "projOTSigY")):
-        v = [np.median(X[key][(X["layer"] == L) & (X[key] > 0)]) * 1e4 for L in LAYERS]
-        ax.plot(LAYERS, v, marker="o", label=nm)
-        res.setdefault("cone_sigma_um", {})[key] = [float(x) for x in v]
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel(r"median cone $\sigma$ [$\mu$m]")
+    for nm, key in (("$\\sigma_x$ (r-phi)", "projOTSigX"), ("$\\sigma_y$ (z | disc: r)", "projOTSigY")):
+        v = [np.median(X[key][(X["layer"] == S) & (X[key] > 0)]) * 1e4
+             if ((X["layer"] == S) & (X[key] > 0)).any() else np.nan for S in SURFACES]
+        ax.plot(range(len(SURFACES)), v, marker="o", label=nm)
+        res.setdefault("cone_sigma_um", {})[key] = per_surface(v)
+    ax.set_yscale("log"); surface_axis(ax); ax.set_ylabel(r"median cone $\sigma$ [$\mu$m]")
     ax.set_title("(2) seed cone size"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     out["cone_containment"] = res
 
@@ -971,27 +1100,35 @@ def study_angle_discrimination(X, K, P, ax_row, out):
 
     UPPER BOUND, not a capability: the cluster angles here are UNSMEARED truth
     (tpLocalCotAlpha/Beta). A real smart-pixel angle carries the PixelAV response
-    smear, so achievable rejection is strictly worse than this.
+    smear, so achievable rejection is strictly worse than this. Barrel (solid) and
+    disc (dashed) crossings separately: on a disc local y is the radius, so
+    cotBeta is the radial angle there.
     """
     m = in_cone(P, CONES["q95"]) & P["ang_ok"]
     correct = (X["hitAccepted"] > 0) & (X["selHitClass"] == 0)
     same = P["is_selected"] & correct[P["xi"]]
     res = {"note": "unsmeared truth angles: an UPPER BOUND on angle rejection"}
+    xs = X["layer"][P["xi"]]
     for ax, d, nm in ((ax_row[0], P["dCotA"], r"$\Delta\cot\alpha$"),
                       (ax_row[1], P["dCotB"], r"$\Delta\cot\beta$")):
-        a_sig, a_bkg = d[m & same], d[m & ~same]
         rng = np.nanpercentile(np.abs(d[m]), 99) if m.any() else 1.0
         bins = np.linspace(-rng, rng, 80)
-        for arr, lab in ((a_bkg, "other clusters in cone"), (a_sig, "the track's own cluster")):
-            if len(arr) > 10:
-                ax.hist(arr, bins=bins, histtype="step", density=True, label=f"{lab} (n={len(arr)})")
-        ax.set_xlabel(nm); ax.set_ylabel("density [1/bin]"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+        key = "dCotAlpha" if "alpha" in nm else "dCotBeta"
+        for reg, ls in (("barrel", "-"), ("disc", "--")):
+            r = _region(xs, reg)
+            a_sig, a_bkg = d[m & same & r], d[m & ~same & r]
+            for arr, lab in ((a_bkg, "other clusters in cone"), (a_sig, "the track's own cluster")):
+                if len(arr) > 10:
+                    ax.hist(arr, bins=bins, histtype="step", density=True, ls=ls,
+                            label=f"{reg}: {lab} (n={len(arr)})")
+            if len(a_sig) > 10 and len(a_bkg) > 10:
+                for q in (0.68, 0.95):
+                    cut = np.quantile(np.abs(a_sig), q)
+                    e = res.setdefault(reg, {}).setdefault(key, {})
+                    e[f"keep{int(q*100)}_cut"] = float(cut)
+                    e[f"keep{int(q*100)}_bkg_rejected"] = float(np.mean(np.abs(a_bkg) > cut))
+        ax.set_xlabel(nm + " [unitless]"); ax.set_ylabel("density [1/bin]"); ax.legend(fontsize=6); ax.grid(alpha=.3)
         ax.set_title(f"(3) {nm} vs track expectation")
-        if len(a_sig) > 10 and len(a_bkg) > 10:
-            for q in (0.68, 0.95):
-                cut = np.quantile(np.abs(a_sig), q)
-                res.setdefault(nm, {})[f"keep{int(q*100)}_cut"] = float(cut)
-                res[nm][f"keep{int(q*100)}_bkg_rejected"] = float(np.mean(np.abs(a_bkg) > cut))
     out["angle_discrimination"] = res
 
 
@@ -1026,9 +1163,16 @@ def study_charge_gate(X, K, P, ax_row, out):
         res["survival_vs_topN"] = keep
         ax2 = ax_row[1]
         Ns = sorted(keep)
-        ax2.plot(Ns, [keep[N] for N in Ns], marker="o")
+        ax2.plot(Ns, [keep[N] for N in Ns], marker="o", color="k", label="all surfaces")
+        xs = X["layer"][xi][match]
+        for reg, ls in (("barrel", "-"), ("disc", "--")):
+            rr = r[_region(xs, reg)]
+            if len(rr) > 10:
+                kr = {N: float(np.mean(rr < N)) for N in Ns}
+                res.setdefault("survival_vs_topN_by_region", {})[reg] = kr
+                ax2.plot(Ns, [kr[N] for N in Ns], marker=".", ls=ls, label=reg)
         ax2.set_xscale("log", base=2); ax2.set_xlabel("clusters read out per module, top-N by charge [count]")
-        ax2.set_ylabel("needed clusters kept [fraction]")
+        ax2.set_ylabel("needed clusters kept [fraction]"); ax2.legend(fontsize=6)
         ax2.set_title("(4) readout gate efficiency"); ax2.grid(alpha=.3); ax2.set_ylim(0, 1.05)
     out["charge_gate"] = res
 
@@ -1056,33 +1200,28 @@ def study_true_containment(X, K, P, ax_row, out):
             continue
         inside = m & in_cone(P, k)
         eff = []
-        for L in LAYERS:
-            sel = m & (X["layer"][xi] == L)
+        for S in SURFACES:
+            sel = m & (X["layer"][xi] == S)
             eff.append(float(inside[sel].mean()) if sel.any() else np.nan)
-        ax.plot(LAYERS, eff, marker="o", label=f"{cname} (unbiased)")
-        res[cname] = {"per_layer_eff": eff, "overall_eff": float(inside[m].mean())}
+        ax.plot(range(len(SURFACES)), eff, marker="o", label=f"{cname} (unbiased)")
+        res[cname] = {"per_surface_eff": per_surface(eff), "overall_eff": float(inside[m].mean())}
     # the biased version, for direct contrast on the same axes
     bc = out.get("cone_containment", {})
     for cname in CONES:
         if cname in bc:
-            ax.plot(LAYERS, bc[cname]["per_layer_eff"], marker="s", ls="--", alpha=.6,
-                    label=f"{cname} (window-conditioned)")
-    ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel("containment efficiency [fraction]")
+            ax.plot(range(len(SURFACES)), [bc[cname]["per_surface_eff"][SNAME[S]] or np.nan for S in SURFACES],
+                    marker="s", ls="--", alpha=.6, label=f"{cname} (window-conditioned)")
+    surface_axis(ax); ax.set_ylabel("containment efficiency [fraction]")
     ax.set_title("(5) TRUE containment vs window-conditioned")
     ax.legend(fontsize=6); ax.grid(alpha=.3); ax.set_ylim(0, 1.05)
 
     # how many true clusters does a track even have on the module it crosses?
     ax = ax_row[1]
     n_true = np.bincount(xi[is_true], minlength=len(X["layer"]))
-    for L in LAYERS:
-        sel = X["layer"] == L
-        if sel.any():
-            ax.plot(L, n_true[sel].mean(), marker="o", color="C0")
-    res["mean_true_clusters_on_module"] = [
-        float(n_true[X["layer"] == L].mean()) if (X["layer"] == L).any() else float("nan")
-        for L in LAYERS]
-    ax.plot(LAYERS, res["mean_true_clusters_on_module"], color="C0")
-    ax.set_xlabel("TBPX layer"); ax.set_ylabel("true clusters on crossed module [count]")
+    mt = _surface_means(n_true.astype(float), X["layer"])
+    res["mean_true_clusters_on_module"] = per_surface(mt)
+    ax.plot(range(len(SURFACES)), mt, marker="o", color="C0")
+    surface_axis(ax); ax.set_ylabel("true clusters on crossed module [count]")
     ax.set_title("(5) how many are there to find"); ax.grid(alpha=.3)
     out["true_containment"] = res
 
@@ -1115,6 +1254,11 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
 
     The angle terms use the SENSOR estimate and its sigma, not truth, so the rule
     itself is deployable -- unlike anything scanned on truth angles.
+
+    SURFACES. The scan pools the crossings of every surface, barrel and disc,
+    because the producer applies ONE metric everywhere; the purity of the
+    baseline and of the 4D optimum is also reported per surface (IL1-ID4), so a
+    weight set that helps the barrel at the discs' expense is visible.
 
     HISTORY WORTH KEEPING. This scan was meaningless until 2026-09-05, because
     SmartPixelsRecHitProducer gave NO angle to clusters with no simlink: hasAlpha
@@ -1168,8 +1312,9 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     has_true[xi[is_true]] = True
     inwin = P["good"]
 
-    def purity(wrphi, wrz, wa, wb):
-        """Fraction of crossings whose lowest-cost candidate is the correct one."""
+    def purity(wrphi, wrz, wa, wb, per_surface_out=False):
+        """Fraction of crossings whose lowest-cost candidate is the correct one
+        (per_surface_out: also {surface name: (purity, n)})."""
         cost = wrphi * dx * dx + wrz * dy * dy + wa * da2 + wb * db2
         cost = np.where(inwin, cost, np.inf)
         best = np.full(ncross, np.inf)
@@ -1178,7 +1323,13 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
         sel = np.isfinite(cost) & (cost <= best[xi]) & is_true
         picked_true[xi[sel]] = True
         d = has_true & np.isfinite(best)
-        return float(picked_true[d].mean()) if d.any() else float("nan"), int(d.sum())
+        tot = (float(picked_true[d].mean()) if d.any() else float("nan"), int(d.sum()))
+        if not per_surface_out:
+            return tot
+        ps = {SNAME[S]: {"purity": float(picked_true[d & (X["layer"] == S)].mean())
+                         if (d & (X["layer"] == S)).any() else None,
+                         "n": int((d & (X["layer"] == S)).sum())} for S in SURFACES}
+        return tot, ps
 
     # SCALE INVARIANCE: the argmin is unchanged by a global rescaling, so only
     # RATIOS matter and w_rphi is pinned to 1. Four weights therefore have THREE
@@ -1194,8 +1345,8 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     # things carried the same name.
     res = {"note": "w_rphi pinned to 1 (scale invariance); the remaining three weights "
                    "are scanned JOINTLY, not greedily"}
-    base, n_den = purity(1, 1, 1, 1)
-    res["baseline_all_unit_weights"] = {"purity": base, "n_crossings": n_den}
+    (base, n_den), base_ps = purity(1, 1, 1, 1, per_surface_out=True)
+    res["baseline_all_unit_weights"] = {"purity": base, "n_crossings": n_den, "per_surface": base_ps}
     print(f"   (6) baseline, all four terms at unit weight: purity {base:.4f} "
           f"over {n_den} crossings")
 
@@ -1232,7 +1383,7 @@ def study_chi2_weight_scan(X, K, P, ax_row, out):
     wz4, wa4, wb4 = (float(v) for v in b4.split("_"))
     res["scan4D_rphi_rz_alpha_beta"] = s4
     res["best4D"] = {"w_rphi": 1.0, "w_rz": wz4, "w_alpha": wa4, "w_beta": wb4,
-                     "purity": s4[b4]}
+                     "purity": s4[b4], "per_surface": purity(1.0, wz4, wa4, wb4, per_surface_out=True)[1]}
     print(f"       4D (w_rz, w_alpha, w_beta) best {b4} -> {s4[b4]:.4f}   "
           f"(baseline {base:.4f}, gain {s4[b4]-base:+.4f})")
     # Does the 4D optimum contain the 3D one? If the best w_rz differs between the
@@ -1321,6 +1472,7 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
     passes a two-sided pull test (see eval_refitq/windows/q_acceptance.py).
     """
     xlay = X["layer"]
+    xpos = np.arange(len(SURFACES))
     res = {}
     ax = ax_row[0]
     for cname, k in CONES.items():
@@ -1328,18 +1480,17 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
         cs = np.bincount(P["xi"][ms], minlength=len(xlay)).astype(float)
         cr = np.bincount(P["xi"][mr], minlength=len(xlay)).astype(float)
         P[f"cnt_rf_{cname}"] = cr
-        ys = [cs[xlay == L].mean() if (xlay == L).any() else np.nan for L in LAYERS]
-        yr = [cr[xlay == L].mean() if (xlay == L).any() else np.nan for L in LAYERS]
-        ax.plot(LAYERS, ys, marker="o", ls="--", label=f"seed {cname}")
-        ax.plot(LAYERS, yr, marker="s", label=f"refit-order {cname}")
-        res[cname] = {"seed_per_layer": [float(v) for v in ys],
-                      "refit_per_layer": [float(v) for v in yr],
-                      "reduction_per_layer": [float(a / b) if b > 0 else float("nan")
-                                              for a, b in zip(ys, yr)]}
-    tot = np.bincount(P["xi"], minlength=len(xlay)).astype(float)
-    ax.plot(LAYERS, [tot[xlay == L].mean() for L in LAYERS], marker="^", ls=":",
-            color="k", label="all on module")
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]")
+        ys = _surface_means(cs, xlay)
+        yr = _surface_means(cr, xlay)
+        ax.plot(xpos, ys, marker="o", ls="--", label=f"seed {cname}")
+        ax.plot(xpos, yr, marker="s", label=f"refit-order {cname}")
+        res[cname] = {"seed_per_surface": per_surface(ys),
+                      "refit_per_surface": per_surface(yr),
+                      "reduction_per_surface": per_surface([a / b if b > 0 else float("nan")
+                                                            for a, b in zip(ys, yr)])}
+    ax.plot(xpos, _surface_means(np.bincount(P["xi"], minlength=len(xlay)).astype(float), xlay),
+            marker="^", ls=":", color="k", label="all on module")
+    ax.set_yscale("log"); surface_axis(ax)
     ax.set_ylabel("candidates per crossing [count]")
     ax.set_title("(9) seed cone vs refit-order cone")
     ax.legend(fontsize=7); ax.grid(alpha=.3)
@@ -1347,16 +1498,16 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
     # cone half-width itself, in microns: the mechanism behind the count above
     ax = ax_row[1]
     hs, hr = [], []
-    for L in LAYERS:
-        m = xlay == L
+    for S in SURFACES:
+        m = xlay == S
         a = X["projOTSigX"][m]; b = X["projSigX"][m]
         hs.append(float(np.median(a[a > 0]) * 1e4) if (a > 0).any() else np.nan)
         hr.append(float(np.median(b[b > 0]) * 1e4) if (b > 0).any() else np.nan)
-    ax.plot(LAYERS, hs, marker="o", ls="--", label="seed sigma_x")
-    ax.plot(LAYERS, hr, marker="s", label="refit-order sigma_x")
-    ax.set_xlabel("TBPX layer [index]"); ax.set_ylabel(r"median projected $\sigma_x$ [$\mu$m]")
+    ax.plot(xpos, hs, marker="o", ls="--", label="seed sigma_x")
+    ax.plot(xpos, hr, marker="s", label="refit-order sigma_x")
+    surface_axis(ax); ax.set_ylabel(r"median projected $\sigma_x$ (r-phi) [$\mu$m]")
     ax.set_title("(9) projection cone half-width"); ax.legend(fontsize=7); ax.grid(alpha=.3)
-    res["median_sigma_x_um"] = {"seed": hs, "refit": hr}
+    res["median_sigma_x_um"] = {"seed": per_surface(hs), "refit": per_surface(hr)}
 
     # does the gain survive at low pT, where scattering is worst?
     ax = ax_row[2]
@@ -1367,30 +1518,31 @@ def study_refit_cone_occupancy(X, K, P, ax_row, out):
         cr = P[f"cnt_rf_{cname}"]
         if cs is None:
             continue
-        ratio = []
-        for i in range(len(PT_EDGES) - 1):
-            m = idx == i
-            if not m.any():
-                ratio.append(np.nan); continue
-            a, b = cs[m].mean(), cr[m].mean()
-            ratio.append(float(a / b) if b > 0 else np.nan)
-        ax.plot(ctr, ratio, marker="o", label=cname)
-        res.setdefault("reduction_vs_pt", {})[cname] = {
-            "bin_centres": [float(c) for c in ctr], "ratio": ratio}
+        for reg, ls in (("barrel", "-"), ("disc", "--")):
+            rg = _region(xlay, reg)
+            ratio = []
+            for i in range(len(PT_EDGES) - 1):
+                m = rg & (idx == i)
+                if not m.any():
+                    ratio.append(np.nan); continue
+                a, b = cs[m].mean(), cr[m].mean()
+                ratio.append(float(a / b) if b > 0 else np.nan)
+            ax.plot(ctr, ratio, marker="o", ls=ls, label=f"{cname} {reg}")
+            res.setdefault("reduction_vs_pt", {}).setdefault(cname, {"bin_centres": [float(c) for c in ctr]})[reg] = ratio
     ax.axhline(1.0, color="k", lw=.8, ls=":")
     ax.set_xlabel(r"track $p_T$ [GeV]"); ax.set_ylabel("seed / refit-order candidates [ratio, unitless]")
-    ax.set_title("(9) combinatorics reduction vs $p_T$"); ax.legend(fontsize=7); ax.grid(alpha=.3)
+    ax.set_title("(9) combinatorics reduction vs $p_T$"); ax.legend(fontsize=6); ax.grid(alpha=.3)
 
     print("\n=== (9) refit-order cone vs naive seed cone ===")
-    print(f"  median projected sigma_x [um] by layer")
+    print("  median projected sigma_x [um] by surface " + " ".join(f"{SNAME[S]:>7}" for S in SURFACES))
     print(f"    seed        : " + "  ".join(f"{v:7.1f}" for v in hs))
     print(f"    refit-order : " + "  ".join(f"{v:7.1f}" for v in hr))
     for cname in CONES:
         r = res[cname]
         print(f"  {cname}: candidates/crossing seed "
-              + "/".join(f"{v:.2f}" for v in r["seed_per_layer"])
-              + "  refit " + "/".join(f"{v:.2f}" for v in r["refit_per_layer"])
-              + "  reduction " + "/".join(f"{v:.2f}x" for v in r["reduction_per_layer"]))
+              + "/".join(f"{(v if v is not None else np.nan):.2f}" for v in r["seed_per_surface"].values())
+              + "  refit " + "/".join(f"{(v if v is not None else np.nan):.2f}" for v in r["refit_per_surface"].values())
+              + "  reduction " + "/".join(f"{(v if v is not None else np.nan):.2f}x" for v in r["reduction_per_surface"].values()))
     out["refit_cone_occupancy"] = res
 
 
@@ -1485,7 +1637,7 @@ def study_z0_resolution(X, K, P, ax_row, out):
     d = K["gClCotTheta"] - K["tpGClCotTheta"]          # cot(theta) residual
     dz0 = K["globalR"] * d                              # cm; z0 = z - r cot(theta)
     eta = np.arcsinh(K["tpGClCotTheta"])                # cot(theta) = sinh(eta)
-    lay = K["layer"]
+    lay = K["surface"]                                  # IL1-IL4, ID1-ID4 (z0 = z - r cot on both)
     Zspan = 2.0 * Z_HALF_RANGE_CM
 
     res = {"n_clusters_used": int(ok.sum()),
@@ -1509,86 +1661,90 @@ def study_z0_resolution(X, K, P, ax_row, out):
                "0.3%, where a physical resolution would degrade toward low pT. Treat these "
                "as an OPTIMISTIC BOUND. See doc/SmartPixelsSeedingAndFitting.md section 4a.")}
 
-    # ---- per layer, and per layer x |eta| -----------------------------------
+    # ---- per surface, and per surface x |eta| -------------------------------
     per_layer = {}
-    for L in LAYERS:
+    for L in SURFACES:
         m = ok & (lay == L)
         s_cot = robust_sigma(d[m])
         s_z0 = robust_sigma(dz0[m])
-        per_layer[f"L{L}"] = {
+        per_layer[SNAME[L]] = {
             "n": int(m.sum()),
             "median_r_cm": float(np.median(K["globalR"][m])) if m.any() else float("nan"),
             "sigma_cotTheta_mad": s_cot[0], "sigma_cotTheta_q68": s_cot[1],
             "sigma_z0_cm_mad": s_z0[0], "sigma_z0_cm_q68": s_z0[1],
             "z0_slices": float(Zspan / (4.0 * s_z0[0])) if s_z0[0] == s_z0[0] else float("nan"),
         }
-    res["per_layer"] = per_layer
+    res["per_surface"] = per_layer
 
     eta_tab = {}
     for i in range(len(ETA_RES_EDGES) - 1):
         lo, hi = ETA_RES_EDGES[i], ETA_RES_EDGES[i + 1]
         me = ok & (np.abs(eta) >= lo) & (np.abs(eta) < hi)
         row = {}
-        for L in LAYERS:
+        for L in SURFACES:
             s = robust_sigma(dz0[me & (lay == L)])
-            row[f"L{L}"] = s[0]
+            row[SNAME[L]] = s[0]
         row["n"] = int(me.sum())
         row["sigma_cotTheta_mad"] = robust_sigma(d[me])[0]
         eta_tab[f"{lo:.1f}-{hi:.1f}"] = row
     res["vs_abs_eta"] = eta_tab
 
-    # ---- the two design targets separately ---------------------------------
+    # ---- the two design targets separately (barrel and disc clusters) -------
     if "tpPt" in K:
-        for nm, sel in (("A_pt_gt_2", ok & (K["tpPt"] > 2.0)),
-                        ("B_pt_0p5_to_2", ok & (K["tpPt"] > 0.5) & (K["tpPt"] <= 2.0))):
-            s = robust_sigma(dz0[sel])
-            res.setdefault("by_target", {})[nm] = {
-                "n": int(sel.sum()), "sigma_z0_cm_mad": s[0],
-                "z0_slices": float(Zspan / (4.0 * s[0])) if s[0] == s[0] else float("nan")}
+        for reg in REGIONS:
+            rg = _region(lay, reg)
+            for nm, sel in (("A_pt_gt_2", ok & rg & (K["tpPt"] > 2.0)),
+                            ("B_pt_0p5_to_2", ok & rg & (K["tpPt"] > 0.5) & (K["tpPt"] <= 2.0))):
+                s = robust_sigma(dz0[sel])
+                res.setdefault("by_target", {}).setdefault(reg, {})[nm] = {
+                    "n": int(sel.sum()), "sigma_z0_cm_mad": s[0],
+                    "z0_slices": float(Zspan / (4.0 * s[0])) if s[0] == s[0] else float("nan")}
 
-    # ---- cluster-weighted headline + the pull check -------------------------
-    s_all = robust_sigma(dz0[ok])
-    res["overall"] = {"sigma_z0_cm_mad": s_all[0], "sigma_z0_cm_q68": s_all[1],
-                      "z0_slices": float(Zspan / (4.0 * s_all[0])) if s_all[0] == s_all[0]
-                      else float("nan"),
-                      "sigma_for_30_slices_cm": float(Zspan / 120.0)}
-    if "gSigCotTheta" in K:
-        pm = ok & (K["gSigCotTheta"] > 0)
-        pull = d[pm] / K["gSigCotTheta"][pm]
-        pw = robust_sigma(pull)
-        res["pull"] = {"n": int(pm.sum()), "width_mad": pw[0], "width_q68": pw[1],
-                       "median": float(np.median(pull)) if pm.any() else float("nan"),
-                       "note": "width far from 1.0 => the stored sigma is miscalibrated"}
-
-    print(f"   (7) sigma(z0) overall {s_all[0]*1e4:.0f} um "
-          f"-> {res['overall']['z0_slices']:.1f} usable z0 slices "
-          f"(design assumed 30, which needs {Zspan/120.0*1e4:.0f} um)")
-    for L in LAYERS:
-        p = per_layer[f"L{L}"]
-        print(f"       L{L}: r={p['median_r_cm']:.1f} cm  sigma(cot)={p['sigma_cotTheta_mad']:.4f}"
+    # ---- cluster-weighted headline + the pull check, barrel and disc --------
+    res["overall"], res["pull"] = {}, {}
+    for reg in REGIONS:
+        rg = ok & _region(lay, reg)
+        s_all = robust_sigma(dz0[rg])
+        res["overall"][reg] = {"sigma_z0_cm_mad": s_all[0], "sigma_z0_cm_q68": s_all[1],
+                               "z0_slices": float(Zspan / (4.0 * s_all[0])) if s_all[0] == s_all[0]
+                               else float("nan"),
+                               "sigma_for_30_slices_cm": float(Zspan / 120.0)}
+        if "gSigCotTheta" in K:
+            pm = rg & (K["gSigCotTheta"] > 0)
+            pull = d[pm] / K["gSigCotTheta"][pm]
+            pw = robust_sigma(pull)
+            res["pull"][reg] = {"n": int(pm.sum()), "width_mad": pw[0], "width_q68": pw[1],
+                                "median": float(np.median(pull)) if pm.any() else float("nan"),
+                                "note": "width far from 1.0 => the stored sigma is miscalibrated"}
+        print(f"   (7) {reg}: sigma(z0) {s_all[0]*1e4:.0f} um "
+              f"-> {res['overall'][reg]['z0_slices']:.1f} usable z0 slices "
+              f"(design assumed 30, which needs {Zspan/120.0*1e4:.0f} um)"
+              + (f", pull width {res['pull'][reg]['width_mad']:.3f} (want ~1.0)" if reg in res["pull"] else ""))
+    for L in SURFACES:
+        p = per_layer[SNAME[L]]
+        print(f"       {SNAME[L]}: r={p['median_r_cm']:.1f} cm  sigma(cot)={p['sigma_cotTheta_mad']:.4f}"
               f"  sigma(z0)={p['sigma_z0_cm_mad']*1e4:.0f} um  slices={p['z0_slices']:.1f}")
-    if "pull" in res:
-        print(f"       pull width {res['pull']['width_mad']:.3f} (want ~1.0)")
 
     # ---- figures -------------------------------------------------------------
     ax = ax_row[0]
     for k_eta, row in eta_tab.items():
-        ys = [row[f"L{L}"] * 1e4 for L in LAYERS]
-        ax.plot(LAYERS, ys, marker="o", label=rf"$|\eta|$ {k_eta}")
-    ax.axhline(Zspan / 120.0 * 1e4, color="k", ls=":", lw=1)
-    ax.text(4.05, Zspan / 120.0 * 1e4, " 30 slices", fontsize=6, va="center")
-    ax.set_yscale("log"); ax.set_xlabel("TBPX layer [index]")
+        ys = [row[SNAME[L]] * 1e4 for L in SURFACES]
+        ax.plot(range(len(SURFACES)), ys, marker="o", label=rf"$|\eta|$ {k_eta}")
+    ax.axhline(Zspan / 120.0 * 1e4, color="k", ls=":", lw=1, label="30 slices")
+    ax.set_yscale("log"); surface_axis(ax)
     ax.set_ylabel(r"robust $\sigma(z_0)$ [$\mu$m]")
     ax.set_title(r"(7) per-cluster $z_0$ resolution"); ax.legend(fontsize=6); ax.grid(alpha=.3)
 
     ax = ax_row[1]
-    if "pull" in res:
-        pm = ok & (K["gSigCotTheta"] > 0)
-        ax.hist(np.clip(d[pm] / K["gSigCotTheta"][pm], -5, 5), bins=80,
-                histtype="step", density=True, label=f"pull (w={res['pull']['width_mad']:.2f})")
+    for reg, ls in (("barrel", "-"), ("disc", "--")):
+        rg = ok & _region(lay, reg)
+        if reg in res["pull"]:
+            pm = rg & (K["gSigCotTheta"] > 0)
+            ax.hist(np.clip(d[pm] / K["gSigCotTheta"][pm], -5, 5), bins=80, ls=ls,
+                    histtype="step", density=True, label=f"{reg} pull (w={res['pull'][reg]['width_mad']:.2f})")
     rng = np.nanpercentile(np.abs(d[ok]), 99) if ok.any() else 1.0
     ax.hist(np.clip(d[ok] / max(rng, 1e-9), -5, 5), bins=80, histtype="step", density=True,
-            label=r"$\Delta\cot\theta$ / q99")
+            label=r"$\Delta\cot\theta$ / q99 (all)")
     ax.set_xlabel("normalised residual [unitless, pull]"); ax.set_ylabel("density [1/bin]")
     ax.set_title(r"(7) $\cot\theta$ residual and pull"); ax.legend(fontsize=7); ax.grid(alpha=.3)
     out["z0_resolution"] = res
@@ -1603,7 +1759,11 @@ B_FIELD_T = 3.8
 C_BEND = 0.29979246 * B_FIELD_T / 2.0 / 100.0
 HOUGH_PT_POINTS = (1.0, 2.0, 5.0, 10.0, 20.0)
 HOUGH_ETA_POINTS = (0.0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4)
-LAYER_COLOR = {1: "#d62728", 2: "#ff7f0e", 3: "#1f77b4", 4: "#2ca02c"}  # red/orange/blue/green
+# per surface: IL1-IL4 red/orange/blue/green, ID1-ID4 purple/brown/pink/olive
+SURFACE_COLOR = {1: "#d62728", 2: "#ff7f0e", 3: "#1f77b4", 4: "#2ca02c",
+                 11: "#9467bd", 12: "#8c564b", 13: "#e377c2", 14: "#bcbd22"}
+SURFACE_COLOR_TEXT = ("IL1 red, IL2 orange, IL3 blue, IL4 green; "
+                      "ID1 purple, ID2 brown, ID3 pink, ID4 olive")
 BAND_ALPHA = (0.95, 0.40, 0.10)      # |d| < 1 sigma, 1-3 sigma, > 3 sigma
 CONE_DPHI, CONE_DETA = 0.20, 0.20
 SECTOR_DPHI = 2.0 * np.pi / 9.0
@@ -1686,14 +1846,14 @@ def _draw_hough(ax, sel, K, xlo, xhi, mode, truth, rasterize, shade=True):
     if not shade and mode == "rphi":
         phi_p = K["globalPhi"][sel]
         slope, intercept = C_BEND * r, _wrap(phi_p - truth["phi0"])
-        for L in LAYERS:
-            m = K["layer"][sel] == L
+        for L in SURFACES:
+            m = K["surface"][sel] == L
             if not m.any():
                 continue
             x0 = np.full(int(m.sum()), xlo); x1 = np.full(int(m.sum()), xhi)
             segs = np.stack([np.stack([x0, intercept[m] + slope[m] * x0], -1),
                              np.stack([x1, intercept[m] + slope[m] * x1], -1)], 1)
-            ax.add_collection(LineCollection(segs, colors=LAYER_COLOR[L], linewidths=0.6,
+            ax.add_collection(LineCollection(segs, colors=SURFACE_COLOR[L], linewidths=0.6,
                                              alpha=0.45, rasterized=rasterize))
         ax.set_xlim(xlo, xhi)
         return
@@ -1711,15 +1871,15 @@ def _draw_hough(ax, sel, K, xlo, xhi, mode, truth, rasterize, shade=True):
         centre = K["gClCotTheta"][sel]
         sigma = K["gSigCotTheta"][sel]
         has = K["gClCotTheta"][sel] > SENTINEL
-    for L in LAYERS:
-        m = K["layer"][sel] == L
+    for L in SURFACES:
+        m = K["surface"][sel] == L
         if not m.any():
             continue
         bands = _hough_bands(centre[m], sigma[m], slope[m], intercept[m], xlo, xhi, has[m])
         for b, segs in enumerate(bands):
             if len(segs):
                 ax.add_collection(LineCollection(
-                    segs, colors=LAYER_COLOR[L], linewidths=0.6, alpha=BAND_ALPHA[b],
+                    segs, colors=SURFACE_COLOR[L], linewidths=0.6, alpha=BAND_ALPHA[b],
                     rasterized=rasterize))
     ax.set_xlim(xlo, xhi)
 
@@ -1761,8 +1921,7 @@ def _variant_crossings(files, v):
     hit = v.hit
     cols = ["trackIdx", "layer", "detId", "projLocalX", "projLocalY", "projSigX", "projSigY",
             "hitAccepted"]
-    H = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{hit}_{c}" for c in cols])
+    H = _concat(files, [f"{hit}_{c}" for c in cols])
     ncross = ak.to_numpy(ak.num(H[f"{hit}_layer"]))
     X = {c: ak.to_numpy(ak.flatten(H[f"{hit}_{c}"])) for c in cols}
     ev = np.repeat(np.arange(len(ncross)), ncross)
@@ -1770,7 +1929,7 @@ def _variant_crossings(files, v):
     # The matched TP is per TRACK and per VARIANT (each variant refits separately),
     # so it has to come from THIS variant's track table.
     tname = _matched_tp_branch(files, v)
-    V = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tname])
+    V = _concat(files, [tname])
     mtp = ak.to_numpy(ak.flatten(V[tname]))
     offm = np.concatenate([[0], np.cumsum(ak.to_numpy(ak.num(V[tname])))])
     X["trk_tpIdx"] = mtp[offm[ev] + X["trackIdx"].astype(np.int64)]
@@ -1778,16 +1937,18 @@ def _variant_crossings(files, v):
 
 
 def _combinations_per_track(X, K, kvals):
-    """For each k, the number of L1xL2xL3xL4 hit combinations each track must search.
+    """For each k, the number of hit combinations (one cluster per crossed surface,
+    IL1-IL4 and ID1-ID4) each track must search.
 
-    Counts are SUMMED over crossings within a layer before the product is taken:
-    a track that clips two overlapping modules at one layer has a single candidate
-    POOL there, so those crossings must add. Multiplying them would invent
-    combinations that the refit never considers, since it takes one hit per layer.
+    Counts are SUMMED over crossings within a surface before the product is taken:
+    a track that clips two overlapping modules at one surface has a single
+    candidate POOL there, so those crossings must add. Multiplying them would
+    invent combinations that the refit never considers, since it takes one hit per
+    surface.
 
-    A layer with no candidate contributes a factor of 1, not 0. The refit skips it
-    and carries on; treating it as 0 would erase the track from the distribution
-    entirely and would bias the result toward the busy tracks.
+    A surface with no candidate contributes a factor of 1, not 0. The refit skips
+    it and carries on; treating it as 0 would erase the track from the
+    distribution entirely and would bias the result toward the busy tracks.
     """
     xi, ci, _ = join_on_module(X, K)
     dx = K["localX"][ci] - X["projLocalX"][xi]
@@ -1799,9 +1960,9 @@ def _combinations_per_track(X, K, kvals):
         ny = np.where(ok, np.abs(dy / sy), np.inf)
 
     tkey = X["event"].astype(np.int64) * (1 << 20) + X["trackIdx"].astype(np.int64)
-    key2 = tkey * 8 + X["layer"].astype(np.int64)
+    key2 = tkey * 32 + X["layer"].astype(np.int64)      # surface codes 1-4, 11-14
     u2, inv2 = np.unique(key2, return_inverse=True)
-    tk2 = u2 // 8
+    tk2 = u2 // 32
     ut, invt = np.unique(tk2, return_inverse=True)
 
     # TRUE-hit containment, the benefit side of widening the cone. A pair is the
@@ -1877,11 +2038,14 @@ def _write_sweep_table(res, sfx, out, n_ev):
         "                  " + " | ".join(
             f"{l} k={res['table_k_sigma'][i]:.3f}" for i, l in enumerate(labs)),
         f"                  {trk_per_ev:.0f} refit-able tracks per event",
-        "  combinations  : PER TRACK, the number of (L1,L2,L3,L4) hit tuples a refit must",
-        "                  test = product of the candidate counts over INSTRUMENTED layers.",
-        "                  A layer with NO candidate contributes 1, not 0 -- the refit skips",
-        "                  it and carries on. Worked: 2,1,0,2 -> 2*1*1*2 = 4;  3,2,1,1 -> 6.",
-        "                  (pinned by tests/test_combination_counting.py)",
+        "  combinations  : PER TRACK, the number of hit tuples (one cluster per crossed",
+        "                  surface) a refit must test = product of the candidate counts over",
+        "                  the INSTRUMENTED surfaces it crosses, IL1-IL4 AND ID1-ID4 (mask",
+        "                  character k = ILk + IDk). A surface with NO candidate contributes",
+        "                  1, not 0 -- the refit skips it and carries on. Worked: 2,1,0,2 ->",
+        "                  2*1*1*2 = 4;  3,2,1,1 -> 6. (tests/test_combination_counting.py)",
+        "                  The barrel-only (IL) and disc-only (ID) counts are in the JSON",
+        "                  (by_region).",
         "  combinations  : MEAN number per track refit at that cone width (see below for",
         "                  what a combination is).",
         f"                  Multiply by {trk_per_ev:.0f} for per-event throughput.",
@@ -1954,7 +2118,8 @@ def study_combination_sweep(X, K, P, ax_row, out):
     THE QUESTION THIS ANSWERS. Widening the cone buys hit-finding efficiency and
     costs combinatorics, and adding smart-pixel layers tightens the cone for free.
     Neither trade is readable from a covariance: the number that matters is how
-    many L1xL2xL3xL4 hit combinations a refit must actually search, and how its
+    many hit combinations (one cluster per instrumented surface crossed, IL1-IL4
+    and, since the disc refit, ID1-ID4) a refit must actually search, and how its
     DISTRIBUTION over tracks moves. A mean is not enough here, because the cost of
     the tail is what sets the hardware budget -- hence a 2D histogram per
     configuration rather than a curve.
@@ -2030,6 +2195,16 @@ def study_combination_sweep(X, K, P, ax_row, out):
         Xv = _variant_crossings(files, vmap[s])
         combos, ntrk, cont, n_have = _combinations_per_track(Xv, K, allk)
         per_cfg[s] = combos
+        # the barrel-only count (the pre-disc definition: IL crossings only) and the
+        # discs' alone, at the design-table cones
+        region = {}
+        for reg in REGIONS:
+            rm = _region(Xv["layer"], reg)
+            if rm.any():
+                cr, nr, contr, _ = _combinations_per_track({k_: v_[rm] for k_, v_ in Xv.items()}, K, ktab)
+                region[reg] = {"n_tracks": int(nr), "by_cone": {
+                    f"{q:.4f}": {"mean": float(cr[k].mean()), "p99": float(np.percentile(cr[k], 99)),
+                                 "true_hit_containment": float(contr[k])} for q, k in zip(tabq, ktab)}}
         # Viability: an uninstrumented layer yields no L1 hit at all, so a build can
         # simply run out of hits. Counted from the refit's OWN acceptance rather than
         # from cone occupancy, since that is what it actually kept.
@@ -2065,7 +2240,8 @@ def study_combination_sweep(X, K, P, ax_row, out):
                   "p999": [float(np.percentile(combos[k], 99.9)) for k in kvals],
                   "p9999": [float(np.percentile(combos[k], 99.99)) for k in kvals],
                   "max": [float(combos[k].max()) for k in kvals],
-                  "total_work": [float(combos[k].sum()) for k in kvals]}
+                  "total_work": [float(combos[k].sum()) for k in kvals],
+                  "by_region": region}
         print(f"   (10) {s}: median combos "
               + "/".join(f"{v:.0f}" for v in res[s]["median"])
               + f"   q99: p99={res[s]['p99'][-1]:.0f} p99.9={res[s]['p999'][-1]:.0f} "
@@ -2116,11 +2292,11 @@ def study_combination_sweep(X, K, P, ax_row, out):
         a.text(0.0, 1.0, _glossary_text(width=52, terms=[
             "activeSP  /  A  /  I", "qX  (cone quantile)", "combinations / track"]),
             transform=a.transAxes, va="top", ha="left", fontsize=5.4, family="monospace")
-    f2.suptitle("(10) refit search space: L1xL2xL3xL4 combinations vs cone quantile, "
-                "per activeSP configuration" + (f"\n{partial}" if partial else ""), y=1.002)
+    f2.suptitle("(10) refit search space: combinations over the instrumented surfaces (IL + ID) "
+                "vs cone quantile, per activeSP configuration" + (f"\n{partial}" if partial else ""), y=1.002)
     f2.tight_layout()
-    p2 = os.path.join(out["_outdir"], "spix_combination_sweep.png")
-    f2.savefig(p2, dpi=130, bbox_inches="tight")
+    p2 = os.path.join(out["_outdir"], "spix_combination_sweep.pdf")
+    f2.savefig(p2, bbox_inches="tight")
     plt.close(f2)
     print(f"   (10) wrote {p2}")
     res["_figure"] = os.path.basename(p2)
@@ -2153,6 +2329,11 @@ def study_combination_sweep(X, K, P, ax_row, out):
         res["partial"] = partial
     _write_sweep_table(res, sfx, out, out.get("n_events", -1))
     out["combination_sweep"] = res
+    out["_monitor"]["study10_combination_sweep"] = {
+        s: {f"q{100 * float(c):g}": {"mean": d["mean"], "p99": d["p99"],
+                                     "containment": d["true_hit_containment"]}
+            for c, d in res[s]["by_cone"].items() if float(c) in SWEEP_TABLE_CONES}
+        for s in sfx}
 
 
 
@@ -2220,6 +2401,29 @@ def _helix_project(rinv, phi0, tanl, z0, r):
     return phi_pos, z, eta, phi0 - 2.0 * half
 
 
+def _helix_project_disc(rinv, phi0, tanl, z0, z):
+    """The same naive single-shot projection onto the PLANE z (signed): transverse
+    arc s = (z - z0) / tanL, chord radius r = 2 sin(rInv s / 2) / rInv, position
+    azimuth phi0 - rInv s / 2, direction azimuth phi0 - rInv s (d0 ignored, as
+    _helix_project). Returns (phi_pos, z, eta, phi_dir) like _helix_project."""
+    tl = np.where(np.abs(tanl) > 1e-9, tanl, 1e-9)
+    s = np.maximum((z - z0) / tl, 0.0)
+    half = 0.5 * rinv * s
+    small = np.abs(rinv) < 1e-9
+    r = np.where(small, s, 2.0 * np.sin(half) / np.where(small, 1.0, rinv))
+    eta = np.arcsinh(z / np.maximum(r, 1e-9))
+    return phi0 - half, z, eta, phi0 - 2.0 * half
+
+
+def _project_surface(tr, g, S, nominal):
+    """_helix_project (layer: radius `nominal`) or _helix_project_disc (disc: the
+    plane at |z| = `nominal` on the side each track heads to) for tracks g."""
+    if SPN.is_disc_surface(S):
+        z = np.where(tr["tanL"][g] > 0, 1.0, -1.0) * nominal
+        return _helix_project_disc(tr["rInv"][g], tr["phi"][g], tr["tanL"][g], tr["z0"][g], z)
+    return _helix_project(tr["rInv"][g], tr["phi"][g], tr["tanL"][g], tr["z0"][g], nominal)
+
+
 def _phase_pick(x, w, ngrid):
     """Choose the offset grid whose bin CENTRE the value lands nearest, and its bin.
 
@@ -2240,7 +2444,7 @@ def _phase_pick(x, w, ngrid):
     return best_g, ib
 
 
-def _sector_counts(tr, cl, tev, cev, layer, r_nom, wphi, weta, gspec, want_c,
+def _sector_counts(tr, cl, tev, cev, layer, nominal, wphi, weta, gspec, want_c,
                    xl, gil, have_ang):
     """Candidates per crossing, and whether the desired cluster was among them.
 
@@ -2253,12 +2457,11 @@ def _sector_counts(tr, cl, tev, cev, layer, r_nom, wphi, weta, gspec, want_c,
     which bin to read.
     """
     _, ngp, nge, ring = gspec   # ring = neighbour radius in bins; reads = (2*ring+1)^2
-    csel = cl["layer"] == layer
+    csel = cl["surface"] == layer
     if not csel.any():
         return None
     ca = np.flatnonzero(csel)
-    phi_p, _, eta_p, phi_dir = _helix_project(tr["rInv"], tr["phi"], tr["tanL"],
-                                              tr["z0"], r_nom)
+    phi_p, _, eta_p, phi_dir = _project_surface(tr, slice(None), layer, nominal)
     gp_t, ip_t = _phase_pick(phi_p, wphi, ngp)
     ge_t, ie_t = _phase_pick(eta_p, weta, nge)
 
@@ -2344,24 +2547,29 @@ def study_sector_binning(X, K, P, ax_row, out):
     the refit wants. An earlier version scored ANY cluster sharing the track's TP,
     which admitted clusters elsewhere in the detector, inflated the L1 q99 offset
     from 92 to 439 mrad, and produced 8e8 combinations per track -- pure artefact.
+
+    DISCS. The same absolute eta-phi grid holds for ID1-ID4: the projection lands
+    on the disc's PLANE (the median |z| of its clusters, on the side the track
+    heads to) instead of a layer's cylinder, and eta-phi bins are cut the same way
+    (eta's sign separates the two sides). The combination count multiplies over
+    every instrumented surface the track crosses.
     """
     files = out.get("_inputs")
     if not files:
         return
     tcols = ["rInv", "phi", "tanL", "z0", "pt"]
-    T = uproot.concatenate([f"{f}:Events" for f in files],
-                           filter_name=[f"{REF}_{c}" for c in tcols])
+    T = _concat(files, [f"{REF}_{c}" for c in tcols])
     tpname = _matched_tp_branch(files, out["_variant"])
-    MT = uproot.concatenate([f"{f}:Events" for f in files], filter_name=[tpname])
+    MT = _concat(files, [tpname])
     ntr = ak.to_numpy(ak.num(T[f"{REF}_rInv"]))
     tr = {c: ak.to_numpy(ak.flatten(T[f"{REF}_{c}"])) for c in tcols}
     tr["tp"] = ak.to_numpy(ak.flatten(MT[tpname]))
     tev = np.repeat(np.arange(len(ntr)), ntr)
     off = np.concatenate([[0], np.cumsum(ntr)])
 
-    cl = {"layer": K["layer"], "phi": K["globalPhi"],
+    cl = {"surface": K["surface"], "phi": K["globalPhi"],
           "eta": np.arcsinh(K["globalZ"] / np.maximum(K["globalR"], 1e-9)),
-          "r": K["globalR"], "tpIdx": K["tpIdx"],
+          "r": K["globalR"], "z": K["globalZ"], "tpIdx": K["tpIdx"],
           "gphi": K.get("gClPhi"), "gcot": K.get("gClCotTheta"),
           "sphi": K.get("gSigPhi"), "scot": K.get("gSigCotTheta")}
     cev = K["event"]
@@ -2376,18 +2584,28 @@ def study_sector_binning(X, K, P, ax_row, out):
 
     res = {"target_containment": SECTOR_TARGET, "f_scan": SECTOR_F,
            "grids": [g[0] for g in SECTOR_GRIDS], "layers": {}}
-    for L in LAYERS:
+    for L in SURFACES:
         xl = np.flatnonzero((X["layer"] == L) & (want_c >= 0))
         if len(xl) < 200:
             continue
         cj = want_c[xl]
         g = gi[xl]
-        pp, _, pe, _ = _helix_project(tr["rInv"][g], tr["phi"][g], tr["tanL"][g],
-                                      tr["z0"][g], cl["r"][cj])
+        disc = SPN.is_disc_surface(L)
+        if disc:      # the desired cluster's own plane (signed z), as the cylinder r below
+            pp, _, pe, _ = _helix_project_disc(tr["rInv"][g], tr["phi"][g], tr["tanL"][g],
+                                               tr["z0"][g], cl["z"][cj])
+        else:
+            pp, _, pe, _ = _helix_project(tr["rInv"][g], tr["phi"][g], tr["tanL"][g],
+                                          tr["z0"][g], cl["r"][cj])
         dphi = np.abs(_wrap(cl["phi"][cj] - pp))
         deta = np.abs(cl["eta"][cj] - pe)
+        on = cl["surface"] == L
         res["layers"][L] = {
-            "r_nom_cm": float(np.median(cl["r"][cl["layer"] == L])),
+            "surface": SNAME[L],
+            # the nominal surface the grid projection uses: median cluster radius
+            # (layer) or median cluster |z| (disc, both sides)
+            "nominal": "abs_z_cm" if disc else "r_cm",
+            "nominal_cm": float(np.median(np.abs(cl["z"][on]) if disc else cl["r"][on])),
             "n_desired": int(len(cj)),
             "dphi_q68_mrad": float(np.percentile(dphi, 68) * 1e3),
             "dphi_q95_mrad": float(np.percentile(dphi, 95) * 1e3),
@@ -2400,9 +2618,9 @@ def study_sector_binning(X, K, P, ax_row, out):
 
     variants = ["pos", "pos+alpha", "pos+alpha+beta"] if have_ang else ["pos"]
     tk = X["event"].astype(np.int64) * (1 << 20) + X["trackIdx"].astype(np.int64)
-    k2 = tk * 8 + X["layer"].astype(np.int64)
+    k2 = tk * 32 + X["layer"].astype(np.int64)          # surface codes reach 14
     u2, i2 = np.unique(k2, return_inverse=True)
-    ut, it_ = np.unique(u2 // 8, return_inverse=True)
+    ut, it_ = np.unique(u2 // 32, return_inverse=True)
     L1k = min(res["layers"])
 
     scan = []
@@ -2415,7 +2633,7 @@ def study_sector_binning(X, K, P, ax_row, out):
                 wphi = f * d["dphi_q99_mrad"] * 1e-3
                 weta = f * d["deta_q99"]
                 xl = np.flatnonzero(X["layer"] == L)
-                got = _sector_counts(tr, cl, tev, cev, L, d["r_nom_cm"], wphi, weta,
+                got = _sector_counts(tr, cl, tev, cev, L, d["nominal_cm"], wphi, weta,
                                      gspec, want_c, xl, gi[xl], have_ang)
                 if got is None:
                     continue
@@ -2484,17 +2702,19 @@ def _write_sector_table(res, out):
         "  desired cluster = the true cluster on the crossing's OWN module, i.e. what the",
         "  refit wants. Its offset from the naive projection:",
         "",
-        f"    {'L':2} {'r[cm]':>7} {'n':>8} {'dphi q68':>10} {'q95':>9} {'q99':>9}"
+        f"    {'surf':4} {'nominal':>12} {'n':>8} {'dphi q68':>10} {'q95':>9} {'q99':>9}"
         f" {'deta q95':>10} {'q99':>9}",
+        "    (nominal = the layer radius r or the disc plane |z| the grid projection uses)",
     ]
     for L, d in sorted(res["layers"].items()):
-        lines.append(f"    L{L} {d['r_nom_cm']:>7.2f} {d['n_desired']:>8} "
+        nom = f"{'|z|' if d['nominal'] == 'abs_z_cm' else 'r'} {d['nominal_cm']:.2f}cm"
+        lines.append(f"    {d['surface']:4} {nom:>12} {d['n_desired']:>8} "
                      f"{d['dphi_q68_mrad']:>9.2f}m {d['dphi_q95_mrad']:>8.2f}m "
                      f"{d['dphi_q99_mrad']:>8.2f}m {d['deta_q95']:>10.5f} {d['deta_q99']:>9.5f}")
     d1 = res["layers"][L1k]
     lines += [
         "",
-        f"  HEAVY TAIL, and it sets the design: at L{L1k} dphi q95 is "
+        f"  HEAVY TAIL, and it sets the design: at {SNAME[L1k]} dphi q95 is "
         f"{d1['dphi_q95_mrad']:.1f} mrad but q99 is {d1['dphi_q99_mrad']:.1f} mrad,",
         f"  a factor {d1['dphi_q99_mrad'] / max(d1['dphi_q95_mrad'], 1e-9):.1f}. "
         "Demanding 99% containment costs that many times the width",
@@ -2558,8 +2778,8 @@ def study_hough_examples(X, K, P, ax_row, out):
     different rates -- phi_p = phi0 - c*r*kappa but phi_d = phi0 - 2*c*r*kappa --
     so a cluster's own angle fixes kappa_hat = (phi_p - phi_d)/(c*r) with
     sigma = sigma(phi_d)/(c*r). The Hough line is drawn dark within 1 sigma of
-    that, mid to 3 sigma, faint beyond. Layers: L1 red, L2 orange, L3 blue,
-    L4 green.
+    that, mid to 3 sigma, faint beyond. Surfaces: IL1 red, IL2 orange, IL3 blue,
+    IL4 green; ID1 purple, ID2 brown, ID3 pink, ID4 olive.
 
     THE r-z PLANE IS THE SAME CONSTRUCTION. z0 = z - r*cot(theta), so a cluster
     is a segment of slope -r there too, and the slope encodes the layer: L1's
@@ -2567,14 +2787,14 @@ def study_hough_examples(X, K, P, ax_row, out):
     loose one. That is the whole reason z0 slicing works, drawn rather than
     asserted.
 
-    ETA COVERAGE IS A RESULT, NOT A PLOTTING PROBLEM. TBPX is a barrel: measured
-    on this file, the fraction of TPs lighting >=3 layers is 0.87 at |eta| 0.2-1.0
-    but 0.21 at 1.4-1.8 and 0.03 above 1.8. That is the acceptance limit of
-    barrel-only seeding (|eta| <~ 1.4). NOTE this is a BLOCKED DEPENDENCY, not a
-    scope decision: forward coverage is wanted, but there is no PixelAV angle
-    parametrisation for the disc sensors in their B-field configuration (a disc
-    sits perpendicular to B where a barrel sits parallel), so a disc cluster has
-    no usable angle yet. See doc/SmartPixelsSeedingAndFitting.md section 1.
+    ETA COVERAGE IS A RESULT, NOT A PLOTTING PROBLEM. TBPX alone is a barrel:
+    measured (barrel-only nanos), the fraction of TPs lighting >=3 layers was
+    0.87 at |eta| 0.2-1.0 but 0.21 at 1.4-1.8 and 0.03 above 1.8. The disc
+    clusters ID1-ID4 are drawn as well, so the forward cells show what the discs
+    add; each page states the pool's fraction reaching >= 3 and >= 4 SURFACES
+    (barrel + disc). The disc angles are the emulator's (an effective-incidence
+    mapping of a BARREL PixelAV response, no disc-orientation simulation): their
+    bands are provisional.
 
     THE TP PER CELL IS THE TYPICAL ONE, NOT THE BEST ONE -- the median-ranked
     candidate by (n_layers, n_clusters). An earlier version took the argmax, which
@@ -2605,9 +2825,12 @@ def study_hough_examples(X, K, P, ax_row, out):
     ok = SPN.tp_matched(K["tpIdx"]) & (K["tpGClPhi"] > SENTINEL) & (K["tpGClCotTheta"] > SENTINEL)
     ukey, inv = np.unique(M.tp_key(K["event"][ok], K["tpIdx"][ok]), return_inverse=True)
     cnt = np.bincount(inv).astype(float)
+    # surfaces reached per TP (bit i = SURFACES[i])
+    sbit = np.zeros(32, np.int64)
+    sbit[list(SURFACES)] = 1 << np.arange(len(SURFACES))
     laymask = np.zeros(len(ukey), dtype=np.int64)
-    np.bitwise_or.at(laymask, inv, (1 << K["layer"][ok].astype(np.int64)))
-    nlay = sum(((laymask >> L) & 1) for L in LAYERS)
+    np.bitwise_or.at(laymask, inv, sbit[K["surface"][ok].astype(np.int64)])
+    nlay = sum(((laymask >> i) & 1) for i in range(len(SURFACES)))
 
     r_ok = K["globalR"][ok]
     half = _half_turn(K["globalPhi"][ok], K["tpGClPhi"][ok])
@@ -2675,7 +2898,7 @@ def study_hough_examples(X, K, P, ax_row, out):
             order = np.lexsort((cnt[cand], nlay[cand]))
             idx = np.flatnonzero(cand)[order[len(order) // 2]]
             pool_ge3 = float((nlay[cand] >= 3).mean())
-            pool_eq4 = float((nlay[cand] == 4).mean())
+            pool_ge4 = float((nlay[cand] >= 4).mean())
             truth = {"phi0": tp_phi0[idx], "kap": tp_kap[idx],
                      "z0": tp_z0[idx], "cot": tp_cot[idx]}
             ev = tp_ev[idx]
@@ -2691,13 +2914,13 @@ def study_hough_examples(X, K, P, ax_row, out):
             res["cells"][cell] = {
                 "found": True, "event": int(ev), "tpIdx": int(tp_idx[idx]),
                 "tp_pt": float(tp_pt[idx]), "tp_eta": float(tp_eta[idx]),
-                "n_layers": int(nlay[idx]), "n_clusters_tp": int(cnt[idx]),
+                "n_surfaces": int(nlay[idx]), "n_clusters_tp": int(cnt[idx]),
                 "n_cone": int(cone.sum()), "n_sector": int(sect.sum()),
                 "n_candidate_tps": int(cand.sum()),
-                "selection": "median-ranked by (n_layers, n_clusters) -- TYPICAL, not best",
+                "selection": "median-ranked by (n_surfaces, n_clusters) -- TYPICAL, not best",
                 # the acceptance statement for this cell, independent of which TP
-                # happened to be drawn
-                "pool_frac_ge3_layers": pool_ge3, "pool_frac_eq4_layers": pool_eq4}
+                # happened to be drawn; surfaces = IL1-IL4 and ID1-ID4
+                "pool_frac_ge3_surfaces": pool_ge3, "pool_frac_ge4_surfaces": pool_ge4}
             pages.append((cell, (idx, truth, cone, sect)))
 
     # ---- render -------------------------------------------------------------
@@ -2709,7 +2932,7 @@ def study_hough_examples(X, K, P, ax_row, out):
                 for a in axs.ravel():
                     a.axis("off")
                 axs[0][1].text(0.5, 0.5, f"{cell}\n\nno TrackingParticle found\n"
-                               "barrel-only acceptance ends near |eta| 1.4",
+                               "(no TP with a cluster on IL1-IL4 / ID1-ID4 in this cell)",
                                ha="center", va="center", fontsize=13)
             else:
                 idx, truth, cone, sect = payload
@@ -2752,11 +2975,11 @@ def study_hough_examples(X, K, P, ax_row, out):
                         a.grid(alpha=.25)
                 c = res["cells"][cell]
                 fig.suptitle(f"{cell}   |   TYPICAL TP: $p_T$={c['tp_pt']:.2f} GeV, "
-                             f"$\\eta$={c['tp_eta']:+.2f}, {c['n_layers']} TBPX layers   |   "
+                             f"$\\eta$={c['tp_eta']:+.2f}, {c['n_surfaces']} surfaces   |   "
                              f"pool of {c['n_candidate_tps']}: "
-                             f"{c['pool_frac_ge3_layers']*100:.0f}% reach $\\geq$3 layers, "
-                             f"{c['pool_frac_eq4_layers']*100:.0f}% reach 4   |   "
-                             f"L1 red, L2 orange, L3 blue, L4 green; "
+                             f"{c['pool_frac_ge3_surfaces']*100:.0f}% reach $\\geq$3 surfaces, "
+                             f"{c['pool_frac_ge4_surfaces']*100:.0f}% $\\geq$4\n"
+                             f"{SURFACE_COLOR_TEXT}; "
                              f"shade = 1/3$\\sigma$ of the cluster's own angle", fontsize=10)
             fig.tight_layout()
             pdf.savefig(fig, dpi=110)
@@ -2809,8 +3032,15 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
     Each column is normalised by ITS OWN mode's finds, so IT and OT sit in one
     matrix despite different notions of findable (IT: a cluster on all three
     layers; OT: a stub on both seed layers and one projection layer).
+
+    BARREL-ONLY BY DESIGN: the seeders it runs (tracklet_topology_cost IT_CONFIGS:
+    the L1L2L3 / L2L3L4 barrel triplets and doublets; OT barrel seeds) implement
+    no disc seed (the disc seed menu, mem smartpixels-disc-seeding-design, is
+    designed, not implemented), so it is given the barrel clusters only
+    (barrel_view: the seeders key on the layer, which is 0 on a disc).
     """
     M = _ttc()
+    K = barrel_view(K)
 
     need = ("globalR", "globalZ", "globalPhi", "gClPhi", "gClCotTheta",
             "gSigPhi", "gSigCotTheta", "sigY", "tpIdx", "tpPt", "tp_d0",
@@ -2833,8 +3063,8 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
          # the flags + angles the seeder's direction_usable gate reads
          "hasAlpha": K["clHasAlpha"], "hasBeta": K["clHasBeta"],
          "localCotAlpha": K["clLocalCotAlpha"], "localCotBeta": K["clLocalCotBeta"]}
-    M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
-                 min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
+    M.set_limits(M.triplets_for_budget(out.get("_seed_budget_gb", M.DEFAULT_PAIR_BUDGET_GB)),
+                 min(out.get("_seed_rss_gb", 6.0), M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     PTMIN = 2.0
     ti = M.build_tp_index(D)
     Q = M.it_prepare(D, None)
@@ -2855,10 +3085,10 @@ def study_seed_mode_confusion(X, K, P, ax_row, out):
                 # IT findable: a TP above ptmin with a cluster on all three
                 # layers of this configuration. Same for all seeds of a config.
                 findable[lbl] = M.findable_keys(D, la, lb, lc, PTMIN)
-    # OT, from the same files
+    # OT, from the same files (not under --max-events: the OT loader reads them whole)
     try:
         srcs = out.get("_inputs") or []
-        if srcs:
+        if srcs and MAX_EVENTS is None:
             O, onev, have = M.load_ot(",".join(srcs), None)
             if "tpIdx" in have:
                 cal = M.calibrate_ot_bend(",".join(srcs), None)
@@ -2984,8 +3214,8 @@ def _confusion_side_artifacts(out, labels, mats, res):
     f2.suptitle("Seed-mode complementarity: fraction of each column mode's "
                 "TrackingParticles also recovered by the row mode", fontsize=11)
     f2.tight_layout()
-    p = os.path.join(od, "spix_seed_mode_confusion.png")
-    f2.savefig(p, dpi=150, facecolor="#fcfcfb", bbox_inches="tight")
+    p = os.path.join(od, "spix_seed_mode_confusion.pdf")
+    f2.savefig(p, facecolor="#fcfcfb", bbox_inches="tight")
     _plt.close(f2)
     t = os.path.join(od, "spix_seed_mode_confusion.txt")
     with open(t, "w") as fh:
@@ -3034,7 +3264,14 @@ def study_seed_composition(X, K, P, ax_row, out):
     So the variant scanned here is a LOWER gate on the doublet's own |kappa| --
     equivalently an UPPER pT bound -- which turns the doublets into pure
     threshold-recovery seeds that run concurrently with the triplet.
+
+    BARREL-ONLY BY DESIGN: the seeders it runs (tracklet_topology_cost IT_CONFIGS:
+    the L1L2L3 / L2L3L4 barrel triplets and doublets; OT barrel seeds) implement
+    no disc seed (the disc seed menu, mem smartpixels-disc-seeding-design, is
+    designed, not implemented), so it is given the barrel clusters only
+    (barrel_view: the seeders key on the layer, which is 0 on a disc).
     """
+    K = barrel_view(K)
     import importlib.util as _ilu
     _p = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                       "tracklet_topology_cost.py")
@@ -3057,8 +3294,8 @@ def study_seed_composition(X, K, P, ax_row, out):
          # the flags + angles the seeder's direction_usable gate reads
          "hasAlpha": K["clHasAlpha"], "hasBeta": K["clHasBeta"],
          "localCotAlpha": K["clLocalCotAlpha"], "localCotBeta": K["clLocalCotBeta"]}
-    M.set_limits(M.triplets_for_budget(M.DEFAULT_PAIR_BUDGET_GB),
-                 min(6.0, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
+    M.set_limits(M.triplets_for_budget(out.get("_seed_budget_gb", M.DEFAULT_PAIR_BUDGET_GB)),
+                 min(out.get("_seed_rss_gb", 6.0), M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
     PTMIN = 2.0
     KMINS = (0.0, 0.25, 0.30, 0.35, 0.40, 0.45)
     Q = M.it_prepare(D, None)
@@ -3207,6 +3444,10 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     A seed's recovered set depends only on its own three layers, never on what
     else is instrumented, so every distinct seed is run ONCE and each build's menu
     is composed from that cache. Without it this would be fifteen full passes.
+
+    BARREL-ONLY BY DESIGN: the census (tp_findability) enumerates the barrel IT +
+    OT barrel seeds only (seed_arity.enumerate_seeds over IL layers); a mask's
+    disc IDk is instrumented with ILk but no disc seed exists to use it yet.
     """
     import importlib.util as _ilu
     _here = os.path.dirname(os.path.abspath(__file__))
@@ -3494,10 +3735,19 @@ def study_combined_it_ot(X, K, P, ax_row, out):
     3-sigma z road, which is what the search actually scans) and the BACKGROUND
     that survives the joint phi-and-z window. The real hit is present by
     construction, so the second number is fakes per projection, not track length.
+
+    BARREL-ONLY BY DESIGN: the seed pairs and target layers are the IT barrel
+    layers and the OT barrel (M.load_flat + it_barrel_codes keep IL1-IL4 only); a
+    disc seed pair (ID + OT disk) is designed, not implemented.
     """
     M = _ttc()
     srcs = out.get("_inputs") or []
     need = ("globalR", "globalZ", "globalPhi", "tpIdx", "tpPt")
+    if MAX_EVENTS is not None:
+        for a in ax_row:
+            a.axis("off")
+        out["combined_it_ot"] = {"skipped": "--max-events set: this study reads its inputs whole"}
+        return
     if not srcs or any(c not in K for c in need):
         for a in ax_row:
             a.axis("off")
@@ -3704,6 +3954,10 @@ def study_cluster_angles_by_layer(X, K, P, ax_row, out):
     Reads the angle rows from the menu census rather than re-fitting: they are
     produced there by KF.angle_rows for one emitted track in ANGLE_SAMPLE, and
     re-deriving them here would be a second implementation of the same thing.
+
+    BARREL-ONLY BY DESIGN: those rows come from the barrel seed census (study 15).
+    The disc (and barrel) cluster angles against the sigma table the refit uses
+    are monitored per surface in R3 (section F).
     """
     import importlib.util as _ilu
     _here = os.path.dirname(os.path.abspath(__file__))
@@ -3809,8 +4063,8 @@ def study_cluster_angles_by_layer(X, K, P, ax_row, out):
                 "wrong-hit count, dashed is a cluster from a different "
                 "TrackingParticle", fontsize=10)
     f2.tight_layout(rect=(0, 0, 1, 0.96))
-    p2 = os.path.join(out["_outdir"], "spix_cluster_angles_by_layer.png")
-    f2.savefig(p2, dpi=130, bbox_inches="tight")
+    p2 = os.path.join(out["_outdir"], "spix_cluster_angles_by_layer.pdf")
+    f2.savefig(p2, bbox_inches="tight")
     plt.close(f2)
     summary["figure"] = p2
     out["cluster_angles_by_layer"] = summary
@@ -3834,6 +4088,8 @@ def study_mva_score_correlation(X, K, P, ax_row, out):
     export_site (one model per discriminant, trained on event-disjoint folds),
     and retraining here would be a second implementation whose numbers could
     drift from the ones the page actually shows.
+
+    BARREL-ONLY BY DESIGN: the site's scores are built on the barrel seed census.
     """
     od = out.get("_outdir", ".")
     site = out.get("_site") or os.path.join(od, "site")
@@ -3961,14 +4217,14 @@ def study_mva_score_correlation(X, K, P, ax_row, out):
                 label=r"$\rho_{\rm Spearman}$ [unitless]")
     f2.suptitle("(18) full rank-correlation matrix of the shipped "
                 "discriminants, per activeSP build", fontsize=10)
-    p2 = os.path.join(od, "spix_mva_score_correlation.png")
-    f2.savefig(p2, dpi=130, bbox_inches="tight")
+    p2 = os.path.join(od, "spix_mva_score_correlation.pdf")
+    f2.savefig(p2, bbox_inches="tight")
     plt.close(f2)
     out["mva_score_correlation"] = {"scores": names, "n_sampled": int(take),
                                     "figure": p2, "per_build": res}
 
 # ---- (19) OT-only projection: targets vs background, per track class --------
-PROJ_TERMS = ["OT-only projection", "layer projection", "4-sigma ellipse",
+PROJ_TERMS = ["OT-only projection", "surface projection", "4-sigma ellipse",
               "majority-owner TP", "foreign stub", "fake stub",
               "track classes  (perfect / foreign-1 / foreign-2+ / fake-1 / fake-2+ / foreign-fake)",
               "excluded tracks  (tie / no-owner / unjoined / covariance absent)",
@@ -4005,22 +4261,31 @@ def _proj_mad_rms(x):
 PROJ_CROSS_CUT = 1.0
 
 
-def _draw_proj_crosscut(R, Ls, nsig, n_events, n_perfect):
-    """Perfect tracks: dcotAlpha with |dcotBeta| <= cut, and the converse, per layer.
+def _cat_legend(fig, y=0.005):
+    """ONE legend for the cluster categories, outside every axes (figure bottom)."""
+    import ot_projection as OPJ
+    from matplotlib.lines import Line2D
+    h = [Line2D([0], [0], **PROJ_CAT_STYLE[c]) for c in range(5)]
+    fig.legend(h, list(OPJ.CATEGORIES), loc="lower center", bbox_to_anchor=(0.5, y), ncol=5,
+               fontsize=9, frameon=False)
 
-    Same common normalisation as the per-layer pages: every category in a panel
+
+def _draw_proj_crosscut(R, Ls, nsig, n_events, n_perfect, title_extra=""):
+    """Perfect tracks: dcotAlpha with |dcotBeta| <= cut, and the converse, per surface.
+
+    Same common normalisation as the per-surface pages: every category in a panel
     is divided by the total AFTER the cut, so relative proportions survive.
-    Clusters without an angle estimate (all of B3) cannot enter either panel.
+    Clusters without an angle estimate cannot enter either panel.
     """
     import ot_projection as OPJ
     cut = PROJ_CROSS_CUT
-    fig = plt.figure(figsize=(14, 3.0 * len(Ls) + 1.6))
+    fig = plt.figure(figsize=(14, 3.0 * len(Ls) + 2.0))
     gs = fig.add_gridspec(len(Ls), 3, width_ratios=[1, 1, 0.8])
     table = {}
     for li, L in enumerate(Ls):
-        base = (R["layer"] == L) & (R["cls"] == 0)
+        base = (R["surface"] == L) & (R["cls"] == 0)
         both = base & np.isfinite(R["dcotA"]) & np.isfinite(R["dcotB"])
-        table[f"IL{L}"] = {}
+        table[SNAME[L]] = {}
         for pi, (q, other, qlab, olab) in enumerate(
                 (("dcotA", "dcotB", "dcotAlpha", "dcotBeta"),
                  ("dcotB", "dcotA", "dcotBeta", "dcotAlpha"))):
@@ -4042,61 +4307,87 @@ def _draw_proj_crosscut(R, Ls, nsig, n_events, n_perfect):
                 if not len(x):
                     continue
                 h, _ = np.histogram(np.clip(x, edges[0], edges[-1]), edges)
-                ax.stairs(h / max(n_all, 1), edges, **PROJ_CAT_STYLE[c],
-                          label=f"{OPJ.CATEGORIES[c]} n={len(x):,} "
-                                f"(kept {100 * rows[OPJ.CATEGORIES[c]]['kept_fraction']:.1f}%)")
-            table[f"IL{L}"][f"{qlab} | |{olab}|<={cut:g}"] = rows
+                ax.stairs(h / max(n_all, 1), edges, **PROJ_CAT_STYLE[c])
+            table[SNAME[L]][f"{qlab} | |{olab}|<={cut:g}"] = rows
             ax.set_yscale("log")
             ax.grid(alpha=.25)
             ax.tick_params(labelsize=7)
-            ax.legend(fontsize=6, loc="upper right")
             ax.set_xlabel(f"{qlab}  [unitless]   (|{olab}| <= {cut:g}; edge bins hold overflow)",
                           fontsize=7)
             if pi == 0:
-                ax.set_ylabel(f"IL{L}\nfraction of all clusters\nin panel / bin", fontsize=8)
+                ax.set_ylabel(f"{SNAME[L]}\nfraction of all clusters\nin panel / bin", fontsize=8)
             if li == 0:
                 ax.set_title(f"{qlab}, with |{olab}| <= {cut:g}", fontsize=9)
     tax = fig.add_subplot(gs[:, -1])
     tax.axis("off")
     tax.text(0.0, 1.0,
              f"PERFECT tracks only ({n_perfect:,} tracks, {n_events:,} events).\n"
-             f"OT-only projection, no KF update between layers,\n"
-             f"{nsig:g}-sigma ellipse as on the per-layer pages.\n\n"
+             f"OT-only projection, no KF update between surfaces,\n"
+             f"{nsig:g}-sigma ellipse as on the per-surface pages.\n\n"
              f"Each panel: one angle residual, the OTHER\n"
              f"restricted to |d| <= {cut:g} (unitless) -- a 1D view of\n"
              f"the 2D (dcotAlpha, dcotBeta) distribution.\n"
-             f"'kept' = fraction of that category's clusters\n"
-             f"(with both angles) surviving the other-angle cut.\n\n"
+             f"Kept fractions and widths per category: the\n"
+             f"table page after this one.\n\n"
              f"Normalised to ALL clusters in the panel after\n"
              f"the cut, so category proportions are preserved.\n\n"
              "A-in / A-out = majority-owner TP's cluster inside /\n"
              "  outside the ellipse; B2 = other TP in ellipse.\n"
              "B1 is empty by definition (a perfect track has no\n"
-             "  foreign stub); B3 (no TP) carries no angle\n"
-             "  estimate, so it cannot appear here.",
+             "  foreign stub); B3 = no TP.\n"
+             "On a disc cotBeta is the RADIAL angle.",
              fontsize=7, va="top", ha="left", family="monospace", transform=tax.transAxes)
     fig.suptitle(f"Perfect tracks: each angle residual with the other angle restricted to "
-                 f"|d| <= {cut:g}, per layer", fontsize=12)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+                 f"|d| <= {cut:g}, per surface{title_extra}", fontsize=12)
+    _cat_legend(fig)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.97))
     return {"fig": fig, "table": table}
+
+
+def _proj_validation(V, lim):
+    """The study-19 cross-check against the producer's projOT*, per surface."""
+    per, bad = {}, []
+    for S in np.unique(V["surface"]):
+        m = V["surface"] == S
+        e = {"n": int(m.sum()),
+             "du_p99_um": float(np.percentile(np.abs(V["du"][m]), 99) * 1e4),
+             "dv_p99_um": float(np.percentile(np.abs(V["dv"][m]), 99) * 1e4),
+             "dcotA_p99": float(np.percentile(np.abs(V["dcotA"][m]), 99)),
+             "dcotB_p99": float(np.percentile(np.abs(V["dcotB"][m]), 99)),
+             "sigU_ratio_median": float(np.median(V["rsu"][m])),
+             "sigV_ratio_median": float(np.median(V["rsv"][m])),
+             "sig_ratio_p1_p99": [float(np.percentile(np.r_[V["rsu"][m], V["rsv"][m]], q)) for q in (1, 99)]}
+        per[SNAME[int(S)]] = e
+        if (e["du_p99_um"] > lim["du_p99_cm"] * 1e4 or e["dv_p99_um"] > lim["dv_p99_cm"] * 1e4
+                or e["dcotA_p99"] > lim["dcotA_p99"] or e["dcotB_p99"] > lim["dcotB_p99"]
+                or abs(e["sigU_ratio_median"] - 1) > lim["sig_ratio_median_tol"]
+                or abs(e["sigV_ratio_median"] - 1) > lim["sig_ratio_median_tol"]):
+            bad.append(SNAME[int(S)])
+    return per, bad
 
 
 def study_ot_projection_targets(X, K, P, ax_row, out):
     """(19) OT-only projection: what the refit's TARGET clusters and the
-    BACKGROUND clusters inside a 4-sigma ellipse look like, by track class.
+    BACKGROUND clusters inside a 4-sigma ellipse look like, by track class, on
+    every surface (IL1-IL4 and ID1-ID4).
 
     WHY THIS IS SEPARATE FROM THE REST OF THE OMNIBUS. Every other study here
-    reads the refit's per-crossing tables, which keep ONE module per layer and
+    reads the refit's per-crossing tables, which keep ONE module per surface and
     record the seed projection only where the seed and the KF-updated state share
     a module. This one needs neither restriction, so it projects the OT track
     itself (ot_projection.py) onto every module its ellipse overlaps, and uses
     the refit tables only as a cross-check of its helix, frame and Jacobian. It
     ignores X/K/P and streams its own inputs (--proj-inputs, default -i).
 
-    WHY PER LAYER. There is no Kalman update between layers here, so IL1 and IL4
-    are two independent extrapolations of the same OT fit with different lever
-    arms; pooling them would mix four different cone sizes. The KF-updated
-    version is a later study.
+    DISCS. The helix meets a disc's mean-|z| plane on the side it heads to, then
+    each candidate module's face (ot_projection.disc_s / surface_s); a disc
+    module's local (u, v) is (r-phi, radius). The cross-check against the
+    producer's projOT* holds on the disc crossings as on the barrel ones (per
+    surface below).
+
+    WHY PER SURFACE. There is no Kalman update between surfaces here, so IL1 and
+    IL4 are two independent extrapolations of the same OT fit with different
+    lever arms; pooling them would mix different cone sizes.
 
     WHY BY TRACK CLASS. The target is the majority-owner TP's cluster. On a
     contaminated OT track the projection itself is pulled, and the cluster of a
@@ -4104,6 +4395,7 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
     classes says whether that trap is visible in position or angle.
     """
     import ot_projection as OPJ
+    from matplotlib.backends.backend_pdf import PdfPages
 
     def _skip(msg):
         for a in ax_row:
@@ -4121,7 +4413,7 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
     # THE VALIDATION GATE'S REFIT TABLE. projOT* is the OT track's own projection,
     # identical in every variant, so any refit table of the (possibly separate)
     # projection inputs validates it: a selected variant first, and among those the
-    # most instrumented (projOT* is stored on more layers there).
+    # most instrumented (projOT* is stored on more surfaces there).
     have = _variant_names(_keys(files[0]))
     sel = {v.name: v for v in out["_variants"]}
     cand = sorted(have, key=lambda n: (n not in sel, -(sel[n].mask if n in sel else n).count("A")))
@@ -4147,25 +4439,19 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
     R, PR, V = r["rows"], r["proj"], r["validation"]
     classes = OPJ.TRACK_CLASSES
     tbc = r["tracks_by_class"]
+    Ls = [S for S in r["surfaces"] if (PR["surface"] == S).any()]
 
-    # ---- the cross-check gate -------------------------------------------
+    # ---- the cross-check gate, per surface ------------------------------
     lim = PROJ_VALIDATION_LIMITS
+    per_val, bad = _proj_validation(V, lim)
     val = {"n_refit_seed_crossings": V["n_refit"], "n_compared": V["n_compared"],
-           "du_p99_cm": float(np.percentile(np.abs(V["du"]), 99)),
-           "dv_p99_cm": float(np.percentile(np.abs(V["dv"]), 99)),
-           "dcotA_p99": float(np.percentile(np.abs(V["dcotA"]), 99)),
-           "dcotB_p99": float(np.percentile(np.abs(V["dcotB"]), 99)),
-           "sigU_ratio_median": float(np.median(V["rsu"])),
-           "sigV_ratio_median": float(np.median(V["rsv"])),
-           "sig_ratio_p1_p99": [float(np.percentile(np.r_[V["rsu"], V["rsv"]], q)) for q in (1, 99)]}
-    bad = [k for k in ("du_p99_cm", "dv_p99_cm", "dcotA_p99", "dcotB_p99") if val[k] > lim[k]]
-    bad += [k for k in ("sigU_ratio_median", "sigV_ratio_median")
-            if abs(val[k] - 1.0) > lim["sig_ratio_median_tol"]]
+           "per_surface": per_val}
     if V["n_compared"] < 0.99 * V["n_refit"]:
         bad.append("n_compared")
-    print(f"    cross-check vs refit projOT*: {V['n_compared']}/{V['n_refit']} crossings, "
-          f"|du| p99 {val['du_p99_cm'] * 1e4:.3f} um, |dcotB| p99 {val['dcotB_p99']:.2e}, "
-          f"width ratio {val['sigU_ratio_median']:.4f}/{val['sigV_ratio_median']:.4f}")
+    for nm, e in per_val.items():
+        print(f"    cross-check vs refit projOT* {nm}: {e['n']} crossings, |du| p99 {e['du_p99_um']:.3f} um, "
+              f"|dv| p99 {e['dv_p99_um']:.3f} um, |dcotB| p99 {e['dcotB_p99']:.2e}, "
+              f"width ratio {e['sigU_ratio_median']:.4f}/{e['sigV_ratio_median']:.4f}")
     if bad:
         raise SystemExit(f"OT-only projection DISAGREES with the producer's seed projection on "
                          f"{bad}: {val}. Do not trust any result of this study.")
@@ -4173,15 +4459,15 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
         print(f"    WARNING: an overlapping module sat at {r['bound_ratio_max']:.2f} of the "
               f"candidate bound; widen BOUND_* in ot_projection.py")
 
-    # ---- per class x layer tables ---------------------------------------
+    # ---- per class x surface tables --------------------------------------
     table = {}
     for ci, cname in enumerate(classes):
         table[cname] = {}
-        for L in OPJ.IT_LAYERS:
-            m = (PR["cls"] == ci) & (PR["layer"] == L)
+        for L in Ls:
+            m = (PR["cls"] == ci) & (PR["surface"] == L)
             cv = m & PR["covered"]
             ae = m & PR["a_exists"]
-            e = {"n_layer_projections": int(m.sum()), "n_covered": int(cv.sum()),
+            e = {"n_surface_projections": int(m.sum()), "n_covered": int(cv.sum()),
                  "n_lands": int((m & PR["lands"]).sum()), "n_target_exists": int(ae.sum()),
                  "n_target_inside": int((ae & PR["a_in"]).sum()),
                  "n_target_unprojectable": int((ae & PR["a_unprojectable"]).sum()),
@@ -4192,10 +4478,10 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
             ld = m & PR["lands"]
             for s_ in ("su", "sv", "sCotA", "sCotB"):
                 e[f"median_{s_}"] = float(np.median(PR[s_][ld])) if ld.any() else float("nan")
-            rm = (R["cls"] == ci) & (R["layer"] == L)
+            rm = (R["cls"] == ci) & (R["surface"] == L)
             e["residuals"] = {OPJ.CATEGORIES[c]: {q: _proj_mad_rms(R[q][rm & (R["cat"] == c)].astype(np.float64))
                                                   for q, _, _ in PROJ_QTY} for c in range(5)}
-            table[cname][f"IL{L}"] = e
+            table[cname][SNAME[L]] = e
 
     excl = {k: tbc[k] for k in ("tie", "no-owner", "unjoined", "covariance-absent")}
     pull_txt = "  ".join(f"{p} {pulls[p]['mad']:.2f}" for p in OPJ.HPAR)
@@ -4204,28 +4490,28 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
 
     # ---- summary row on the omnibus grid ---------------------------------
     ax = ax_row[0]
-    Ls = list(OPJ.IT_LAYERS)
+    xp = np.arange(len(Ls))
     cols_ = plt.cm.tab10(np.arange(len(classes)))
     for ci, cname in enumerate(classes):
-        y = [table[cname][f"IL{L}"]["containment"] for L in Ls]
-        ax.plot(Ls, y, "o-", color=cols_[ci], label=f"{cname} ({tbc[cname]:,} trk)")
-    ax.set_xticks(Ls, [f"IL{L}" for L in Ls])
-    ax.set_ylabel("target containment  [fraction of layer projections]")
+        y = [table[cname][SNAME[L]]["containment"] for L in Ls]
+        ax.plot(xp, y, "o-", color=cols_[ci], label=f"{cname} ({tbc[cname]:,} trk)")
+    surface_axis(ax, Ls)
+    ax.set_ylabel("target containment  [fraction of surface projections]")
     ax.set_title("A-in / (A exists): majority-owner cluster\ninside the 4-sigma OT-only ellipse",
                  fontsize=9)
     ax.set_ylim(0, 1.02)
     ax.grid(alpha=.3)
-    ax.legend(fontsize=6, loc="lower left")
+    ax.legend(fontsize=6)
     ax = ax_row[1]
     for ci, cname in enumerate(classes):
-        tot = [sum(table[cname][f"IL{L}"][f"mean_nB{b}_per_covered"] for b in (1, 2, 3)) for L in Ls]
-        b1 = [table[cname][f"IL{L}"]["mean_nB1_per_covered"] for L in Ls]
-        ax.plot(Ls, tot, "o-", color=cols_[ci], label=cname)
+        tot = [sum(table[cname][SNAME[L]][f"mean_nB{b}_per_covered"] for b in (1, 2, 3)) for L in Ls]
+        b1 = [table[cname][SNAME[L]]["mean_nB1_per_covered"] for L in Ls]
+        ax.plot(xp, tot, "o-", color=cols_[ci], label=cname)
         if cname.startswith("foreign"):
-            ax.plot(Ls, b1, "s:", color=cols_[ci], ms=4)
-    ax.set_xticks(Ls, [f"IL{L}" for L in Ls])
+            ax.plot(xp, b1, "s:", color=cols_[ci], ms=4)
+    surface_axis(ax, Ls)
     ax.set_yscale("log")
-    ax.set_ylabel("background clusters per covered layer projection  [count]")
+    ax.set_ylabel("background clusters per covered surface projection  [count]")
     ax.set_title("B1+B2+B3 inside the ellipse (solid)\nB1 alone, foreign classes (dotted)", fontsize=9)
     ax.grid(alpha=.3, which="both")
     ax.legend(fontsize=6)
@@ -4239,30 +4525,63 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
           "  (stub-combinatoric or unknown).  CMSSW L1TTrack_genuine can carry\n"
           "  ONE fake stub: it is NOT 'perfect'.\n"
         f"EXCLUDED (no class): {excl_txt}\n"
-        "A = majority-owner TP's cluster on the layer (A-in / A-out of ellipse)\n"
+        "A = majority-owner TP's cluster on the surface (A-in / A-out of ellipse)\n"
         "B1 = in ellipse, TP owns a foreign stub of this track\n"
         "B2 = in ellipse, other TP;  B3 = in ellipse, no TP\n"
         "Ellipse: d < 4 of J C J^T, OT fit covariance, no MS, no KF update;\n"
-        "  every module it overlaps, residuals in the cluster's module frame.\n"
+        "  every module it overlaps, residuals in the cluster's module frame\n"
+        "  (disc: u = r-phi, v = radius).\n"
         f"OT fit pull widths (MAD; 1 = honest): {pull_txt}\n"
-        f"Cross-check vs refit projOT*: {V['n_compared']:,} crossings, |du| p99\n"
-        f"  {val['du_p99_cm'] * 1e4:.3f} um, width ratio {val['sigU_ratio_median']:.3f}\n"
-        f"Per-layer residual figures: spix_ot_projection_IL1..4.png / .pdf")
+        f"Cross-check vs refit projOT*: {V['n_compared']:,} crossings, per surface\n"
+        f"  on page 1 of spix_ot_projection.pdf")
     ax.text(0.0, 1.0, legend_txt, fontsize=5.6, va="top", ha="left", family="monospace",
             transform=ax.transAxes)
 
-    # ---- per-layer residual figures --------------------------------------
-    from matplotlib.backends.backend_pdf import PdfPages
+    # ---- the PDF: validation + class counts, then per surface ------------
     od = out["_outdir"]
     pdf_path = os.path.join(od, "spix_ot_projection.pdf")
     defs = _glossary_text(width=58, terms=PROJ_TERMS)
-    pngs = []
     with PdfPages(pdf_path) as pdf:
+        OSU.table_pages(
+            pdf, "Study 19: cross-check of the OT-only projection against the producer's projOT*",
+            ["surface", "crossings", "|du| p99 [um]", "|dv| p99 [um]", "|dcotA| p99", "|dcotB| p99",
+             "sigma_u ratio med", "sigma_v ratio med", "ratio p1", "ratio p99"],
+            [[nm, f"{e['n']:,}", OSU.fmt(e["du_p99_um"]), OSU.fmt(e["dv_p99_um"]),
+              OSU.fmt(e["dcotA_p99"], "{:.2e}"), OSU.fmt(e["dcotB_p99"], "{:.2e}"),
+              OSU.fmt(e["sigU_ratio_median"], "{:.4f}"), OSU.fmt(e["sigV_ratio_median"], "{:.4f}"),
+              OSU.fmt(e["sig_ratio_p1_p99"][0], "{:.3f}"), OSU.fmt(e["sig_ratio_p1_p99"][1], "{:.3f}")]
+             for nm, e in per_val.items()],
+            notes=[f"{r['n_events']:,} events; validation refit table {refit}; {V['n_compared']:,} of "
+                   f"{V['n_refit']:,} crossings with projOT* compared (same module as the producer).",
+                   "Limits: |du|,|dv| p99 < 1 um, |dcotA| p99 < 2e-3, |dcotB| p99 < 5e-3, width-ratio "
+                   "medians within 2%. Widths: ours central differences (disc perturbations refined",
+                   "past the 1 um Newton stop), the producer's one-sided. Disc u = r-phi, v = radius.",
+                   f"Tracks per class: {cls_txt}",
+                   f"EXCLUDED (no class): {excl_txt}",
+                   f"OT fit pull widths (MAD; 1 = honest): {pull_txt}"])
+        crows = []
+        for cname in classes:
+            for L in Ls:
+                e = table[cname][SNAME[L]]
+                crows.append([cname, SNAME[L], f"{e['n_surface_projections']:,}", f"{e['n_target_exists']:,}",
+                              OSU.fmt(e["containment"]),
+                              OSU.fmt(sum(e[f"mean_nB{b}_per_covered"] for b in (1, 2, 3)), "{:.2f}"),
+                              OSU.fmt(e["mean_nB1_per_covered"], "{:.2f}"), OSU.fmt(e["mean_nB2_per_covered"], "{:.2f}"),
+                              OSU.fmt(e["mean_nB3_per_covered"], "{:.2f}"),
+                              OSU.fmt(e["median_su"] * 1e4, "{:.0f}"), OSU.fmt(e["median_sv"] * 1e4, "{:.0f}")])
+        OSU.table_pages(pdf, "Study 19: containment and background per class and surface",
+                        ["class", "surface", "projections", "A exists", "containment", "B per covered",
+                         "B1", "B2", "B3", "median sigma_u [um]", "median sigma_v [um]"], crows,
+                        notes=["containment = A-in / A exists (majority-owner cluster inside the 4-sigma "
+                               "ellipse); B per covered projection (ellipse overlaps a module).",
+                               "sigma_u/v: projected OT-fit width on the module(s) the helix lands on "
+                               "(disc v = radius)."])
         for L in Ls:
-            fig = plt.figure(figsize=(26, 3.0 * len(classes) + 1.6))
+            fig = plt.figure(figsize=(26, 3.0 * len(classes) + 2.0))
             gs = fig.add_gridspec(len(classes), len(PROJ_QTY) + 1,
                                   width_ratios=[1] * len(PROJ_QTY) + [1.25])
-            inl = (R["layer"] == L) & np.isin(R["cat"], (0, 2, 3, 4))
+            inl = (R["surface"] == L) & np.isin(R["cat"], (0, 2, 3, 4))
+            disc = SPN.is_disc_surface(L)
             for qi, (q, qlab, sc) in enumerate(PROJ_QTY):
                 v = R[q][inl].astype(np.float64) * sc
                 if q == "d":
@@ -4270,15 +4589,16 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
                 else:
                     hi = np.nanpercentile(np.abs(v), 99.5) if np.isfinite(v).any() else 1.0
                     edges = np.linspace(-hi, hi, 81)
+                if disc:
+                    qlab = qlab.replace("du  [um]", "du (r-phi)  [um]").replace("dv  [um]", "dv (radius)  [um]")
                 for ci, cname in enumerate(classes):
                     ax = fig.add_subplot(gs[ci, qi])
-                    base = (R["layer"] == L) & (R["cls"] == ci)
+                    base = (R["surface"] == L) & (R["cls"] == ci)
                     # ONE common normalisation for every category in the panel:
                     # the total of A-in + A-out + B1 + B2 + B3. That keeps the
                     # relative proportions (how much background per target) and
                     # makes A-in and A-out -- two halves of one distribution split
                     # at d = nsig -- join continuously at the ellipse boundary.
-                    # Per-category normalisation made that curve jump ~6x there.
                     xall = R[q][base].astype(np.float64)
                     n_all = int(np.isfinite(xall).sum())
                     for c in range(5):
@@ -4287,18 +4607,16 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
                         if not len(x):
                             continue
                         h, _ = np.histogram(np.clip(x, edges[0], edges[-1]), edges)
-                        ax.stairs(h / n_all, edges, **PROJ_CAT_STYLE[c],
-                                  label=f"{OPJ.CATEGORIES[c]} n={len(x):,}")
+                        ax.stairs(h / n_all, edges, **PROJ_CAT_STYLE[c])
                     if q == "d":
                         ax.axvline(nsig, color="#555", lw=0.8, ls=":")
                     ax.set_yscale("log")
                     ax.tick_params(labelsize=6)
                     ax.grid(alpha=.25)
-                    ax.legend(fontsize=5.2, loc="upper right")
                     if ci == len(classes) - 1:
                         ax.set_xlabel(qlab + "   (edge bins hold overflow)", fontsize=7)
                     if qi == 0:
-                        e = table[cname][f"IL{L}"]
+                        e = table[cname][SNAME[L]]
                         ax.set_ylabel(f"{cname}\nfraction of all clusters\nin panel / bin\n"
                                       f"containment {e['containment']:.3f}\n"
                                       f"({e['n_target_inside']:,}/{e['n_target_exists']:,})", fontsize=7)
@@ -4307,44 +4625,76 @@ def study_ot_projection_targets(X, K, P, ax_row, out):
             tax = fig.add_subplot(gs[:, -1])
             tax.axis("off")
             tax.text(0.0, 1.0,
-                     f"IL{L}: OT-only projection, no KF update between layers\n"
+                     f"{SNAME[L]}: OT-only projection, no KF update between surfaces\n"
                      f"{r['n_events']:,} events.  Tracks per class: {cls_txt}\n"
                      f"EXCLUDED (no class): {excl_txt}\n"
-                     f"OT fit pull widths (MAD): {pull_txt}\n\n" + defs,
+                     f"OT fit pull widths (MAD): {pull_txt}\n"
+                     f"Counts and widths per category: next page.\n\n" + defs,
                      fontsize=5.4, va="top", ha="left", family="monospace",
                      transform=tax.transAxes, wrap=True)
-            fig.suptitle(f"SmartPixels OT-only projection onto IL{L}: target (A) vs background "
+            fig.suptitle(f"SmartPixels OT-only projection onto {SNAME[L]}: target (A) vs background "
                          f"(B1/B2/B3) clusters inside the {nsig:g}-sigma ellipse, by track class",
                          fontsize=12)
-            fig.tight_layout(rect=(0, 0, 1, 0.975))
-            p_ = os.path.join(od, f"spix_ot_projection_IL{L}.png")
-            fig.savefig(p_, dpi=110)
+            _cat_legend(fig)
+            fig.tight_layout(rect=(0, 0.025, 1, 0.975))
             pdf.savefig(fig)
             plt.close(fig)
-            pngs.append(p_)
+            rows_t = []
+            for cname in classes:
+                for c in range(5):
+                    rr = table[cname][SNAME[L]]["residuals"][OPJ.CATEGORIES[c]]
+                    rows_t.append([cname, OPJ.CATEGORIES[c], f"{rr['du']['n']:,}"]
+                                  + [OSU.fmt(rr[q]["mad"] * sc, "{:.1f}" if sc > 1 else "{:.3f}")
+                                     for q, _, sc in PROJ_QTY])
+            OSU.table_pages(pdf, f"Study 19, {SNAME[L]}: clusters and robust widths (MAD x 1.4826) "
+                                 f"per class and category",
+                            ["class", "category", "n clusters", "du [um]", "dv [um]", "d [sigma]",
+                             "dcotA", "dcotB"], rows_t,
+                            notes=["Widths of the histograms on the previous page; du, dv in the cluster's "
+                                   "module frame" + (" (disc: r-phi, radius)." if disc else ".")])
         # ---- perfect tracks, one angle cut on the other angle -------------
         # A 1D look at the 2D (dcotAlpha, dcotBeta) distribution: each angle's
         # residual with the OTHER restricted to |d| <= PROJ_CROSS_CUT, per
-        # layer. Overlaying five categories as surfaces in (alpha, beta,
-        # count) is unreadable; this shows how much of each category survives
-        # the second angle and what its first-angle shape is once it has.
-        crosscut = _draw_proj_crosscut(R, Ls, nsig, r["n_events"], tbc["perfect"])
-        pdf.savefig(crosscut["fig"])
-        p_ = os.path.join(od, "spix_ot_projection_perfect_crosscut.png")
-        crosscut["fig"].savefig(p_, dpi=110)
-        plt.close(crosscut["fig"])
-        pngs.append(p_)
+        # surface, barrel and disc on separate pages.
+        crosscut = {}
+        for grp, title in (([L for L in Ls if not SPN.is_disc_surface(L)], " (barrel)"),
+                           ([L for L in Ls if SPN.is_disc_surface(L)], " (discs)")):
+            if not grp:
+                continue
+            cc = _draw_proj_crosscut(R, grp, nsig, r["n_events"], tbc["perfect"], title)
+            pdf.savefig(cc["fig"])
+            plt.close(cc["fig"])
+            crosscut.update(cc["table"])
+            rows_c = []
+            for nm, blocks in cc["table"].items():
+                for blk, cats in blocks.items():
+                    for cat, e in cats.items():
+                        rows_c.append([nm, blk, cat, f"{e['n_with_both_angles']:,}", f"{e['n_after_cut']:,}",
+                                       OSU.fmt(e["kept_fraction"]), OSU.fmt(e["mad"]), OSU.fmt(e["rms"])])
+            OSU.table_pages(pdf, "Study 19: perfect tracks, angle residuals after the other-angle cut"
+                            + title, ["surface", "panel", "category", "n (both angles)", "n after cut",
+                                      "kept", "MAD width", "RMS"], rows_c)
     for cname in classes:
         print(f"    {cname:13s} " + "  ".join(
-            f"IL{L} cont {table[cname][f'IL{L}']['containment']:.3f} "
-            f"B/cov {sum(table[cname][f'IL{L}'][f'mean_nB{b}_per_covered'] for b in (1, 2, 3)):.2f}"
+            f"{SNAME[L]} cont {table[cname][SNAME[L]]['containment']:.3f} "
+            f"B/cov {sum(table[cname][SNAME[L]][f'mean_nB{b}_per_covered'] for b in (1, 2, 3)):.2f}"
             for L in Ls))
     out["ot_projection_targets"] = {
-        "n_events": r["n_events"], "nsig": nsig, "tracks_by_class": tbc, "excluded": excl,
+        "n_events": r["n_events"], "nsig": nsig, "surfaces": [SNAME[L] for L in Ls],
+        "tracks_by_class": tbc, "excluded": excl,
         "ot_fit_pulls": pulls, "validation_vs_refit": val, "validation_refit_table": refit,
-        "candidate_bound_ratio_max": r["bound_ratio_max"], "per_class_layer": table,
-        "perfect_crosscut": crosscut["table"],
-        "figures": pngs + [pdf_path]}
+        "candidate_bound_ratio_max": r["bound_ratio_max"], "per_class_surface": table,
+        "perfect_crosscut": crosscut, "figures": [pdf_path]}
+    mon = out["_monitor"].setdefault("study19_ot_projection", {})
+    mon.update({"n_events": r["n_events"],
+                "containment_perfect": {SNAME[L]: table["perfect"][SNAME[L]]["containment"] for L in Ls},
+                "background_per_covered_perfect": {
+                    SNAME[L]: sum(table["perfect"][SNAME[L]][f"mean_nB{b}_per_covered"] for b in (1, 2, 3))
+                    for L in Ls},
+                "median_sigma_u_um_perfect": {SNAME[L]: table["perfect"][SNAME[L]]["median_su"] * 1e4 for L in Ls},
+                "validation": {nm: {k: e[k] for k in ("du_p99_um", "sigU_ratio_median", "sigV_ratio_median")}
+                               for nm, e in per_val.items()},
+                "ot_fit_pull_mad": {p: pulls[p]["mad"] for p in OPJ.HPAR}})
 
 
 # ---- (20) refit-update projection: A vs B under the projection a refit uses --
@@ -4353,38 +4703,43 @@ REFIT_VAR_STYLE = {"none": dict(color="#8c8c8c", ls="-", lw=1.4),
                    "producer": dict(color="#d62728", ls="-", lw=1.2),
                    "tuned": dict(color="#9467bd", ls="--", lw=1.2),
                    "oracle": dict(color="#111111", ls=":", lw=1.6)}
-# The replay must reproduce the producer's running projection to this level, or
-# the update here is not the refit's. Measured (PU200 ttbar, 50 events): IL4
-# exact; IL3-IL1 position median 0.07-0.29 um, p99 8-21 um; width ratio median
-# 1.0000; BOTH widths within 2% on 94.9-96.2% of crossings, the rest a bounded
-# float-level drift (ratio down to ~0.85 on ~1%) not traced to any logic
-# difference -- every alpha-update decision and selected module matches. A real
-# regression (wrong Q, gain, Jacobian) moves the MEDIANS by orders of magnitude,
-# which is what these limits are set to catch.
-# RE-BASELINED 2026-09-24 on the FIXED-Q nanos (itot_tp, 100 events): IL3 87.6%, IL2
-# 94.5%, IL1 94.6% within 2%, width-ratio q01/q99 0.972/1.030 at IL3, medians and
-# positions unchanged. The smaller (correct) Q no longer masks the float-level drift
-# after the IL4 update; the drift's source is still to be traced (work-queue TODO).
-REFIT_REPLAY_LIMITS = {"du_p50_cm": 2e-4, "dv_p50_cm": 5e-4, "du_p99_cm": 1e-2,
-                       "dv_p99_cm": 1e-2, "sig_ratio_median_tol": 0.01,
-                       "sig_ratio_within_2pct_min": 0.85}
+# The replay must reproduce the producer's running projection, or the update here
+# is not the refit's. WHAT CAN AND CANNOT CLOSE: the producer's crossings are
+# single-precision (GlobalPoint / LocalPoint are float), and its Jacobian is a
+# one-sided difference over steps of 1e-6 (rInv) .. 1e-3 cm (z0, d0), so every
+# column carries ~1% float noise (measured: emulating float32 crossing points in
+# this replay moves its own widths by +-0.7-0.9% p1/p99 at the first visited
+# surface, the same spread as against the producer). The FIRST visited surface
+# (the OT state) closes exactly in position (p99 0.01 um); after each update the
+# noise is carried into the state (larger where the innovation is large), so the
+# later surfaces close in the MEDIAN (position and width) with a float-noise band.
+# Gated: the path (every recorded crossing on the emulated visit sequence, in
+# order), the first visits, the per-surface medians and the width band q05-q95,
+# and the selection closure (box window + metric re-derive the producer's pick).
+# Re-baselined 2026-10-01 (canon_v2 AAAA, alphaBeta, discs, 10 events): width-ratio
+# medians 0.9995-1.0005; q05/q95 0.98/1.02 on IL1-IL3, 0.950-0.957/1.049-1.054 on
+# ID1-ID3 (one to three disc updates carry the noise); |du|/sigma p50 <= 0.04;
+# first visits p99 <= 0.015 um; selection 0.999-1.000; path 0 off / 0 out of order.
+REFIT_REPLAY_LIMITS = {"pos_p50_sig": 0.1, "sig_ratio_median_tol": 0.01, "sig_ratio_q05_min": 0.93,
+                       "sig_ratio_q95_max": 1.07, "first_visit_pos_p99_cm": 1e-5,
+                       "selection_agreement_min": 0.99, "path_bad_frac_max": 1e-3}
 
 
 def _refit_tables(res, classes):
-    """per variant x class x layer: containment, widths, background, selection."""
+    """per variant x class x surface: containment, widths, background, selection."""
     tab = {}
     for v, d in res["variants"].items():
         P, S = d["proj"], d["sel"]
         tab[v] = {}
         for ci, cname in enumerate(classes):
             tab[v][cname] = {}
-            for L in res["layers"]:
-                m = (P["cls"] == ci) & (P["layer"] == L)
+            for L in res["surfaces"]:
+                m = (P["cls"] == ci) & (P["surface"] == L)
                 ae, cv, ld = m & P["a_exists"], m & P["covered"], m & P["lands"]
-                ms = (S["cls"] == ci) & (S["layer"] == L)
+                ms = (S["cls"] == ci) & (S["surface"] == L)
                 sa = ms & S["a_in"]
                 sn = ms & ~S["a_in"]
-                e = {"n_layer_projections": int(m.sum()),
+                e = {"n_surface_projections": int(m.sum()),
                      "containment": float((ae & P["a_in"]).sum() / ae.sum()) if ae.any() else float("nan"),
                      "median_su_um": float(np.median(P["su"][ld]) * 1e4) if ld.any() else float("nan"),
                      "median_sv_um": float(np.median(P["sv"][ld]) * 1e4) if ld.any() else float("nan"),
@@ -4394,101 +4749,183 @@ def _refit_tables(res, classes):
                     for lab, code in (("A-in", 0), ("B1", 2), ("B2", 3), ("B3", 4), ("none", -1)):
                         e[f"chosen_{lab}_given_A_in"] = float((S["chosen"][sa] == code).mean()) if sa.any() else float("nan")
                     e["update_without_target"] = float((S["chosen"][sn] >= 0).mean()) if sn.any() else float("nan")
-                tab[v][cname][f"IL{L}"] = e
+                tab[v][cname][SNAME[L]] = e
     return tab
 
 
-def _refit_explain_page(res, rep_val, mask, nsig):
-    import ot_refit_projection as RPJ
+def _replay_closure(V, lim):
+    """Per-surface closure of the replay against the producer (see REFIT_REPLAY_LIMITS)."""
+    rows = V["rows"]
+    row = V["row"]
+    # rows["first"]: a track's first recorded crossing, compared at the OT state
+    per, bad = {}, []
+    for S in np.unique(V["surface"]):
+        m = V["surface"] == S
+        sx, sy = rows["sigX_proj"][row[m]], rows["sigY_proj"][row[m]]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            nu = np.where(sx > 0, np.abs(V["du"][m]) / sx, np.nan)
+            nv = np.where(sy > 0, np.abs(V["dv"][m]) / sy, np.nan)
+        nu, nv = nu[np.isfinite(nu)], nv[np.isfinite(nv)]
+        fv = rows["first"][row[m]]
+        acc = (rows["surface"] == S) & rows["accepted"]
+        allr = rows["surface"] == S
+        e = {"n": int(m.sum()),
+             "du_p50_um": float(np.median(np.abs(V["du"][m])) * 1e4),
+             "du_p99_um": float(np.percentile(np.abs(V["du"][m]), 99) * 1e4),
+             "dv_p50_um": float(np.median(np.abs(V["dv"][m])) * 1e4),
+             "dv_p99_um": float(np.percentile(np.abs(V["dv"][m]), 99) * 1e4),
+             "du_over_sigma_p50": float(np.median(nu)), "du_over_sigma_p99": float(np.percentile(nu, 99)),
+             "dv_over_sigma_p50": float(np.median(nv)), "dv_over_sigma_p99": float(np.percentile(nv, 99)),
+             "sigu_ratio_median": float(np.median(V["rsu"][m])),
+             "sigv_ratio_median": float(np.median(V["rsv"][m])),
+             "sig_ratio_q05": float(min(np.percentile(V["rsu"][m], 5), np.percentile(V["rsv"][m], 5))),
+             "sig_ratio_q95": float(max(np.percentile(V["rsu"][m], 95), np.percentile(V["rsv"][m], 95))),
+             "within_2pct": float(np.mean((np.abs(V["rsu"][m] - 1) < 0.02) & (np.abs(V["rsv"][m] - 1) < 0.02))),
+             "within_5pct": float(np.mean((np.abs(V["rsu"][m] - 1) < 0.05) & (np.abs(V["rsv"][m] - 1) < 0.05))),
+             "n_first_visit": int(fv.sum()),
+             "first_visit_pos_p99_um": (float(np.percentile(np.r_[np.abs(V["du"][m][fv]), np.abs(V["dv"][m][fv])], 99) * 1e4)
+                                        if fv.any() else float("nan")),
+             "selection_agreement": float(rows["same_pick"][acc].mean()) if acc.any() else float("nan"),
+             "window_mult_agreement": float((rows["emu_mult"][allr] == rows["windowMult"][allr]).mean()) if allr.any() else float("nan"),
+             "truncation_agreement": float((rows["emu_truncated"][allr] == rows["windowTruncated"][allr]).mean()) if allr.any() else float("nan")}
+        per[SNAME[int(S)]] = e
+        if (e["du_over_sigma_p50"] > lim["pos_p50_sig"] or e["dv_over_sigma_p50"] > lim["pos_p50_sig"]
+                or abs(e["sigu_ratio_median"] - 1) > lim["sig_ratio_median_tol"]
+                or abs(e["sigv_ratio_median"] - 1) > lim["sig_ratio_median_tol"]
+                or e["sig_ratio_q05"] < lim["sig_ratio_q05_min"] or e["sig_ratio_q95"] > lim["sig_ratio_q95_max"]
+                or (fv.any() and e["first_visit_pos_p99_um"] > lim["first_visit_pos_p99_cm"] * 1e4)
+                or (acc.any() and e["selection_agreement"] < lim["selection_agreement_min"])
+                or (allr.any() and e["window_mult_agreement"] < lim["selection_agreement_min"])):
+            bad.append(SNAME[int(S)])
+    n = len(rows["surface"])
+    path = {"n_rows": int(n), "off_path": int(rows["off_path"].sum()), "order_bad": int(rows["order_bad"].sum())}
+    if n and (path["off_path"] + path["order_bad"]) > lim["path_bad_frac_max"] * n:
+        bad.append("path")
+    return {"per_surface": per, "path": path, "n_bad_det": int(V["n_bad_det"])}, bad
+
+
+def _replay_decomposition(V):
+    """On the CORRECT accepted hits (selected cluster of the OT track's TP), per
+    surface: the KF innovation pull in u, v from the replayed prediction, and the
+    three-way split of each angle's innovation -- the measurement against truth
+    over the cluster sigma (the sigma table's share), the PREDICTED track angle
+    against truth over the track's own projected sigma (the projection
+    covariance's share), and the innovation over their quadrature sum."""
+    D, rows = V["decomposition"], V["rows"]
+    r = D["row"]
+    good = (rows["selHitClass"][r] == 0)
+    out = {}
+    for S in np.unique(D["surface"]):
+        m = good & (D["surface"] == S)
+        if m.sum() < 20:
+            continue
+        rr = r[m]
+        e = {"n": int(m.sum())}
+        for ax_, meas, sigc, pred, strk in (("u", "recoLocalX", "sigX", "u_pred", "su_trk"),
+                                            ("v", "recoLocalY", "sigY", "v_pred", "sv_trk")):
+            inn = (rows[meas][rr] - D[pred][m]) / np.sqrt(D[strk][m] ** 2 + rows[sigc][rr] ** 2)
+            c, fo = OSU.core_rms(inn)
+            e[f"innovation_pull_{ax_}"] = {"core_rms": c, "frac_out": fo, "full_rms": OSU.full_rms(inn),
+                                           **OSU.coverage(inn)}
+        for ang, meas, sig, truth, pred, strk, has in (
+                ("alpha", "recoCotAlpha", "sigAlpha", "tpLocalCotAlpha", "a_pred", "sa_trk", "hasAlpha"),
+                ("beta", "recoCotBeta", "sigBeta", "tpLocalCotBeta", "b_pred", "sb_trk", "hasBeta")):
+            ok = rows[has][rr] & (rows[truth][rr] > SENTINEL) & (rows[sig][rr] > 0)
+            if ok.sum() < 20:
+                continue
+            mm, sg, t = rows[meas][rr][ok], rows[sig][rr][ok], rows[truth][rr][ok]
+            h0, st = D[pred][m][ok], D[strk][m][ok]
+            parts = {"measurement_vs_truth": (mm - t) / sg,
+                     "track_prediction_vs_truth": (h0 - t) / np.maximum(st, 1e-12),
+                     "innovation": (mm - h0) / np.sqrt(st ** 2 + sg ** 2)}
+            e[ang] = {k: {"core_rms": OSU.core_rms(x)[0], "full_rms": OSU.full_rms(x),
+                          "width68": OSU.width68(x)} for k, x in parts.items()}
+            e[ang]["median_sigma_meas"] = float(np.median(sg))
+            e[ang]["median_sigma_track"] = float(np.median(st))
+        out[SNAME[int(S)]] = e
+    return out
+
+
+def _refit_explain_page(res, rep, mask, nsig, cfg):
     fig = plt.figure(figsize=(11, 14))
     fig.text(0.04, 0.975, f"Refit-update projection ({mask}): what the A / B populations look like\n"
              f"under the projection a refit actually uses", fontsize=13, fontweight="bold", va="top")
+    surf_txt = ", ".join(SNAME[s] for s in res["surfaces"])
     txt = (
         "WHAT IS DONE\n"
-        f"Every OT track (L1TTrack helix + fit covariance) visits the active layers OUTERMOST FIRST: "
-        f"{' -> '.join('IL%d' % L for L in res['layers'])}. At each layer the track is projected onto "
-        f"every module its {nsig:g}-sigma ellipse overlaps (the same code as study 19), every cluster is "
-        "labelled A-in / A-out / B1 / B2 / B3, the variant's metric picks the best in-ellipse cluster, "
-        "and the track is UPDATED on it before the next layer is projected. The first layer has had no "
-        "update, so it is identical for every variant and to study 19.\n\n"
+        f"Every OT track (L1TTrack helix + fit covariance) visits the active surfaces ({surf_txt}) in\n"
+        "PATH order along the OT helix, OUTERMOST FIRST, as the producer does (e.g. IL4, IL3, IL2, IL1 for a\n"
+        "central track; ID4, ID3, ID2, ID1, IL1 for a forward one; a disc is on the path when the helix\n"
+        "meets its plane within its radial extent). At each surface the track is projected onto every\n"
+        f"module its {nsig:g}-sigma ellipse overlaps (study 19's code; a disc: the side the track heads to),\n"
+        "every cluster is labelled A-in / A-out / B1 / B2 / B3, the variant's metric picks the best\n"
+        "in-ellipse cluster, and the track is UPDATED on it before the next surface is projected. The first\n"
+        f"visited surface has had no update, so it equals study 19. At most {cfg['maxKFUpdates']} updates.\n\n"
         "UPDATE (mirrors the seedlessRefit producer term for term)\n"
-        "Sequential scalar Kalman updates in local x, y, then cotAlpha, cotBeta, linearised about the "
-        "pre-update state (the projection, and so the Jacobian, is recomputed at every layer); a scalar "
-        "with r^2/S > 2e6 is skipped; Jacobian columns with |H| > 1e4 are zeroed; no update where the "
-        "predicted |cot| > 12. Angles used here: " + res["use_angles"] + ".\n"
-        + ("COVARIANCE MODEL: CALIBRATED (" + os.path.basename(res["calibration"]) + "). Seed = each "
-           "track's reported covariance + a correlated deficit per (OT-track group, stub count, pT bin) "
-           "measured against truth (the reported one is too small and its rInv-phi0 correlation "
-           "near-degenerate). Scattering: Highland, full momentum and path length, on the tkLayout "
-           "Phase-2 planes x1 (validated against the physical IT scattering and the CMSSW D121 scan), "
-           "every plane crossed charged, updated or not. Cluster errors: the size/angle R lookup. A "
-           "~1.37x scattering-variance excess the innovation likelihood prefers is NOT modelled; "
-           "containment is measured, not assumed.\n\n"
+        "Sequential scalar Kalman updates in local x, y, then cotAlpha, cotBeta, linearised about the\n"
+        "pre-update state (the projection, and so the Jacobian, is recomputed at every surface); a scalar\n"
+        "with r^2/S > 2e6 is skipped; Jacobian columns with |H| > 1e4 are zeroed; no update where the\n"
+        f"predicted |cot| > 12. Angles used by the emulated variants: {res['use_angles']} (the producer's:\n"
+        f"{cfg['useAngles']}).\n"
+        + ("COVARIANCE MODEL: CALIBRATED (" + os.path.basename(res["calibration"]) + "), BARREL SURFACES\n"
+           "ONLY (the v3 calibration has no disc material or disc seed groups). Seed = reported covariance +\n"
+           "a correlated deficit per (OT-track group, stub count, pT bin); Highland scattering on the tkLayout\n"
+           "Phase-2 planes x1; the cluster size/angle R lookup.\n\n"
            if res.get("calibration") else
-           "COVARIANCE MODEL: the PRODUCER'S. The cluster's own errors (CPE sigX/sigY, sensor "
-           "sigAlpha/sigBeta); before each later layer, process noise Q = theta0^2 n_layers "
-           "(J_T J_T^T + J_L J_L^T), theta0 = 0.00075 / pT, kink at the last constrained radius; the "
-           "OT->IT gap is never charged and the seed is the reported covariance.\n\n")
+           "COVARIANCE MODEL: the PRODUCER'S. The cluster's own errors (CPE sigX/sigY, sensor sigAlpha/sigBeta,\n"
+           "the emulator's sigma table); at every visited surface after the first update, process noise\n"
+           "Q = theta0^2 nCross (J_T J_T^T + J_L J_L^T), theta0 = 0.00075 / p, nCross = traversed surfaces\n"
+           "since the last constraint (layers within their |z|, discs within their radius, +-1 cm), kink at\n"
+           "the last constraint's radius (the same for a disc); the seed is the reported covariance.\n\n")
         + "THE FOUR RANKING METRICS, and the baseline\n"
-        "  none        no update at all: study 19's OT-only projection to every layer.\n"
-        "  innovation  d^2 = r^T (J C J^T + R)^-1 r over (du, dv, dcotAlpha, dcotBeta) -- the track's\n"
-        "              projected uncertainty PLUS the cluster's errors, all correlations kept. Nothing is\n"
-        "              tuned. A missing angle is dropped from the form and replaced by its mean, 1.\n"
-        "  producer    seedlessRefit's selection today: (du/sigX)^2 + (dv/sigY)^2 + (dcotA/sigA)^2 +\n"
-        "              (dcotB/sigB)^2, each term over the CLUSTER'S error only, unit weights; a missing\n"
-        "              angle adds 0, as in the producer. The track's own uncertainty never enters.\n"
-        "  tuned       the same terms weighted (1, 2, 16384, 16384) as omnibus study 6's chi2 scan found\n"
-        "              best (purity 0.982 vs 0.915 unit weights) -- STALE: fitted through the pre-Q\n"
-        "              covariance. The huge angle weight mostly undoes dividing a ~100 um projection\n"
-        "              residual by a ~3 um CPE error, i.e. it approximates the innovation chi2.\n"
-        "  oracle      truth: the majority-owner TP's cluster when one is inside the ellipse, else no\n"
-        "              update. Not deployable; the ceiling the others are measured against.\n"
+        "  none        no update at all: study 19's OT-only projection to every surface.\n"
+        "  innovation  d^2 = r^T (J C J^T + R)^-1 r over (du, dv, dcotAlpha, dcotBeta), nothing tuned;\n"
+        "              a missing angle is dropped from the form and replaced by its mean, 1.\n"
+        "  producer    seedlessRefit's selection: (du/sigX)^2 + (dv/sigY)^2 + (dcotA/sigA)^2 + (dcotB/sigB)^2,\n"
+        "              each term over the CLUSTER'S error only, unit weights; a missing angle adds 0.\n"
+        "  tuned       the same terms weighted (1, 2, 16384, 16384) (study 6, STALE: pre-Q covariance).\n"
+        "  oracle      truth: the majority-owner TP's cluster when inside the ellipse, else no update.\n"
         "All variants choose among the SAME candidates: every cluster inside the ellipse on every\n"
-        "overlapping module.\n\n"
-        "B3 CAVEAT: unlinked (no-TP) clusters carry NO angle in these nanos, so innovation/tuned score\n"
-        "their missing angle terms as 1 and producer as 0, never as a mismatch. Selection purity\n"
-        "against B3 is therefore NOT representative: once B3 clusters get angle estimates they become a\n"
-        "potential contaminant. Containment and window widths are unaffected (they do not use B3).\n\n"
-        "HOW THIS DIFFERS FROM THE PRODUCTION REFIT IN THESE FILES\n"
-        "  * production ran useAngles = 'alpha' (cotBeta never selected or updated on); this study uses\n"
-        f"    '{res['use_angles']}'.\n"
-        "  * production's candidates are a static per-layer box on ONE module, first 8 in readout order;\n"
-        "    here the ellipse on every overlapping module.\n"
-        "  * Jacobian: central differences with the perturbed Newton solve started at the converged\n"
-        "    nominal crossing. The producer's is one-sided and restarts each perturbed solve from the\n"
-        "    cylinder, stopping at 1 um -- against a ~1.3 um rInv-step signal at IL4, so its rInv column is\n"
-        "    Newton-noise-limited (projected width differs by up to ~5% at p99).\n\n"
-        "VALIDATION: REPLAY AGAINST CMSSW\n"
-        "The update was fed exactly the clusters the producer selected, with its alpha-only setting and its\n"
-        "own Newton/Jacobian scheme; it must reproduce the producer's recorded running projection\n"
-        "(projLocalX/Y, projSigX/Y, projCot*) at every layer:\n")
-    for L, e in rep_val["per_layer"].items():
-        txt += (f"  {L}: {e['n']:,} crossings, |du| p50 {e['du_p50_um']:.2f} / p99 {e['du_p99_um']:.1f} um, "
-                f"|dv| p50 {e['dv_p50_um']:.2f} / p99 {e['dv_p99_um']:.1f} um, width ratio median "
-                f"{e['sigu_ratio_median']:.4f}, within 2%: {100 * e['within_2pct']:.1f}%\n")
-    txt += (f"  cluster/module mismatches in the producer's selections: {rep_val['n_bad_det']}\n\n"
-            "EXCLUDED TRACKS are as in study 19 (tie / no-owner / unjoined / covariance absent); track\n"
-            "classes, A and B categories are defined on the study-19 pages and in spix_glossary.txt.")
-    fig.text(0.04, 0.93, txt, fontsize=8.2, va="top", family="monospace", wrap=True)
+        "overlapping module (the producer: a box on ONE module, the first 8 in readout order).\n\n"
+        "VALIDATION: REPLAY AGAINST CMSSW (table on the next page)\n"
+        "The update is fed exactly the clusters the producer selected, along its visit sequence (rebuilt\n"
+        "from the OT helix; Q added at every visited surface after the first update, as the producer does,\n"
+        f"also where it recorded no crossing), with ITS useAngles ({cfg['useAngles']}); it must reproduce the\n"
+        "recorded running projection (projLocal*, projSig*, projCot*) on every surface. The first visited\n"
+        "surface closes exactly; later ones in the median, within a float-noise band: the producer's\n"
+        "crossing points are single precision and its one-sided Jacobian steps are 1e-6..1e-3, so each\n"
+        "column carries ~1% noise that later updates carry on (emulating float32 crossings in this replay\n"
+        "reproduces the spread). SELECTION closure: the producer's box windows (barrel "
+        f"{'/'.join(f'{x:g}' for x in cfg['windowRPhi'])} x\n"
+        f"{'/'.join(f'{x:g}' for x in cfg['windowZ'])} cm, discs "
+        f"{'/'.join(f'{x:g}' for x in cfg['windowDiscRPhi'])} x {'/'.join(f'{x:g}' for x in cfg['windowDiscR'])} cm), "
+        f"the first {cfg['maxHitsPerWindow']} in readout order and its metric re-derive\n"
+        "its pick, window multiplicity and truncation from the cluster table.\n\n"
+        f"path: {rep['path']['n_rows']:,} recorded crossings, {rep['path']['off_path']} off the emulated path, "
+        f"{rep['path']['order_bad']} out of order; cluster/module mismatches {rep['n_bad_det']}.\n\n"
+        "EXCLUDED TRACKS are as in study 19 (tie / no-owner / unjoined / covariance absent); track\n"
+        "classes, A and B categories are defined on the study-19 pages and in spix_glossary.txt.")
+    fig.text(0.04, 0.93, txt, fontsize=7.8, va="top", family="monospace")
     return fig
 
 
 def _refit_summary_page(tab, res, classes, variants):
-    Ls = res["layers"]
+    Ls = res["surfaces"]
     qs = [("containment", "target containment  [fraction]", False),
           ("median_su_um", "median projected sigma_u  [um]", True),
           ("B_per_covered", "background clusters per covered projection  [count]", True),
           ("chosen_A-in_given_A_in", "P(chosen = A-in | A-in exists)  [fraction]", False)]
-    fig, axs = plt.subplots(len(classes), len(qs), figsize=(19, 3.0 * len(classes) + 1.2), squeeze=False)
+    fig, axs = plt.subplots(len(classes), len(qs), figsize=(19, 3.0 * len(classes) + 1.8), squeeze=False)
+    from matplotlib.lines import Line2D
     for ci, cname in enumerate(classes):
         for qi, (key, lab, logy) in enumerate(qs):
             ax = axs[ci][qi]
             for v in variants:
                 if key.startswith("chosen") and v == "none":
                     continue
-                y = [tab[v][cname][f"IL{L}"].get(key, np.nan) for L in Ls]
-                ax.plot(range(len(Ls)), y, "o-", ms=3, label=v, **REFIT_VAR_STYLE[v])
-            ax.set_xticks(range(len(Ls)), [f"IL{L}" for L in Ls])
+                y = [tab[v][cname][SNAME[L]].get(key, np.nan) for L in Ls]
+                ax.plot(range(len(Ls)), y, "o-", ms=3, **REFIT_VAR_STYLE[v])
+            ax.set_xticks(range(len(Ls)), [SNAME[L] for L in Ls])
             ax.grid(alpha=.3, which="both")
             ax.tick_params(labelsize=7)
             if logy:
@@ -4496,21 +4933,20 @@ def _refit_summary_page(tab, res, classes, variants):
             if ci == 0:
                 ax.set_title(lab, fontsize=9)
             if qi == 0:
-                ax.set_ylabel(f"{cname}\n(visit order ->)", fontsize=8)
-            if ci == 0 and qi == 0:
-                ax.legend(fontsize=7)
-    fig.suptitle("Refit-update projection, per track class, layers in VISIT order: containment, window "
-                 "width, background in reach, and how often the metric chose the target", fontsize=11)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+                ax.set_ylabel(cname, fontsize=8)
+    fig.legend([Line2D([0], [0], **REFIT_VAR_STYLE[v]) for v in variants], variants,
+               loc="lower center", bbox_to_anchor=(0.5, 0.0), ncol=len(variants), fontsize=9, frameon=False)
+    fig.suptitle("Refit-update projection, per track class and surface: containment, window width, "
+                 "background in reach, and how often the metric chose the target", fontsize=11)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.97))
     return fig
 
 
-def _refit_layer_page(res, L, cls_sel, title, variants, nsig):
-    import ot_projection as OPJ
-    fig, axs = plt.subplots(len(variants), len(PROJ_QTY), figsize=(24, 2.8 * len(variants) + 1.2),
+def _refit_surface_page(res, L, cls_sel, title, variants, nsig):
+    fig, axs = plt.subplots(len(variants), len(PROJ_QTY), figsize=(24, 2.8 * len(variants) + 1.8),
                             squeeze=False)
     ref = res["variants"]["none"]["rows"]
-    inl = (ref["layer"] == L) & np.isin(ref["cls"], cls_sel) & np.isin(ref["cat"], (0, 2, 3, 4))
+    inl = (ref["surface"] == L) & np.isin(ref["cls"], cls_sel) & np.isin(ref["cat"], (0, 2, 3, 4))
     for qi, (q, qlab, sc) in enumerate(PROJ_QTY):
         vv = ref[q][inl].astype(np.float64) * sc
         if q == "d":
@@ -4521,7 +4957,7 @@ def _refit_layer_page(res, L, cls_sel, title, variants, nsig):
         for vi, v in enumerate(variants):
             ax = axs[vi][qi]
             R = res["variants"][v]["rows"]
-            base = (R["layer"] == L) & np.isin(R["cls"], cls_sel)
+            base = (R["surface"] == L) & np.isin(R["cls"], cls_sel)
             n_all = int(np.isfinite(R[q][base].astype(np.float64)).sum())
             for c in range(5):
                 x = R[q][base & (R["cat"] == c)].astype(np.float64) * sc
@@ -4529,44 +4965,49 @@ def _refit_layer_page(res, L, cls_sel, title, variants, nsig):
                 if not len(x):
                     continue
                 h, _ = np.histogram(np.clip(x, edges[0], edges[-1]), edges)
-                ax.stairs(h / max(n_all, 1), edges, **PROJ_CAT_STYLE[c],
-                          label=f"{OPJ.CATEGORIES[c]} n={len(x):,}")
+                ax.stairs(h / max(n_all, 1), edges, **PROJ_CAT_STYLE[c])
             if q == "d":
                 ax.axvline(nsig, color="#555", lw=0.8, ls=":")
             ax.set_yscale("log")
             ax.grid(alpha=.25)
             ax.tick_params(labelsize=6)
-            ax.legend(fontsize=5.2, loc="upper right")
             if vi == 0:
                 ax.set_title(qlab, fontsize=8)
             if qi == 0:
                 ax.set_ylabel(f"{v}\nfraction of all\nclusters in panel / bin", fontsize=7)
             if vi == len(variants) - 1:
                 ax.set_xlabel(qlab + "   (edge bins hold overflow)", fontsize=7)
-    fig.suptitle(f"IL{L}, {title}: A / B residuals against the projection each variant makes here "
-                 f"(IL{res['layers'][0]} is visited first and is identical for all)", fontsize=11)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.suptitle(f"{SNAME[L]}, {title}: A / B residuals against the projection each variant makes here "
+                 f"(the first visited surface of a track is identical for all variants)"
+                 + ("; disc: du = r-phi, dv = radius" if SPN.is_disc_surface(L) else ""), fontsize=11)
+    _cat_legend(fig)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.97))
     return fig
 
 
 def study_ot_refit_projection(X, K, P, ax_row, out):
     """(20) Refit-update projection: the A vs B picture under the projection a
-    refit actually uses -- outside-in, choosing and updating at each layer --
-    for four ranking metrics plus the no-update baseline. See ot_refit_projection.
+    refit actually uses -- outside-in along the OT track's path over the active
+    surfaces (IL1-IL4 and ID1-ID4), choosing and updating at each -- for four
+    ranking metrics plus the no-update baseline. See ot_refit_projection.
 
     WHY FOUR METRICS. Which cluster a refit updates on decides everything after
-    it: a wrong choice pulls the state, and the next layer's window is centred
+    it: a wrong choice pulls the state, and the next surface's window is centred
     on the pulled state. The producer's metric never uses the track's own
     uncertainty; the innovation chi2 does; the tuned weights are an empirical
     approximation of it; the oracle is the ceiling. Running all four on the same
     candidates shows how much of the gap to the ceiling each closes.
 
     WHY THE REPLAY GATE. The update is a reimplementation; replaying the
-    producer's own selections must reproduce its recorded running projection,
-    or the study measures a different refit (REFIT_REPLAY_LIMITS).
+    producer's own selections must reproduce its recorded running projection
+    (REFIT_REPLAY_LIMITS, per surface, discs included), and its windows + metric
+    must re-derive the clusters it picked, or the study measures a different refit.
+    The replay uses the producer's useAngles (read from the nano's ParameterSets);
+    --refit-use-angles sets the emulated variants' (alphaBeta default, alpha option).
     """
     import ot_refit_projection as RPJ
     import ot_projection as OPJ
+    from matplotlib.backends.backend_pdf import PdfPages
 
     def _skip(msg):
         for a in ax_row:
@@ -4588,6 +5029,7 @@ def study_ot_refit_projection(X, K, P, ax_row, out):
         OPJ.check_inputs(files[0], with_refit=True, refit=v.hit)
     except SystemExit as e:
         return _skip(str(e))
+    cfg = dict(RPJ.PRODUCER_DEFAULTS, **out["_refit_config"].get(v.name, {}))
     nsig = 4.0
     step = [0]
 
@@ -4595,61 +5037,43 @@ def study_ot_refit_projection(X, K, P, ax_row, out):
         step[0] += 1
         if step[0] % 10 == 0:
             print(msg)
-    res = RPJ.run(files, geom, mask=mask, use_angles="alphaBeta", nsig=nsig,
+    res = RPJ.run(files, geom, mask=mask, use_angles=out.get("_refit_use_angles", "alphaBeta"), nsig=nsig,
                   chunk=out.get("_proj_chunk", 10), nev=out.get("_proj_nev"), replay=True, log=_log,
-                  producer_q=out.get("_producer_q", "natural"), calibration=out.get("_refit_calibration"),
-                  refit=v.hit)
+                  calibration=out.get("_refit_calibration"), refit=v.hit, producer=cfg)
     variants = list(res["variants"])
     classes = OPJ.TRACK_CLASSES
 
     # ---- replay gate --------------------------------------------------------
     V = res["replay"]
-    lim = REFIT_REPLAY_LIMITS
-    rep = {"n_bad_det": int(V["n_bad_det"]), "per_layer": {}}
-    bad = []
-    for L in (4, 3, 2, 1):
-        m = V["layer"] == L
-        if not m.any():
-            continue
-        e = {"n": int(m.sum()),
-             "du_p50_um": float(np.median(np.abs(V["du"][m])) * 1e4),
-             "du_p99_um": float(np.percentile(np.abs(V["du"][m]), 99) * 1e4),
-             "dv_p50_um": float(np.median(np.abs(V["dv"][m])) * 1e4),
-             "dv_p99_um": float(np.percentile(np.abs(V["dv"][m]), 99) * 1e4),
-             "sigu_ratio_median": float(np.median(V["rsu"][m])),
-             "sigv_ratio_median": float(np.median(V["rsv"][m])),
-             "within_2pct": float(np.mean((np.abs(V["rsu"][m] - 1) < 0.02) & (np.abs(V["rsv"][m] - 1) < 0.02)))}
-        rep["per_layer"][f"IL{L}"] = e
-        if e["du_p50_um"] > lim["du_p50_cm"] * 1e4 or e["dv_p50_um"] > lim["dv_p50_cm"] * 1e4 \
-                or e["du_p99_um"] > lim["du_p99_cm"] * 1e4 or e["dv_p99_um"] > lim["dv_p99_cm"] * 1e4 \
-                or abs(e["sigu_ratio_median"] - 1) > lim["sig_ratio_median_tol"] \
-                or e["within_2pct"] < lim["sig_ratio_within_2pct_min"]:
-            bad.append(f"IL{L}")
-    for L, e in rep["per_layer"].items():
-        print(f"    replay {L}: |du| p50 {e['du_p50_um']:.2f} p99 {e['du_p99_um']:.1f} um, |dv| p50 "
-              f"{e['dv_p50_um']:.2f} p99 {e['dv_p99_um']:.1f} um, width ratio {e['sigu_ratio_median']:.4f}, "
-              f"within 2% {100 * e['within_2pct']:.1f}%")
+    rep, bad = _replay_closure(V, REFIT_REPLAY_LIMITS)
+    for nm, e in rep["per_surface"].items():
+        print(f"    replay {nm}: |du| p50 {e['du_p50_um']:.2f} p99 {e['du_p99_um']:.1f} um ({e['du_over_sigma_p50']:.3f}/"
+              f"{e['du_over_sigma_p99']:.2f} sigma), width ratio {e['sigu_ratio_median']:.4f}/{e['sigv_ratio_median']:.4f} "
+              f"(q05 {e['sig_ratio_q05']:.3f}, q95 {e['sig_ratio_q95']:.3f}; within 2% {100 * e['within_2pct']:.1f}%), "
+              f"selection {e['selection_agreement']:.4f}, mult {e['window_mult_agreement']:.4f}")
+    print(f"    replay path: {rep['path']}, bad-det {rep['n_bad_det']}")
     if bad or rep["n_bad_det"]:
         raise SystemExit(f"refit replay DISAGREES with the producer on {bad} "
                          f"(bad-det {rep['n_bad_det']}): {rep}. Do not trust study 20.")
+    decomp = _replay_decomposition(V)
 
     tab = _refit_tables(res, classes)
     tbc = res["tracks_by_class"]
 
     # ---- summary row on the omnibus grid -------------------------------------
-    Ls = res["layers"]
+    Ls = res["surfaces"]
     for ai, (key, lab, logy) in enumerate((
             ("containment", "target containment, perfect tracks  [fraction]", False),
             ("median_su_um", "median projected sigma_u, perfect  [um]", True),
             ("chosen_A-in_given_A_in", "P(chosen = A-in | A-in exists), perfect", False))):
         ax = ax_row[ai]
-        for v in variants:
-            if key.startswith("chosen") and v == "none":
+        for vv in variants:
+            if key.startswith("chosen") and vv == "none":
                 continue
-            y = [tab[v]["perfect"][f"IL{L}"].get(key, np.nan) for L in Ls]
-            ax.plot(range(len(Ls)), y, "o-", label=v, **REFIT_VAR_STYLE[v])
-        ax.set_xticks(range(len(Ls)), [f"IL{L}" for L in Ls])
-        ax.set_title(lab + f"\n{mask}, visit order ->", fontsize=9)
+            y = [tab[vv]["perfect"][SNAME[L]].get(key, np.nan) for L in Ls]
+            ax.plot(range(len(Ls)), y, "o-", label=vv, **REFIT_VAR_STYLE[vv])
+        ax.set_xticks(range(len(Ls)), [SNAME[L] for L in Ls])
+        ax.set_title(lab + f"\n{mask}", fontsize=9)
         ax.grid(alpha=.3, which="both")
         if logy:
             ax.set_yscale("log")
@@ -4659,58 +5083,946 @@ def study_ot_refit_projection(X, K, P, ax_row, out):
         ax = ax_row[3]
         ax.axis("off")
         ax.text(0.0, 1.0, "VARIANTS (full text: page 1 of spix_ot_refit_projection_" + mask + ".pdf)\n"
-                + "\n".join(f"  {v}: {RPJ.VARIANT_DEF[v]}" for v in variants)
+                + "\n".join(f"  {vv}: {RPJ.VARIANT_DEF[vv]}" for vv in variants)
                 + f"\nUpdate: sequential x, y, cotA, cotB (angles: {res['use_angles']}),"
-                  "\n  Q = 0.00075/pT, candidates = the 4-sigma ellipse, all modules."
-                  "\nReplay vs CMSSW (producer's own selections, alpha-only):\n"
-                + "\n".join(f"  {L}: |du| p50 {e['du_p50_um']:.2f} um, width {e['sigu_ratio_median']:.3f}"
-                            for L, e in rep["per_layer"].items()),
-                fontsize=5.8, va="top", family="monospace", transform=ax.transAxes)
+                  "\n  producer Q (nTraversed rule), candidates = the 4-sigma ellipse, all modules."
+                  f"\nReplay vs CMSSW (producer's selections, useAngles {cfg['useAngles']}):\n"
+                + "\n".join(f"  {L}: |du|/sig p50 {e['du_over_sigma_p50']:.3f}, width {e['sigu_ratio_median']:.3f}, "
+                            f"sel {e['selection_agreement']:.3f}"
+                            for L, e in rep["per_surface"].items()),
+                fontsize=5.6, va="top", family="monospace", transform=ax.transAxes)
 
     # ---- the PDF ---------------------------------------------------------------
-    from matplotlib.backends.backend_pdf import PdfPages
     od = out["_outdir"]
     pdf_path = os.path.join(od, f"spix_ot_refit_projection_{mask}.pdf")
-    pngs = []
     contaminated = [ci for ci, c in enumerate(classes) if c != "perfect"]
     with PdfPages(pdf_path) as pdf:
-        for fig, name in ((_refit_explain_page(res, rep, mask, nsig), "explain"),
-                          (_refit_summary_page(tab, res, classes, variants), "summary")):
-            pdf.savefig(fig)
-            p_ = os.path.join(od, f"spix_ot_refit_projection_{mask}_{name}.png")
-            fig.savefig(p_, dpi=110)
-            plt.close(fig)
-            pngs.append(p_)
+        fig = _refit_explain_page(res, rep, mask, nsig, cfg)
+        pdf.savefig(fig)
+        plt.close(fig)
+        OSU.table_pages(
+            pdf, f"Study 20 ({mask}): replay of the producer's refit, closure per surface",
+            ["surface", "crossings", "|du| p50/p99 [um]", "|dv| p50/p99 [um]", "|du|/sig p50/p99",
+             "|dv|/sig p50/p99", "width ratio med u/v", "ratio q05/q95", "within 2%/5%", "first visits",
+             "first p99 [um]", "selection", "mult / trunc"],
+            [[nm, f"{e['n']:,}", f"{e['du_p50_um']:.2f}/{e['du_p99_um']:.1f}", f"{e['dv_p50_um']:.2f}/{e['dv_p99_um']:.1f}",
+              f"{e['du_over_sigma_p50']:.3f}/{e['du_over_sigma_p99']:.2f}",
+              f"{e['dv_over_sigma_p50']:.3f}/{e['dv_over_sigma_p99']:.2f}",
+              f"{e['sigu_ratio_median']:.4f}/{e['sigv_ratio_median']:.4f}",
+              f"{e['sig_ratio_q05']:.3f}/{e['sig_ratio_q95']:.3f}",
+              f"{100 * e['within_2pct']:.1f}/{100 * e['within_5pct']:.1f}%", f"{e['n_first_visit']:,}",
+              OSU.fmt(e["first_visit_pos_p99_um"], "{:.3f}"), OSU.fmt(e["selection_agreement"], "{:.4f}"),
+              f"{OSU.fmt(e['window_mult_agreement'], '{:.4f}')} / {OSU.fmt(e['truncation_agreement'], '{:.4f}')}"]
+             for nm, e in rep["per_surface"].items()],
+            notes=[f"{res['n_events']:,} events; refit table {v.hit}; producer useAngles {cfg['useAngles']}, "
+                   f"maxKFUpdates {cfg['maxKFUpdates']}, maxHitsPerWindow {cfg['maxHitsPerWindow']}.",
+                   f"path: {rep['path']['n_rows']:,} recorded crossings, {rep['path']['off_path']} off the "
+                   f"emulated visit sequence, {rep['path']['order_bad']} out of order; bad-det {rep['n_bad_det']}.",
+                   "Gate: |du|/sigma and |dv|/sigma p50 < 0.1 (sigma = the recorded projSigX/Y); width-ratio medians",
+                   "within 1%, q05 >= 0.93, q95 <= 1.07; first visits p99 < 0.1 um; selection and window "
+                   "multiplicity >= 99%.",
+                   "Later surfaces carry the producer's float32 crossing noise (see the explain page)."])
+        drows = []
+        for nm, e in decomp.items():
+            for ang in ("alpha", "beta"):
+                if ang not in e:
+                    continue
+                d = e[ang]
+                drows.append([nm, ang, f"{e['n']:,}",
+                              OSU.fmt(d["measurement_vs_truth"]["core_rms"]), OSU.fmt(d["measurement_vs_truth"]["width68"]),
+                              OSU.fmt(d["track_prediction_vs_truth"]["core_rms"]),
+                              OSU.fmt(d["track_prediction_vs_truth"]["width68"]),
+                              OSU.fmt(d["innovation"]["core_rms"]), OSU.fmt(d["innovation"]["width68"]),
+                              OSU.fmt(d["median_sigma_meas"], "{:.4f}"), OSU.fmt(d["median_sigma_track"], "{:.4f}")])
+            drows.append([nm, "u / v", f"{e['n']:,}", "-", "-", "-", "-",
+                          f"{OSU.fmt(e['innovation_pull_u']['core_rms'])} / {OSU.fmt(e['innovation_pull_v']['core_rms'])}",
+                          "-", "-", "-"])
+        OSU.table_pages(
+            pdf, f"Study 20 ({mask}): which part of the KF pull is short -- the cluster sigma or the track's",
+            ["surface", "angle", "correct hits", "meas-truth / sigma_table core", "w68",
+             "pred-truth / sigma_track core", "w68", "innovation pull core", "w68",
+             "median sigma_table", "median sigma_track"], drows,
+            notes=["On the producer's CORRECT accepted hits (cluster of the OT track's TP), with the replayed "
+                   "prediction (= the producer's to float precision).",
+                   "meas-truth / sigma_table: emitted angle against the TP's true local angle (helix, no "
+                   "scattering) over the cluster's sigma = the sigma table's honesty;",
+                   "pred-truth / sigma_track: the track's predicted angle against the same truth over its own "
+                   "projected sigma sqrt(J C J^T) = the projection covariance's honesty;",
+                   "innovation: (emitted - predicted) / sqrt(sigma_track^2 + sigma_table^2) = the KF pull. "
+                   "core = the project's 3-sigma-clipped RMS; w68 = (q84 - q16)/2.",
+                   "u / v: position innovation pulls (CPE sigma + track sigma)."])
+        fig = _refit_summary_page(tab, res, classes, variants)
+        pdf.savefig(fig)
+        plt.close(fig)
         for L in Ls:
-            for sel_cls, title, tag in (([0], "perfect tracks", "perfect"),
-                                        (contaminated, "contaminated tracks (all non-perfect classes)",
-                                         "contaminated")):
-                fig = _refit_layer_page(res, L, sel_cls, title, variants, nsig)
+            for sel_cls, title in (([0], "perfect tracks"),
+                                   (contaminated, "contaminated tracks (all non-perfect classes)")):
+                fig = _refit_surface_page(res, L, sel_cls, title, variants, nsig)
                 pdf.savefig(fig)
-                p_ = os.path.join(od, f"spix_ot_refit_projection_{mask}_IL{L}_{tag}.png")
-                fig.savefig(p_, dpi=100)
                 plt.close(fig)
-                pngs.append(p_)
-    for v in variants:
-        print(f"    {v:10s} " + "  ".join(
-            f"IL{L} cont {tab[v]['perfect'][f'IL{L}']['containment']:.3f} "
-            f"su {tab[v]['perfect'][f'IL{L}']['median_su_um']:.0f}um"
-            + (f" pur {tab[v]['perfect'][f'IL{L}']['chosen_A-in_given_A_in']:.3f}" if v != "none" else "")
+    for vv in variants:
+        print(f"    {vv:10s} " + "  ".join(
+            f"{SNAME[L]} cont {tab[vv]['perfect'][SNAME[L]]['containment']:.3f} "
+            f"su {tab[vv]['perfect'][SNAME[L]]['median_su_um']:.0f}um"
+            + (f" pur {tab[vv]['perfect'][SNAME[L]]['chosen_A-in_given_A_in']:.3f}" if vv != "none" else "")
             for L in Ls))
     out["ot_refit_projection"] = {
-        "mask": mask, "layers": Ls, "use_angles": res["use_angles"], "n_events": res["n_events"],
-        "nsig": nsig, "tracks_by_class": tbc, "replay_vs_cmssw": rep,
-        "gated_scalar_updates": {v: res["variants"][v]["gated"] for v in variants},
-        "variant_definitions": RPJ.VARIANT_DEF, "per_variant_class_layer": tab,
-        "figures": pngs + [pdf_path]}
+        "mask": mask, "surfaces": [SNAME[L] for L in Ls], "use_angles": res["use_angles"],
+        "producer_config": {k: (list(x) if isinstance(x, tuple) else x) for k, x in cfg.items()},
+        "calibration": res.get("calibration"), "n_events": res["n_events"],
+        "nsig": nsig, "tracks_by_class": tbc, "replay_vs_cmssw": rep, "pull_decomposition": decomp,
+        "gated_scalar_updates": {vv: res["variants"][vv]["gated"] for vv in variants},
+        "variant_definitions": RPJ.VARIANT_DEF, "per_variant_class_surface": tab,
+        "figures": [pdf_path]}
+    mon = out["_monitor"].setdefault("study20_refit_projection", {}).setdefault(v.name, {})
+    mon.update({"n_events": res["n_events"],
+                "replay": {nm: {k: e[k] for k in ("du_over_sigma_p50", "sigu_ratio_median", "sig_ratio_q05",
+                                                    "sig_ratio_q95", "within_2pct", "selection_agreement")}
+                           for nm, e in rep["per_surface"].items()},
+                "containment_perfect": {vv: {SNAME[L]: tab[vv]["perfect"][SNAME[L]]["containment"] for L in Ls}
+                                        for vv in variants},
+                "purity_perfect": {vv: {SNAME[L]: tab[vv]["perfect"][SNAME[L]].get("chosen_A-in_given_A_in")
+                                        for L in Ls} for vv in variants if vv != "none"},
+                "pull_decomposition": decomp})
+
+
+# ---- (F) the refit monitor: R1-R5 -------------------------------------------
+# Studies meant to run CONTINUOUSLY as the SmartPixels cluster estimate (today the
+# emulator's angles and sigma table) is replaced by better simulation: each reads
+# its inputs whole, is parametrised by the emulator/sigma-table inputs it finds in
+# the nano (or on the command line), and writes trend-friendly numbers into the
+# run's monitor summary (spix_monitor_summary.json; compare runs with monitor_diff.py).
+R_ETA_EDGES = (0.0, 1.1, 1.8, 2.4)                 # |eta| bins of the monitor
+R_ETA_LABELS = ("|eta|<1.1", "1.1-1.8", "1.8-2.4")
+R_PT_EDGES = (2.0, 3.0, 5.0, 10.0, 20.0, 1e9)      # true pT bins [GeV]
+R_PT_LABELS = ("2-3", "3-5", "5-10", "10-20", ">20")
+# (key, label, unit, scale): residual reco - truth; pT as (reco - true) / true
+R1_PARAMS = (("d0", "d0", "um", 1e4), ("z0", "z0", "um", 1e4), ("pt", "pT", "rel.", 1.0),
+             ("phi", "phi0", "mrad", 1e3), ("tanL", "cotTheta", "unitless", 1.0))
+# the covariance entry each parameter's pull divides by (pT: q/pT via rInv)
+R1_COV = {"d0": "cov_d0_d0", "z0": "cov_z0_z0", "pt": "cov_rInv_rInv", "phi": "cov_phi_phi",
+          "tanL": "cov_tanL_tanL"}
+R_TRK = ["rInv", "phi", "tanL", "z0", "d0", "pt", "tpIdx", "cov_rInv_rInv", "cov_phi_phi",
+         "cov_tanL_tanL", "cov_z0_z0", "cov_d0_d0"]
+R_SP_EXTRA = ["l1TrackIdx", "spixRefitPerformed", "spixNAcceptedHits", "spixLayerHitMask"]
+R_TP = ["pt", "eta", "phi0", "d0", "z0", "charge"]
+R_FLAG_BAND = (0.85, 1.15)                          # monitor flag: a width ratio / pull outside
+
+
+def _flat_tables(files, spec):
+    """{table: {col: flat np array, "_ev": event index}, "_n_events": n} for
+    spec {table: [cols]}, read whole (track/TP tables are small)."""
+    keys = _keys(files[0])
+    br = [b for t, cols in spec.items() for b in SPN.branch_names(keys, t, cols)]
+    A = _concat(files, br)
+    out = {}
+    for t, cols in spec.items():
+        J = SPN.table_columns(A, t, cols)
+        n = ak.to_numpy(ak.num(J[cols[0]]))
+        D = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
+        D["_ev"] = np.repeat(np.arange(len(n)), n)
+        D["_off"] = np.concatenate([[0], np.cumsum(n)])
+        out[t] = D
+    out["_n_events"] = len(A)
+    return out
+
+
+def _truth_rows(TP, ev, tp_idx):
+    """Flat L1TTP row of each object's TP (-1 where tpIdx is not a written row)."""
+    ok = tp_idx >= 0
+    return np.where(ok, TP["_off"][ev] + np.where(ok, tp_idx, 0), -1)
+
+
+def _param_residuals(trk, TP, row, kpt):
+    """{param: (residual, pull)} of tracks against L1TTP rows `row` (>= 0)."""
+    pt_t = TP["pt"][row].astype(np.float64)
+    tru = {"d0": TP["d0"][row], "z0": TP["z0"][row], "phi": TP["phi0"][row],
+           "tanL": np.sinh(TP["eta"][row].astype(np.float64)),
+           "rInv": TP["charge"][row] * kpt / np.maximum(pt_t, 1e-9)}
+    out = {}
+    for k, _, _, _ in R1_PARAMS:
+        if k == "pt":
+            res = trk["pt"].astype(np.float64) / pt_t - 1.0
+            pull = (trk["rInv"] - tru["rInv"]) / np.sqrt(np.abs(trk["cov_rInv_rInv"]))
+        else:
+            res = trk[k].astype(np.float64) - tru[k]
+            if k == "phi":
+                res = np.angle(np.exp(1j * res))
+            pull = res / np.sqrt(np.abs(trk[R1_COV[k]]))
+        out[k] = (res, pull)
+    return out
+
+
+def _res_stats(res, pull, scale):
+    c, fo = OSU.core_rms(res * scale) if len(res) >= 20 else (float("nan"), float("nan"))
+    pc, _ = OSU.core_rms(pull) if len(pull) >= 20 else (float("nan"), float("nan"))
+    return {"n": int(len(res)), "core_rms": c, "frac_out": fo,
+            "full_rms": OSU.full_rms(res * scale) if len(res) else float("nan"),
+            "pull_core": pc, "pull_full": OSU.full_rms(pull) if len(pull) else float("nan"),
+            **({f"pull_{k}": v for k, v in OSU.coverage(pull).items()} if len(pull) >= 20 else {})}
+
+
+def _binned_stats(R, eta, pt, sel):
+    """{eta label: {pt label | "all": {param: stats}}} for the residuals R over `sel`."""
+    out = {}
+    for ie, el in enumerate(R_ETA_LABELS):
+        me = sel & (np.abs(eta) >= R_ETA_EDGES[ie]) & (np.abs(eta) < R_ETA_EDGES[ie + 1])
+        row = {}
+        for ip, pl in enumerate(R_PT_LABELS + ("all",)):
+            m = me & ((pt >= R_PT_EDGES[ip]) & (pt < R_PT_EDGES[ip + 1]) if pl != "all" else (pt >= R_PT_EDGES[0]))
+            row[pl] = {k: _res_stats(R[k][0][m], R[k][1][m][np.isfinite(R[k][1][m])], sc)
+                       for k, _, _, sc in R1_PARAMS}
+        out[el] = row
+    return out
+
+
+def study_track_parameters(X, K, P, ax_row, out):
+    """(R1) Final track-parameter performance: resolution and pulls of d0, z0, pT,
+    phi0 and cotTheta, refit (SmartPixels) vs OT, per variant, against true pT
+    and |eta| (< 1.1, 1.1-1.8, 1.8-2.4).
+
+    TRUTH LINKS (the project's conventions): an OT track (L1TTrack) against its
+    own tpIdx (TTTrackAssociator, loosely genuine); a SmartPixels track against
+    BOTH its own tpIdx (the strict majority owner of its clusters, 1/2 per OT stub
+    cluster and 1 per accepted IT cluster) AND the OT link (its OT track's
+    tpIdx, via l1TrackIdx). Truth parameters are the L1TTP row's (pT, eta ->
+    cotTheta, phi0, d0, z0 at the POCA, charge); a TP outside the L1TTP selection
+    (tpIdx <= -3, |p| <= 1 GeV) has no row and is not counted. Binning variables
+    are the TRUE pT and |eta|. Every SmartPixels track is counted, refitted or
+    passed through (the collection downstream sees); the refitted fraction is
+    reported per bin.
+
+    RESOLUTION: core RMS (the project convention: iterative 3-sigma clip about the
+    mean, RMS about zero of the kept core, so a bias counts; plus the fraction
+    outside the core) and the full RMS. pT is relative, (pT - pT_true) / pT_true;
+    its PULL is that of q/pT (rInv / cov_rInv_rInv). PULLS use each track's own
+    covariance (L1TTrack_cov_*, the OT KF's; the refit's KF posterior).
+    """
+    from matplotlib.backends.backend_pdf import PdfPages
+    files = out["_inputs"]
+    variants = out["_variants"]
+    spec = {REF: R_TRK, SPN.TP_TABLE: R_TP}
+    for v in variants:
+        spec[v.track] = R_TRK + R_SP_EXTRA
+    D = _flat_tables(files, spec)
+    TP, OT = D[SPN.TP_TABLE], D[REF]
+    kpt = float(np.median(OT["pt"] * np.abs(OT["rInv"])))
+    res = {"definitions": {
+        "resolution": "core RMS = RMS about zero of the iterative 3-sigma-clipped core; full RMS; "
+                      "d0, z0 [um], pT relative, phi0 [mrad], cotTheta [unitless]",
+        "pull": "residual / sqrt(own covariance); pT pull = q/pT pull (rInv)",
+        "truth": "OT: L1TTrack_tpIdx; SP: own tpIdx (cluster majority) and the OT link; "
+                 "L1TTP rows only (pruned TPs not counted); binned in TRUE pT and |eta|"},
+        "n_events": D["_n_events"], "populations": {}}
+    # the OT tracks against their own link
+    row_ot = _truth_rows(TP, OT["_ev"], OT["tpIdx"])
+    pops = {}
+    ok = row_ot >= 0
+    eta_ot = np.where(ok, TP["eta"][np.maximum(row_ot, 0)], np.nan)
+    pt_ot = np.where(ok, TP["pt"][np.maximum(row_ot, 0)], np.nan)
+    R_ot = _param_residuals({k: OT[k][ok] for k in R_TRK}, TP, row_ot[ok], kpt)
+    pops["OT"] = _binned_stats(R_ot, eta_ot[ok], pt_ot[ok], np.ones(int(ok.sum()), bool))
+    res["populations"]["OT"] = {"tracks": int(len(row_ot)), "matched": int(ok.sum()), "bins": pops["OT"]}
+    refit_frac = {}
+    for v in variants:
+        S = D[v.track]
+        g = OT["_off"][S["_ev"]] + S["l1TrackIdx"].astype(np.int64)
+        for lab, link in (("SP link", S["tpIdx"]), ("OT link", OT["tpIdx"][g])):
+            row = _truth_rows(TP, S["_ev"], link)
+            ok = row >= 0
+            eta = TP["eta"][row[ok]]
+            pt = TP["pt"][row[ok]]
+            R = _param_residuals({k: S[k][ok] for k in R_TRK}, TP, row[ok], kpt)
+            key = f"{v.name} SP ({lab})"
+            pops[key] = _binned_stats(R, eta, pt, np.ones(int(ok.sum()), bool))
+            res["populations"][key] = {"tracks": int(len(row)), "matched": int(ok.sum()), "bins": pops[key]}
+            if lab == "OT link":
+                rf = S["spixRefitPerformed"][ok] > 0
+                refit_frac[v.name] = {el: float(rf[(np.abs(eta) >= R_ETA_EDGES[i]) & (np.abs(eta) < R_ETA_EDGES[i + 1])
+                                                   & (pt >= 2)].mean())
+                                      if ((np.abs(eta) >= R_ETA_EDGES[i]) & (np.abs(eta) < R_ETA_EDGES[i + 1])
+                                          & (pt >= 2)).any() else None
+                                      for i, el in enumerate(R_ETA_LABELS)}
+    res["refit_fraction_pt_ge_2"] = refit_frac
+
+    # ---- grid row: core d0 / z0 resolution vs |eta| (pT >= 2), OT vs SP ------
+    xs = np.arange(len(R_ETA_LABELS))
+    for ax, k, lab in ((ax_row[0], "d0", "d0 core RMS [um]"), (ax_row[1], "z0", "z0 core RMS [um]"),
+                       (ax_row[2], "pt", "pT/pT core RMS [rel.]")):
+        for i, (pn, b) in enumerate(pops.items()):
+            if "SP link" in pn:
+                continue
+            y = [b[el]["all"][k]["core_rms"] for el in R_ETA_LABELS]
+            ax.plot(xs, y, "o-" if pn == "OT" else "s--", color="k" if pn == "OT" else None, ms=4,
+                    label=pn.replace(" SP (OT link)", " SP"))
+        ax.set_xticks(xs, R_ETA_LABELS); ax.set_xlabel("true |eta|"); ax.set_yscale("log")
+        ax.set_ylabel(lab); ax.grid(alpha=.3, which="both")
+        ax.set_title(f"(R1) {lab}, true pT >= 2, OT vs refit", fontsize=9)
+        ax.legend(fontsize=6, ncol=2)
+
+    # ---- PDF: curves vs true pT per |eta| bin, pulls, tables ----------------
+    od = out["_outdir"]
+    pdf_path = os.path.join(od, "spix_refit_track_parameters.pdf")
+    show = [p for p in pops if "SP link" not in p]
+    cmap = plt.get_cmap("tab10" if len(show) <= 11 else "tab20")
+    styles = {p: dict(color="k", ls="-", marker="o") if p == "OT" else
+              dict(color=cmap((i - 1) % cmap.N), ls="--", marker="s") for i, p in enumerate(show)}
+    from matplotlib.lines import Line2D
+    with PdfPages(pdf_path) as pdf:
+        for what, key, ylab in (("resolution", "core_rms", "core RMS"), ("resolution (full)", "full_rms", "full RMS"),
+                                ("pull width", "pull_core", "pull core RMS")):
+            fig, axs = plt.subplots(len(R1_PARAMS), len(R_ETA_LABELS), figsize=(14, 3.0 * len(R1_PARAMS) + 1.8),
+                                    squeeze=False)
+            xp = np.arange(len(R_PT_LABELS))
+            for i, (k, nm, unit, _) in enumerate(R1_PARAMS):
+                for j, el in enumerate(R_ETA_LABELS):
+                    ax = axs[i][j]
+                    for pn in show:
+                        y = [pops[pn][el][pl][k][key] for pl in R_PT_LABELS]
+                        ax.plot(xp, y, ms=3, **styles[pn])
+                    ax.set_xticks(xp, R_PT_LABELS, fontsize=7)
+                    if key != "pull_core":
+                        ax.set_yscale("log")
+                    else:
+                        ax.axhline(1.0, color="#888", lw=0.8, ls=":")
+                    ax.grid(alpha=.3, which="both")
+                    if i == 0:
+                        ax.set_title(f"true {el}", fontsize=9)
+                    if j == 0:
+                        ax.set_ylabel(f"{nm} {ylab}" + (f" [{unit}]" if key != "pull_core" else ""), fontsize=8)
+                    if i == len(R1_PARAMS) - 1:
+                        ax.set_xlabel("true pT [GeV]", fontsize=8)
+            fig.legend([Line2D([0], [0], **styles[p]) for p in show], show, loc="lower center",
+                       bbox_to_anchor=(0.5, 0.0), ncol=min(5, len(show)), fontsize=7, frameon=False)
+            fig.suptitle(f"(R1) track-parameter {what} vs true pT and |eta|: OT tracks (own link) vs "
+                         f"SmartPixels tracks (OT link); {D['_n_events']} events", fontsize=11)
+            fig.tight_layout(rect=(0, 0.06, 1, 0.97))
+            pdf.savefig(fig)
+            plt.close(fig)
+        rows = []
+        for pn, b in pops.items():
+            for el in R_ETA_LABELS:
+                st = b[el]["all"]
+                rows.append([pn, el, f"{st['d0']['n']:,}"]
+                            + [f"{OSU.fmt(st[k]['core_rms'], '{:.1f}' if sc > 1 else '{:.4f}')} / "
+                               f"{OSU.fmt(st[k]['full_rms'], '{:.1f}' if sc > 1 else '{:.4f}')}"
+                               for k, _, _, sc in R1_PARAMS]
+                            + [f"{OSU.fmt(st[k]['pull_core'], '{:.2f}')}" for k, _, _, _ in R1_PARAMS])
+        OSU.table_pages(pdf, "(R1) resolution core / full RMS and pull core width, true pT >= 2 GeV",
+                        ["population", "true |eta|", "N", "d0 [um]", "z0 [um]", "pT/pT", "phi0 [mrad]",
+                         "cotTheta", "pull d0", "pull z0", "pull q/pT", "pull phi0", "pull cotTheta"], rows,
+                        notes=["core RMS = RMS about zero of the iterative 3-sigma-clipped core (bias "
+                               "counts); full = plain RMS. OT: own link; SP: own (cluster-majority) or OT link.",
+                               "Refitted fraction of the SP collection, true pT >= 2: "
+                               + "; ".join(f"{vn}: " + ", ".join(f"{el} {OSU.fmt(f, '{:.3f}')}" for el, f in fr.items())
+                                           for vn, fr in list(refit_frac.items())[:4])
+                               + (" ..." if len(refit_frac) > 4 else "")])
+        for pn, b in pops.items():
+            rows = []
+            for el in R_ETA_LABELS:
+                for pl in R_PT_LABELS:
+                    st = b[el][pl]
+                    rows.append([el, pl, f"{st['d0']['n']:,}"]
+                                + [OSU.fmt(st[k]["core_rms"], "{:.1f}" if sc > 1 else "{:.4f}") for k, _, _, sc in R1_PARAMS]
+                                + [OSU.fmt(st[k]["pull_core"], "{:.2f}") for k, _, _, _ in R1_PARAMS]
+                                + [OSU.fmt(st["d0"].get("pull_lt1"), "{:.3f}"), OSU.fmt(st["z0"].get("pull_lt1"), "{:.3f}")])
+            OSU.table_pages(pdf, f"(R1) {pn}: core RMS and pull core width per true |eta| x pT bin",
+                            ["true |eta|", "true pT", "N", "d0 [um]", "z0 [um]", "pT/pT", "phi0 [mrad]",
+                             "cotTheta", "pull d0", "pull z0", "pull q/pT", "pull phi0", "pull cotTh",
+                             "d0 |pull|<1", "z0 |pull|<1"], rows,
+                            notes=["Gaussian coverage |pull| < 1 = 0.683."])
+    res["pdf"] = pdf_path
+    out["track_parameters"] = res
+    mon = out["_monitor"].setdefault("R1_track_parameters", {})
+    for pn, b in pops.items():
+        mon[pn] = {el: {k: {"core": b[el]["all"][k]["core_rms"], "full": b[el]["all"][k]["full_rms"],
+                            "pull_core": b[el]["all"][k]["pull_core"]} for k, _, _, _ in R1_PARAMS}
+                   for el in R_ETA_LABELS}
+    mon["refit_fraction_pt_ge_2"] = refit_frac
+    print("   (R1) core RMS d0/z0 [um], pT>=2, per |eta| bin:")
+    for pn in show:
+        print(f"       {pn:28s} " + "  ".join(
+            f"{el}: {OSU.fmt(pops[pn][el]['all']['d0']['core_rms'], '{:.0f}')}/"
+            f"{OSU.fmt(pops[pn][el]['all']['z0']['core_rms'], '{:.0f}')}" for el in R_ETA_LABELS))
+
+
+def study_hit_selection(X, K, P, ax_row, out):
+    """(R2) Hit selection per SURFACE (IL1-IL4, ID1-ID4), and per the OT track's
+    |eta| and pT. Per recorded refit crossing (one per visited surface with a
+    valid crossing; NB tracks the refit left without any accepted hit are passed
+    through and record NO crossing, so these rates are over the refitted tracks):
+
+      correct exists   a cluster of the OT track's TP (L1TTrack_tpIdx, the TP the
+                       producer's selHitClass refers to) on the crossed module
+      in window        that cluster inside the producer's box window around the
+                       running projection (barrel / disc half-widths from the nano)
+      acceptance       P(the accepted hit IS that TP's | it exists on the module)
+      wrong-hit rate   P(the accepted hit is another TP's or no TP's | a hit was
+                       accepted), OT-matched tracks only (selHitClass 1 or 2)
+      empty window     P(no cluster in the window) = windowMult 0
+      truncation       P(the window held more than maxHitsPerWindow clusters)
+
+    Folded together: the cone containment of the refit-order cone (study 5,
+    q95) and the selection purity of the chi2 metric (study 6 baseline) per
+    surface, from this page's earlier studies.
+    """
+    from matplotlib.backends.backend_pdf import PdfPages
+    xi, ci = P["xi"], P["ci"]
+    n = len(X["layer"])
+    cfg = dict(out["_refit_config"].get(out["_variant"].name, {}))
+    import ot_refit_projection as RPJ
+    cfg = dict(RPJ.PRODUCER_DEFAULTS, **cfg)
+    otm = SPN.tp_matched(X["ot_tpIdx"])
+    is_c = otm[xi] & SPN.tp_matched(K["tpIdx"][ci]) & (K["tpIdx"][ci] == X["ot_tpIdx"][xi])
+    exists = np.zeros(n, bool)
+    exists[xi[is_c]] = True
+    wr = np.array([RPJ.window(cfg, int(s))[0] for s in X["layer"]])
+    wz = np.array([RPJ.window(cfg, int(s))[1] for s in X["layer"]])
+    inw = is_c & (np.abs(K["localX"][ci] - X["projLocalX"][xi]) <= wr[xi]) \
+        & (np.abs(K["localY"][ci] - X["projLocalY"][xi]) <= wz[xi])
+    in_window = np.zeros(n, bool)
+    in_window[xi[inw]] = True
+    acc = X["hitAccepted"] > 0
+    correct = acc & (X["selHitClass"] == 0)
+    wrong = acc & otm & (X["selHitClass"] > 0)
+    empty = X["windowMult"] == 0
+    trunc = X["windowTruncated"] > 0
+    eta, pt = np.abs(X["trk_eta"]), X["trk_pt"]
+    s5 = out.get("true_containment", {}).get("q95", {}).get("per_surface_eff", {})
+    s6 = out.get("chi2_weight_scan", {}).get("baseline_all_unit_weights", {}).get("per_surface", {})
+
+    def rates(m):
+        e = m & exists
+        a = m & acc & otm
+        return {"n_crossings": int(m.sum()), "n_correct_exists": int(e.sum()),
+                "correct_in_window": float(in_window[e].mean()) if e.any() else None,
+                "acceptance": float(correct[e].mean()) if e.any() else None,
+                "wrong_hit_rate": float(wrong[a].mean()) if a.any() else None,
+                "empty_window": float(empty[m].mean()) if m.any() else None,
+                "truncation": float(trunc[m].mean()) if m.any() else None,
+                "mean_window_mult": float(X["windowMult"][m].mean()) if m.any() else None}
+    res = {"definitions": "see the docstring / PDF notes", "per_surface": {}}
+    for S in SURFACES:
+        ms = X["layer"] == S
+        if not ms.any():
+            continue
+        e = {"all": rates(ms), "eta": {}, "pt": {}}
+        for i, el in enumerate(R_ETA_LABELS):
+            e["eta"][el] = rates(ms & (eta >= R_ETA_EDGES[i]) & (eta < R_ETA_EDGES[i + 1]))
+        for i, pl in enumerate(R_PT_LABELS):
+            e["pt"][pl] = rates(ms & (pt >= R_PT_EDGES[i]) & (pt < R_PT_EDGES[i + 1]))
+        e["cone_containment_q95_study5"] = s5.get(SNAME[S])
+        e["metric_purity_study6"] = (s6.get(SNAME[S]) or {}).get("purity")
+        res["per_surface"][SNAME[S]] = e
+    present = [S for S in SURFACES if SNAME[S] in res["per_surface"]]
+    xp = np.arange(len(present))
+    for ax, keys, title in ((ax_row[0], ("acceptance", "correct_in_window"), "correct hit accepted / in window"),
+                            (ax_row[1], ("wrong_hit_rate", "empty_window", "truncation"), "wrong hits, empty, truncated")):
+        for k in keys:
+            ax.plot(xp, [res["per_surface"][SNAME[S]]["all"][k] or np.nan for S in present], "o-", label=k)
+        surface_axis(ax, present); ax.set_ylabel("fraction"); ax.grid(alpha=.3)
+        ax.set_title(f"(R2) {title}", fontsize=9); ax.legend(fontsize=6)
+    ax = ax_row[2]
+    for i, el in enumerate(R_ETA_LABELS):
+        ax.plot(xp, [res["per_surface"][SNAME[S]]["eta"][el]["acceptance"] or np.nan for S in present],
+                "o-", label=f"acceptance {el}")
+    surface_axis(ax, present); ax.set_ylabel("fraction"); ax.grid(alpha=.3); ax.legend(fontsize=6)
+    ax.set_title("(R2) acceptance per OT-track |eta|", fontsize=9)
+
+    pdf_path = os.path.join(out["_outdir"], "spix_refit_hit_selection.pdf")
+    cols = ["n_crossings", "n_correct_exists", "correct_in_window", "acceptance", "wrong_hit_rate",
+            "empty_window", "truncation", "mean_window_mult"]
+    hdr = ["surface", "bin", "crossings", "correct exists", "in window", "acceptance", "wrong hits",
+           "empty", "truncated", "<mult>"]
+
+    def cells(e):
+        return [f"{e['n_crossings']:,}", f"{e['n_correct_exists']:,}"] + \
+            [OSU.fmt(e[c]) for c in cols[2:7]] + [OSU.fmt(e["mean_window_mult"], "{:.2f}")]
+    with PdfPages(pdf_path) as pdf:
+        rows = []
+        for S in present:
+            e = res["per_surface"][SNAME[S]]
+            rows.append([SNAME[S], "all"] + cells(e["all"]))
+            rows += [[SNAME[S], el] + cells(e["eta"][el]) for el in R_ETA_LABELS]
+            rows += [[SNAME[S], f"pT {pl}"] + cells(e["pt"][pl]) for pl in R_PT_LABELS]
+        notes = [f"variant {out['_variant'].label}; windows barrel "
+                 f"{'/'.join(f'{x:g}' for x in cfg['windowRPhi'])} x {'/'.join(f'{x:g}' for x in cfg['windowZ'])} cm, "
+                 f"discs {'/'.join(f'{x:g}' for x in cfg['windowDiscRPhi'])} x "
+                 f"{'/'.join(f'{x:g}' for x in cfg['windowDiscR'])} cm (r-phi x z|r), max {cfg['maxHitsPerWindow']} per window.",
+                 "Per recorded crossing; tracks with NO accepted hit are passed through and record no crossing.",
+                 "correct = a cluster of the OT track's TP (L1TTrack_tpIdx); acceptance = P(accepted hit is it | it exists"
+                 " on the module); wrong hits = P(accepted hit of another / no TP | accepted), OT-matched tracks.",
+                 "|eta| and pT bins: the OT track's."]
+        OSU.table_pages(pdf, f"(R2) hit selection per surface, |eta| and pT ({out['_variant'].label})", hdr, rows, notes)
+        OSU.table_pages(pdf, "(R2) folded in: cone containment (study 5, q95 refit-order cone) and metric "
+                             "purity (study 6, unit weights)",
+                        ["surface", "acceptance", "correct in window", "cone containment q95 (5)", "metric purity (6)"],
+                        [[SNAME[S], OSU.fmt(res["per_surface"][SNAME[S]]["all"]["acceptance"]),
+                          OSU.fmt(res["per_surface"][SNAME[S]]["all"]["correct_in_window"]),
+                          OSU.fmt(res["per_surface"][SNAME[S]]["cone_containment_q95_study5"]),
+                          OSU.fmt(res["per_surface"][SNAME[S]]["metric_purity_study6"])] for S in present],
+                        notes=["Study 5 truth = the SP track's cluster-majority TP; study 6 purity = the unit-weight "
+                               "chi2 picks the true cluster when it is in the seed cone."])
+    res["pdf"] = pdf_path
+    out["hit_selection"] = res
+    mon = out["_monitor"].setdefault("R2_hit_selection", {}).setdefault(out["_variant"].name, {})
+    for S in present:
+        e = res["per_surface"][SNAME[S]]
+        mon[SNAME[S]] = {k: e["all"][k] for k in ("acceptance", "correct_in_window", "wrong_hit_rate",
+                                                  "empty_window", "truncation")}
+        mon[SNAME[S]]["acceptance_by_eta"] = {el: e["eta"][el]["acceptance"] for el in R_ETA_LABELS}
+    print("   (R2) acceptance / wrong / empty / truncated per surface: " + "  ".join(
+        f"{SNAME[S]} {OSU.fmt(res['per_surface'][SNAME[S]]['all']['acceptance'])}/"
+        f"{OSU.fmt(res['per_surface'][SNAME[S]]['all']['wrong_hit_rate'])}/"
+        f"{OSU.fmt(res['per_surface'][SNAME[S]]['all']['empty_window'])}/"
+        f"{OSU.fmt(res['per_surface'][SNAME[S]]['all']['truncation'])}" for S in present))
+
+
+def _sigma_table(out):
+    """(SigmaTable or None, provenance dict): the emulator sigma table the nano's
+    rec-hit producer names (emuSigmaSet), resolved against --cmssw-src, or the
+    --emu-sigma-table override."""
+    prov = dict(out["_provenance"].get("rechit", {}))
+    path = out.get("_emu_sigma_table") or OSU.resolve_data_path(prov.get("emuSigmaSet"), out.get("_cmssw_search", []))
+    if not path:
+        prov["table_status"] = "not found (pass --emu-sigma-table or --cmssw-src): compared to the per-cluster stored sigma"
+        return None, prov
+    prov.update({"table_path": os.path.abspath(path), "table_sha256": OSU.sha256(path)})
+    return OSU.SigmaTable(path), prov
+
+
+def study_angle_monitor(X, K, P, ax_row, out):
+    """(R3) Angle-estimate monitor: the SmartPixels angles the refit is given,
+    against the truth and against the sigma table it is told they have, per
+    SURFACE (IL1-IL4 and ID1-ID4), angle and emulator class.
+
+    CLUSTERS (variant-independent). For every truth-linked cluster with a valid
+    true local angle (tpLocalCotAlpha/Beta: the TP's helix at the hit) and a
+    usable emitted angle (|cot| <= 12): the residual emitted - true, binned in
+    |emitted cot| on the sigma table's OWN bin edges, per class -- T (truth-
+    consistent: TP helix within 1 cm; emitted = the SmartPixels response on the
+    truth) and C (no trustworthy truth: emitted = CNN + donor route, its "true"
+    angle is the dominant TP's helix and can be a delta ray's parent) -- and
+    both together. Widths: (q84 - q16)/2 (the TABLE'S OWN DEFINITION), the core
+    RMS and the full RMS; table = the sigma the refit uses in that bin (the
+    emulator table named by the nano's emuSigmaSet; its sha256 is recorded).
+    The table is built on the INCLUSIVE emulated population (both routes run on
+    truth-consistent training clusters), which cannot be rebuilt on data: class
+    T alone should sit at or below it, class C's residual is dominated by its
+    unreliable truth. These ratios are reported, not flagged; a table bin far
+    below both neighbours (a sparse-bin artefact) is flagged.
+
+    REFIT CROSSINGS (per variant). On the CORRECT accepted hits (selHitClass 0):
+    the producer's KF angle pulls (pullAlpha / pullBeta: innovation over
+    sqrt(track + cluster variance); beta is the 4th sequential scalar), and the
+    split that says WHICH variance is short -- (emitted - true) / sigma: the
+    table's share; (predicted - true): the track prediction's error, whose
+    quadrature with sigma_table must match the innovation. The full split with
+    the track's own projected sigma is study 20's replay (pull decomposition).
+    FLAGS (outside [0.85, 1.15]): "TABLE" when (emitted - true)/sigma on these
+    hits is off (the sigma table does not describe the clusters the refit uses);
+    "TRACK" when only the KF pull is off (the projection covariance).
+    """
+    from matplotlib.backends.backend_pdf import PdfPages
+    need = ("clLocalCotAlpha", "clLocalCotBeta", "clSigAlpha", "clSigBeta", "clHasAlpha", "clHasBeta")
+    if not all(c in K for c in need):
+        out["angle_monitor"] = {"skipped": "cluster table lacks the sensor angle columns"}
+        for a in ax_row:
+            a.axis("off")
+        return
+    T, prov = _sigma_table(out)
+    linked = SPN.tp_matched(K["tpIdx"])
+    emu = K.get("tpEmuClass", np.full(len(K["tpIdx"]), -1))
+    res = {"sigma_table": prov, "clusters": {}, "kf": {}, "flags": []}
+    angles = (("alpha", "clLocalCotAlpha", "tpLocalCotAlpha", "clSigAlpha", "clHasAlpha"),
+              ("beta", "clLocalCotBeta", "tpLocalCotBeta", "clSigBeta", "clHasBeta"))
+    # does the stored per-cluster sigma follow the table? (provenance check)
+    if T is not None:
+        chk = {}
+        for ang, m_, _, s_, h_ in angles:
+            ok = (K[h_] > 0) & np.isin(K["surface"], list(T.tables[ang]))
+            tab = T.evaluate(ang, K["surface"][ok], np.abs(K[m_][ok]))
+            rel = np.abs(K[s_][ok] / tab - 1)
+            chk[ang] = {"n": int(ok.sum()), "frac_rel_diff_gt_1e-3": float(np.mean(rel > 1e-3)) if ok.any() else None}
+        res["stored_sigma_vs_table"] = chk
+    rows_t = []
+    for ang, m_, t_, s_, h_ in angles:
+        res["clusters"][ang] = {}
+        for S in SURFACES:
+            base = (K["surface"] == S) & linked & (K[h_] > 0) & (K[t_] > SENTINEL)
+            if base.sum() < 50:
+                continue
+            if T is not None and S in T.tables[ang]:
+                edges, tabv = T.bins(ang, S)
+            else:
+                edges, tabv = np.array([0, 0.1, 0.3, 0.75, 1.5, 3.0, 12.0]), None
+            e_s = {}
+            for cl, cm in (("T", emu == 1), ("C", emu == 0), ("T+C", np.ones(len(emu), bool))):
+                sel = base & cm
+                r = K[m_][sel] - K[t_][sel]
+                ac = np.abs(K[m_][sel])
+                sg = K[s_][sel]
+                bins = []
+                for b in range(len(edges) - 1):
+                    mb = (ac >= edges[b]) & ((ac < edges[b + 1]) if b < len(edges) - 2 else True)
+                    if mb.sum() < 30:
+                        continue
+                    w68 = OSU.width68(r[mb])
+                    ref = float(tabv[b]) if tabv is not None else float(np.median(sg[mb]))
+                    bins.append({"lo": float(edges[b]), "hi": float(edges[b + 1]), "n": int(mb.sum()),
+                                 "width68": w68, "core_rms": OSU.core_rms(r[mb])[0],
+                                 "full_rms": OSU.full_rms(r[mb]), "table_sigma": ref,
+                                 "ratio": w68 / ref if ref > 0 else float("nan"),
+                                 "pull_width68": OSU.width68(r[mb] / sg[mb])})
+                    rows_t.append([ang, SNAME[S], cl, f"{edges[b]:g}-{edges[b + 1]:g}", f"{mb.sum():,}",
+                                   OSU.fmt(w68, "{:.4f}"), OSU.fmt(OSU.core_rms(r[mb])[0], "{:.4f}"),
+                                   OSU.fmt(OSU.full_rms(r[mb]), "{:.3f}"), OSU.fmt(ref, "{:.4f}"),
+                                   OSU.fmt(w68 / ref if ref > 0 else None), OSU.fmt(OSU.width68(r[mb] / sg[mb]))])
+                n = np.array([b["n"] for b in bins], float)
+                ratio = float(np.sum(n * np.array([b["ratio"] for b in bins])) / n.sum()) if len(bins) else float("nan")
+                e_s[cl] = {"n": int(sel.sum()), "bins": bins, "ratio_weighted": ratio,
+                           "pull_width68": OSU.width68(r / sg), "pull_core": OSU.core_rms(r / sg)[0],
+                           "width68": OSU.width68(r), "full_rms": OSU.full_rms(r)}
+            res["clusters"][ang][SNAME[S]] = e_s
+            # a table bin far below BOTH neighbours is a sparse-bin artefact of the table
+            if tabv is not None and len(tabv) >= 3:
+                for b in range(1, len(tabv) - 1):
+                    if tabv[b] < 0.5 * min(tabv[b - 1], tabv[b + 1]):
+                        res["flags"].append(f"table {ang} {SNAME[S]}: bin |cot| {edges[b]:g}-{edges[b + 1]:g} "
+                                            f"sigma {tabv[b]:.3f} < half its neighbours "
+                                            f"({tabv[b - 1]:.3f}, {tabv[b + 1]:.3f})")
+    # ---- the refit crossings, per variant -------------------------------------
+    files = out["_inputs"]
+    cols = ["layer", "hitAccepted", "selHitClass", "pullAlpha", "pullBeta", "recoCotAlpha", "recoCotBeta",
+            "sigAlpha", "sigBeta", "tpLocalCotAlpha", "tpLocalCotBeta", "projCotAlpha", "projCotBeta",
+            "hasAlpha", "hasBeta"]
+    D = _flat_tables(files, {v.hit: cols for v in out["_variants"]})
+    rows_k = []
+    for v in out["_variants"]:
+        H = D[v.hit]
+        good = (H["hitAccepted"] > 0) & (H["selHitClass"] == 0)
+        res["kf"][v.name] = {}
+        for S in SURFACES:
+            ms = good & (H["layer"] == S)
+            if ms.sum() < 30:
+                continue
+            e = {"n": int(ms.sum())}
+            for ang, pull, reco, sig, tru, pred, has in (
+                    ("alpha", "pullAlpha", "recoCotAlpha", "sigAlpha", "tpLocalCotAlpha", "projCotAlpha", "hasAlpha"),
+                    ("beta", "pullBeta", "recoCotBeta", "sigBeta", "tpLocalCotBeta", "projCotBeta", "hasBeta")):
+                m = ms & (H[has] > 0) & (H[pull] > SENTINEL) & (H[tru] > SENTINEL)
+                if m.sum() < 30:
+                    continue
+                kp = H[pull][m]
+                mt = (H[reco][m] - H[tru][m]) / H[sig][m]
+                pe = H[pred][m] - H[tru][m]
+                inn = H[reco][m] - H[pred][m]
+                # the track-prediction variance the innovation implies, given the table
+                implied = OSU.width68(inn) ** 2 - np.median(H[sig][m]) ** 2
+                e[ang] = {"n": int(m.sum()), "kf_pull_core": OSU.core_rms(kp)[0], "kf_pull_width68": OSU.width68(kp),
+                          "kf_pull_full": OSU.full_rms(kp),
+                          "meas_vs_truth_pull_width68": OSU.width68(mt), "meas_vs_truth_pull_core": OSU.core_rms(mt)[0],
+                          "pred_minus_truth_width68": OSU.width68(pe), "innovation_width68": OSU.width68(inn),
+                          "median_sigma_table": float(np.median(H[sig][m])),
+                          "implied_track_sigma": float(np.sqrt(implied)) if implied > 0 else 0.0}
+                rows_k.append([v.name, SNAME[S], ang, f"{m.sum():,}", OSU.fmt(e[ang]["kf_pull_core"]),
+                               OSU.fmt(e[ang]["kf_pull_width68"]), OSU.fmt(e[ang]["meas_vs_truth_pull_width68"]),
+                               OSU.fmt(e[ang]["pred_minus_truth_width68"], "{:.4f}"),
+                               OSU.fmt(e[ang]["innovation_width68"], "{:.4f}"),
+                               OSU.fmt(e[ang]["median_sigma_table"], "{:.4f}")])
+                w, mt68 = e[ang]["kf_pull_width68"], e[ang]["meas_vs_truth_pull_width68"]
+                # which variance is off: the table's (the measurement against truth over
+                # its sigma) or the track's (the KF pull off while the table is right)
+                if np.isfinite(mt68) and not (R_FLAG_BAND[0] <= mt68 <= R_FLAG_BAND[1]):
+                    res["flags"].append(f"{v.name} {ang} {SNAME[S]}: TABLE sigma {'short' if mt68 > 1 else 'long'}"
+                                        f" -- (emitted-true)/sigma width68 {mt68:.2f} on the correct hits "
+                                        f"(KF pull {w:.2f})")
+                elif np.isfinite(w) and not (R_FLAG_BAND[0] <= w <= R_FLAG_BAND[1]):
+                    res["flags"].append(f"{v.name} {ang} {SNAME[S]}: TRACK projection variance "
+                                        f"{'short' if w > 1 else 'long'} -- KF pull width68 {w:.2f} while the "
+                                        f"table closes ({mt68:.2f})")
+            res["kf"][v.name][SNAME[S]] = e
+    # ---- grid row -----------------------------------------------------------
+    for ax, ang in ((ax_row[0], "alpha"), (ax_row[1], "beta")):
+        present = [S for S in SURFACES if SNAME[S] in res["clusters"][ang]]
+        xp = np.arange(len(present))
+        # class C is left to the tables: its "true" angle is unreliable (ratios 2-11)
+        for cl, mk in (("T", "o"), ("T+C", "^")):
+            ax.plot(xp, [res["clusters"][ang][SNAME[S]][cl]["ratio_weighted"] for S in present], marker=mk,
+                    label=f"cluster w68/table, class {cl}")
+        v0 = out["_variants"][0].name
+        ax.plot(xp, [res["kf"].get(v0, {}).get(SNAME[S], {}).get(ang, {}).get("kf_pull_width68", np.nan)
+                     for S in present], "k*--", label=f"KF pull w68 ({v0})")
+        ax.plot(xp, [res["kf"].get(v0, {}).get(SNAME[S], {}).get(ang, {}).get("meas_vs_truth_pull_width68", np.nan)
+                     for S in present], "rs:", label=f"(emitted-true)/sigma w68, KF hits ({v0})")
+        ax.axhspan(*R_FLAG_BAND, color="#dddddd", alpha=0.5, lw=0)
+        surface_axis(ax, present); ax.set_ylabel("ratio / pull width"); ax.grid(alpha=.3)
+        ax.set_title(f"(R3) cot{ang} estimate vs its sigma table", fontsize=9); ax.legend(fontsize=6)
+    ax = ax_row[2]
+    ax.axis("off")
+    ax.text(0.0, 1.0, "R3 FLAGS (outside [0.85, 1.15]):\n" + ("\n".join(textwrap.fill(f, 80) for f in res["flags"][:20])
+                                                         or "none")
+            + f"\n\nsigma table: {prov.get('emuSigmaSet', '?')}\n  {prov.get('table_path', prov.get('table_status', ''))}"
+            + (f"\n  sha256 {prov['table_sha256'][:16]}" if "table_sha256" in prov else ""),
+            fontsize=5.6, va="top", family="monospace", transform=ax.transAxes)
+
+    pdf_path = os.path.join(out["_outdir"], "spix_refit_angle_monitor.pdf")
+    with PdfPages(pdf_path) as pdf:
+        # residual-width / table curves per surface
+        for ang in ("alpha", "beta"):
+            present = [S for S in SURFACES if SNAME[S] in res["clusters"][ang]]
+            fig, axs = plt.subplots(2, 4, figsize=(17, 8.5), squeeze=False)
+            for i, S in enumerate(present[:8]):
+                ax = axs[i // 4][i % 4]
+                for cl, st in (("T", "o-"), ("C", "s--"), ("T+C", "^-")):
+                    b = res["clusters"][ang][SNAME[S]][cl]["bins"]
+                    x = [0.5 * (e["lo"] + min(e["hi"], 6)) for e in b]
+                    ax.plot(x, [e["width68"] for e in b], st, ms=3, label=f"w68 {cl}")
+                b = res["clusters"][ang][SNAME[S]]["T+C"]["bins"]
+                ax.step([e["lo"] for e in b] + [min(b[-1]["hi"], 6)] if b else [],
+                        [e["table_sigma"] for e in b] + [b[-1]["table_sigma"]] if b else [], where="post",
+                        color="k", lw=1.4, label="table sigma")
+                ax.set_xscale("symlog", linthresh=0.1); ax.set_yscale("log"); ax.grid(alpha=.3)
+                ax.set_title(SNAME[S], fontsize=9)
+                ax.set_xlabel(f"|emitted cot{ang}|", fontsize=8); ax.set_ylabel("(q84-q16)/2 of emitted - true", fontsize=8)
+            for j in range(len(present), 8):
+                axs[j // 4][j % 4].axis("off")
+            from matplotlib.lines import Line2D
+            fig.legend([Line2D([0], [0], marker=m, ls=l, color=c) for m, l, c in
+                        (("o", "-", "C0"), ("s", "--", "C1"), ("^", "-", "C2"), ("", "-", "k"))],
+                       ["class T", "class C", "T + C", "sigma table"], loc="lower center", ncol=4, frameon=False)
+            fig.suptitle(f"(R3) emitted - true cot{ang}: width vs the emulator sigma table, per surface "
+                         f"(clusters linked to a TP)", fontsize=11)
+            fig.tight_layout(rect=(0, 0.04, 1, 0.97))
+            pdf.savefig(fig)
+            plt.close(fig)
+        OSU.table_pages(pdf, "(R3) cluster angle residual widths vs the sigma table, per surface x class x |cot| bin",
+                        ["angle", "surface", "class", "|cot| bin", "n", "width68", "core RMS", "full RMS",
+                         "table sigma", "w68/table", "pull w68"], rows_t,
+                        notes=[f"sigma table: {prov.get('emuSigmaSet', '?')} -> {prov.get('table_path', prov.get('table_status'))}",
+                               "width68 = (q84-q16)/2 (the table's definition); class T = truth-consistent, C = CNN+donor "
+                               "route (its 'true' angle unreliable); pull = residual / the cluster's stored sigma.",
+                               f"stored sigma vs table: {res.get('stored_sigma_vs_table')}"],
+                        highlight=lambda r: r[2] == "T+C" and r[9] not in ("-",) and
+                        not (R_FLAG_BAND[0] <= float(r[9]) <= R_FLAG_BAND[1]))
+        OSU.table_pages(pdf, "(R3) KF angle pulls on the refit's correct accepted hits",
+                        ["variant", "surface", "angle", "n", "KF pull core", "KF pull w68", "meas-truth pull w68",
+                         "pred-truth w68", "innovation w68", "median sigma table"], rows_k,
+                        notes=["KF pull = the producer's (innovation / sqrt(track var + sigma^2)); meas-truth pull = "
+                               "(emitted - true)/sigma: ~1 => the table is right;",
+                               "pred-truth = the track's predicted angle minus the true one (cot units): with the "
+                               "table sigma it should add in quadrature to the innovation width.",
+                               "Track-side sigma (projection covariance) per crossing: study 20's pull decomposition."])
+        OSU.table_pages(pdf, "(R3) flags", ["flag"], [[f] for f in res["flags"]] or [["none"]])
+    res["pdf"] = pdf_path
+    out["angle_monitor"] = res
+    mon = out["_monitor"].setdefault("R3_angle_monitor", {})
+    mon["sigma_table"] = {k: prov.get(k) for k in ("emuSigmaSet", "table_sha256", "angleSource", "emuInflation",
+                                                    "emuDiscAlphaOffset", "table_status")}
+    mon["cluster_width68_over_table"] = {ang: {s: {cl: e[cl]["ratio_weighted"] for cl in e}
+                                               for s, e in res["clusters"][ang].items()} for ang in ("alpha", "beta")}
+    mon["cluster_pull_width68"] = {ang: {s: {cl: e[cl]["pull_width68"] for cl in e}
+                                         for s, e in res["clusters"][ang].items()} for ang in ("alpha", "beta")}
+    mon["kf_meas_vs_truth_pull_width68"] = {
+        vn: {s: {ang: e[ang]["meas_vs_truth_pull_width68"] for ang in ("alpha", "beta") if ang in e}
+             for s, e in d.items()} for vn, d in res["kf"].items()}
+    mon["kf_pull_width68"] = {vn: {s: {ang: e[ang]["kf_pull_width68"] for ang in ("alpha", "beta") if ang in e}
+                                   for s, e in d.items()} for vn, d in res["kf"].items()}
+    mon["flags"] = res["flags"]
+    print(f"   (R3) {len(res['flags'])} flag(s): " + "; ".join(res["flags"][:12]))
+
+
+def study_covariance_check(X, K, P, ax_row, out):
+    """(R4) Refit covariance calibration check: the pulls and coverage of the
+    quantities the refit-calibration scripts tune, per SURFACE and overall.
+
+      innovation pulls  the producer's position pulls pullX / pullY on its correct
+                        accepted hits: (cluster - running projection) / sqrt(track
+                        variance + CPE variance) -- the seed + material + R model
+                        in one number per surface (pullX is the first scalar
+                        update; pullY follows it), core / full width and coverage
+                        of |pull| < 1, 2, 3 against the Gaussian 0.683 / 0.954 /
+                        0.997, per surface and true-pT bin of the OT track;
+      final state       the refit track parameters' pulls against truth (from R1,
+                        SP tracks with the OT link): coverage per parameter and
+                        |eta| bin.
+
+    NOT INVOKED: the calibration scripts (refit_calibration.py extraction +
+    refit_calibration_fit.py joint fits) are a multi-hour, barrel-only
+    pipeline; what a full recalibration with the discs needs is listed on the PDF.
+    """
+    from matplotlib.backends.backend_pdf import PdfPages
+    files = out["_inputs"]
+    cols = ["layer", "trackIdx", "hitAccepted", "selHitClass", "pullX", "pullY"]
+    spec = {v.hit: cols for v in out["_variants"]}
+    spec[REF] = ["pt", "eta"]
+    D = _flat_tables(files, spec)
+    OT = D[REF]
+    res = {"innovation": {}, "final_state": {}}
+    rows = []
+    for v in out["_variants"]:
+        H = D[v.hit]
+        g = OT["_off"][H["_ev"]] + H["trackIdx"].astype(np.int64)
+        pt = OT["pt"][g]
+        good = (H["hitAccepted"] > 0) & (H["selHitClass"] == 0) & (H["pullX"] > SENTINEL) & (H["pullY"] > SENTINEL)
+        res["innovation"][v.name] = {}
+        for S in SURFACES:
+            ms = good & (H["layer"] == S)
+            if ms.sum() < 30:
+                continue
+            e = {}
+            for axn, col in (("u", "pullX"), ("v", "pullY")):
+                p = H[col][ms]
+                c, fo = OSU.core_rms(p)
+                e[axn] = {"n": int(ms.sum()), "core": c, "frac_out": fo, "full": OSU.full_rms(p), **OSU.coverage(p),
+                          "core_by_pt": {pl: (OSU.core_rms(H[col][ms & (pt >= R_PT_EDGES[i]) & (pt < R_PT_EDGES[i + 1])])[0]
+                                              if (ms & (pt >= R_PT_EDGES[i]) & (pt < R_PT_EDGES[i + 1])).sum() >= 30
+                                              else None) for i, pl in enumerate(R_PT_LABELS)}}
+                rows.append([v.name, SNAME[S], axn, f"{ms.sum():,}", OSU.fmt(c), OSU.fmt(fo), OSU.fmt(e[axn]["full"]),
+                             OSU.fmt(e[axn]["lt1"]), OSU.fmt(e[axn]["lt2"]), OSU.fmt(e[axn]["lt3"])]
+                            + [OSU.fmt(e[axn]["core_by_pt"][pl]) for pl in R_PT_LABELS])
+            res["innovation"][v.name][SNAME[S]] = e
+    tp = out.get("track_parameters", {}).get("populations", {})
+    frows = []
+    for pn, b in tp.items():
+        if "OT link" not in pn and pn != "OT":
+            continue
+        res["final_state"][pn] = {el: {k: {c: b["bins"][el]["all"][k].get(c) for c in ("pull_core", "pull_lt1", "pull_lt2", "pull_lt3")}
+                                       for k, _, _, _ in R1_PARAMS} for el in R_ETA_LABELS}
+        for el in R_ETA_LABELS:
+            frows.append([pn, el] + [f"{OSU.fmt(b['bins'][el]['all'][k]['pull_core'], '{:.2f}')} / "
+                                     f"{OSU.fmt(b['bins'][el]['all'][k].get('pull_lt1'), '{:.3f}')}"
+                                     for k, _, _, _ in R1_PARAMS])
+    v0 = out["_variants"][0].name
+    for ax, axn in ((ax_row[0], "u"), (ax_row[1], "v")):
+        present = [S for S in SURFACES if SNAME[S] in res["innovation"].get(v0, {})]
+        xp = np.arange(len(present))
+        for vn, d in list(res["innovation"].items())[:6]:
+            ax.plot(xp, [d.get(SNAME[S], {}).get(axn, {}).get("core", np.nan) for S in present], "o-", ms=3, label=vn)
+        ax.axhline(1.0, color="k", lw=0.8, ls=":")
+        surface_axis(ax, present); ax.set_ylabel(f"innovation pull {axn} core RMS"); ax.grid(alpha=.3)
+        ax.set_title(f"(R4) position innovation pull {axn} (1 = calibrated)", fontsize=9); ax.legend(fontsize=6)
+    ax = ax_row[2]
+    ax.axis("off")
+    ax.text(0.0, 1.0, "(R4) final-state pull core / coverage |pull|<1 (0.683)\n"
+            + "\n".join("  ".join(str(c) for c in r) for r in frows[:18]),
+            fontsize=5.4, va="top", family="monospace", transform=ax.transAxes)
+    pdf_path = os.path.join(out["_outdir"], "spix_refit_covariance_check.pdf")
+    with PdfPages(pdf_path) as pdf:
+        OSU.table_pages(pdf, "(R4) innovation pulls on the correct accepted hits, per variant and surface",
+                        ["variant", "surface", "axis", "n", "core RMS", "frac out", "full RMS", "|p|<1", "|p|<2",
+                         "|p|<3"] + [f"core pT {pl}" for pl in R_PT_LABELS], rows,
+                        notes=["Gaussian: |p|<1 0.683, |p|<2 0.954, |p|<3 0.997; core = 3-sigma-clipped RMS about 0.",
+                               "Disc u = r-phi, v = radius. pT = the OT track's."])
+        OSU.table_pages(pdf, "(R4) final-state pulls (core RMS / coverage |pull|<1) against truth",
+                        ["population", "true |eta|"] + [f"{nm}" for _, nm, _, _ in R1_PARAMS], frows,
+                        notes=["From R1 (true pT >= 2): OT tracks (own link) and SP tracks (OT link)."])
+        fig = plt.figure(figsize=(11.7, 8.3))
+        fig.text(0.04, 0.95, "(R4) what a full refit-covariance recalibration with the discs needs", fontsize=12,
+                 fontweight="bold", va="top")
+        fig.text(0.04, 0.9, "\n".join([
+            "The calibration pipeline (refit_calibration.py extraction + refit_calibration_fit.py joint fits; v3 JSON",
+            "consumed by study 20 --refit-calibration) is BARREL-ONLY and was fitted on payload-era barrel refits:",
+            "  1. extraction: run ot_projection.evaluate_surface over IL1-IL4 AND ID1-ID4 (the kernel now supports it),",
+            "     with the TP truth helix projected onto the disc module planes (disc_s) -- refit_calibration.py loops",
+            "     IT_LAYERS only;",
+            "  2. seed deficit: re-measure cov(TTTrack - truth at the POCA) per (floor group incl. the OT disk-stub",
+            "     groups, stub count, pT bin) on canon_v2 -- the forward OT tracks dominate the disc crossings;",
+            "  3. material: disc planes (TFPX module 1.34% X0 at normal incidence, path factor 1/|cos|) and the",
+            "     |eta| > 1.2 service shell (1.7-1.9x the barrel gap, tkLayout / D121 scan) in the 'planes' list,",
+            "     keyed by z for discs;",
+            "  4. R tables: rebuild the CPE / angle error lookup on the emulator clusters, per surface incl. discs",
+            "     (disc local y = radius; the emu disc beta has no Gaussian core, see R3);",
+            "  5. export a v4 JSON with disc planes and groups; then study 20's calibrated mode can visit discs",
+            "     (today it is restricted to IL1-IL4 when a calibration is given).",
+            "The monitoring here (innovation pulls per surface and pT, final-state coverage) is what such a",
+            "recalibration would be judged on; it runs on every omnibus invocation."]),
+                 fontsize=9, va="top", family="monospace")
+        pdf.savefig(fig)
+        plt.close(fig)
+    res["pdf"] = pdf_path
+    out["covariance_check"] = res
+    mon = out["_monitor"].setdefault("R4_covariance_check", {})
+    mon["innovation_pull_core"] = {vn: {s: {a: e[a]["core"] for a in e} for s, e in d.items()}
+                                   for vn, d in res["innovation"].items()}
+    mon["innovation_coverage_lt1"] = {vn: {s: {a: e[a]["lt1"] for a in e} for s, e in d.items()}
+                                      for vn, d in res["innovation"].items()}
+    mon["final_state"] = res["final_state"]
+
+
+def study_track_mva(X, K, P, ax_row, out):
+    """(R5) Track-MVA performance per variant (ngtagger.train.trackmva, the
+    canonical/prompt family): the clean head's AUC and the sigma_hat(d0) head's
+    68% coverage against |eta|. A frozen bundle is used when --trackmva-bundle
+    holds the variant's (trackmva_<family>_<mask>), otherwise the heads are
+    trained with event cross-fitting (outer, 5 folds; --train-only files never
+    evaluated). OFF by default (--with-trackmva): it trains several HGB models
+    per variant. NB a bundle trained on another build (e.g. the barrel-only
+    canon_v1 refit) scores the disc-refit tracks out of its training domain."""
+    if not out.get("_with_trackmva"):
+        msg = "off by default; enable with --with-trackmva (trains/loads HGB track MVAs per variant)"
+        out["track_mva"] = {"skipped": msg}
+        for a in ax_row:
+            a.axis("off")
+        ax_row[0].text(0.02, 0.5, "(R5) track MVA SKIPPED:\n" + msg, fontsize=7, va="center")
+        return
+    from sklearn.metrics import roc_auc_score
+    from ngtagger.train import trackmva as TM
+    files = out["_inputs"]
+    res = {}
+    for v in out["_variants"]:
+        family = "canonical" if v.name == CANONICAL else "prompt"
+        T, E = TM.build_dataset(files, family, v.mask, step_events=25, max_events=MAX_EVENTS, log=lambda m: None)
+        bdir = out.get("_trackmva_bundle")
+        bpath = os.path.join(bdir, TM.bundle_stem(family, v.mask) + "_meta.json") if bdir else None
+        if bpath and os.path.exists(bpath):
+            M = TM.load_bundle(bpath)
+            sc = M.predict(T, "refit", quantiles=True)
+            outer = np.column_stack([sc[c] for c in TM.EVAL_COLUMNS])
+            how = f"frozen bundle {bpath}"
+            tested = np.ones(len(outer), bool)
+        else:
+            # the --train-only entries that name one of these inputs (f01/f02 by default)
+            tro = [t for t in out.get("_train_only") or [] if any(t in os.path.basename(f) for f in files)]
+            to = TM.train_only_mask(files, tro)
+            folds = TM.event_folds(E["file"], to, TM.N_FOLDS, 0)[T["evt"]]
+            scores = TM.crossfit(T, "refit", folds, "outer", TM.N_FOLDS, log=lambda m: None)
+            outer = TM.outer_scores(scores, folds, "outer")
+            tested = folds >= 0
+            how = "event cross-fitting (outer, 5 folds)"
+        matched, clean, rd0, rz0 = TM.truth(T, "refit", "ot")
+        eta = np.abs(T["b_eta"])
+        e = {"how": how, "per_eta": {}}
+        for i, el in enumerate(R_ETA_LABELS):
+            m = tested & (eta >= R_ETA_EDGES[i]) & (eta < R_ETA_EDGES[i + 1]) & np.isfinite(outer[:, 0])
+            mm = m & matched
+            cov = np.mean((rd0[mm] >= outer[mm, 5]) & (rd0[mm] <= outer[mm, 7])) if mm.any() else np.nan
+            e["per_eta"][el] = {"n": int(m.sum()),
+                                "auc_clean": float(roc_auc_score(clean[m], outer[m, 0])) if len(set(clean[m])) == 2 else None,
+                                "sd0_coverage_68": float(cov)}
+        res[v.name] = e
+    out["track_mva"] = res
+    out["_monitor"]["R5_track_mva"] = {vn: e["per_eta"] for vn, e in res.items()}
+    ax = ax_row[0]
+    xs = np.arange(len(R_ETA_LABELS))
+    for vn, e in res.items():
+        ax.plot(xs, [e["per_eta"][el]["auc_clean"] or np.nan for el in R_ETA_LABELS], "o-", label=vn)
+    ax.set_xticks(xs, R_ETA_LABELS); ax.set_ylabel("AUC P(clean)"); ax.grid(alpha=.3); ax.legend(fontsize=6)
+    ax.set_title("(R5) clean-head AUC vs |eta|", fontsize=9)
+    ax = ax_row[1]
+    for vn, e in res.items():
+        ax.plot(xs, [e["per_eta"][el]["sd0_coverage_68"] for el in R_ETA_LABELS], "o-", label=vn)
+    ax.axhline(0.683, color="k", ls=":"); ax.set_xticks(xs, R_ETA_LABELS)
+    ax.set_ylabel("sigma_hat(d0) 68% coverage"); ax.grid(alpha=.3); ax.legend(fontsize=6)
+    ax.set_title("(R5) d0 width-head coverage vs |eta|", fontsize=9)
 
 
 VARIANT, SHARED = "variant", "shared"
 
 SECTIONS = [
     ("A. Cluster cones: how much is in reach of a track?",
-     "Occupancy and containment around a projected track -- the raw material every"
-     " later stage draws on, and the cost floor nothing can go below.",
+     "Occupancy and containment around a projected track, per surface (IL1-IL4, ID1-ID4)"
+     " -- the raw material every later stage draws on, and the cost floor nothing can go below.",
      [("cone occupancy", study_cone_occupancy, 3, VARIANT),
       ("refit-order cone", study_refit_cone_occupancy, 3, VARIANT),
       ("cone containment + size", study_cone_containment, 2, VARIANT)]),
@@ -4732,9 +6044,9 @@ SECTIONS = [
       ("combination sweep (activeSP)", study_combination_sweep, 3, SHARED)]),
 
     ("D. Seeding: binning, transforms, and which seeds to build",
-     "The seeding design itself -- sector sizing, the Hough picture, what each"
-     " seed mode recovers that the others do not, and whether the doublets can be"
-     " aimed at the triplet's failures instead of duplicating its successes.",
+     "The seeding design itself -- sector sizing (barrel + discs), the Hough picture (barrel +"
+     " discs), and, BARREL-ONLY BY DESIGN (no disc seed is implemented), what each seed mode"
+     " recovers, whether the doublets can aim at the triplet's failures, and the seed menus.",
      [("sector bin sizing", study_sector_binning, 2, VARIANT),
       ("hough examples", study_hough_examples, 2, SHARED),
       ("seed-mode confusion", study_seed_mode_confusion, 3, SHARED),
@@ -4743,11 +6055,21 @@ SECTIONS = [
       ("seed menu per build", study_seed_menu_by_build, 3, SHARED)]),
 
     ("E. OT-only projection: what a refit is offered, by track class",
-     "The OT track's own helix and covariance projected onto every IT barrel module"
-     " its 4-sigma ellipse overlaps, with no KF update: the majority-owner TP's"
-     " cluster (target) against every other cluster in reach, per layer.",
+     "The OT track's own helix and covariance projected onto every IT module (layers and"
+     " discs) its 4-sigma ellipse overlaps, with no KF update, and then updated surface by"
+     " surface as the refit does (replayed against CMSSW), per surface.",
      [("OT-only projection targets vs background", study_ot_projection_targets, 3, SHARED),
       ("OT refit-update projection", study_ot_refit_projection, 4, VARIANT)]),
+
+    ("F. Refit monitor: what the refit delivers, tracked run to run",
+     "Track-parameter resolution and pulls (R1), hit selection per surface (R2), the angle"
+     " estimates against their sigma table (R3), the covariance calibration (R4) and the"
+     " track MVAs (R5, optional); key numbers into spix_monitor_summary.json.",
+     [("R1 track-parameter resolution and pulls", study_track_parameters, 3, SHARED),
+      ("R2 hit selection per surface", study_hit_selection, 3, VARIANT),
+      ("R3 angle-estimate monitor", study_angle_monitor, 3, SHARED),
+      ("R4 refit covariance check", study_covariance_check, 3, SHARED),
+      ("R5 track MVA performance", study_track_mva, 2, SHARED)]),
 ]
 
 # Flat view, kept because the figure is still one grid and several studies index
@@ -4756,51 +6078,109 @@ STUDIES = [t for _, _, group in SECTIONS for t in group]
 
 
 def run_page(sections, X, K, P, out, title):
-    """One report page: the studies of `sections` on one set of inputs, drawn as
-    one banner-grouped grid, with its JSON sidecar, into out["_outdir"]."""
+    """One report: the studies of `sections` on one set of inputs, ONE PDF PAGE PER
+    SECTION (vector; legends below the panels), with its JSON sidecar, into
+    out["_outdir"]. Each study's outcome (ran / skipped, why / FAILED, why), time
+    and memory go into out["_status"]; a failing study (an exception, or a
+    validation gate's SystemExit) does not stop the others."""
+    import traceback
+    from matplotlib.backends.backend_pdf import PdfPages
     od = out["_outdir"]
     os.makedirs(od, exist_ok=True)
-    ncols = max(n for _, _, grp in sections for _, _, n, _ in grp)
-    # one extra row per section for its banner
-    nrows = sum(len(g) for _, _, g in sections) + len(sections)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(5.2 * ncols, 4.2 * nrows))
-    axes = np.atleast_2d(axes)
-    row = 0
-    for stitle, sdesc, group in sections:
-        print(f"\n{stitle}\n    {sdesc}")
-        for c in range(ncols):
-            axes[row][c].axis("off")
-        axes[row][0].text(0.0, 0.45, stitle, fontsize=15, fontweight="bold",
-                          va="center", ha="left", transform=axes[row][0].transAxes)
-        axes[row][0].text(0.0, 0.12, sdesc, fontsize=9, color="#52514e", va="center",
-                          ha="left", wrap=True, transform=axes[row][0].transAxes)
-        axes[row][0].axhline(0.78, color="#0b0b0b", lw=1.4,
-                             xmin=0.0, xmax=ncols * 0.98)
-        row += 1
-        for (name, fn, n, _) in group:
-            print(f"  study: {name}")
-            fn(X, K, P, axes[row], out)
-            for c in range(n, ncols):
-                axes[row][c].axis("off")
-            row += 1
-    fig.suptitle(title, y=1.005)
+    page = os.path.relpath(od, out["_status_root"]) if out.get("_status_root") else od
+    pdf_path = os.path.join(od, "spix_combinatorics_omnibus.pdf")
     # qX vs pXX is the confusion most likely to survive into a slide, so it is
-    # stamped on the figure itself rather than only in the glossary file.
-    fig.text(0.5, -0.004,
-             "qX = cone WIDTH chosen (input; k = Phi^-1((1+X/100)/2), nominal, assumes unit pulls)   |   "
-             "pXX = percentile over TRACKS (output)   |   containment = MEASURED, conditional on the "
-             "hit existing   |   see spix_glossary.txt",
-             ha="center", va="top", fontsize=7.5)
-    fig.tight_layout()
-    png = os.path.join(od, "spix_combinatorics_omnibus.png")
-    fig.savefig(png, dpi=130, bbox_inches="tight")
-    plt.close(fig)
+    # stamped on every page rather than only in the glossary file.
+    footer = ("qX = cone WIDTH chosen (input; k = Phi^-1((1+X/100)/2), nominal, assumes unit pulls)   |   "
+              "pXX = percentile over TRACKS (output)   |   containment = MEASURED, conditional on the "
+              "hit existing   |   surfaces IL1-IL4, ID1-ID4   |   see spix_glossary.txt")
+    with PdfPages(pdf_path) as pdf:
+        for stitle, sdesc, group in sections:
+            print(f"\n{stitle}\n    {sdesc}")
+            ncols = max(2, max(n for _, _, n, _ in group))
+            fig, axes = plt.subplots(len(group), ncols, figsize=(5.4 * ncols, 4.9 * len(group) + 1.4),
+                                     squeeze=False)
+            for row, (name, fn, n, _) in enumerate(group):
+                print(f"  study: {name}")
+                keys0 = set(out)
+                t0 = time.time()
+                try:
+                    fn(X, K, P, axes[row], out)
+                    new = [out[k] for k in set(out) - keys0 if isinstance(out[k], dict)]
+                    skip = next((d["skipped"] for d in new if "skipped" in d), None)
+                    status = ("skipped: " + str(skip)) if skip else "ran"
+                except (Exception, SystemExit) as exc:                 # noqa: BLE001 (reported, run goes on)
+                    status = f"FAILED: {type(exc).__name__}: {exc}"
+                    print(f"  *** study {name} FAILED:\n" + traceback.format_exc())
+                    for a in axes[row]:
+                        a.cla(); a.axis("off")
+                    axes[row][0].text(0.02, 0.5, textwrap.fill(f"{name} FAILED: {exc}", 90)[:900],
+                                      fontsize=7, color="#b1524f", va="center")
+                rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1 << 30 if sys.platform == "darwin"
+                                                                             else 1 << 20)
+                out["_status"].append({"page": page, "study": name, "status": status,
+                                       "seconds": round(time.time() - t0, 1), "max_rss_gb_so_far": round(rss, 2)})
+                OSU.legends_outside(axes[row][:n])
+                for c in range(n, ncols):
+                    axes[row][c].axis("off")
+            top = 1.0 - 0.9 / fig.get_figheight()          # inches -> figure fraction
+            fig.suptitle(f"{title}\n{stitle}", fontsize=13, fontweight="bold", y=0.998, va="top")
+            fig.text(0.5, top, textwrap.fill(sdesc, 160), ha="center", va="top", fontsize=9, color="#52514e")
+            fig.text(0.5, 0.004, footer, ha="center", va="bottom", fontsize=7)
+            fig.tight_layout(rect=(0, 0.02, 1, top - 0.5 / fig.get_figheight()))
+            pdf.savefig(fig)
+            plt.close(fig)
     js = os.path.join(od, "spix_combinatorics_omnibus.json")
-    for k in ("_outdir", "_inputs", "_variant", "_variants"):
-        out.pop(k, None)
     with open(js, "w") as fh:
-        json.dump(out, fh, indent=2)
-    print(f"\nwrote {png}\nwrote {js}")
+        json.dump(OSU.jsonable({k: v for k, v in out.items() if not k.startswith("_")}), fh, indent=2)
+    print(f"\nwrote {pdf_path}\nwrote {js}")
+
+
+def provenance(files, variants, args):
+    """(provenance dict for the monitor, {variant name: producer refit config}).
+
+    From every input's ParameterSets: the refit producer behind each variant's
+    track table (useAngles, windows, maxKFUpdates, ... and its activeSP mask), the
+    rec-hit producer's angle source and emulator tables (emuSigmaSet, ...); the
+    inputs (size, mtime); this code's git state; the CMSSW build only via
+    --build-hash (the nano does not carry it)."""
+    blobs = {f: OSU.pset_blob(f) for f in files}
+    refit_config, prod = {}, {}
+    for v in variants:
+        per = {}
+        for f, b in blobs.items():
+            lab, params = OSU.producer_params(b, v.track)
+            cfgv = OSU.refit_producer_config(params)
+            if params:
+                cfgv["activeLayers"] = params.get("smartPixelsActiveLayers")
+                cfgv["discScope"] = params.get("seedlessRefitDiscScope")
+                cfgv["label"] = lab
+            per[f] = cfgv
+        first = per[files[0]]
+        odd = [os.path.basename(f) for f, c in per.items() if c != first]
+        if odd:
+            print(f"  WARNING: the refit configuration of {v.label} differs between inputs: {odd}")
+        refit_config[v.name] = {k: c for k, c in first.items() if k not in ("activeLayers", "discScope", "label")}
+        prod[v.name] = {k: (list(c) if isinstance(c, tuple) else c) for k, c in first.items()}
+        if first.get("activeLayers") and first["activeLayers"].replace("1", "A").replace("0", "I") != v.mask:
+            print(f"  WARNING: {v.label}: producer smartPixelsActiveLayers {first['activeLayers']} != mask {v.mask}")
+    lab, rh = OSU.rechit_params(blobs[files[0]])
+    keep = ("angleSource", "discScope", "emuSigmaSet", "emuLibrary", "emuBarrelModel", "emuDiscModel",
+            "emuBarrelA1", "emuDiscA1", "emuInflation", "emuDiscAlphaOffset", "angleSet", "noiseSet")
+    rechit = {k: rh[k] for k in keep if rh and k in rh}
+    odd = [os.path.basename(f) for f in files[1:] if (OSU.rechit_params(blobs[f])[1] or {}).get("emuSigmaSet")
+           != rechit.get("emuSigmaSet")]
+    if odd:
+        print(f"  WARNING: the rec-hit producer's emuSigmaSet differs between inputs: {odd}")
+    prov = {"created": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+            "inputs": OSU.file_info(files), "n_inputs": len(files),
+            "cmssw_build": args.build_hash or "not recorded in the nano (pass --build-hash)",
+            "refit_producers": prod, "rechit": dict(rechit, label=lab),
+            "ngtagger": OSU.git_state(os.path.abspath(__file__)),
+            "variants": [v.label for v in variants], "argv": sys.argv,
+            "geometry": ({"path": os.path.abspath(args.geometry), "sha256": OSU.sha256(args.geometry)}
+                         if args.geometry and os.path.exists(args.geometry) else None)}
+    return prov, refit_config
 
 
 def main():
@@ -4829,6 +6209,11 @@ def main():
     ap.add_argument("--menu-chunk", type=int, default=4,
                     help="events per chunk for study 15's cached census; smaller "
                          "is FASTER (measured 27.8 vs 62.9 s/event at 4 vs 16)")
+    ap.add_argument("--seed-budget-gb", type=float, default=1.5,
+                    help="studies 12/13: the seeder's candidate-slice memory budget "
+                         "(tracklet_topology_cost DEFAULT_PAIR_BUDGET_GB)")
+    ap.add_argument("--seed-rss-gb", type=float, default=6.0,
+                    help="studies 12/13: the seeder's RSS ceiling (it raises above it)")
     ap.add_argument("--menu-budget-gb", type=float, default=0.4)
     ap.add_argument("--menu-rss-gb", type=float, default=8.0)
     ap.add_argument("--site", default=None,
@@ -4853,14 +6238,34 @@ def main():
                     help="comma-separated files/globs for study 19, which streams "
                          "its inputs; defaults to -i")
     ap.add_argument("--proj-nev", type=int, default=None,
-                    help="event cap for study 19 (default: all)")
+                    help="event cap for studies 19 and 20 (default: --max-events, else all)")
+    ap.add_argument("--max-events", type=int, default=None,
+                    help="DEVELOPMENT: read only the first N events of the inputs (in order) in "
+                         "every in-memory study; studies 12 (OT part) and 14 do not run under it")
     ap.add_argument("--refit-calibration", default=None,
                     help="v3 refit calibration JSON (refit_calibration_fit.export_refit_calibration) "
-                         "for study 20; default: the producer's covariance model")
-    ap.add_argument("--producer-q", default="natural", choices=("natural", "f629627"),
-                    help="which producer Q wrote the refit tables study 20 replays: "
-                         "'natural' for itot_tp_* (fixed producer), 'f629627' for refit nanos "
-                         "produced before 2026-09-24")
+                         "for study 20; default: the producer's covariance model. The v3 model is "
+                         "barrel-only: with it study 20 visits IL1-IL4 only")
+    ap.add_argument("--refit-use-angles", default="alphaBeta", choices=("alphaBeta", "alpha"),
+                    help="angles the EMULATED refit variants of study 20 update on (the producer's "
+                         "setting is alphaBeta). The replay against CMSSW always uses the producer's "
+                         "own useAngles, read from the nano's ParameterSets")
+    ap.add_argument("--build-hash", default=None,
+                    help="CMSSW build (git) the inputs were produced with, for the monitor's "
+                         "provenance: the nano does not record it")
+    ap.add_argument("--cmssw-src", default=None,
+                    help="CMSSW src directory to resolve the nano's data paths (the emulator sigma "
+                         "table emuSigmaSet) against; default $CMSSW_BASE/src")
+    ap.add_argument("--emu-sigma-table", default=None,
+                    help="the emulator sigma-table JSON (R3), overriding the nano's emuSigmaSet path")
+    ap.add_argument("--with-trackmva", action="store_true",
+                    help="run R5 (track MVAs per variant: trains HGB heads with event cross-fitting "
+                         "unless --trackmva-bundle holds the variant's frozen bundle)")
+    ap.add_argument("--trackmva-bundle", default=None,
+                    help="directory of frozen trackmva bundles (trackmva_<family>_<mask>) for R5")
+    ap.add_argument("--train-only", nargs="*", default=["_f01_", "_f02_"],
+                    help="R5: files (substring of the basename) whose events only train, never "
+                         "evaluate (f01/f02 are in-sample for the cluster CNN)")
     ap.add_argument("--proj-chunk", type=int, default=10,
                     help="events per chunk for study 19 (~0.35 GB RSS at 10)")
     ap.add_argument("--angle-cap-reference", default=ANGLE_CAP_REFERENCE,
@@ -4869,6 +6274,10 @@ def main():
                     help="measure the angle-cap census on -i, store it as the reference "
                          "of the input's era in --angle-cap-reference, and exit")
     args = ap.parse_args()
+    global MAX_EVENTS
+    MAX_EVENTS = args.max_events
+    if args.proj_nev is None:
+        args.proj_nev = args.max_events
     files = [f for p in args.inputs for f in (sorted(_glob.glob(p)) or [p])]
     if args.write_angle_cap_reference:
         write_angle_cap_reference(files, args.angle_cap_reference)
@@ -4878,7 +6287,12 @@ def main():
     variants = select_variants(files, args.variants, args.canonical_mask)
     print(f"  refit variants: {', '.join(f'{v.label} [{v.hit}]' for v in variants)}")
 
+    prov, refit_config = provenance(files, variants, args)
+    monitor, status = {"provenance": prov}, []
+    cmssw_search = [d for d in (args.cmssw_src, os.path.join(os.environ.get("CMSSW_BASE", ""), "src")
+                                if os.environ.get("CMSSW_BASE") else None) if d]
     sentinel = angle_cap_sentinel(files, args.outdir, args.angle_cap_reference)
+    monitor["angle_cap_sentinel"] = {"era": sentinel["era"], "n_warnings": sentinel["n_warnings"]}
     K, T, n_ev = load_clusters(files)
     base = {"n_events": n_ev, "n_clusters": int(len(K["layer"])),
             "angle_cap_sentinel": sentinel,
@@ -4889,13 +6303,19 @@ def main():
             "_inputs": files, "_variants": variants,
             "_menu_inputs": args.menu_inputs, "_menu_nev": args.menu_nev, "_menu_chunk": args.menu_chunk,
             "_menu_budget_gb": args.menu_budget_gb,
+            "_seed_budget_gb": args.seed_budget_gb, "_seed_rss_gb": args.seed_rss_gb,
             "_menu_rss_gb": args.menu_rss_gb, "_menu_cache": args.menu_cache,
             "_site": args.site,
             "_menu_cache_mode": args.menu_cache_mode,
             "_menu_export_tracks": args.menu_export_tracks,
             "_geometry": args.geometry, "_proj_nev": args.proj_nev,
             "_proj_chunk": args.proj_chunk,
-            "_producer_q": args.producer_q, "_refit_calibration": args.refit_calibration,
+            "_refit_calibration": args.refit_calibration,
+            "_refit_use_angles": args.refit_use_angles, "_refit_config": refit_config,
+            "_provenance": prov, "_cmssw_search": cmssw_search, "_emu_sigma_table": args.emu_sigma_table,
+            "_with_trackmva": args.with_trackmva, "_trackmva_bundle": args.trackmva_bundle,
+            "_train_only": args.train_only,
+            "_monitor": monitor, "_status": status, "_status_root": args.outdir,
             "_proj_inputs": ([f for g in args.proj_inputs.split(",") for f in
                               (sorted(_glob.glob(g)) or [g])] if args.proj_inputs else None)}
 
@@ -4935,6 +6355,17 @@ def main():
             title = f"SmartPixels combinatorics omnibus — {v.label}, {n_ev} events"
         run_page(sections, X, K, P, out, title)
         del X, P
+    monitor["status"] = status
+    mp = os.path.join(args.outdir, "spix_monitor_summary.json")
+    with open(mp, "w") as fh:
+        json.dump(OSU.jsonable(monitor), fh, indent=1)
+    print(f"\nwrote {mp}\n\nSTUDY STATUS")
+    for e in status:
+        print(f"  {e['page']:>10s}  {e['study']:42s} {e['seconds']:7.1f}s  rss<={e['max_rss_gb_so_far']:5.2f}GB  "
+              f"{e['status'][:140]}")
+    failed = [e for e in status if e["status"].startswith("FAILED")]
+    if failed:
+        raise SystemExit(f"{len(failed)} study(ies) FAILED (see above)")
 
 
 if __name__ == "__main__":
