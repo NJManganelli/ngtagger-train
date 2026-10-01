@@ -878,6 +878,11 @@ def per_surface(values, surfaces=SURFACES):
                                   else float(v)) for s, v in zip(surfaces, values)}
 
 
+def _nan(v):
+    """A JSON value for plotting: None -> NaN (a 0.0 stays 0.0)."""
+    return np.nan if v is None else v
+
+
 def load_crossings(files, v, T):
     """Variant v's refit crossings, tagged with event index, the owning OT
     track's pt/eta (T from load_clusters) and the SP track's matched TP."""
@@ -1208,7 +1213,7 @@ def study_true_containment(X, K, P, ax_row, out):
     bc = out.get("cone_containment", {})
     for cname in CONES:
         if cname in bc:
-            ax.plot(range(len(SURFACES)), [bc[cname]["per_surface_eff"][SNAME[S]] or np.nan for S in SURFACES],
+            ax.plot(range(len(SURFACES)), [_nan(bc[cname]["per_surface_eff"][SNAME[S]]) for S in SURFACES],
                     marker="s", ls="--", alpha=.6, label=f"{cname} (window-conditioned)")
     surface_axis(ax); ax.set_ylabel("containment efficiency [fraction]")
     ax.set_title("(5) TRUE containment vs window-conditioned")
@@ -5521,7 +5526,7 @@ def study_hit_selection(X, K, P, ax_row, out):
     for ax, keys, title in ((ax_row[0], ("acceptance", "correct_in_window"), "correct hit accepted / in window"),
                             (ax_row[1], ("wrong_hit_rate", "empty_window", "truncation"), "wrong hits, empty, truncated")):
         for k in keys:
-            ax.plot(xp, [res["per_surface"][SNAME[S]]["all"][k] or np.nan for S in present], "o-", label=k)
+            ax.plot(xp, [_nan(res["per_surface"][SNAME[S]]["all"][k]) for S in present], "o-", label=k)
         surface_axis(ax, present); ax.set_ylabel("fraction"); ax.grid(alpha=.3)
         ax.set_title(f"(R2) {title}", fontsize=9); ax.legend(fontsize=6)
     ax = ax_row[2]
@@ -6036,7 +6041,7 @@ def study_track_mva(X, K, P, ax_row, out):
     ax = ax_row[0]
     xs = np.arange(len(R_ETA_LABELS))
     for vn, e in res.items():
-        ax.plot(xs, [e["per_eta"][el]["auc_clean"] or np.nan for el in R_ETA_LABELS], "o-", label=vn)
+        ax.plot(xs, [_nan(e["per_eta"][el]["auc_clean"]) for el in R_ETA_LABELS], "o-", label=vn)
     ax.set_xticks(xs, R_ETA_LABELS); ax.set_ylabel("AUC P(clean)"); ax.grid(alpha=.3); ax.legend(fontsize=6)
     ax.set_title("(R5) clean-head AUC vs |eta|", fontsize=9)
     ax = ax_row[1]
