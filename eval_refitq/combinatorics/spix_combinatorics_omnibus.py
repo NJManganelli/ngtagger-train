@@ -5206,6 +5206,7 @@ R_TRK = ["rInv", "phi", "tanL", "z0", "d0", "pt", "tpIdx", "cov_rInv_rInv", "cov
 R_SP_EXTRA = ["l1TrackIdx", "spixRefitPerformed", "spixNAcceptedHits", "spixLayerHitMask"]
 R_TP = ["pt", "eta", "phi0", "d0", "z0", "charge"]
 R_FLAG_BAND = (0.85, 1.15)                          # monitor flag: a width ratio / pull outside
+R_FLAG_FOLLOW = 0.05                                # a KF pull within 5% of the table's closure is the table's
 R_PLATEAU_COT = float(np.tan(np.radians(25.0)))     # |true cot| of the emulator's beta plateau
 
 
@@ -5620,8 +5621,9 @@ def study_angle_monitor(X, K, P, ax_row, out):
     quadrature with sigma_table must match the innovation. The full split with
     the track's own projected sigma is study 20's replay (pull decomposition).
     FLAGS (outside [0.85, 1.15]): "TABLE" when (emitted - true)/sigma on these
-    hits is off (the sigma table does not describe the clusters the refit uses);
-    "TRACK" when only the KF pull is off (the projection covariance).
+    hits is off (the sigma table does not describe the clusters the refit uses),
+    or when the KF pull is off but within 5% of that ratio (it only follows the
+    table); "TRACK" when the KF pull is off on its own (the projection covariance).
     """
     from matplotlib.backends.backend_pdf import PdfPages
     need = ("clLocalCotAlpha", "clLocalCotBeta", "clSigAlpha", "clSigBeta", "clHasAlpha", "clHasBeta")
@@ -5740,12 +5742,17 @@ def study_angle_monitor(X, K, P, ax_row, out):
                                f"{OSU.fmt(e[ang + '_by_true_angle']['ge25deg']['meas_vs_truth_pull_width68'])}"])
                 w, mt68 = e[ang]["kf_pull_width68"], e[ang]["meas_vs_truth_pull_width68"]
                 # which variance is off: the table's (the measurement against truth over
-                # its sigma) or the track's (the KF pull off while the table is right)
-                if np.isfinite(mt68) and not (R_FLAG_BAND[0] <= mt68 <= R_FLAG_BAND[1]):
+                # its sigma) or the track's (the KF pull off while the table is right).
+                # A KF pull that only follows the table (within R_FLAG_FOLLOW) is the
+                # table's, even when the table itself sits just inside the band.
+                table_out = np.isfinite(mt68) and not (R_FLAG_BAND[0] <= mt68 <= R_FLAG_BAND[1])
+                kf_out = np.isfinite(w) and not (R_FLAG_BAND[0] <= w <= R_FLAG_BAND[1])
+                follows = np.isfinite(mt68) and np.isfinite(w) and abs(w / mt68 - 1.0) <= R_FLAG_FOLLOW
+                if table_out or (kf_out and follows):
                     res["flags"].append(f"{v.name} {ang} {SNAME[S]}: TABLE sigma {'short' if mt68 > 1 else 'long'}"
                                         f" -- (emitted-true)/sigma width68 {mt68:.2f} on the correct hits "
                                         f"(KF pull {w:.2f})")
-                elif np.isfinite(w) and not (R_FLAG_BAND[0] <= w <= R_FLAG_BAND[1]):
+                elif kf_out:
                     res["flags"].append(f"{v.name} {ang} {SNAME[S]}: TRACK projection variance "
                                         f"{'short' if w > 1 else 'long'} -- KF pull width68 {w:.2f} while the "
                                         f"table closes ({mt68:.2f})")
