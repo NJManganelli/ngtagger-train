@@ -11,6 +11,8 @@ export OMP_NUM_THREADS=2
 LOG=/Volumes/WDMac/smartpixels_scratch/tagger_sp/logs
 mkdir -p $LOG
 rm -f /Volumes/WDMac/smartpixels_scratch/tagger_sp/preds/*.npz
+pixi run python -c "import sys; sys.path.insert(0, 'eval_refitq/tagger_sp'); import common as C; \
+print('frozen file set:', C.freeze_fileset(sys.argv[1:]))" $SAMPLES > $LOG/fileset.log 2>&1
 for m in IIII AAAA AAAI IAAA; do
   pixi run python eval_refitq/tagger_sp/build.py --mask $m --samples $SAMPLES > $LOG/build_$m.log 2>&1
   for v in baseline track trackmva; do

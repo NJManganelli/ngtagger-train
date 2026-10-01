@@ -92,10 +92,31 @@ def files(sample: str, mask: str, require_all: bool = False) -> list[tuple[int, 
     return out
 
 
+def fileset_path() -> str:
+    return os.path.join(OUT, "cache", "fileset.json")
+
+
+def freeze_fileset(samples) -> dict:
+    """Freeze, for this run, the file numbers per sample finished for EVERY mask (run_all.sh
+    calls it once at the start, so files finishing mid-run cannot split the masks)."""
+    import json
+
+    fs = {s: sorted(set.intersection(*(set(n for n, _ in files(s, m)) for m in MASKS))) for s in samples}
+    os.makedirs(os.path.dirname(fileset_path()), exist_ok=True)
+    with open(fileset_path(), "w") as f:
+        json.dump(fs, f)
+    return fs
+
+
 def study_files(sample: str, mask: str) -> list[tuple[int, str]]:
-    """The files of `mask` whose file NUMBER is finished for every mask (the study's
-    common event set). TTbar must be complete (the split spans all ten files)."""
-    common = set.intersection(*(set(n for n, _ in files(sample, m)) for m in MASKS))
+    """The files of `mask` whose file NUMBER is in the frozen file set (freeze_fileset), or,
+    without one, finished for every mask. TTbar must be complete (the split spans all ten)."""
+    import json
+
+    if os.path.exists(fileset_path()):
+        common = set(json.load(open(fileset_path()))[sample])
+    else:
+        common = set.intersection(*(set(n for n, _ in files(sample, m)) for m in MASKS))
     out = [(n, p) for n, p in files(sample, mask, require_all=(sample == "ttbar")) if n in common]
     if sample == "ttbar" and len(out) != len(SAMPLES[sample][2]):
         raise FileNotFoundError(f"ttbar: files {sorted(common)} common to all masks")
