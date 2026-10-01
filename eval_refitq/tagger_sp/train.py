@@ -30,14 +30,19 @@ CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp.yam
 
 
 def load_mask(mask, samples):
-    """Concatenate the jet caches of `mask` over `samples` (study acceptance applied)."""
+    """Concatenate the jet caches of `mask` over `samples` (study acceptance applied), for
+    exactly the files build.py used (its manifest)."""
+    with open(C.manifest_path(mask)) as f:
+        man = json.load(f)
+    if man["samples"] != list(samples):
+        raise RuntimeError(f"{mask}: built for samples {man['samples']}, asked for {samples}")
     parts, test_keys = [], []
     names = None
     for si, s in enumerate(samples):
-        fs = C.files(s, mask)
+        fs = [n for s2, n, _ in man["files"] if s2 == s]
         if not fs:
             raise FileNotFoundError(f"no {s} files for {mask}")
-        for n, _ in fs:
+        for n in fs:
             d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, mask, n) + ".npz"))
             fn = [str(x) for x in d["feature_names"]]
             if names is None:

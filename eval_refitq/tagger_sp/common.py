@@ -7,8 +7,10 @@ its OT track), i.e. the OT-only baseline through the identical pipeline.
 
 Samples (PU200): ttbar = canon_v2 spstudy_<mask>_f01..f10_100ev.root (1000 ev),
 htt = canon_v2_htt spstudy_<mask>_htt_f<NN>.root (QQ -> H -> tautau RelVal; every file
-present is used, so adding tau files is a rerun of build.py / train.py / analyze.py).
-Files younger than MIN_AGE_S are skipped (may still be being copied).
+file number finished for ALL masks is used -- `study_files` -- so every scenario sees the
+same events and adding tau files is a rerun of run_all.sh). Files younger than MIN_AGE_S
+are skipped (may still be being copied). build.py freezes the set it used in a per-mask
+manifest that train.py reads (files appearing mid-run are ignored until the next rerun).
 
 Truth: the OT track's TP everywhere track truth is needed (user decision): the SP
 heads use trackmva refit_truth="otlink"; jet labels come from GenJet / GenVisTau /
@@ -88,6 +90,20 @@ def files(sample: str, mask: str, require_all: bool = False) -> list[tuple[int, 
     if require_all and len(out) != len(nums):
         raise FileNotFoundError(f"{sample} {mask}: {len(out)}/{len(nums)} files present")
     return out
+
+
+def study_files(sample: str, mask: str) -> list[tuple[int, str]]:
+    """The files of `mask` whose file NUMBER is finished for every mask (the study's
+    common event set). TTbar must be complete (the split spans all ten files)."""
+    common = set.intersection(*(set(n for n, _ in files(sample, m)) for m in MASKS))
+    out = [(n, p) for n, p in files(sample, mask, require_all=(sample == "ttbar")) if n in common]
+    if sample == "ttbar" and len(out) != len(SAMPLES[sample][2]):
+        raise FileNotFoundError(f"ttbar: files {sorted(common)} common to all masks")
+    return out
+
+
+def manifest_path(mask: str) -> str:
+    return os.path.join(OUT, "cache", f"manifest_{mask}.json")
 
 
 def split_table(sample: str, evids: dict[int, np.ndarray]) -> dict[int, np.ndarray]:

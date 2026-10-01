@@ -187,7 +187,7 @@ def main():
     a = ap.parse_args()
     fileset, splits = [], {}
     for s in a.samples:
-        fs = C.files(s, a.mask, require_all=(s == "ttbar"))
+        fs = C.study_files(s, a.mask)
         if not fs:
             raise FileNotFoundError(f"no {s} files for {a.mask}")
         ev = {n: event_ids(p) for n, p in fs}
@@ -199,6 +199,9 @@ def main():
     bundle_dir, sha = train_mva(a.mask, fileset, splits)
     for s, n, p, _ in fileset:
         build_jets(s, a.mask, n, p, bundle_dir, sha, splits[s][n])
+    with open(C.manifest_path(a.mask), "w") as f:
+        json.dump({"samples": a.samples, "files": [[s, n, p] for s, n, p, _ in fileset],
+                   "bundle_sha": sha, "created": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, f, indent=1)
     log("done")
 
 
