@@ -307,11 +307,16 @@ def table_pages(pdf, title, header, rows, notes=(), per_page=36, fontsize=6.8, h
         top = 0.93 - 0.0125 * len(notes)
         ax = fig.add_axes([0.03, 0.03, 0.94, max(top - 0.04, 0.2)])
         ax.axis("off")
-        tb = ax.table(cellText=[[str(c) for c in r] for r in part], colLabels=header,
-                      loc="upper left", cellLoc="right")
+        cells = [[str(c) for c in r] for r in part]
+        tb = ax.table(cellText=cells, colLabels=header, loc="upper left", cellLoc="right")
         tb.auto_set_font_size(False)
         tb.set_fontsize(fontsize)
         tb.scale(1.0, 1.12)
+        # column widths in proportion to the longest entry, filling the page width
+        chars = [max([len(str(header[j]))] + [len(r[j]) for r in cells if j < len(r)]) + 2
+                 for j in range(len(header))]
+        for (i, j), cell in tb.get_celld().items():
+            cell.set_width(chars[j] / sum(chars))
         for i, r in enumerate(part, start=1):
             tb[i, 0].set_text_props(ha="left")
             if highlight is not None and highlight(r):
