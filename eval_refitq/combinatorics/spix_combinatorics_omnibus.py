@@ -58,7 +58,6 @@ import glob as _glob
 import json
 import os
 import re
-import resource
 import time
 
 import awkward as ak
@@ -6132,10 +6131,10 @@ def run_page(sections, X, K, P, out, title):
                         a.cla(); a.axis("off")
                     axes[row][0].text(0.02, 0.5, textwrap.fill(f"{name} FAILED: {exc}", 90)[:900],
                                       fontsize=7, color="#b1524f", va="center")
-                rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1 << 30 if sys.platform == "darwin"
-                                                                             else 1 << 20)
+                rss, foot = OSU.peak_memory_gb()
                 out["_status"].append({"page": page, "study": name, "status": status,
-                                       "seconds": round(time.time() - t0, 1), "max_rss_gb_so_far": round(rss, 2)})
+                                       "seconds": round(time.time() - t0, 1), "max_rss_gb_so_far": round(rss, 2),
+                                       "max_footprint_gb_so_far": None if foot is None else round(foot, 2)})
                 OSU.legends_outside(axes[row][:n])
                 for c in range(n, ncols):
                     axes[row][c].axis("off")
@@ -6377,8 +6376,9 @@ def main():
         json.dump(OSU.jsonable(monitor), fh, indent=1)
     print(f"\nwrote {mp}\n\nSTUDY STATUS")
     for e in status:
+        foot = e["max_footprint_gb_so_far"]
         print(f"  {e['page']:>10s}  {e['study']:42s} {e['seconds']:7.1f}s  rss<={e['max_rss_gb_so_far']:5.2f}GB  "
-              f"{e['status'][:140]}")
+              + ("" if foot is None else f"footprint<={foot:5.2f}GB  ") + e["status"][:140])
     failed = [e for e in status if e["status"].startswith("FAILED")]
     if failed:
         raise SystemExit(f"{len(failed)} study(ies) FAILED (see above)")

@@ -209,6 +209,28 @@ def git_state(path):
         return {"commit": None, "dirty_files": []}
 
 
+def peak_memory_gb():
+    """(peak RSS, peak footprint) of this process so far, in GiB.
+
+    On macOS the RSS peak undercounts under memory pressure: pages the kernel
+    compresses or swaps leave the resident set but still occupy the machine. The
+    lifetime peak "physical footprint" (libproc, the number `/usr/bin/time -l`
+    prints as "peak memory footprint") counts them; it is None elsewhere."""
+    import resource
+    import sys
+    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1 << 30 if sys.platform == "darwin" else 1 << 20)
+    if sys.platform != "darwin":
+        return rss, None
+    import ctypes
+    buf = (ctypes.c_uint64 * 64)()          # struct rusage_info_v4 (16-byte uuid, then uint64 fields)
+    try:
+        if ctypes.CDLL("/usr/lib/libproc.dylib").proc_pid_rusage(os.getpid(), 4, ctypes.byref(buf)) != 0:
+            return rss, None
+    except OSError:
+        return rss, None
+    return rss, buf[2 + 28] / (1 << 30)    # ri_lifetime_max_phys_footprint
+
+
 def file_info(paths):
     out = []
     for p in paths:
