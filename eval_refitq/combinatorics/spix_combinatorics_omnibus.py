@@ -5207,6 +5207,7 @@ R_SP_EXTRA = ["l1TrackIdx", "spixRefitPerformed", "spixNAcceptedHits", "spixLaye
 R_TP = ["pt", "eta", "phi0", "d0", "z0", "charge"]
 R_FLAG_BAND = (0.85, 1.15)                          # monitor flag: a width ratio / pull outside
 R_FLAG_FOLLOW = 0.05                                # a KF pull within 5% of the table's closure is the table's
+R_MIN_N = 30                                        # fewer entries: a binned rate is not plotted / monitored
 R_PLATEAU_COT = float(np.tan(np.radians(25.0)))     # |true cot| of the emulator's beta plateau
 
 
@@ -5525,10 +5526,13 @@ def study_hit_selection(X, K, P, ax_row, out):
         ax.set_title(f"(R2) {title}", fontsize=9); ax.legend(fontsize=6)
     ax = ax_row[2]
     for i, el in enumerate(R_ETA_LABELS):
-        ax.plot(xp, [res["per_surface"][SNAME[S]]["eta"][el]["acceptance"] or np.nan for S in present],
-                "o-", label=f"acceptance {el}")
+        bins = [res["per_surface"][SNAME[S]]["eta"][el] for S in present]
+        p = np.array([b["acceptance"] if b["n_correct_exists"] >= R_MIN_N else np.nan for b in bins], float)
+        nb = np.array([max(b["n_correct_exists"], 1) for b in bins])
+        ax.errorbar(xp + 0.08 * (i - 1), p, yerr=np.sqrt(p * (1 - p) / nb), fmt="o-", ms=4, capsize=2,
+                    label=f"acceptance {el}")
     surface_axis(ax, present); ax.set_ylabel("fraction"); ax.grid(alpha=.3); ax.legend(fontsize=6)
-    ax.set_title("(R2) acceptance per OT-track |eta|", fontsize=9)
+    ax.set_title(f"(R2) acceptance per OT-track |eta| (binomial errors; bins < {R_MIN_N} omitted)", fontsize=9)
 
     pdf_path = os.path.join(out["_outdir"], "spix_refit_hit_selection.pdf")
     cols = ["n_crossings", "n_correct_exists", "correct_in_window", "acceptance", "wrong_hit_rate",
@@ -5571,7 +5575,8 @@ def study_hit_selection(X, K, P, ax_row, out):
         e = res["per_surface"][SNAME[S]]
         mon[SNAME[S]] = {k: e["all"][k] for k in ("acceptance", "correct_in_window", "wrong_hit_rate",
                                                   "empty_window", "truncation")}
-        mon[SNAME[S]]["acceptance_by_eta"] = {el: e["eta"][el]["acceptance"] for el in R_ETA_LABELS}
+        mon[SNAME[S]]["acceptance_by_eta"] = {el: e["eta"][el]["acceptance"] if e["eta"][el]["n_correct_exists"]
+                                              >= R_MIN_N else None for el in R_ETA_LABELS}
     print("   (R2) acceptance / wrong / empty / truncated per surface: " + "  ".join(
         f"{SNAME[S]} {OSU.fmt(res['per_surface'][SNAME[S]]['all']['acceptance'])}/"
         f"{OSU.fmt(res['per_surface'][SNAME[S]]['all']['wrong_hit_rate'])}/"
@@ -5842,7 +5847,8 @@ def study_angle_monitor(X, K, P, ax_row, out):
     mon["cluster_pull_width68"] = {ang: {s: {cl: e[cl]["pull_width68"] for cl in e}
                                          for s, e in res["clusters"][ang].items()} for ang in ("alpha", "beta")}
     mon["kf_meas_vs_truth_by_true_angle"] = {
-        vn: {s: {ang: {k: v["meas_vs_truth_pull_width68"] for k, v in e[ang + "_by_true_angle"].items()}
+        vn: {s: {ang: {k: v["meas_vs_truth_pull_width68"] if v["n"] >= R_MIN_N else None
+                       for k, v in e[ang + "_by_true_angle"].items()}
                  for ang in ("alpha", "beta") if ang + "_by_true_angle" in e}
              for s, e in d.items()} for vn, d in res["kf"].items()}
     mon["kf_meas_vs_truth_pull_width68"] = {
@@ -6023,6 +6029,8 @@ def study_track_mva(X, K, P, ax_row, out):
                                 "auc_clean": float(roc_auc_score(clean[m], outer[m, 0])) if len(set(clean[m])) == 2 else None,
                                 "sd0_coverage_68": float(cov)}
         res[v.name] = e
+        print(f"   (R5) {v.label} [{how}] AUC(clean) / sigma_hat(d0) 68% coverage per |eta|: " + "  ".join(
+            f"{el} {OSU.fmt(d['auc_clean'])}/{OSU.fmt(d['sd0_coverage_68'])}" for el, d in e["per_eta"].items()))
     out["track_mva"] = res
     out["_monitor"]["R5_track_mva"] = {vn: e["per_eta"] for vn, e in res.items()}
     ax = ax_row[0]
