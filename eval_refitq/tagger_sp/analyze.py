@@ -56,13 +56,33 @@ PAIRS = {  # name: (signal, background, numerator, denominator) classes
     "c_vs_light": (["charm"], ["light"], ["charm"], ["charm", "light"]),
 }
 WP_PAIRS = ["b_vs_udsg", "c_vs_udsg", "tau_vs_jet"]
-MISTAGS = (0.10, 0.01, 0.001)      # loose / medium / tight (background = udsg; tau: light+gluon jets)
+MISTAGS = [0.10, 0.01, 0.001]      # loose / medium / tight (background = udsg; tau: light+gluon jets)
 WP_NAME = {0.10: "loose", 0.01: "medium", 0.001: "tight"}
+WP_LABEL = {}                      # value -> key label override ("menu", set in main)
 STOCK_B_CUT = 0.15                 # the stock NG menu cut on bTagScore
 
 
 def pct(m):
-    return f"{m * 100:g}%"
+    return WP_LABEL.get(m, f"{m * 100:g}%")
+
+
+def wp_title(x):
+    return f"{WP_NAME.get(x, pct(x))} ({x * 100:.3g}% fake rate)"
+
+
+def stock_reference():
+    """The udsg fake rate of the stock menu cut bTagScore > STOCK_B_CUT on the OT baseline
+    (IIII) test jets in acceptance -- the fake-rate target of the "menu" matched WP."""
+    man = json.load(open(C.manifest_path(C.BASELINE_MASK)))
+    sc, lab = [], []
+    for s, n, _ in man["files"]:
+        d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, C.BASELINE_MASK, n) + ".npz"))
+        sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX)
+        sc.append(d["stock_bTagScore"][sel])
+        lab.append(d["label"][sel])
+    sc, lab = np.concatenate(sc), np.concatenate(lab)
+    u = np.isin(lab, [CI["light"], CI["gluon"]])
+    return float(np.mean(sc[u] > STOCK_B_CUT)), int(u.sum())
 SP_MASKS = [m for m in C.MASKS if m != C.BASELINE_MASK]
 L0 = ("baseline", C.BASELINE_MASK)
 STEPS = [  # (label, a, b): a - b ; mask "M" = the SP mask of the column
@@ -76,8 +96,9 @@ STEPS = [  # (label, a, b): a - b ; mask "M" = the SP mask of the column
     ("L3-L0  total", ("trackmva", "M"), L0),
 ]
 MAIN_STEPS = STEPS[:5]
-KEY_METRICS = ["macro_auc", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "b_vs_udsg_eff@0.1%",
-               "c_vs_udsg_eff@10%", "c_vs_udsg_eff@1%", "tau_vs_jet_eff@10%", "tau_vs_jet_eff@1%",
+KEY_METRICS = ["macro_auc", "b_vs_udsg_eff@menu", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "b_vs_udsg_eff@0.1%",
+               "c_vs_udsg_eff@menu", "c_vs_udsg_eff@10%", "c_vs_udsg_eff@1%",
+               "tau_vs_jet_eff@menu", "tau_vs_jet_eff@10%", "tau_vs_jet_eff@1%",
                "b_vs_light_eff@10%", "c_vs_light_eff@10%"]
 ALL_AUCS = [f"auc_{c}" for c in CLASSES] + ["auc_tau"]
 STEP_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#6b6b6b", "#a0a0a0"]
@@ -418,7 +439,7 @@ def plot_rocs(pdf, P, STK=None):
                        label="< 10 bkg test jets (unmeasurable)" if (i, j) == (0, 0) else None)
             for x in MISTAGS:
                 ax.axhline(x, color="k", lw=0.6, ls=":")
-                ax.text(0.99, x * 1.1, f"{WP_NAME[x]} {pct(x)}", ha="right", va="bottom", fontsize=6,
+                ax.text(0.99, x * 1.1, wp_title(x), ha="right", va="bottom", fontsize=6,
                         transform=ax.get_yaxis_transform())
             ax.set_yscale("log")
             ax.set_ylim(5e-4, 1.05)
@@ -478,6 +499,14 @@ def main():
     P = load_preds()
     if not P:
         raise SystemExit("no predictions")
+    # matched "menu" WP: the udsg fake rate of the stock menu cut on IIII, applied to every cell
+    global MISTAGS
+    fr_menu, n_udsg_ref = stock_reference()
+    WP_LABEL[fr_menu] = "menu"
+    WP_NAME[fr_menu] = "menu-matched"
+    MISTAGS = [fr_menu] + [x for x in MISTAGS if x != fr_menu]
+    print(f"menu WP: udsg fake rate of bTagScore > {STOCK_B_CUT} on IIII = {fr_menu:.4f} "
+          f"({n_udsg_ref} udsg test jets)", flush=True)
     print(f"cells: {sorted(P)}", flush=True)
     M = compute(P, a.boot)
     regs = list(M[next(iter(M))]["avg"])
@@ -516,6 +545,25 @@ def main():
                                     for (v, m) in M},
             "expected_bkg_jets_above_threshold": RCH,
             "stock_ng_tagger": {"cut": f"bTagScore > {STOCK_B_CUT}", "per_mask": STK}},
+        "calibrated_working_points": {
+            "definition": "matched-fake-rate WPs: every cell (scenario x ladder step) and seed gets the "
+                          "discriminant threshold giving the SAME background (udsg; tau: light+gluon jets) "
+                          "fake rate on its own test jets in acceptance, with the estimator used for the "
+                          "reference: 'menu' = the udsg fake rate of the stock menu cut bTagScore > 0.15 on "
+                          "the IIII (OT baseline) test jets; '10%', '1%' (statistically weak), '0.1%' "
+                          "(unmeasurable). The same fake-rate values are used for c and tau.",
+            "reference": {"stock_cut": f"bTagScore > {STOCK_B_CUT}", "mask": C.BASELINE_MASK,
+                          "udsg_fake_rate_menu": fr_menu, "n_udsg_test_jets": n_udsg_ref},
+            "fake_rate_targets": {pct(x): x for x in MISTAGS},
+            "cells": {f"{v}@{m}": {n: {pct(x): {
+                "threshold_mean_std": seed_stats(M, (v, m), "incl", f"{n}_thr@{pct(x)}")[:2],
+                "threshold_per_seed": {s: M[(v, m)]["seeds"][s]["incl"][f"{n}_thr@{pct(x)}"]
+                                       for s in M[(v, m)]["seeds"]},
+                "eff_mean_seedstd": seed_stats(M, (v, m), "incl", f"{n}_eff@{pct(x)}")[:2],
+                "achieved_fake_rate_mean": seed_stats(M, (v, m), "incl", f"{n}_mistag@{pct(x)}")[0],
+                "expected_bkg_jets_above": RCH[f"{v}@{m}"][n][pct(x)]}
+                for x in MISTAGS} for n in WP_PAIRS} for (v, m) in M},
+            "ladder": "see 'ladder': keys <pair>_eff@menu / @10% / @1% (difference, boot_err, seed_err)"},
     }
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "summary.json"), "w") as f:
@@ -576,7 +624,8 @@ def main():
                         ALL_AUCS + ["b_vs_udsg_auc", "c_vs_udsg_auc", "tau_vs_jet_auc", "b_vs_light_auc", "c_vs_light_auc"]],
                        "step gains per class (one-vs-rest AUC) and pairwise AUCs", "Δ AUC")
             bins = [r for r in regs if r.startswith(("abs_eta:", "pt:"))]
-            for k, lab in (("b_vs_udsg_eff@10%", "Δ b eff (loose: 10% udsg mistag)"),
+            for k, lab in (("b_vs_udsg_eff@menu", "Δ b eff (menu-matched udsg fake rate)"),
+                           ("b_vs_udsg_eff@10%", "Δ b eff (loose: 10% udsg mistag)"),
                            ("b_vs_udsg_eff@1%", "Δ b eff (medium: 1% udsg mistag)"),
                            ("c_vs_udsg_eff@10%", "Δ c eff (10% udsg mistag)"),
                            ("tau_vs_jet_eff@10%", "Δ tau eff (10% light+gluon mistag)"),
@@ -586,8 +635,8 @@ def main():
                            f"step gains in |η| and pT bins: {k}", lab)
             rows = []
             for reg in bins + [r for r in regs if r.startswith("sample:")]:
-                for k in ("b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "c_vs_udsg_eff@10%", "tau_vs_jet_eff@10%",
-                          "macro_auc"):
+                for k in ("b_vs_udsg_eff@menu", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "c_vs_udsg_eff@10%",
+                          "tau_vs_jet_eff@menu", "tau_vs_jet_eff@10%", "macro_auc"):
                     m0 = seed_stats(M, L0, reg, k) if L0 in M else (np.nan, np.nan, 0)
                     rows.append([reg, k, fmt(m0[0], m0[1])] + [fmt_step(L[mask].get(lab, {}).get(reg, {}).get(k))
                                                              for lab, _, _ in STEPS])
@@ -606,7 +655,7 @@ def main():
                     flag = " [unreachable]" if nb < 1 else (" [<10 bkg jets]" if nb < 10 else "")
                     row += [fmt(e[0], e[1]) + flag, fmt(t[0], t[1], 4)]
                 rows.append(row)
-            hdr = ["cell"] + [f"{WP_NAME[x]} ({pct(x)}): {k}" for x in MISTAGS for k in ("eff", "threshold on D")]
+            hdr = ["cell"] + [f"{wp_title(x)}: {k}" for x in MISTAGS for k in ("eff", "threshold on D")]
             table_page(pdf, f"Working points per cell: {n} (mean ± seed std over the trained taggers)", hdr,
                        rows, fontsize=6,
                        note="Threshold = D value giving the background efficiency on the cell's own test jets "
