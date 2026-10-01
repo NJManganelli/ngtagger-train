@@ -5207,6 +5207,7 @@ R_TRK = ["rInv", "phi", "tanL", "z0", "d0", "pt", "tpIdx", "cov_rInv_rInv", "cov
 R_SP_EXTRA = ["l1TrackIdx", "spixRefitPerformed", "spixNAcceptedHits", "spixLayerHitMask"]
 R_TP = ["pt", "eta", "phi0", "d0", "z0", "charge"]
 R_FLAG_BAND = (0.85, 1.15)                          # monitor flag: a width ratio / pull outside
+R_PLATEAU_COT = float(np.tan(np.radians(25.0)))     # |true cot| of the emulator's beta plateau
 
 
 def _flat_tables(files, spec):
@@ -5719,6 +5720,12 @@ def study_angle_monitor(X, K, P, ax_row, out):
                 inn = H[reco][m] - H[pred][m]
                 # the track-prediction variance the innovation implies, given the table
                 implied = OSU.width68(inn) ** 2 - np.median(H[sig][m]) ** 2
+                # the SmartPixels model's beta PLATEAU: true |beta| < 25 deg is emitted ~0, so
+                # the residual there is ~ -true, whatever |emitted cot| the table is keyed on
+                small = np.abs(H[tru][m]) < R_PLATEAU_COT
+                e[ang + "_by_true_angle"] = {
+                    "lt25deg": {"n": int(small.sum()), "meas_vs_truth_pull_width68": OSU.width68(mt[small])},
+                    "ge25deg": {"n": int((~small).sum()), "meas_vs_truth_pull_width68": OSU.width68(mt[~small])}}
                 e[ang] = {"n": int(m.sum()), "kf_pull_core": OSU.core_rms(kp)[0], "kf_pull_width68": OSU.width68(kp),
                           "kf_pull_full": OSU.full_rms(kp),
                           "meas_vs_truth_pull_width68": OSU.width68(mt), "meas_vs_truth_pull_core": OSU.core_rms(mt)[0],
@@ -5729,7 +5736,9 @@ def study_angle_monitor(X, K, P, ax_row, out):
                                OSU.fmt(e[ang]["kf_pull_width68"]), OSU.fmt(e[ang]["meas_vs_truth_pull_width68"]),
                                OSU.fmt(e[ang]["pred_minus_truth_width68"], "{:.4f}"),
                                OSU.fmt(e[ang]["innovation_width68"], "{:.4f}"),
-                               OSU.fmt(e[ang]["median_sigma_table"], "{:.4f}")])
+                               OSU.fmt(e[ang]["median_sigma_table"], "{:.4f}"),
+                               f"{OSU.fmt(e[ang + '_by_true_angle']['lt25deg']['meas_vs_truth_pull_width68'])} / "
+                               f"{OSU.fmt(e[ang + '_by_true_angle']['ge25deg']['meas_vs_truth_pull_width68'])}"])
                 w, mt68 = e[ang]["kf_pull_width68"], e[ang]["meas_vs_truth_pull_width68"]
                 # which variance is off: the table's (the measurement against truth over
                 # its sigma) or the track's (the KF pull off while the table is right)
@@ -5807,12 +5816,15 @@ def study_angle_monitor(X, K, P, ax_row, out):
                         not (R_FLAG_BAND[0] <= float(r[9]) <= R_FLAG_BAND[1]))
         OSU.table_pages(pdf, "(R3) KF angle pulls on the refit's correct accepted hits",
                         ["variant", "surface", "angle", "n", "KF pull core", "KF pull w68", "meas-truth pull w68",
-                         "pred-truth w68", "innovation w68", "median sigma table"], rows_k,
+                         "pred-truth w68", "innovation w68", "median sigma table",
+                         "meas-truth w68 |true|<25 / >=25 deg"], rows_k,
                         notes=["KF pull = the producer's (innovation / sqrt(track var + sigma^2)); meas-truth pull = "
                                "(emitted - true)/sigma: ~1 => the table is right;",
                                "pred-truth = the track's predicted angle minus the true one (cot units): with the "
                                "table sigma it should add in quadrature to the innovation width.",
-                               "Track-side sigma (projection covariance) per crossing: study 20's pull decomposition."])
+                               "Track-side sigma (projection covariance) per crossing: study 20's pull decomposition.",
+                               "Last column: the emulator's beta PLATEAU -- a true |angle| < 25 deg is emitted near 0, "
+                               "so the residual there is ~ -true whatever the |emitted cot| key of the table says."])
         OSU.table_pages(pdf, "(R3) flags", ["flag"], [[f] for f in res["flags"]] or [["none"]])
     res["pdf"] = pdf_path
     out["angle_monitor"] = res
@@ -5823,6 +5835,10 @@ def study_angle_monitor(X, K, P, ax_row, out):
                                                for s, e in res["clusters"][ang].items()} for ang in ("alpha", "beta")}
     mon["cluster_pull_width68"] = {ang: {s: {cl: e[cl]["pull_width68"] for cl in e}
                                          for s, e in res["clusters"][ang].items()} for ang in ("alpha", "beta")}
+    mon["kf_meas_vs_truth_by_true_angle"] = {
+        vn: {s: {ang: {k: v["meas_vs_truth_pull_width68"] for k, v in e[ang + "_by_true_angle"].items()}
+                 for ang in ("alpha", "beta") if ang + "_by_true_angle" in e}
+             for s, e in d.items()} for vn, d in res["kf"].items()}
     mon["kf_meas_vs_truth_pull_width68"] = {
         vn: {s: {ang: e[ang]["meas_vs_truth_pull_width68"] for ang in ("alpha", "beta") if ang in e}
              for s, e in d.items()} for vn, d in res["kf"].items()}
