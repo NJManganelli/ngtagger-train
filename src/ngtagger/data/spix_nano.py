@@ -65,6 +65,7 @@ KEY_LINKED_TP_BRANCHES = (f"{TP_TABLE}_key", f"{TP_TABLE}_idx")
 DISC_SURFACE_OFFSET = 10
 BARREL = (1, 2, 3, 4)                       # surfaces IL1-IL4
 SP_DISCS = (11, 12, 13, 14)                 # surfaces ID1-ID4
+SP_SURFACES = BARREL + SP_DISCS             # the SmartPixels surfaces (the refit's, discScope sp)
 # disc_scope -> largest pxfDisk kept (TFPX = disks 1-8, TEPX = 9-12)
 DISC_SCOPES = {"none": 0, "sp": 4, "tfpx": 8, "all": 12}
 
@@ -226,6 +227,21 @@ def surface_name(code):
     """IL1-IL4 for barrel surface codes 1-4, ID<n> for disc codes 10+n."""
     code = int(code)
     return f"ID{code - DISC_SURFACE_OFFSET}" if code > DISC_SURFACE_OFFSET else f"IL{code}"
+
+
+def is_disc_surface(code):
+    """Boolean: a disc surface code (10 + disk). Works on scalars and arrays."""
+    return np.asarray(code) > DISC_SURFACE_OFFSET
+
+
+def mask_surfaces(mask):
+    """The surface codes an activeSP mask instruments, IL first. Character k
+    (1-based) of the 4-character A/I mask instruments ILk AND IDk together:
+    "AIAI" -> (1, 3, 11, 13)."""
+    if len(mask) != 4 or set(mask) - {"A", "I"}:
+        raise ValueError(f"activeSP mask must be 4 characters of A/I, got {mask!r}")
+    on = [k for k in range(1, 5) if mask[k - 1] == "A"]
+    return tuple(on) + tuple(DISC_SURFACE_OFFSET + k for k in on)
 
 
 def _cap_counts(cot, has, max_abs):
