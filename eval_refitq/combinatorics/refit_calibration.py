@@ -2,7 +2,7 @@
 
 For every PERFECT track and every IT barrel layer, the majority-owner TP's
 cluster (the target) is recorded against the UN-UPDATED OT-only projection onto
-its own module (ot_projection.evaluate_layer, study 19's code), together with
+its own module (ot_projection.evaluate_surface, study 19's code), together with
 everything needed to evaluate a trial covariance model offline without
 re-projecting:
 
@@ -75,7 +75,7 @@ def extract(files, geometry, nev=None, chunk=10, log=print):
         n_disk = np.bincount(gst, weights=Sst["isBarrel"] == 0, minlength=ctx["ntrk"]).astype(np.int16)
         n_st = np.bincount(gst, minlength=ctx["ntrk"]).astype(np.int16)
         for L in OP.IT_LAYERS:
-            ev = OP.evaluate_layer(ctx, a, C, L, geo, 4.0, use)
+            ev = OP.evaluate_surface(ctx, a, C, L, geo, 4.0, use)
             if ev is None:
                 continue
             c, pj, pm = ev["cand"], ev["pj"], ev["pm"]

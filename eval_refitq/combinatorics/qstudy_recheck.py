@@ -60,7 +60,7 @@ def replay_pulls(A, geo, k, form):
     K = ctx["K"]
     H = OP._flat(A, OP.REFIT, OP.REFIT_COLS + COLS)
     toff = np.concatenate([[0], np.cumsum(ak.to_numpy(ak.num(A["L1TTrack_pt"])))])
-    coff = np.concatenate([[0], np.cumsum(K["_n"])])     # K is TBPX-only (OP._flat)
+    coff = np.concatenate([[0], np.cumsum(K["_n"])])     # K is the whole cluster table (OP._flat)
     gt = toff[H["event"]] + H["trackIdx"].astype(np.int64)
     kpt = RP.pt_constant(ctx["T"])
     a, C = ctx["a"].copy(), ctx["C"].copy()
@@ -76,7 +76,7 @@ def replay_pulls(A, geo, k, form):
         q = t[(st["nUpd"][t] > 0) & (st["prevR"][t] > 0)]
         q_producer_form(a, C, q, L, st["prevL"], st["prevR"], kpt, k, form)
         pj = OP.project_with_cov(a[t], C[t], OP.cylinder_s(a[t], geo["R"][L]), geo, mi,
-                                 jac="cmssw", R=L)
+                                 jac="cmssw", surface=L)
         acc = (H["hitAccepted"][idx] > 0) & (H["selClusterIdx"][idx] >= 0) & np.isfinite(pj["u"])
         u = np.flatnonzero(acc)
         if not len(u):

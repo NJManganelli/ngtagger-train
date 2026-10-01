@@ -1,22 +1,34 @@
-"""OT-only track projection onto the inner-tracker barrel, independent of the refit.
+"""OT-only track projection onto the inner-tracker surfaces, independent of the refit.
 
 WHAT THIS IS FOR. A refit starts from an OT-only track and has to decide which
 inner-tracker clusters to include. Before any Kalman update, the only thing it
 knows is the OT fit: its helix and its covariance. This module projects that
-helix, with that covariance, onto EVERY barrel module of IL1-IL4 it could reach
-within a k-sigma ellipse, and labels every cluster found there by who made it.
-It deliberately does NOT use the refit's per-crossing tables:
+helix, with that covariance, onto EVERY module of the SmartPixels surfaces --
+the barrel layers IL1-IL4 and the discs ID1-ID4 (TFPX disks 1-4, both sides) --
+it could reach within a k-sigma ellipse, and labels every cluster found there by
+who made it. It deliberately does NOT use the refit's per-crossing tables:
 
-  * the refit keeps ONE module per layer (the nearest containing one), so
+  * the refit keeps ONE module per surface (the nearest containing one), so
     clusters on a neighbouring module inside the ellipse are never offered;
   * the refit records its seed projection only where the seed lands on the
-    same module as the KF-UPDATED state, so under outsideIn IL1-IL3 are
-    conditioned on the outer updates;
+    same module as the KF-UPDATED state, so under outsideIn the inner surfaces
+    are conditioned on the outer updates;
   * only the diagonal of the projected covariance is stored there, and
     grazing predictions are dropped by the refit's angle clamp.
 
 Those tables are used here only as an independent cross-check of the helix,
 frame and Jacobian (validate_against_refit).
+
+SURFACES, as SmartPixelsHelixProjector (L1Trigger/Phase3SmartPixels) builds them,
+codes as the nano's (1-4 = IL1-IL4, 11-14 = ID1-ID4):
+  barrel  the helix meets the layer CYLINDER at the mean module radius
+          (cylinder_s), then each candidate module plane (Newton in s);
+  disc    the helix meets the disc's mean-|z| PLANE on the side it heads to,
+          z = sign(tanL) * Z_disc (s = (z - z0) / tanL, s > 0 and within half a
+          turn: disc_s), then each candidate module plane. The disc modules sit
+          on four faces within +-0.9 cm of that plane; the Newton step resolves it.
+  surface_s dispatches on the code. A disc module's local x is r-phi, local y
+  the RADIUS (inward), so the residuals (du, dv) are (r-phi, r) on a disc.
 
 INPUTS (nano + one JSON):
   L1TTrack               helix (rInv, phi, tanL, z0, d0) and its fit covariance
@@ -74,12 +86,14 @@ COV_COLS = [f"cov_{HPAR[i]}_{HPAR[j]}" for i in range(5) for j in range(i, 5)]
 # Jacobian steps: the producer's own seed-cone steps (kEpsS), used here as
 # central differences.
 JAC_EPS = np.array([1e-6, 1e-5, 1e-5, 1e-3, 1e-3])
-IT_LAYERS = (1, 2, 3, 4)
-# Candidate modules per (track, layer): every module whose centre is within
+IT_LAYERS = SPN.BARREL                  # IL1-IL4 (the barrel-only calibration scripts)
+IT_SURFACES = SPN.SP_SURFACES           # IL1-IL4, ID1-ID4
+# Candidate modules per (track, surface): every module whose centre is within
 #   BOUND_SIGMA_MARGIN * nsig * sqrt(sigma_u^2 + sigma_v^2)       (ellipse box corner)
 #   + half-diagonal of the module
-#   + BOUND_SLACK_CM * sqrt(1 + tanL^2)                           (cylinder -> plane)
-# of the layer-cylinder crossing, sigmas taken on the nearest module. NOT
+#   + BOUND_SLACK_CM * sqrt(1 + tanL^2)        barrel: cylinder -> module plane
+#     BOUND_SLACK_CM * sqrt(1 + 1/tanL^2)      disc: mean plane -> module face (+-0.9 cm in z)
+# of the nominal-surface crossing, sigmas taken on the nearest module. NOT
 # k-nearest-by-centre: 4 sigma in v reaches ~6 cm on soft tracks and a long
 # module overlaps while its centre is far away (k = 24 vs 48 changed the B
 # counts). Measured by exhaustive projection onto every module of the layer:
@@ -91,12 +105,17 @@ BOUND_SIGMA_MARGIN = 1.5
 BOUND_SLACK_CM = 2.0
 NEWTON_ITERS = 8
 ON_PLANE_CM = 1e-4        # |distance to plane| accepted as converged (1 um)
+REFINE_STEPS = 2          # project_to_modules(refine=): Newton steps past convergence
+# SmartPixelsHelixProjector / L1SmartPixelsTrackProducer constants
+BARREL_CANDIDATES = 4     # crossLayer: the k nearest module centres
+DISC_CAND_SLACK_CM = 1.5  # crossDisc: centres within the largest half-diagonal + this
+TRAVERSED_MARGIN_CM = 1.0  # pathToSurface: a surface is traversed within its extent + this
 
 TRK_COLS = list(HPAR) + ["pt", "eta", "nStubs"] + COV_COLS
 TST_COLS = ["trackIdx", "detId", "x", "y", "z", "bend", "layer", "isBarrel"]
 OTS_COLS = ["detId", "x", "y", "z", "bend", "layer", "isBarrel", "tpIdx",
             "tpGenuine", "tpCombinatoric", "tpUnknown"]
-CL_COLS = ["detId", "layer", "localX", "localY", "localCotAlpha",
+CL_COLS = ["detId", "surface", "localX", "localY", "localCotAlpha",
            "localCotBeta", "hasAlpha", "hasBeta", "tpIdx",
            "sigX", "sigY", "sigAlpha", "sigBeta",      # errors: the refit's measurement R
            "sizeX", "sizeY"]                             # cluster size: calibrated R lookup
@@ -142,9 +161,9 @@ TRACK_CLASS_DEF = {
 EXCLUDED = ("tie", "no-owner", "unjoined")
 
 # --------------------------------------------------------------------------
-# cluster categories on a layer projection
+# cluster categories on a surface projection (one track onto one layer or disc)
 # --------------------------------------------------------------------------
-# A   -- a cluster of the majority-owner TP anywhere on the layer: the TARGET.
+# A   -- a cluster of the majority-owner TP anywhere on the surface: the TARGET.
 #        Split A-in / A-out by the k-sigma ellipse; A-out residuals are taken on
 #        the target's own module, so they are still frame-consistent.
 # B1  -- inside the ellipse, owned by a TP that also owns a foreign stub of
@@ -155,20 +174,49 @@ EXCLUDED = ("tie", "no-owner", "unjoined")
 CATEGORIES = ("A-in", "A-out", "B1", "B2", "B3")
 
 
-def load_geometry(path, layers=IT_LAYERS):
-    """Barrel modules of the requested layers, as arrays sorted by detId."""
+def _surface_code(m):
+    """Surface code of a geometry-JSON module: PXB layer, or 10 + PXF disk."""
+    return m["layer"] if m["subdet"] == "PXB" else SPN.DISC_SURFACE_OFFSET + m["disk"]
+
+
+def load_geometry(path, surfaces=IT_SURFACES):
+    """Modules of the requested surfaces, as arrays sorted by detId, plus the
+    per-surface constants SmartPixelsHelixProjector::build derives:
+      R[L], halfZ[L]   barrel: mean module-centre radius; largest |z| of the
+                       module outlines (corners and edge midpoints)
+      Z[D], rext[D]    disc: mean |z| of the module centres (both sides); radial
+                       extent (min, max) of the module outlines
+      maxHalfDiag[D]   disc: largest module half-diagonal
+      by_surface[S]    module rows of surface S; by_side[(D, side)] the rows of
+                       disc D on the side z < 0 (0) or z > 0 (1)."""
     G = json.load(open(path))
-    ms = [m for m in G["modules"] if m["subdet"] == "PXB" and m["layer"] in layers]
+    ms = [m for m in G["modules"] if m["subdet"] in ("PXB", "PXF") and _surface_code(m) in surfaces]
     ms.sort(key=lambda m: m["detId"])
     g = {"detId": np.array([m["detId"] for m in ms], np.int64),
-         "layer": np.array([m["layer"] for m in ms], np.int64)}
+         "surface": np.array([_surface_code(m) for m in ms], np.int64)}
     for k in ("origin", "ex", "ey", "ez"):
         g[k] = np.array([m[k] for m in ms], np.float64)
     g["hw"] = np.array([m["halfWidth"] for m in ms], np.float64)
     g["hl"] = np.array([m["halfLength"] for m in ms], np.float64)
-    g["R"] = {L: float(np.hypot(*g["origin"][g["layer"] == L][:, :2].T).mean())
-              for L in layers}
-    g["by_layer"] = {L: np.flatnonzero(g["layer"] == L) for L in layers}
+    # the outline the projector measures extents on: corners and edge midpoints
+    f = np.array([(fx, fy) for fx in (-1., 0., 1.) for fy in (-1., 0., 1.) if fx or fy])
+    outline = (g["origin"][:, None, :] + (f[None, :, 0] * g["hw"][:, None])[..., None] * g["ex"][:, None, :]
+               + (f[None, :, 1] * g["hl"][:, None])[..., None] * g["ey"][:, None, :])
+    g["surfaces"] = tuple(s for s in surfaces if (g["surface"] == s).any())
+    g["by_surface"] = {s: np.flatnonzero(g["surface"] == s) for s in g["surfaces"]}
+    g["R"], g["halfZ"], g["Z"], g["rext"], g["maxHalfDiag"], g["by_side"] = {}, {}, {}, {}, {}, {}
+    for s in g["surfaces"]:
+        rows = g["by_surface"][s]
+        if not SPN.is_disc_surface(s):
+            g["R"][s] = float(np.hypot(*g["origin"][rows][:, :2].T).mean())
+            g["halfZ"][s] = float(np.abs(outline[rows][..., 2]).max())
+            continue
+        g["Z"][s] = float(np.abs(g["origin"][rows][:, 2]).mean())
+        rr = np.hypot(outline[rows][..., 0], outline[rows][..., 1])
+        g["rext"][s] = (float(rr.min()), float(rr.max()))
+        g["maxHalfDiag"][s] = float(np.hypot(g["hw"][rows], g["hl"][rows]).max())
+        for side in (0, 1):
+            g["by_side"][(s, side)] = rows[(g["origin"][rows][:, 2] > 0) == bool(side)]
     return g
 
 
@@ -218,6 +266,40 @@ def cylinder_s(a, R):
     return np.where(s > 0, s, np.nan)
 
 
+def disc_s(a, Z):
+    """Transverse arc length to the disc plane z = sign(tanL) * Z on the side the
+    helix heads to (NaN if |tanL| < 1e-9, s <= 0 or beyond half a turn), as
+    HelixProjector::crossDisc / pathToSurface."""
+    rinv, tanl, z0 = a[..., 0], a[..., 2], a[..., 3]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        s = (np.where(tanl > 0, 1.0, -1.0) * Z - z0) / tanl
+    ok = (np.abs(tanl) >= 1e-9) & (s > 0) & ~(np.abs(rinv) * s > np.pi)
+    return np.where(ok, s, np.nan)
+
+
+def surface_s(a, geo, S):
+    """Arc length to the nominal surface S (cylinder for a layer, mean plane for a disc)."""
+    return disc_s(a, geo["Z"][S]) if SPN.is_disc_surface(S) else cylinder_s(a, geo["R"][S])
+
+
+def surface_path_s(a, geo, S, margin=TRAVERSED_MARGIN_CM):
+    """HelixProjector::pathToSurface: (s, traversed). s as surface_s (NaN where the
+    helix does not meet the surface); traversed when that point lies within the
+    surface's module extent widened by `margin` (barrel |z| <= halfZ + margin,
+    disc radius within rext +- margin): the surfaces the particle crosses, which
+    order the visits and are charged scattering material."""
+    s = surface_s(a, geo, S)
+    ok = np.isfinite(s)
+    p, _ = helix_at(a, np.where(ok, s, 0.0))
+    if SPN.is_disc_surface(S):
+        r = np.hypot(p[..., 0], p[..., 1])
+        lo, hi = geo["rext"][S]
+        crossed = ok & (r >= lo - margin) & (r <= hi + margin)
+    else:
+        crossed = ok & (np.abs(p[..., 2]) <= geo["halfZ"][S] + margin)
+    return s, crossed
+
+
 def _newton_cmssw(a, s0, o, n_):
     """SmartPixelsHelixProjector::crossLayer's Newton loop, verbatim semantics:
     at most 5 iterations, converged if |f| < 1 um at the START of an iteration,
@@ -241,26 +323,50 @@ def _newton_cmssw(a, s0, o, n_):
     return s, conv
 
 
-def crosslayer_module(a, L, geo):
-    """The module SmartPixelsHelixProjector::crossLayer resolves for helices a
-    on layer L: the 4 module centres nearest the mean-radius cylinder point,
-    each re-solved onto its plane, kept if the on-plane point is inside the
-    bounds, the one whose centre is nearest THAT point winning. -1 if none."""
-    rows = geo["by_layer"][L]
-    s0 = cylinder_s(a, geo["R"][L])
+def _surface_candidates(a, S, geo, s0):
+    """Candidate module rows (n, k) for HelixProjector::land, nearest first, -1
+    padding: crossLayer's k = 4 module centres nearest the cylinder point, or
+    crossDisc's every centre on the side the helix heads to within the largest
+    half-diagonal + DISC_CAND_SLACK_CM of the mean-plane point."""
     pc, _ = helix_at(a, np.where(np.isfinite(s0), s0, 1.0))
-    d2 = ((pc[:, None, :] - geo["origin"][rows][None, :, :]) ** 2).sum(-1)
-    k = min(4, len(rows))
-    near = rows[np.argpartition(d2, k - 1, axis=1)[:, :k]]
+    if not SPN.is_disc_surface(S):
+        rows = geo["by_surface"][S]
+        d2 = ((pc[:, None, :] - geo["origin"][rows][None, :, :]) ** 2).sum(-1)
+        k = min(BARREL_CANDIDATES, len(rows))
+        part = np.argpartition(d2, k - 1, axis=1)[:, :k]
+        o = np.argsort(np.take_along_axis(d2, part, 1), axis=1, kind="stable")
+        return rows[np.take_along_axis(part, o, 1)]
+    out = []
+    rmax2 = (geo["maxHalfDiag"][S] + DISC_CAND_SLACK_CM) ** 2
+    for side in (0, 1):
+        rows = geo["by_side"][(S, side)]
+        d2 = ((pc[:, None, :] - geo["origin"][rows][None, :, :]) ** 2).sum(-1)
+        d2 = np.where(d2 < rmax2, d2, np.inf)
+        o = np.argsort(d2, axis=1, kind="stable")
+        out.append((np.where(np.isfinite(np.take_along_axis(d2, o, 1)), rows[o], -1)))
+    k = max(int((out[0] >= 0).sum(1).max(initial=0)), int((out[1] >= 0).sum(1).max(initial=0)), 1)
+    up = a[:, 2] > 0
+    return np.where(up[:, None], out[1][:, :k], out[0][:, :k])
+
+
+def cross_module(a, S, geo):
+    """The module SmartPixelsHelixProjector::crossSurface resolves for helices a
+    on surface S (crossLayer / crossDisc): each candidate (_surface_candidates)
+    re-solved onto its plane by crossLayer's Newton loop from the nominal-surface
+    crossing, kept if the on-plane point is inside the bounds, the one whose
+    centre is nearest THAT point winning. -1 if none."""
+    s0 = surface_s(a, geo, S)
+    near = _surface_candidates(a, S, geo, s0)
     best = np.full(len(a), -1, np.int64)
     bestd = np.full(len(a), np.inf)
-    for c in range(k):
-        mi = near[:, c]
+    for c in range(near.shape[1]):
+        have = near[:, c] >= 0
+        mi = np.where(have, near[:, c], 0)
         s, ok = _newton_cmssw(a, s0, geo["origin"][mi], geo["ez"][mi])
         p, _ = helix_at(a, s)
         rel = p - geo["origin"][mi]
         u, v = (rel * geo["ex"][mi]).sum(-1), (rel * geo["ey"][mi]).sum(-1)
-        inside = ok & np.isfinite(s0) & (np.abs(u) <= geo["hw"][mi]) & (np.abs(v) <= geo["hl"][mi])
+        inside = have & ok & np.isfinite(s0) & (np.abs(u) <= geo["hw"][mi]) & (np.abs(v) <= geo["hl"][mi])
         dd = (rel ** 2).sum(-1)
         take = inside & (dd < bestd)
         best = np.where(take, mi, best)
@@ -268,12 +374,22 @@ def crosslayer_module(a, L, geo):
     return best
 
 
-def project_to_modules(a, s0, geo, mi, newton="study"):
+def project_to_modules(a, s0, geo, mi, newton="study", refine=None):
     """Project helices a[n] onto module rows mi[n], Newton from arc s0[n].
 
     Returns dict of u, v (local position, cm), cotA, cotB, s and ok, where ok
     means the helix reached the plane (converged, s > 0). u, v may lie OUTSIDE
     the module bounds; containment is the caller's question.
+
+    refine (boolean per row): after convergence, REFINE_STEPS more Newton steps
+    without the 1 um stop. For the Jacobian's perturbed solves on a DISC: a disc
+    module's normal is along z, so a tanL or z0 step moves the crossing ALONG
+    the normal by ~1 um -- the stop tolerance -- and an unrefined solve that
+    starts on the nominal plane often never moves, losing the column (the
+    anti-correlated tanL-z0 pair then inflated sigma_r by a median 14-17% on
+    ID1/ID2 against the producer). Barrel perturbations move the crossing
+    mostly in-plane; they are NOT refined, which keeps barrel results as they
+    were (their width carries a +-1-6% p1/p99 noise from the same stop).
     """
     o, n_ = geo["origin"][mi], geo["ez"][mi]
     if newton == "cmssw":
@@ -301,6 +417,13 @@ def project_to_modules(a, s0, geo, mi, newton="study"):
     p, d = helix_at(a, s)
     conv = np.abs(((p - o) * n_).sum(-1)) < ON_PLANE_CM
     ok &= conv
+    if refine is not None and refine.any():
+        for _ in range(REFINE_STEPS):
+            f = ((p - o) * n_).sum(-1)
+            fp = (d * n_).sum(-1)
+            go = refine & ok & (np.abs(fp) > 1e-9)
+            s = np.where(go, s - f / np.where(go, fp, 1.0), s)
+            p, d = helix_at(a, s)
     rel = p - o
     lz = (d * geo["ez"][mi]).sum(-1)
     lz = np.where(np.abs(lz) > 1e-9, lz, 1e-9)
@@ -312,17 +435,17 @@ def project_to_modules(a, s0, geo, mi, newton="study"):
 OUT_KEYS = ("u", "v", "cotA", "cotB")
 
 
-def project_with_cov(a, C, s0, geo, mi, jac="central", R=None):
+def project_with_cov(a, C, s0, geo, mi, jac="central", surface=None):
     """project_to_modules plus the 4x4 covariance of (u, v, cotA, cotB).
 
     jac="central": central differences (the default, more accurate).
     jac="cmssw": the producer's scheme exactly -- one-sided +eps falling back
-    to -eps, each perturbed helix re-solved by crossLayer's own Newton loop
-    started from ITS cylinder crossing and stopped at 1 um, and a perturbation
-    that crossLayer would put on a DIFFERENT module is not usable (the
-    producer's same-module guard; both sides unusable -> NaN column, which the
-    update zeroes). R is the layer's number (1..4). Used only where CMSSW must
-    be reproduced (replay).
+    to -eps, each perturbed helix re-solved by crossSurface's own Newton loop
+    started from ITS nominal-surface crossing and stopped at 1 um, and a
+    perturbation that crossSurface would put on a DIFFERENT module is not usable
+    (the producer's same-module guard; both sides unusable -> NaN column, which
+    the update zeroes). `surface` is the surface code (1-4, 11-14). Used only
+    where CMSSW must be reproduced (replay).
 
     NEWTON NOISE, why "central" does not simply reuse the producer's scheme:
     crossLayer stops at |distance to plane| < 1 um, and the rInv step (1e-6)
@@ -339,8 +462,8 @@ def project_with_cov(a, C, s0, geo, mi, jac="central", R=None):
             for sgn in (+1.0, -1.0):
                 ap = a.copy()
                 ap[:, j] += sgn * JAC_EPS[j]
-                pp = project_to_modules(ap, cylinder_s(ap, geo["R"][R]), geo, mi, newton="cmssw")
-                pp["ok"] = pp["ok"] & (crosslayer_module(ap, R, geo) == mi)
+                pp = project_to_modules(ap, surface_s(ap, geo, surface), geo, mi, newton="cmssw")
+                pp["ok"] = pp["ok"] & (cross_module(ap, surface, geo) == mi)
                 cols.append(pp)
             for r, key in enumerate(OUT_KEYS):
                 fwd = (cols[0][key] - nom[key]) / JAC_EPS[j]
@@ -351,13 +474,14 @@ def project_with_cov(a, C, s0, geo, mi, jac="central", R=None):
         nom["ok"] &= np.isfinite(nom["S"]).all((1, 2))
         return nom
     nom = project_to_modules(a, s0, geo, mi)
+    disc = SPN.is_disc_surface(geo["surface"][mi])
     J = np.full((len(mi), 4, 5), np.nan)
     for j in range(5):
         cols = []
         for sgn in (+1.0, -1.0):
             ap = a.copy()
             ap[:, j] += sgn * JAC_EPS[j]
-            cols.append(project_to_modules(ap, nom["s"], geo, mi))
+            cols.append(project_to_modules(ap, nom["s"], geo, mi, refine=disc))
         both = cols[0]["ok"] & cols[1]["ok"]
         for r, key in enumerate(OUT_KEYS):
             cen = (cols[0][key] - cols[1][key]) / (2 * JAC_EPS[j])
@@ -376,10 +500,12 @@ def project_with_cov(a, C, s0, geo, mi, jac="central", R=None):
 # per-chunk flattening
 # --------------------------------------------------------------------------
 def _flat(A, pre, cols):
-    """Flat numpy columns of table `pre`. The cluster table is read TBPX-only
-    (the study and the refit are barrel-only): barrel rows are a per-event
-    prefix, so selClusterIdx indexes this table exactly as it does the file's."""
-    J = (SPN.cluster_columns(A, cols, surfaces=SPN.BARREL) if pre == CL_TABLE
+    """Flat numpy columns of table `pre`. The cluster table is read WHOLE
+    (disc_scope "all": every row the producer wrote, barrel then discs), so
+    selClusterIdx -- a row of the file's table, barrel or disc -- indexes it
+    exactly as it does the file's. Clusters on modules outside the geometry
+    (none on discScope-sp nanos) are ignored downstream (module_index -1)."""
+    J = (SPN.cluster_columns(A, cols, disc_scope="all") if pre == CL_TABLE
          else SPN.table_columns(A, pre, cols))
     n = ak.to_numpy(ak.num(J[cols[0]]))
     D = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
@@ -405,7 +531,7 @@ def branches(with_refit, path, cl_extra=(), refit=REFIT):
     keys = _keys(path)
     b = [f"L1TTrackStub_{OT_LINK}"]
     for tbl, cols in _tables(with_refit, cl_extra, refit):
-        b += (SPN.cluster_branches(keys, cols, surfaces=SPN.BARREL) if tbl == CL_TABLE
+        b += (SPN.cluster_branches(keys, cols, disc_scope="all") if tbl == CL_TABLE
               else SPN.branch_names(keys, tbl, cols))
     return b
 
@@ -491,7 +617,7 @@ def prepare_chunk(A, geo):
     cls, maj_tp, foreign_keys = classify_tracks(T, S, O)
     covok = np.trace(C, axis1=1, axis2=2) > 0
     cls = np.where(covok, cls, -4)                         # covariance absent
-    kmi = module_index(geo, K["detId"])                    # IT barrel clusters only
+    kmi = module_index(geo, K["detId"])                    # clusters on the geometry's surfaces
     kev = K["event"]
     kkey = kev.astype(np.int64) * (1 << 32) + K["detId"].astype(np.int64)
     toff = np.concatenate([[0], np.cumsum(T["_n"])])
@@ -500,46 +626,52 @@ def prepare_chunk(A, geo):
     return {"A": A, "T": T, "K": K, "ntrk": len(T["pt"]), "a": a, "C": C, "n_disk_stubs": n_disk,
             "tev": T["event"], "cls": cls, "maj_tp": maj_tp,
             "foreign_keys": foreign_keys, "kmi": kmi, "kin": kmi >= 0, "kev": kev,
-            "klay": geo["layer"][np.maximum(kmi, 0)], "kkey": kkey,
+            "ksurf": np.where(kmi >= 0, geo["surface"][np.maximum(kmi, 0)], -1), "kkey": kkey,
             "ko": np.argsort(kkey, kind="stable")}
 
 
-def evaluate_layer(ctx, a, C, L, geo, nsig, use):
-    """One layer, for the track STATE (a, C): candidate modules, the ellipse on
-    each, and every cluster there labelled A-in / A-out / B1 / B2 / B3.
+def evaluate_surface(ctx, a, C, S, geo, nsig, use):
+    """One surface S (1-4 IL, 11-14 ID), for the track STATE (a, C): candidate
+    modules, the ellipse on each, and every cluster there labelled A-in / A-out /
+    B1 / B2 / B3.
 
     Returns the study rows and per-projection bookkeeping (what study 19
     records), plus the candidate-level arrays a refit needs to choose a cluster
-    and update on it (key "cand"). None if no track reaches the layer.
+    and update on it (key "cand"). None if no track reaches the surface.
     """
     K, tev, ntrk = ctx["K"], ctx["tev"], ctx["ntrk"]
     maj_tp, foreign_keys, cls = ctx["maj_tp"], ctx["foreign_keys"], ctx["cls"]
-    kmi, kin, kev, klay, kkey, ko = (ctx[k] for k in ("kmi", "kin", "kev", "klay", "kkey", "ko"))
-    R = geo["R"][L]
-    s0 = cylinder_s(a, R)
+    kmi, kin, kev, ksurf, kkey, ko = (ctx[k] for k in ("kmi", "kin", "kev", "ksurf", "kkey", "ko"))
+    disc = bool(SPN.is_disc_surface(S))
+    s0 = surface_s(a, geo, S)
     reach = use & np.isfinite(s0)
     ti = np.flatnonzero(reach)
     if not len(ti):
         return None
     pc, _ = helix_at(a[ti], s0[ti])
-    rows = geo["by_layer"][L]
+    rows = geo["by_surface"][S]
     dist = np.sqrt(((pc[:, None, :] - geo["origin"][rows][None, :, :]) ** 2).sum(-1))
+    if disc:
+        # only the disc on the side the helix heads to; the other side is ~2 Z away
+        up = a[ti, 2] > 0
+        dist = np.where((geo["origin"][rows][None, :, 2] > 0) == up[:, None], dist, np.inf)
     # ellipse size from the nearest module; a failed projection there gets
-    # the layer-wide worst case so the track is not silently narrowed
+    # the surface-wide worst case so the track is not silently narrowed
     m0 = rows[np.argmin(dist, 1)]
     p0 = project_with_cov(a[ti], C[ti], s0[ti], geo, m0)
     tr = np.nan_to_num(p0["S"][:, 0, 0]) + np.nan_to_num(p0["S"][:, 1, 1])
     r_ell = BOUND_SIGMA_MARGIN * nsig * np.sqrt(np.clip(tr, 0, None))
     r_ell = np.where(p0["ok"], r_ell, np.nanmax(np.where(p0["ok"], r_ell, np.nan)) if p0["ok"].any() else 10.0)
     hdiag = np.hypot(geo["hw"][rows], geo["hl"][rows])
-    slack = BOUND_SLACK_CM * np.sqrt(1.0 + a[ti, 2] ** 2)
+    tl2 = a[ti, 2] ** 2
+    slack = BOUND_SLACK_CM * np.sqrt(1.0 + (1.0 / np.maximum(tl2, 1e-12) if disc else tl2))
     bound = (r_ell + slack)[:, None] + hdiag[None, :]
     it_, im_ = np.nonzero(dist <= bound)
     cand_t, cand_m = ti[it_], rows[im_]
     cand_ratio = (dist / bound)[it_, im_]
-    # target modules: every IT module on this layer holding a cluster of
+    # target modules: every IT module on this surface holding a cluster of
     # the majority-owner TP, even if it is not among the candidates
-    tgt = kin & (klay == L) & SPN.tp_matched(K["tpIdx"])
+    tgt = kin & (ksurf == S) & SPN.tp_matched(K["tpIdx"])
     tk = M.tp_key(kev[tgt], K["tpIdx"][tgt])
     has_maj = SPN.tp_matched(maj_tp[ti])      # no owner: -1, matches no tk
     want = np.full(len(ti), -1, np.int64)
@@ -567,7 +699,7 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
         & (np.abs(pj["v"]) <= geo["hl"][pm_] + nsig * sv)
     lands = pj["ok"] & (np.abs(pj["u"]) <= geo["hw"][pm_]) & (np.abs(pj["v"]) <= geo["hl"][pm_])
     bound_ratio = float(pr_[overlap].max()) if overlap.any() else 0.0
-    # layer projection = one track projected to one layer: lands if the
+    # surface projection = one track projected to one surface: lands if the
     # helix point is inside at least one module
     lp_lands = np.bincount(pt_[lands], minlength=ntrk) > 0
     # covered: the ellipse overlaps at least one module (it can do so with
@@ -606,12 +738,12 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
     dcA = np.where(hasA, K["localCotAlpha"][ci] - pj["cotA"][pq], np.nan)
     dcB = np.where(hasB, K["localCotBeta"][ci] - pj["cotB"][pq], np.nan)
     rows_out = {
-        "layer": np.full(sel.sum(), L, np.int8), "cls": cls[t_of][sel].astype(np.int8),
+        "surface": np.full(sel.sum(), S, np.int8), "cls": cls[t_of][sel].astype(np.int8),
         "cat": cat[sel].astype(np.int8), "du": du[sel].astype(np.float32),
         "dv": dv[sel].astype(np.float32), "d": np.sqrt(m2[sel]).astype(np.float32),
         "dcotA": dcA[sel].astype(np.float32), "dcotB": dcB[sel].astype(np.float32),
         "pt": ctx["T"]["pt"][t_of][sel].astype(np.float32)}
-    # per layer projection bookkeeping: lands?, target exists?, target inside?
+    # per surface projection bookkeeping: lands?, target exists?, target inside?
     a_any = np.bincount(t_of[isA], minlength=ntrk) > 0
     a_in = np.bincount(t_of[isA & inside], minlength=ntrk) > 0
     a_proj_fail = np.zeros(ntrk, bool)
@@ -623,7 +755,7 @@ def evaluate_layer(ctx, a, C, L, geo, nsig, use):
     nl = np.maximum(np.bincount(pt_[lands], minlength=ntrk)[ti], 1)
     wmean = lambda w: np.bincount(pt_[lands], weights=w, minlength=ntrk)[ti] / nl
     proj_out = {
-        "layer": np.full(len(ti), L, np.int8), "cls": cls[ti].astype(np.int8),
+        "surface": np.full(len(ti), S, np.int8), "cls": cls[ti].astype(np.int8),
         "lands": lp_lands[ti], "covered": lp_cov[ti], "a_exists": (nA > 0), "a_reached": a_any[ti],
         "a_in": a_in[ti], "a_unprojectable": a_proj_fail[ti],
         "nB1": nB[0][ti], "nB2": nB[1][ti], "nB3": nB[2][ti],
@@ -647,8 +779,8 @@ def process_chunk(A, geo, nsig=4.0, with_refit=False, refit=REFIT):
     res = {"n_tracks_by_class": np.bincount(cls + 4, minlength=10),
            "bound_ratio_max": 0.0, "rows": [], "proj": []}
     use = cls >= 0
-    for L in IT_LAYERS:
-        ev = evaluate_layer(ctx, ctx["a"], ctx["C"], L, geo, nsig, use)
+    for S in geo["surfaces"]:
+        ev = evaluate_surface(ctx, ctx["a"], ctx["C"], S, geo, nsig, use)
         if ev is None:
             continue
         res["bound_ratio_max"] = max(res["bound_ratio_max"], ev["bound_ratio"])
@@ -675,12 +807,15 @@ def validate_against_refit(A, a, C, geo, refit=REFIT):
     mi = module_index(geo, H["detId"][has])
     ok = mi >= 0
     gt, mi = gt[ok], mi[ok]
-    lay = geo["layer"][mi]
-    s0 = cylinder_s(a[gt], np.array([geo["R"][L] for L in lay], np.float64))
+    surf = geo["surface"][mi]
+    s0 = np.full(len(gt), np.nan)
+    for S in np.unique(surf):
+        m = surf == S
+        s0[m] = surface_s(a[gt[m]], geo, int(S))
     pj = project_with_cov(a[gt], C[gt], s0, geo, mi)
     h = {c: H[c][has][ok].astype(np.float64) for c in REFIT_COLS}
     g = pj["ok"]
-    return {"layer": lay[g], "du": (pj["u"] - h["projOTLocalX"])[g],
+    return {"surface": surf[g], "du": (pj["u"] - h["projOTLocalX"])[g],
             "dv": (pj["v"] - h["projOTLocalY"])[g],
             "dcotA": (pj["cotA"] - h["projOTCotAlpha"])[g],
             "dcotB": (pj["cotB"] - h["projOTCotBeta"])[g],
@@ -689,9 +824,11 @@ def validate_against_refit(A, a, C, geo, refit=REFIT):
             "n_refit": int(has.sum()), "n_compared": int(g.sum())}
 
 
-def run(files, geometry, nsig=4.0, chunk=10, nev=None, validate=True, log=print, refit=REFIT):
-    """Stream the inputs; return concatenated per-cluster rows and per-projection rows."""
-    geo = load_geometry(geometry)
+def run(files, geometry, nsig=4.0, chunk=10, nev=None, validate=True, log=print, refit=REFIT,
+        surfaces=IT_SURFACES):
+    """Stream the inputs; return concatenated per-cluster rows and per-projection rows
+    for the `surfaces` (default IL1-IL4 and ID1-ID4)."""
+    geo = load_geometry(geometry, surfaces)
     check_inputs(files[0], with_refit=validate, refit=refit)
     rows, proj, vals = [], [], []
     ncls = np.zeros(10, np.int64)
@@ -721,7 +858,8 @@ def run(files, geometry, nsig=4.0, chunk=10, nev=None, validate=True, log=print,
     names = ["covariance-absent", "unjoined", "no-owner", "tie"] + list(TRACK_CLASSES)
     return {"rows": cat(rows), "proj": cat(proj), "validation": V, "n_events": done,
             "tracks_by_class": dict(zip(names, ncls[:len(names)].tolist())),
-            "bound_ratio_max": bound_ratio, "nsig": nsig, "bound_slack_cm": BOUND_SLACK_CM}
+            "bound_ratio_max": bound_ratio, "nsig": nsig, "bound_slack_cm": BOUND_SLACK_CM,
+            "surfaces": list(geo["surfaces"])}
 
 
 def param_pulls(files, nev=None):
