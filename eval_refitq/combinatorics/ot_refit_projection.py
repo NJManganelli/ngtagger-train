@@ -1,25 +1,32 @@
-"""Refit-update projection: the OT-only projection, updated layer by layer.
+"""Refit-update projection: the OT-only projection, updated surface by surface.
 
-STUDY 19 projects the OT fit to every layer independently. A real refit does
-not: it visits the active layers outside-in, picks a "best" cluster at each,
-updates the track on it, and only THEN projects to the next layer. This module
+STUDY 19 projects the OT fit to every surface independently. A real refit does
+not: it visits the active surfaces outside-in, picks a "best" cluster at each,
+updates the track on it, and only THEN projects to the next surface. This module
 does exactly that, so the target (A) and background (B1/B2/B3) populations can
 be compared under the projection the refit actually uses.
 
   1. Start from the OT track: helix + fit covariance (L1TTrack_cov_*).
-  2. For each ACTIVE layer, outermost first (AAAA: IL4, IL3, IL2, IL1; AIAI:
-     IL3 then IL1 -- mask character i is layer i+1):
+  2. Order the IT surfaces along the OT helix's PATH (surface_path), exactly as
+     L1SmartPixelsTrackProducer (seedlessRefit) builds drPath: every TBPX layer
+     (IL1-IL4) at its cylinder arc length (a layer the helix does not reach is
+     placed first if inside |d0|, else last), and each disc ID1-ID4 whose mean
+     plane the helix meets within the disc's radial extent (+- 1 cm). A barrel
+     track gives IL1..IL4; a forward one e.g. IL1, ID1, ID2, ID3, ID4.
+  3. Visit the ACTIVE surfaces of that path OUTSIDE-IN (the mask's character k
+     activates ILk AND IDk), at most maxKFUpdates (8) updates per track:
        a. add multiple-scattering process noise Q for the material crossed
-          since the last layer that constrained the track (none before the
-          first update, so the first active layer is IDENTICAL to study 19);
+          since the last surface that constrained the track (none before the
+          first update, so the first visited surface is IDENTICAL to study 19);
        b. project onto every module the 4-sigma ellipse overlaps and label
-          every cluster there -- ot_projection.evaluate_layer, the same code
+          every cluster there -- ot_projection.evaluate_surface, the same code
           study 19 runs, so the two are comparable by construction;
        c. choose the best candidate inside the ellipse with the variant's
           ranking metric (below);
        d. update the state on it with sequential scalar Kalman updates in
           local x, y, then cotAlpha, cotBeta (when the cluster has them and
-          USE_ANGLES asks for them).
+          use_angles asks for them: "alphaBeta", the producer's setting, or
+          "alpha").
 
 THE UPDATE MIRRORS L1SmartPixelsTrackProducer (seedlessRefit) term for term:
   * measurement h = (u, v, cotAlpha, cotBeta) on the chosen cluster's module,
@@ -32,13 +39,23 @@ THE UPDATE MIRRORS L1SmartPixelsTrackProducer (seedlessRefit) term for term:
     skipped (the producer's numerical-pathology gate);
   * no update where the predicted |cotAlpha| or |cotBeta| exceeds
     PRED_ANGLE_MAX_ABS (the producer invalidates such a crossing);
-  * Q = theta0^2 * n_layers_crossed * (J_T J_T^T + J_L J_L^T), theta0 =
-    MULT_SCATT_TERM / pT, kink at the last constrained radius r_s:
-    J_T = (0, 1, 0, 0, -r_s), J_L = (0, 0, sec^2, -r_s sec^2, 0).
-  Checked against CMSSW by REPLAY: feeding this update exactly the clusters
-  the producer selected (and its alpha-only setting) must reproduce the
-  producer's recorded running projection projLocalX/Y, projSigX/Y,
-  projCotAlpha/Beta at every layer (replay_against_refit).
+  * Q (add_process_noise), the producer's ONE physical material rule: at every
+    visited active surface after the first update, theta0^2 * nCross * (J_T J_T^T
+    + J_L J_L^T) with theta0 = MULT_SCATT_TERM / p (projected space angle),
+    nCross = max(1, |nTraversed(this surface) - nTraversed(last constraint)|)
+    counting the surfaces the OT helix TRAVERSES (layers within their |z|
+    extent, discs within their radial extent, both +- 1 cm), the kink at the last
+    constraint's transverse radius r_s: J_T = (0, sec, 0, 0, +r_s sec),
+    J_L = (0, 0, sec^2, -r_s sec^2, 0). The same Jacobian holds for a kink on a
+    disc (it depends only on r_s), and a disc is charged one theta0 like a
+    layer. NB as in the producer, Q is added at EVERY visited surface after the
+    first update, also where the crossing then fails or the window is empty, so
+    the material since the last constraint is charged again at the next one.
+  Checked against CMSSW by REPLAY (replay_against_refit): the producer's own
+  selections, its visit sequence and its useAngles must reproduce its recorded
+  running projection projLocalX/Y, projSigX/Y, projCotAlpha/Beta on every
+  surface, and its box windows + selection metric (SELECTION closure) must
+  re-derive the cluster it selected, the window multiplicity and truncation.
 
 RANKING METRICS (which in-ellipse cluster is "best"):
   innovation  d^2 = r^T (J C J^T + R)^-1 r over (du, dv, dcotA, dcotB): the
@@ -69,6 +86,7 @@ from pathlib import Path
 import awkward as ak
 import numpy as np
 import uproot
+from ngtagger.data import spix_nano as SPN
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ot_projection as OP   # noqa: E402
@@ -82,19 +100,103 @@ TUNED_WEIGHTS = np.array([1.0, 2.0, 16384.0, 16384.0])
 NEUTRAL = 1.0
 VARIANTS = ("none", "innovation", "producer", "tuned", "oracle")
 VARIANT_DEF = {
-    "none": "no update: study 19's OT-only projection to every layer (baseline)",
+    "none": "no update: study 19's OT-only projection to every surface (baseline)",
     "innovation": "innovation chi2 r^T (J C J^T + R)^-1 r, track + cluster errors",
     "producer": "seedlessRefit today: sum (residual / cluster error)^2, unit weights",
     "tuned": "study-6 weights (1, 2, 16384, 16384) on the producer terms (stale)",
     "oracle": "truth: the majority-owner cluster when inside the ellipse",
 }
+USE_ANGLES = ("alpha", "alphaBeta")
+# The producer configuration the replay and the selection closure need: the
+# customizeSmartPixels defaults, overridden by the nano's ParameterSets when the
+# caller reads them (omnibus_support.refit_producer_config).
+PRODUCER_DEFAULTS = {
+    "useAngles": "alphaBeta",
+    "maxKFUpdates": 8,
+    "maxHitsPerWindow": 8,
+    "windowRPhi": (0.05, 0.17, 0.5, 0.9),      # IL1-IL4 module-local x half-widths [cm]
+    "windowZ": (0.45, 0.35, 0.25, 0.2),        # IL1-IL4 module-local y (z)
+    "windowDiscRPhi": (0.2, 0.2, 0.2, 0.2),    # ID1-ID4 module-local x (r-phi)
+    "windowDiscR": (0.3, 0.3, 0.3, 0.3),       # ID1-ID4 module-local y (radius)
+    "multScattTerm": MULT_SCATT_TERM,
+    "applyProcessNoise": True,
+    "layerOrder": "outsideIn",
+}
 
 
-def active_layers(mask):
-    """Active layers, OUTERMOST first. mask[i] describes layer i + 1."""
-    if len(mask) != 4 or set(mask) - {"A", "I"}:
-        raise SystemExit(f"activeSP mask must be 4 of A/I, got {mask!r}")
-    return [L for L in (4, 3, 2, 1) if mask[L - 1] == "A"]
+def active_surfaces(mask):
+    """The surfaces an activeSP mask instruments: character k = ILk AND IDk."""
+    try:
+        return SPN.mask_surfaces(mask)
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
+
+
+def window(cfg, S):
+    """(r-phi, z-or-radius) half-widths [cm] of the producer's box on surface S."""
+    if SPN.is_disc_surface(S):
+        k = S - SPN.DISC_SURFACE_OFFSET - 1
+        return cfg["windowDiscRPhi"][k], cfg["windowDiscR"][k]
+    return cfg["windowRPhi"][S - 1], cfg["windowZ"][S - 1]
+
+
+# ---- the visit order ------------------------------------------------------------
+def surface_path(a, geo, surfaces=None):
+    """drPath of L1SmartPixelsTrackProducer for helices a (the OT tracks).
+
+    The surfaces in PATH ORDER (transverse arc length from the POCA): every
+    barrel layer (s from the cylinder; a layer not reached sorts first when its
+    radius is inside |d0|, else last: key -1e9 / +1e9 + layer), and each disc
+    whose plane the helix meets (s > 0, within half a turn) within its radial
+    extent +- TRAVERSED_MARGIN_CM. Ties keep the insertion order layers 1-4 then
+    discs 1-4 (std::stable_sort). nT = nTraversed: the number of TRAVERSED
+    surfaces up to and including this one along the path (a layer counts only
+    when |z| at its crossing is within its module extent + 1 cm), the material
+    count Q uses.
+
+    Returns {"surfaces": the codes considered, in insertion order; "codes":
+    (n, ns) path-ordered codes, -1 for discs off the path; "nT": (n, ns)
+    nTraversed per surface in insertion order; "in_path": (n, ns)}."""
+    surfaces = list(surfaces if surfaces is not None else geo["surfaces"])
+    surfaces = [s for s in surfaces if not SPN.is_disc_surface(s)] + \
+               [s for s in surfaces if SPN.is_disc_surface(s)]
+    n, ns = len(a), len(surfaces)
+    key = np.full((n, ns), np.inf)
+    inpath = np.zeros((n, ns), bool)
+    trav = np.zeros((n, ns), bool)
+    d0 = np.abs(a[:, 4])
+    for j, S in enumerate(surfaces):
+        s, crossed = OP.surface_path_s(a, geo, S)
+        ok = np.isfinite(s)
+        if SPN.is_disc_surface(S):
+            inpath[:, j] = ok & crossed
+            key[:, j] = np.where(inpath[:, j], s, np.inf)
+        else:
+            inpath[:, j] = True
+            key[:, j] = np.where(ok, s, np.where(geo["R"][S] < d0, -1e9, 1e9) + S)
+        trav[:, j] = crossed & inpath[:, j]
+    order = np.argsort(key, axis=1, kind="stable")
+    codes = np.where(np.take_along_axis(inpath, order, 1), np.asarray(surfaces, np.int64)[order], -1)
+    ntr = np.cumsum(np.take_along_axis(trav, order, 1), axis=1)
+    nT = np.empty((n, ns), np.int64)
+    np.put_along_axis(nT, order, ntr, 1)
+    return {"surfaces": surfaces, "codes": codes, "nT": nT, "in_path": inpath}
+
+
+def visit_sequence(path, active, order="outsideIn"):
+    """(n, k) surface codes each track visits, in visit order (outsideIn = the path
+    from its outer end), the inactive and off-path ones removed, -1 padded."""
+    c = path["codes"][:, ::-1] if order == "outsideIn" else path["codes"]
+    keep = np.isin(c, list(active)) & (c >= 0)
+    o = np.argsort(~keep, axis=1, kind="stable")
+    seq = np.where(np.take_along_axis(keep, o, 1), np.take_along_axis(c, o, 1), -1)
+    k = max(int(keep.sum(1).max(initial=0)), 1)
+    return seq[:, :k]
+
+
+def n_traversed(path, t, S):
+    """nTraversed of surface S for tracks t."""
+    return path["nT"][t, path["surfaces"].index(S)]
 
 
 # ---- the calibrated covariance model (refit_calibration_fit.export_refit_calibration) --
@@ -110,6 +212,8 @@ def active_layers(mask):
 #     visited layers is charged, updated or not. A ~1.37x variance excess the innovation
 #     likelihood asks for is UNEXPLAINED and deliberately not modelled;
 #   * R: the cluster size/angle lookup, not the published CPE/payload errors.
+# BARREL ONLY: the v3 calibration was fitted on barrel-only refits; it has no disc
+# material planes and no disc seed groups, so the calibrated model visits IL1-IL4 only.
 def load_calibration(path):
     """The v3 calibration JSON: seed_deficit {"g,ns,b": 5x5}, pt_bins, stub_min/max,
     floor_groups [[name, disk, |tanL| lo, hi], ...], planes [[r_cm or "ILj", x/X0,
@@ -176,39 +280,19 @@ def pt_constant(T):
     return float(np.median(k[np.isfinite(k) & (k > 0)]))
 
 
-# Which producer Q to reproduce. The nano's refit tables were written by one of:
-#   "f629627"  the first Q (2026-09-06 .. 2026-09-23): theta = k/pT, jT = (0, 1, 0, 0,
-#              -r_s) -- the WRONG d0 sign for TTTrack d0 -- and dtanL = theta sec^2.
-#              Every refit nano produced before 2026-09-24 (e.g. itot_htt, itot_nopu,
-#              itot_pu200_60ev) predates the fix and needs this.
-#   "natural"  the fixed producer: theta = k/p (projected space angle), jT = (0, sec,
-#              0, 0, +r_s sec), jL = (0, 0, sec^2, -r_s sec^2, 0) -- the one
-#              formulation used everywhere else in these codes. itot_tp_* (2026-09-24)
-#              were written by it.
-PRODUCER_Q_FORMS = ("f629627", "natural")
-
-
-def add_process_noise(a, C, t, L, prevL, prevR, kpt, form="f629627"):
-    """The PRODUCER'S Q for tracks t, between their last constrained layer and L,
-    in the form of the producer that wrote the file (PRODUCER_Q_FORMS). Only for
-    replaying CMSSW and the producer-covariance comparison; the calibrated model
-    is add_material."""
+def add_process_noise(a, C, t, n_cur, n_prev, prev_r, kpt, mult=MULT_SCATT_TERM):
+    """The PRODUCER'S Q for tracks t (see the module docstring): n_cur / n_prev the
+    nTraversed of the surface being predicted / of the last constraint, prev_r the
+    transverse radius of the last constraint's crossing (the kink)."""
     if not len(t):
         return
-    if form not in PRODUCER_Q_FORMS:
-        raise ValueError(f"producer Q form {form!r} not in {PRODUCER_Q_FORMS}")
     pt = kpt / np.maximum(np.abs(a[t, 0]), 1e-12)
-    ncross = np.maximum(1, np.abs(L - prevL[t]))
-    rs, sec2 = prevR[t], 1.0 + a[t, 2] ** 2
-    if form == "f629627":
-        var = (MULT_SCATT_TERM / pt) ** 2 * ncross
-        jT = np.zeros((len(t), 5)); jT[:, 1] = 1.0; jT[:, 4] = -rs
-        jL = np.zeros((len(t), 5)); jL[:, 2] = sec2; jL[:, 3] = -rs * sec2
-    else:
-        sec = np.sqrt(sec2)
-        var = (MULT_SCATT_TERM / (pt * sec)) ** 2 * ncross
-        jT = np.zeros((len(t), 5)); jT[:, 1] = sec; jT[:, 4] = +rs * sec
-        jL = np.zeros((len(t), 5)); jL[:, 2] = sec2; jL[:, 3] = -rs * sec2
+    ncross = np.maximum(1, np.abs(n_cur - n_prev))
+    sec2 = 1.0 + a[t, 2] ** 2
+    sec = np.sqrt(sec2)
+    var = np.where(pt > 1e-3, (mult / (pt * sec)) ** 2 * ncross, 0.0)
+    jT = np.zeros((len(t), 5)); jT[:, 1] = sec; jT[:, 4] = +prev_r * sec
+    jL = np.zeros((len(t), 5)); jL[:, 2] = sec2; jL[:, 3] = -prev_r * sec2
     C[t] += var[:, None, None] * (jT[:, :, None] * jT[:, None, :] + jL[:, :, None] * jL[:, None, :])
 
 
@@ -300,8 +384,9 @@ def _candidates(ev, K, use_angles, cal=None):
     return c
 
 
-def update_on(a, C, sel_c, c, ev, K, geo, state, L):
-    """Update the tracks of the chosen candidates; bookkeeping into state."""
+def update_on(a, C, sel_c, c, ev, K, geo, state, n_trav):
+    """Update the tracks of the chosen candidates; bookkeeping into state
+    (n_trav: nTraversed of this surface per track, for the next Q)."""
     if not len(sel_c):
         return 0
     t = c["t"][sel_c]
@@ -317,12 +402,12 @@ def update_on(a, C, sel_c, c, ev, K, geo, state, L):
     g = geo["origin"][pm[p]] + pj["u"][p][:, None] * geo["ex"][pm[p]] + pj["v"][p][:, None] * geo["ey"][pm[p]]
     state["prevR"][t] = np.hypot(g[:, 0], g[:, 1])
     state["nUpd"][t] += 1
-    state["prevL"][t] = L
+    state["prevNT"][t] = n_trav[t]
     return gated
 
 
-def run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal=None, q_form="f629627",
-              refit=OP.REFIT):
+def run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal=None, refit=OP.REFIT,
+              cfg=PRODUCER_DEFAULTS):
     ctx = OP.prepare_chunk(A, geo)
     K, cls, ntrk = ctx["K"], ctx["cls"], ctx["ntrk"]
     use = cls >= 0
@@ -332,131 +417,299 @@ def run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal=None, q_form
                       kpt / np.maximum(np.abs(ctx["a"][:, 0]), 1e-12))
     else:
         C0 = ctx["C"]
-    layers = active_layers(mask)
+    active = [s for s in active_surfaces(mask) if s in geo["surfaces"]
+              and (cal is None or not SPN.is_disc_surface(s))]
+    # the visit order is fixed by the OT helix (the producer builds drPath once)
+    path = surface_path(ctx["a"], geo)
+    seq = visit_sequence(path, active, cfg["layerOrder"])
     out = {"n_tracks_by_class": np.bincount(cls + 4, minlength=10), "by_variant": {}}
-    first_ev = None
+    first_ev = {}                                         # step 0: the OT state, every variant
     for v in variants:
         a, C = ctx["a"].copy(), C0.copy()
         state = {"nUpd": np.zeros(ntrk, np.int64), "prevR": np.full(ntrk, -1.0),
-                 "prevL": np.zeros(ntrk, np.int64)}
+                 "prevNT": np.zeros(ntrk, np.int64)}
         Lv = np.full(ntrk, 5, np.int64)                      # last VISITED layer (5 = OT)
         rows, proj, selrec, gated = [], [], [], 0
-        for li, L in enumerate(layers):
-            if cal is not None:
-                add_material(a, C, np.flatnonzero(use), L, Lv, geo, cal, kpt)
-                Lv[use] = L
-            else:
-                q = np.flatnonzero(use & (state["nUpd"] > 0) & (state["prevR"] > 0))
-                add_process_noise(a, C, q, L, state["prevL"], state["prevR"], kpt, q_form)
-            if li == 0:                               # identical state for every variant
-                if first_ev is None:                      # (calibrated: gap + outer kinks too)
-                    first_ev = OP.evaluate_layer(ctx, a, C, L, geo, nsig, use)
-                ev = first_ev
-            else:
-                ev = OP.evaluate_layer(ctx, a, C, L, geo, nsig, use)
-            if ev is None:
-                continue
-            rows.append(ev["rows"])
-            proj.append(ev["proj"])
-            c = _candidates(ev, K, use_angles, cal)
-            sel = choose(v, c, ev["pj"]) if v != "none" else np.zeros(0, np.int64)
-            # selection outcome per layer projection: which category was chosen
-            chosen = np.full(ntrk, -1, np.int8)
-            chosen[c["t"][sel]] = c["cat"][sel]
-            ti = ev["ti"]
-            selrec.append({"layer": np.full(len(ti), L, np.int8), "cls": cls[ti].astype(np.int8),
-                           "chosen": chosen[ti], "a_in": ev["a_in_track"][ti]})
-            gated += update_on(a, C, sel, c, ev, K, geo, state, L)
+        for j in range(seq.shape[1]):
+            for S in np.unique(seq[:, j][seq[:, j] >= 0]):
+                S = int(S)
+                on = use & (seq[:, j] == S) & (state["nUpd"] < cfg["maxKFUpdates"])
+                tq = np.flatnonzero(on)
+                if not len(tq):
+                    continue
+                n_trav = np.zeros(ntrk, np.int64)
+                n_trav[tq] = n_traversed(path, tq, S)
+                if cal is not None:
+                    add_material(a, C, tq, S, Lv, geo, cal, kpt)
+                    Lv[tq] = S
+                elif cfg["applyProcessNoise"]:
+                    q = tq[(state["nUpd"][tq] > 0) & (state["prevR"][tq] > 0)]
+                    add_process_noise(a, C, q, n_trav[q], state["prevNT"][q], state["prevR"][q], kpt,
+                                      cfg["multScattTerm"])
+                if j == 0:                                # identical state for every variant
+                    if S not in first_ev:
+                        first_ev[S] = OP.evaluate_surface(ctx, a, C, S, geo, nsig, on)
+                    ev = first_ev[S]
+                else:
+                    ev = OP.evaluate_surface(ctx, a, C, S, geo, nsig, on)
+                if ev is None:
+                    continue
+                ev["rows"]["step"] = np.full(len(ev["rows"]["cls"]), j, np.int8)
+                ev["proj"]["step"] = np.full(len(ev["proj"]["cls"]), j, np.int8)
+                rows.append(ev["rows"])
+                proj.append(ev["proj"])
+                c = _candidates(ev, K, use_angles, cal)
+                sel = choose(v, c, ev["pj"]) if v != "none" else np.zeros(0, np.int64)
+                # selection outcome per surface projection: which category was chosen
+                chosen = np.full(ntrk, -1, np.int8)
+                chosen[c["t"][sel]] = c["cat"][sel]
+                ti = ev["ti"]
+                selrec.append({"surface": np.full(len(ti), S, np.int8), "cls": cls[ti].astype(np.int8),
+                               "chosen": chosen[ti], "a_in": ev["a_in_track"][ti],
+                               "step": np.full(len(ti), j, np.int8)})
+                gated += update_on(a, C, sel, c, ev, K, geo, state, n_trav)
         out["by_variant"][v] = {"rows": rows, "proj": proj, "sel": selrec, "gated": gated}
     if replay:
-        out["replay"] = replay_against_refit(ctx, geo, kpt, q_form, refit)
+        out["replay"] = replay_against_refit(ctx, geo, kpt, refit, cfg, path, mask)
     return out
 
 
-def replay_against_refit(ctx, geo, kpt, q_form="f629627", refit=OP.REFIT):
-    """Feed this update the producer's OWN selections (alpha-only, as the
-    production config ran) and compare against its recorded running projection.
+# ---- the replay against CMSSW ---------------------------------------------------
+# hit-table columns the replay reads: the producer's crossing, its running
+# projection, and the measurement it updated on (full-precision copies of the
+# selected cluster, so the update does not inherit the cluster table's rounding)
+REPLAY_COLS = ["selClusterIdx", "hitAccepted", "windowMult", "windowTruncated", "selHitClass",
+               "hasAlpha", "hasBeta", "projLocalX", "projLocalY", "projSigX", "projSigY",
+               "projCotAlpha", "projCotBeta", "recoLocalX", "recoLocalY", "sigX", "sigY",
+               "recoCotAlpha", "recoCotBeta", "sigAlpha", "sigBeta", "tpLocalCotAlpha",
+               "tpLocalCotBeta"]
 
-    Visits the refit hit table in layer order IL4 -> IL1 (outsideIn); at each
-    crossing projects the current state onto the producer's module, compares,
-    then updates on the producer's selected cluster.
+
+def _row_steps(seq, gt, surf):
+    """Visit step of every hit-table row in its track's emulated visit sequence
+    (-1 when the producer recorded a crossing on a surface the emulated path
+    does not visit)."""
+    step = np.full(len(gt), -1, np.int64)
+    for j in range(seq.shape[1]):
+        m = (step < 0) & (seq[gt, j] == surf)
+        step[m] = j
+    return step
+
+
+def selection_closure(H, K, coff, cfg):
+    """The producer's window + selection, re-derived from the cluster table.
+
+    For every recorded crossing (its module, its RECORDED running projection
+    projLocal* / projCot*), the clusters on the module in readout order (the
+    table's row order within a module) inside the box |x - x_pred| <= w_rphi,
+    |y - y_pred| <= w_z|r of the surface, the first maxHitsPerWindow of them
+    kept (truncated when another cluster of the module follows the last one
+    kept), and the lowest selection chi2 (dx/ex)^2 + (dy/ey)^2 [+ (dcotA/sigA)^2
+    if useAngles has alpha and the angle is usable] [+ beta likewise] wins (the
+    first in readout order on a tie). Returns per row: windowMult, truncated and
+    the selected cluster's table row (-1 none), from the cluster table's
+    (reduced-precision) values."""
+    use_a = cfg["useAngles"] in USE_ANGLES
+    use_b = cfg["useAngles"] == "alphaBeta"
+    ev = H["event"]
+    det = H["detId"].astype(np.int64)
+    ckey = K["event"].astype(np.int64) * (1 << 32) + K["detId"].astype(np.int64)
+    o = np.argsort(ckey, kind="stable")                  # readout order kept within a module
+    cs = ckey[o]
+    xkey = ev.astype(np.int64) * (1 << 32) + det
+    lo, hi = np.searchsorted(cs, xkey, "left"), np.searchsorted(cs, xkey, "right")
+    n = hi - lo
+    xi = np.repeat(np.arange(len(det)), n)
+    ramp = np.arange(n.sum()) - np.repeat(np.cumsum(n) - n, n)
+    ci = o[np.repeat(lo, n) + ramp]
+    surf = H["layer"].astype(np.int64)
+    wr = np.zeros(len(det)); wz = np.zeros(len(det))
+    for S in np.unique(surf):
+        m = surf == S
+        wr[m], wz[m] = window(cfg, int(S))
+    dx = K["localX"][ci].astype(np.float64) - H["projLocalX"][xi]
+    dy = K["localY"][ci].astype(np.float64) - H["projLocalY"][xi]
+    inwin = (np.abs(dx) <= wr[xi]) & (np.abs(dy) <= wz[xi])
+    # rank among the in-window ones of the crossing (readout order)
+    cin = np.cumsum(inwin)
+    base = np.repeat(np.r_[0, np.cumsum(np.bincount(xi, weights=inwin, minlength=len(det)))[:-1]], n)
+    rk = cin - base - 1                                    # 0-based in-window rank (valid where inwin)
+    nmax = cfg["maxHitsPerWindow"]
+    kept = inwin & (rk < nmax)
+    mult = np.bincount(xi[kept], minlength=len(det))
+    # truncated: the nmax-th kept candidate is followed by another cluster of the module
+    last = inwin & (rk == nmax - 1)
+    pos_last = np.full(len(det), -1, np.int64)
+    pos_last[xi[last]] = ramp[last]
+    truncated = (pos_last >= 0) & (pos_last < n - 1)
+    sel = (dx / np.maximum(K["sigX"][ci], 1e-12)) ** 2 + (dy / np.maximum(K["sigY"][ci], 1e-12)) ** 2
+    if use_a:
+        ok = K["hasAlpha"][ci] > 0
+        sel = sel + np.where(ok, ((K["localCotAlpha"][ci] - H["projCotAlpha"][xi])
+                                  / np.maximum(K["sigAlpha"][ci], 1e-12)) ** 2, 0.0)
+    if use_b:
+        ok = K["hasBeta"][ci] > 0
+        sel = sel + np.where(ok, ((K["localCotBeta"][ci] - H["projCotBeta"][xi])
+                                  / np.maximum(K["sigBeta"][ci], 1e-12)) ** 2, 0.0)
+    sel = np.where(kept, sel, np.inf)
+    oo = np.lexsort((ramp, sel, xi))                       # per crossing: lowest chi2, then readout order
+    first = np.r_[True, xi[oo][1:] != xi[oo][:-1]] if len(oo) else np.zeros(0, bool)
+    best = np.full(len(det), -1, np.int64)
+    pick = oo[first]
+    pick = pick[np.isfinite(sel[pick])]
+    best[xi[pick]] = ci[pick]
+    return {"mult": mult, "truncated": truncated, "best": best}
+
+
+def replay_against_refit(ctx, geo, kpt, refit, cfg, path, mask):
+    """Feed this update the producer's OWN selections (with its useAngles) along its
+    visit sequence and compare against its recorded running projection.
+
+    The visit sequence is rebuilt from the OT helix (surface_path, outside-in over
+    the active surfaces of the producer's mask): at each step the producer's Q is added (after the first update,
+    also where it recorded no crossing), the state is projected onto the module
+    the producer recorded with the producer's Newton/Jacobian scheme, compared
+    with projLocal*/projSig*/projCot*, and updated on the selected cluster's
+    full-precision measurement. Also returned: the selection closure
+    (selection_closure) and, on the accepted hits, the track-side predicted
+    variances needed to split a pull into its track and cluster parts.
     """
     A, K = ctx["A"], ctx["K"]
-    H = OP._flat(A, refit, OP.REFIT_COLS + ["selClusterIdx", "hitAccepted", "projLocalX", "projLocalY",
-                                                "projSigX", "projSigY", "projCotAlpha",
-                                                "projCotBeta"])
+    H = OP._flat(A, refit, OP.REFIT_COLS + REPLAY_COLS)
     ntrk_ev = ak.to_numpy(ak.num(A["L1TTrack_pt"]))
     toff = np.concatenate([[0], np.cumsum(ntrk_ev)])
-    coff = np.concatenate([[0], np.cumsum(K["_n"])])     # K is TBPX-only (OP._flat)
+    coff = np.concatenate([[0], np.cumsum(K["_n"])])     # K is the whole cluster table (OP._flat)
     gt = toff[H["event"]] + H["trackIdx"].astype(np.int64)
-    a, C = ctx["a"].copy(), ctx["C"].copy()
+    surf = H["layer"].astype(np.int64)
     ntrk = ctx["ntrk"]
+    active = [s for s in active_surfaces(mask) if s in geo["surfaces"]]
+    seq = visit_sequence(path, active, cfg["layerOrder"])
+    step = _row_steps(seq, gt, surf)
+    # every recorded crossing must sit on the emulated path, and in its order
+    off_path = step < 0
+    order_bad = np.zeros(len(gt), bool)
+    same = gt[1:] == gt[:-1]
+    order_bad[1:] = same & ~off_path[1:] & ~off_path[:-1] & (step[1:] <= step[:-1])
+    row_of = np.full((ntrk, seq.shape[1]), -1, np.int64)
+    ok_rows = np.flatnonzero(~off_path)
+    row_of[gt[ok_rows], step[ok_rows]] = ok_rows
+    has_rows = np.zeros(ntrk, bool)
+    has_rows[gt] = True                                  # the producer attempted a refit here
+    use_dim_ab = (cfg["useAngles"] in USE_ANGLES, cfg["useAngles"] == "alphaBeta")
+
+    a, C = ctx["a"].copy(), ctx["C"].copy()
     state = {"nUpd": np.zeros(ntrk, np.int64), "prevR": np.full(ntrk, -1.0),
-             "prevL": np.zeros(ntrk, np.int64)}
-    cmp = {k: [] for k in ("layer", "du", "dv", "dcotA", "dcotB", "rsu", "rsv")}
+             "prevNT": np.zeros(ntrk, np.int64)}
+    cmp = {k: [] for k in ("surface", "row", "du", "dv", "dcotA", "dcotB", "rsu", "rsv")}
+    dec = {k: [] for k in ("surface", "row", "su_trk", "sv_trk", "sa_trk", "sb_trk",
+                           "u_pred", "v_pred", "a_pred", "b_pred")}
     n_bad_det = 0
-    for L in (4, 3, 2, 1):
-        m = (H["layer"] == L)
-        mi = OP.module_index(geo, H["detId"][m])
-        ok = mi >= 0
-        idx = np.flatnonzero(m)[ok]
-        t, mi = gt[idx], mi[ok]
-        q = t[(state["nUpd"][t] > 0) & (state["prevR"][t] > 0)]
-        add_process_noise(a, C, q, L, state["prevL"], state["prevR"], kpt, q_form)
-        s0 = OP.cylinder_s(a[t], geo["R"][L])
-        pj = OP.project_with_cov(a[t], C[t], s0, geo, mi, jac="cmssw", R=L)   # the producer's H
-        # the producer records its width through the guard-ZEROED H
-        Jz = np.where(np.isfinite(pj["J"]).all(1, keepdims=True)
-                      & (np.abs(np.nan_to_num(pj["J"], nan=np.inf)) <= JACOBIAN_MAX_ABS).all(1, keepdims=True),
-                      np.nan_to_num(pj["J"]), 0.0)
-        pj["S"] = np.einsum("nij,njk,nlk->nil", Jz, C[t], Jz)
-        g = np.isfinite(pj["u"]) & (H["projLocalX"][idx] > OP.SENTINEL)
-        cmp["layer"].append(np.full(g.sum(), L))
-        cmp["du"].append((pj["u"] - H["projLocalX"][idx])[g])
-        cmp["dv"].append((pj["v"] - H["projLocalY"][idx])[g])
-        cmp["dcotA"].append((pj["cotA"] - H["projCotAlpha"][idx])[g])
-        cmp["dcotB"].append((pj["cotB"] - H["projCotBeta"][idx])[g])
-        cmp["rsu"].append((np.sqrt(pj["S"][:, 0, 0]) / H["projSigX"][idx])[g])
-        cmp["rsv"].append((np.sqrt(pj["S"][:, 1, 1]) / H["projSigY"][idx])[g])
-        # update on the producer's selected cluster
-        acc = (H["hitAccepted"][idx] > 0) & (H["selClusterIdx"][idx] >= 0) & np.isfinite(pj["u"])
-        cg = coff[H["event"][idx]] + H["selClusterIdx"][idx].astype(np.int64)
-        cg = np.where(acc, cg, 0)
-        n_bad_det += int((acc & (K["detId"][cg] != H["detId"][idx])).sum())
-        u = np.flatnonzero(acc)
-        if len(u):
-            ci = cg[u]
+    for j in range(seq.shape[1]):
+        for S in np.unique(seq[:, j][seq[:, j] >= 0]):
+            S = int(S)
+            t = np.flatnonzero(has_rows & (seq[:, j] == S) & (state["nUpd"] < cfg["maxKFUpdates"]))
+            if not len(t):
+                continue
+            if cfg["applyProcessNoise"]:
+                q = t[(state["nUpd"][t] > 0) & (state["prevR"][t] > 0)]
+                add_process_noise(a, C, q, n_traversed(path, q, S), state["prevNT"][q],
+                                  state["prevR"][q], kpt, cfg["multScattTerm"])
+            r = row_of[t, j]
+            t, r = t[r >= 0], r[r >= 0]
+            if not len(t):
+                continue
+            mi = OP.module_index(geo, H["detId"][r])
+            good = mi >= 0
+            t, r, mi = t[good], r[good], mi[good]
+            if not len(t):
+                continue
+            s0 = OP.surface_s(a[t], geo, S)
+            pj = OP.project_with_cov(a[t], C[t], s0, geo, mi, jac="cmssw", surface=S)  # the producer's H
+            # the producer records its width through the guard-ZEROED H
+            Jz = np.where(np.isfinite(pj["J"]).all(1, keepdims=True)
+                          & (np.abs(np.nan_to_num(pj["J"], nan=np.inf)) <= JACOBIAN_MAX_ABS).all(1, keepdims=True),
+                          np.nan_to_num(pj["J"]), 0.0)
+            pj["S"] = np.einsum("nij,njk,nlk->nil", Jz, C[t], Jz)
+            g = np.isfinite(pj["u"]) & (H["projLocalX"][r] > OP.SENTINEL) & (H["projSigX"][r] > 0) \
+                & (H["projSigY"][r] > 0)
+            cmp["surface"].append(np.full(g.sum(), S))
+            cmp["row"].append(r[g])
+            cmp["du"].append((pj["u"] - H["projLocalX"][r])[g])
+            cmp["dv"].append((pj["v"] - H["projLocalY"][r])[g])
+            cmp["dcotA"].append((pj["cotA"] - H["projCotAlpha"][r])[g])
+            cmp["dcotB"].append((pj["cotB"] - H["projCotBeta"][r])[g])
+            cmp["rsu"].append((np.sqrt(pj["S"][:, 0, 0]) / H["projSigX"][r])[g])
+            cmp["rsv"].append((np.sqrt(pj["S"][:, 1, 1]) / H["projSigY"][r])[g])
+            # update on the producer's selected cluster (its full-precision copy)
+            acc = (H["hitAccepted"][r] > 0) & (H["selClusterIdx"][r] >= 0) & np.isfinite(pj["u"])
+            cg = coff[H["event"][r]] + H["selClusterIdx"][r].astype(np.int64)
+            cg = np.where(acc, cg, 0)
+            n_bad_det += int((acc & (K["detId"][cg] != H["detId"][r])).sum())
+            u = np.flatnonzero(acc)
+            if not len(u):
+                continue
+            ru = r[u]
+            dec["surface"].append(np.full(len(u), S))
+            dec["row"].append(ru)
+            for k_, i_ in (("su_trk", 0), ("sv_trk", 1), ("sa_trk", 2), ("sb_trk", 3)):
+                dec[k_].append(np.sqrt(np.clip(pj["S"][u, i_, i_], 0, None)))
+            for k_, q_ in (("u_pred", "u"), ("v_pred", "v"), ("a_pred", "cotA"), ("b_pred", "cotB")):
+                dec[k_].append(pj[q_][u])
             h0 = np.stack([pj["u"][u], pj["v"][u], pj["cotA"][u], pj["cotB"][u]], 1)
-            meas = np.stack([K["localX"][ci], K["localY"][ci], K["localCotAlpha"][ci],
-                             K["localCotBeta"][ci]], 1).astype(np.float64)
-            sig = np.stack([K["sigX"][ci], K["sigY"][ci], K["sigAlpha"][ci],
-                            K["sigBeta"][ci]], 1).astype(np.float64)
+            meas = np.stack([H["recoLocalX"][ru], H["recoLocalY"][ru], H["recoCotAlpha"][ru],
+                             H["recoCotBeta"][ru]], 1).astype(np.float64)
+            sig = np.stack([H["sigX"][ru], H["sigY"][ru], H["sigAlpha"][ru],
+                            H["sigBeta"][ru]], 1).astype(np.float64)
             use_dim = np.stack([np.ones(len(u), bool), np.ones(len(u), bool),
-                                K["hasAlpha"][ci] > 0, np.zeros(len(u), bool)], 1)   # alpha only
+                                (H["hasAlpha"][ru] > 0) & use_dim_ab[0],
+                                (H["hasBeta"][ru] > 0) & use_dim_ab[1]], 1)
             kalman_update(a, C, t[u], pj["J"][u], h0, meas, sig, use_dim)
             gp = geo["origin"][mi[u]] + pj["u"][u][:, None] * geo["ex"][mi[u]] \
                 + pj["v"][u][:, None] * geo["ey"][mi[u]]
             state["prevR"][t[u]] = np.hypot(gp[:, 0], gp[:, 1])
             state["nUpd"][t[u]] += 1
-            state["prevL"][t[u]] = L
+            state["prevNT"][t[u]] = n_traversed(path, t[u], S)
     outc = {k: np.concatenate(v) if v else np.zeros(0) for k, v in cmp.items()}
     outc["n_bad_det"] = n_bad_det
+    outc["decomposition"] = {k: np.concatenate(v) if v else np.zeros(0) for k, v in dec.items()}
+    # the per-row record the decomposition and the closure tables are keyed on
+    sc = selection_closure(H, K, coff, cfg)
+    acc = (H["hitAccepted"] > 0) & (H["selClusterIdx"] >= 0)
+    prod_best = np.where(acc, coff[H["event"]] + H["selClusterIdx"].astype(np.int64), -1)
+    first = np.r_[True, gt[1:] != gt[:-1]] if len(gt) else np.zeros(0, bool)
+    outc["rows"] = {
+        "surface": surf.astype(np.int8), "off_path": off_path, "order_bad": order_bad,
+        "first": first, "sigX_proj": H["projSigX"], "sigY_proj": H["projSigY"],
+        "accepted": acc, "selHitClass": H["selHitClass"].astype(np.int8),
+        "windowMult": H["windowMult"].astype(np.int16), "windowTruncated": H["windowTruncated"] > 0,
+        "emu_mult": sc["mult"].astype(np.int16), "emu_truncated": sc["truncated"],
+        "same_pick": sc["best"] == prod_best,
+        "recoCotAlpha": H["recoCotAlpha"], "recoCotBeta": H["recoCotBeta"],
+        "sigAlpha": H["sigAlpha"], "sigBeta": H["sigBeta"],
+        "tpLocalCotAlpha": H["tpLocalCotAlpha"], "tpLocalCotBeta": H["tpLocalCotBeta"],
+        "hasAlpha": H["hasAlpha"] > 0, "hasBeta": H["hasBeta"] > 0,
+        "recoLocalX": H["recoLocalX"], "recoLocalY": H["recoLocalY"],
+        "sigX": H["sigX"], "sigY": H["sigY"]}
+    outc["mask"] = mask
     return outc
 
 
 def run(files, geometry, mask="AAAA", use_angles="alphaBeta", variants=VARIANTS,
         nsig=4.0, chunk=10, nev=None, replay=True, log=print, calibration=None,
-        producer_q="natural", refit=None):
-    """producer_q: which producer wrote the file's refit tables (PRODUCER_Q_FORMS);
-    it sets the replay AND the uncalibrated (producer-covariance) variants.
-    refit: the refit hit table the replay reads; default the coexist table of `mask`
-    (the producer's selections are only meaningful for the build being replayed)."""
+        refit=None, producer=None):
+    """refit: the refit hit table the replay reads; default the coexist table of `mask`
+    (the producer's selections are only meaningful for the build being replayed).
+    producer: the producer configuration of that table (PRODUCER_DEFAULTS keys;
+    omitted keys keep the defaults): the replay uses ITS useAngles, windows and
+    update cap; `use_angles` is the emulated variants' choice."""
+    if use_angles not in USE_ANGLES:
+        raise SystemExit(f"use_angles {use_angles!r} not in {USE_ANGLES}")
+    cfg = dict(PRODUCER_DEFAULTS, **(producer or {}))
     refit = refit or f"L1TSmartPixelsRefitHitSeedlessRefit{mask}"
     cal = load_calibration(calibration) if calibration else None
     geo = OP.load_geometry(geometry)
     OP.check_inputs(files[0], with_refit=True, refit=refit)
-    extra = [f"{refit}_{c}" for c in ("selClusterIdx", "hitAccepted", "projLocalX", "projLocalY", "projSigX",
-                                         "projSigY", "projCotAlpha", "projCotBeta")]
+    extra = [f"{refit}_{c}" for c in REPLAY_COLS]
     acc = {v: {"rows": [], "proj": [], "sel": [], "gated": 0} for v in variants}
     rep = []
     ncls = np.zeros(10, np.int64)
@@ -467,7 +720,7 @@ def run(files, geometry, mask="AAAA", use_angles="alphaBeta", variants=VARIANTS,
             break
         if nev is not None and done + len(A) > nev:
             A = A[:nev - done]
-        r = run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal, producer_q, refit)
+        r = run_chunk(A, geo, mask, use_angles, variants, nsig, replay, cal, refit, cfg)
         ncls += r["n_tracks_by_class"]
         for v in variants:
             for k in ("rows", "proj", "sel"):
@@ -479,12 +732,26 @@ def run(files, geometry, mask="AAAA", use_angles="alphaBeta", variants=VARIANTS,
         log(f"    refit-projection: {done} events")
     cat = lambda L: {k: np.concatenate([d[k] for d in L]) for k in L[0]} if L else {}
     names = ["covariance-absent", "unjoined", "no-owner", "tie"] + list(OP.TRACK_CLASSES)
-    res = {"n_events": done, "mask": mask, "use_angles": use_angles, "layers": active_layers(mask),
-           "calibration": calibration,
+    active = [s for s in active_surfaces(mask) if s in geo["surfaces"]
+              and (cal is None or not SPN.is_disc_surface(s))]
+    res = {"n_events": done, "mask": mask, "use_angles": use_angles, "surfaces": active,
+           "calibration": calibration, "producer_config": cfg,
            "tracks_by_class": dict(zip(names, ncls[:len(names)].tolist())), "nsig": nsig,
            "variants": {v: {"rows": cat(acc[v]["rows"]), "proj": cat(acc[v]["proj"]),
                             "sel": cat(acc[v]["sel"]), "gated": acc[v]["gated"]} for v in variants}}
     if rep:
-        res["replay"] = {k: (np.concatenate([x[k] for x in rep]) if k != "n_bad_det"
-                             else sum(x[k] for x in rep)) for k in rep[0]}
+        res["replay"] = {
+            **{k: np.concatenate([x[k] for x in rep]) for k in rep[0]
+               if k not in ("n_bad_det", "decomposition", "rows", "mask")},
+            "n_bad_det": sum(x["n_bad_det"] for x in rep),
+            "decomposition": {k: np.concatenate([x["decomposition"][k] for x in rep])
+                              for k in rep[0]["decomposition"]},
+            "mask": rep[0]["mask"]}
+        # rows: concatenated per chunk; the cmp/decomposition "row" indices are
+        # chunk-local, so re-base them onto the concatenated rows
+        base = np.cumsum([0] + [len(x["rows"]["surface"]) for x in rep[:-1]])
+        res["replay"]["rows"] = {k: np.concatenate([x["rows"][k] for x in rep]) for k in rep[0]["rows"]}
+        res["replay"]["row"] = np.concatenate([x["row"] + b for x, b in zip(rep, base)])
+        res["replay"]["decomposition"]["row"] = np.concatenate(
+            [x["decomposition"]["row"] + b for x, b in zip(rep, base)])
     return res
