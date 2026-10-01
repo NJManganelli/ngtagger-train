@@ -63,6 +63,11 @@ def width_cm(nb, k):
     return k * RANGE / nb
 
 
+def collapsed_folds(cf, test_folds, thr=0.5):
+    """Outer folds whose PV efficiency is below thr (a training collapse, e.g. a constant z)."""
+    return [int(k) for k in np.unique(test_folds) if np.mean(np.abs(cf.dz[test_folds == k]) < A.PV_WINDOW) < thr]
+
+
 def extra_effs(cf):
     return {f"eff_{w:.2f}": float(np.mean(np.abs(cf.dz) < w)) for w in EXTRA_WINDOWS}
 
@@ -115,6 +120,7 @@ def main():
         print(f"{v}: configs ready", flush=True)
     B, seeds = A.bootstrap_all(cfgs, n_test)
     ext = {key: [extra_effs(cf) for cf in lst] for key, lst in cfgs.items()}
+    coll = {key: [collapsed_folds(cf, folds[test]) for cf in lst] for key, lst in cfgs.items()}
 
     def base_of(key):
         """The 256-bin baseline of the same method (FHt: the GTT FH 256/3)."""
@@ -131,7 +137,7 @@ def main():
              "values": {m: dict(zip(("value", "boot_err"), A.val(B, key, m)), seed_sd=A.seed_sd(seeds, key, m))
                         for m in A.METRICS},
              "extra_eff": {w: float(np.mean([e[w] for e in ext[key]])) for w in ext[key][0]},
-             "seed_values": seeds[key]}
+             "seed_values": seeds[key], "collapsed_folds_per_seed": coll[key]}
         if base_of(key) in cfgs and key != base_of(key):
             d["diff_vs_256"] = {m: dict(zip(("value", "boot_err"), A.diff(B, key, base_of(key), m)),
                                         seed_err=A.seed_err_of_diff(seeds, key, base_of(key), m)) for m in A.METRICS}
@@ -190,17 +196,22 @@ def main():
                         r += ["baseline"] * 4
                     if m == "FH":
                         r += [f"{100 * fh_train_eff[(v, key[2], key[3])]:.1f}"]
+                    if not fhm:
+                        r += [str(sum(len(c) for c in coll[key]))]
                     rows.append(r)
                 hdr = (["nbins", "window" if fhm else "kernel", "width [cm]", "PV eff %", "dz core [um]",
                         "dz full [um]", "assoc AUC", "pur % @FH eff", "eff % @0.05/0.10/0.30 cm", "d eff %",
-                        "d core [um]", "d AUC", "d pur %"] + (["eff % f01/f02 (train-only)"] if m == "FH" else []))
+                        "d core [um]", "d AUC", "d pur %"] + (["eff % f01/f02 (train-only)"] if m == "FH" else [])
+                       + ([] if fhm else ["collapsed folds"]))
                 A.table_page(pdf, f"{nvc.VLABEL[v]}: {MLABEL[m]} vs z binning ({n_test} test events)", hdr, rows,
                              notes=["d = paired difference to the 256-bin baseline (FH and FHt: the GTT FH with 256 bins, "
                                     "3-bin window; E2E: 256 bins, kernel 3, same arm). width = window (FH) or kernel (E2E) "
                                     "x bin width.",
                                     "f01/f02 column: PV eff on the 200 training-only events (independent choice of the "
                                     "window; small sample)." if m == "FH" else
-                                    "E2E: seed means; [ ] seed std (values) / seed error (differences)."])
+                                    "E2E: seed means; [ ] seed std (values) / seed error (differences). collapsed folds = "
+                                    "(seed, outer fold) models with PV eff < 50% on their 160 test events (training "
+                                    "collapse); they are kept in the means."])
         rows = []
         for k, r in summ["best"].items():
             v, m, nb = k.split(":")
