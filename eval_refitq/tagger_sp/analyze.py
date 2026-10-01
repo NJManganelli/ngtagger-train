@@ -389,7 +389,9 @@ def mask_colors():
     return {"IIII": "#6b6b6b", "AAAA": "#2a78d6", "AAAI": "#eb6834", "IAAA": "#1baf7a"}
 
 
-def plot_rocs(pdf, P):
+def plot_rocs(pdf, P, STK=None):
+    """Efficiency vs mistag of every cell (all seeds pooled), with the offline-convention
+    reference WPs and the statistical floor (< 10 background test jets above threshold)."""
     import matplotlib.pyplot as plt
 
     col = mask_colors()
@@ -405,17 +407,35 @@ def plot_rocs(pdf, P):
                 ok = eb > 0
                 ax.plot(es[ok], eb[ok], "--" if mask == C.BASELINE_MASK else "-", color=col[mask], lw=1.5,
                         label=mask)
+                if STK and var == "baseline" and name == "b_vs_udsg" and mask in STK:
+                    ax.plot(STK[mask]["b_eff@cut"][0], STK[mask]["udsg_mistag@cut"][0], "*", ms=10,
+                            color=col[mask], mec="k", mew=0.5,
+                            label=f"stock NG bTagScore>{STOCK_B_CUT}" if mask == C.BASELINE_MASK else None)
+            nb = min(np.isin(next(iter(P[c].values()))["label"], [CI[x] for x in PAIRS[name][1]]).sum()
+                     for c in P if c[0] == var)
+            floor = 10.0 / max(nb, 1)
+            ax.axhspan(1e-4, floor, color="#dddddd", alpha=0.6, lw=0,
+                       label="< 10 bkg test jets (unmeasurable)" if (i, j) == (0, 0) else None)
+            for x in MISTAGS:
+                ax.axhline(x, color="k", lw=0.6, ls=":")
+                ax.text(0.99, x * 1.1, f"{WP_NAME[x]} {pct(x)}", ha="right", va="bottom", fontsize=6,
+                        transform=ax.get_yaxis_transform())
             ax.set_yscale("log")
-            ax.set_ylim(3e-3, 1.05)
+            ax.set_ylim(5e-4, 1.05)
             ax.set_xlim(0, 1)
             ax.grid(alpha=0.25, lw=0.5)
             sig, bkg = name.split("_vs_")
             ax.set_xlabel(f"{sig} efficiency")
             ax.set_ylabel(f"{bkg} mistag")
             ax.set_title(f"L{C.LEVEL[var]} ({var}): {name}", fontsize=9)
-    h, lab = axes[0, 0].get_legend_handles_labels()
-    fig.legend(h, lab, loc="lower center", ncol=4, frameon=False, title="scenario (IIII = OT baseline)")
-    fig.suptitle("ROC curves on the test set (all seeds pooled)", fontsize=12)
+    hl = {}
+    for ax in axes.flat:
+        for h, lab in zip(*ax.get_legend_handles_labels()):
+            hl.setdefault(lab, h)
+    fig.legend(list(hl.values()), list(hl), loc="lower center", ncol=6, frameon=False,
+               title="scenario (IIII = OT baseline)")
+    fig.suptitle("Efficiency vs mistag on the test set (all seeds pooled). Dotted: offline-convention WPs "
+                 "(reference only); grey: < 10 background test jets", fontsize=10)
     fig.tight_layout(rect=(0, 0.06, 1, 0.97))
     pdf.savefig(fig)
     plt.close(fig)
@@ -608,7 +628,7 @@ def main():
             rows = [[k] + [fmt(*seed_stats(M, c, "incl", k)[:2]) for c in cl] for k in chunk]
             table_page(pdf, "Absolute inclusive values per cell (mean ± seed std)", ["metric"]
                        + [f"{c[0]}@{c[1]}" for c in cl], rows, fontsize=5.3)
-        plot_rocs(pdf, P)
+        plot_rocs(pdf, P, STK)
         if mva:
             rows = [[m, v.get("coll"), v.get("n_test_tracks"), fmt(v.get("auc_clean")),
                      fmt(v.get("median_sigma_hat_d0_um"), None, 1), fmt(v.get("sigma68_d0_resid_um"), None, 1),
