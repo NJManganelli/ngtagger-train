@@ -42,6 +42,9 @@ from ngtagger.data.nano import load_jets  # noqa: E402
 from ngtagger.train import trackmva as tm  # noqa: E402
 
 STEP = 25
+# the stock NG tagger's scores (emulated in CMSSW, per scenario's jets): for the menu WP
+STOCK_SCORES = ["bTagScore", "cTagScore", "udsTagScore", "gTagScore", "tau_pTagScore", "tau_nTagScore",
+                "muTagScore", "eTagScore"]
 EVENT_ID = ["run", "luminosityBlock", "event"]
 
 
@@ -158,7 +161,7 @@ def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask):
     if os.path.exists(out):
         d = np.load(out)
         if str(d["bundle_sha"]) == sha and [str(x) for x in d["feature_names"]] == \
-                resolve_feature_groups(C.GROUPS_ALL):
+                resolve_feature_groups(C.GROUPS_ALL) and "stock_bTagScore" in d.files:
             return out
     jets, const, gen = load_jets([fn], n_const=C.N_CONST, feature_groups=C.GROUPS_ALL,
                                  track_table=C.TRACK_TABLE, trackmva_model=bundle_dir)
@@ -175,6 +178,7 @@ def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask):
         nconst=ak.to_numpy(ak.flatten(ak.num(const.pt, axis=2)))[k],
         entry=entry[k], is_test=test_mask[entry[k]], evid=evid, test_entries=test_mask,
         n_jets_all=int(len(k)),
+        **{f"stock_{c}": ak.to_numpy(ak.flatten(jets[c]))[k] for c in STOCK_SCORES},
         bundle_sha=np.array(sha))
     log(f"jets {C.tag(sample, mask, n)}: {int(k.sum())} labelled of {len(k)}")
     return out

@@ -18,12 +18,18 @@ metric array is the nominal (unit-weight) value.
 
 Metrics (softmax p_k), per region (inclusive; per sample; |eta| bins; pT bins):
   auc_<class> one-vs-rest (+ auc_tau for p_tau+ + p_tau-), macro_auc = mean of the 8 class AUCs
-  b_vs_light  D = p_b/(p_b+p_light)          signal b,     background light (uds)
-  c_vs_light  D = p_c/(p_c+p_light)          signal charm, background light
-  tau_vs_jet  D = p_tau/(p_tau+p_light+p_g)  signal tau+-, background light+gluon
-  <pair>_auc; <pair>_eff@1% / @10%: signal efficiency at the threshold giving 1% / 10%
-  background efficiency INCLUSIVELY (per seed and replicate); in a bin, the same threshold
-  (so a bin's efficiency and <pair>_mistag@X% are those of the inclusive working point).
+  b_vs_udsg   D = p_b/(p_b+p_light+p_g)      signal b,     background udsg (light + gluon)
+  c_vs_udsg   D = p_c/(p_c+p_light+p_g)      signal charm, background udsg
+  tau_vs_jet  D = p_tau/(p_tau+p_light+p_g)  signal tau+-, background udsg
+  b_vs_light, c_vs_light: the same with light (uds) only
+  WORKING POINTS (per trained tagger = per cell and seed): loose / medium / tight = the threshold
+  on D giving 10% / 1% / 0.1% background efficiency on the cell's own test jets (thresholds
+  thr@X% in summary.json); <pair>_eff@X% = signal efficiency there. In a bin, the INCLUSIVE
+  threshold (so <pair>_mistag@X% in a bin is that WP's mistag in the bin).
+  Reachability: n_bkg x mistag < 1 -> the WP is not resolvable with our test jets (flagged);
+  < 10 -> poorly determined.
+  Stock NG tagger (emulated scores in the nano, per scenario's jets; not retrained): b eff and
+  udsg mistag of bTagScore > 0.15 (menu cut), test jets in acceptance.
 """
 from __future__ import annotations
 
@@ -43,11 +49,20 @@ import common as C  # noqa: E402
 CLASSES = ["b", "charm", "light", "gluon", "taup", "taum", "muon", "electron"]
 CI = {c: i for i, c in enumerate(CLASSES)}
 PAIRS = {  # name: (signal, background, numerator, denominator) classes
+    "b_vs_udsg": (["b"], ["light", "gluon"], ["b"], ["b", "light", "gluon"]),
+    "c_vs_udsg": (["charm"], ["light", "gluon"], ["charm"], ["charm", "light", "gluon"]),
+    "tau_vs_jet": (["taup", "taum"], ["light", "gluon"], ["taup", "taum"], ["taup", "taum", "light", "gluon"]),
     "b_vs_light": (["b"], ["light"], ["b"], ["b", "light"]),
     "c_vs_light": (["charm"], ["light"], ["charm"], ["charm", "light"]),
-    "tau_vs_jet": (["taup", "taum"], ["light", "gluon"], ["taup", "taum"], ["taup", "taum", "light", "gluon"]),
 }
-MISTAGS = (0.01, 0.10)
+WP_PAIRS = ["b_vs_udsg", "c_vs_udsg", "tau_vs_jet"]
+MISTAGS = (0.10, 0.01, 0.001)      # loose / medium / tight (background = udsg; tau: light+gluon jets)
+WP_NAME = {0.10: "loose", 0.01: "medium", 0.001: "tight"}
+STOCK_B_CUT = 0.15                 # the stock NG menu cut on bTagScore
+
+
+def pct(m):
+    return f"{m * 100:g}%"
 SP_MASKS = [m for m in C.MASKS if m != C.BASELINE_MASK]
 L0 = ("baseline", C.BASELINE_MASK)
 STEPS = [  # (label, a, b): a - b ; mask "M" = the SP mask of the column
@@ -61,8 +76,9 @@ STEPS = [  # (label, a, b): a - b ; mask "M" = the SP mask of the column
     ("L3-L0  total", ("trackmva", "M"), L0),
 ]
 MAIN_STEPS = STEPS[:5]
-KEY_METRICS = ["macro_auc", "b_vs_light_eff@10%", "b_vs_light_eff@1%", "c_vs_light_eff@10%",
-               "tau_vs_jet_eff@10%", "tau_vs_jet_eff@1%"]
+KEY_METRICS = ["macro_auc", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "b_vs_udsg_eff@0.1%",
+               "c_vs_udsg_eff@10%", "c_vs_udsg_eff@1%", "tau_vs_jet_eff@10%", "tau_vs_jet_eff@1%",
+               "b_vs_light_eff@10%", "c_vs_light_eff@10%"]
 ALL_AUCS = [f"auc_{c}" for c in CLASSES] + ["auc_tau"]
 STEP_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#6b6b6b", "#a0a0a0"]
 STEP_MARKERS = ["o", "s", "^", "v", "D"]
@@ -128,6 +144,7 @@ def cell_metrics(d, W):
     S = {n: np.isin(lab, [CI[c] for c in sig]) for n, (sig, _, _, _) in PAIRS.items()}
     B = {n: np.isin(lab, [CI[c] for c in bkg]) for n, (_, bkg, _, _) in PAIRS.items()}
     T = {(n, m): thresholds(D[n][B[n]], W[:, B[n]], m) for n in PAIRS for m in MISTAGS}
+    thr = {f"{n}_thr@{pct(m)}": T[(n, m)] for n in PAIRS for m in MISTAGS}
     out = {}
     for reg, r in region_masks(d).items():
         Wr = W[:, r]
@@ -139,8 +156,10 @@ def cell_metrics(d, W):
             sel = r & (S[n] | B[n])
             o[f"{n}_auc"] = wauc(D[n][sel], S[n][sel], W[:, sel])
             for m in MISTAGS:
-                o[f"{n}_eff@{m:.0%}"] = frac_above(D[n][r & S[n]], W[:, r & S[n]], T[(n, m)])
-                o[f"{n}_mistag@{m:.0%}"] = frac_above(D[n][r & B[n]], W[:, r & B[n]], T[(n, m)])
+                o[f"{n}_eff@{pct(m)}"] = frac_above(D[n][r & S[n]], W[:, r & S[n]], T[(n, m)])
+                o[f"{n}_mistag@{pct(m)}"] = frac_above(D[n][r & B[n]], W[:, r & B[n]], T[(n, m)])
+        if reg == "incl":
+            o.update(thr)
         out[reg] = o
     return out
 
@@ -222,7 +241,7 @@ def ladder(M, regs):
     for mask in SP_MASKS:
         for lab, a, b in STEPS:
             for reg in regs:
-                for k in M[next(iter(M))]["avg"][reg]:
+                for k in [k for k in M[next(iter(M))]["avg"][reg] if "_thr@" not in k]:
                     v = step_value(M, resolve(a, mask), resolve(b, mask), reg, k)
                     if v is not None:
                         L.setdefault(mask, {}).setdefault(lab, {}).setdefault(reg, {})[k] = v
@@ -255,6 +274,54 @@ def roc_points(seeds, name):
     return 1 - np.searchsorted(Ds, t) / len(Ds), 1 - np.searchsorted(Db, t) / len(Db)
 
 
+def reachability(P):
+    """{cell: {pair: {wp: n_bkg_test_jets * mistag}}} (seed independent)."""
+    out = {}
+    for (v, m), seeds in P.items():
+        d = next(iter(seeds.values()))
+        out[f"{v}@{m}"] = {n: {pct(x): float(np.isin(d["label"], [CI[c] for c in PAIRS[n][1]]).sum() * x)
+                               for x in MISTAGS} for n in WP_PAIRS}
+    return out
+
+
+def stock_wp(n_boot=300, seed=7):
+    """The stock NG tagger (scores emulated in the nano, per scenario's jets) on each mask's
+    test jets in acceptance: b eff / udsg mistag of bTagScore > STOCK_B_CUT, and its b eff at
+    the 10 / 1 / 0.1% udsg-mistag thresholds of bTagScore; event-bootstrap errors."""
+    out = {}
+    for mask in C.MASKS:
+        mp = C.manifest_path(mask)
+        if not os.path.exists(mp):
+            continue
+        man = json.load(open(mp))
+        b, lab, key = [], [], []
+        for s, n, _ in man["files"]:
+            d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, mask, n) + ".npz"))
+            if "stock_bTagScore" not in d.files:
+                return {}
+            sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX)
+            b.append(d["stock_bTagScore"][sel])
+            lab.append(d["label"][sel])
+            key.append(C.event_key(man["samples"].index(s), n, d["evid"][d["entry"][sel]]))
+        b, lab, key = np.concatenate(b).astype(float), np.concatenate(lab), np.concatenate(key)
+        ev, inv = np.unique(key, return_inverse=True)
+        rng = np.random.default_rng(seed)
+        W = np.vstack([np.ones(len(ev))] + [rng.multinomial(len(ev), np.full(len(ev), 1 / len(ev)))
+                                            for _ in range(n_boot)]).astype(float)[:, inv]
+        isb, isu = lab == CI["b"], np.isin(lab, [CI["light"], CI["gluon"]])
+        cut = np.full(len(W), STOCK_B_CUT)
+        r = {"b_eff@cut": frac_above(b[isb], W[:, isb], cut), "udsg_mistag@cut": frac_above(b[isu], W[:, isu], cut),
+             "light_mistag@cut": frac_above(b[lab == CI["light"]], W[:, lab == CI["light"]], cut)}
+        for x in MISTAGS:
+            t = thresholds(b[isu], W[:, isu], x)
+            r[f"b_eff@{pct(x)}"] = frac_above(b[isb], W[:, isb], t)
+            r[f"thr@{pct(x)}"] = t
+        out[mask] = {k: [float(v[0]), float(np.nanstd(v[1:], ddof=1))] for k, v in r.items()}
+        out[mask].update({"n_b": int(isb.sum()), "n_udsg": int(isu.sum()),
+                          "frac_udsg_score0": float(np.mean(b[isu] == 0))})
+    return out
+
+
 # ------------------------------------------------------------------ PDF helpers
 def fmt(m, s=None, nd=3):
     if m is None or not np.isfinite(m):
@@ -279,7 +346,13 @@ STEP_NOTE = ("Steps: " + "; ".join(f"{short(lab)} = {lab.split('  ', 1)[1]}" for
              "the two error parts are listed separately in summary.json.")
 
 
-def table_page(pdf, title, header, rows, note=None, fontsize=7.0, col_widths=None):
+def table_page(pdf, title, header, rows, note=None, fontsize=7.0, col_widths=None, max_rows=30):
+    """One or more table pages (max_rows body rows each)."""
+    if len(rows) > max_rows:
+        for i in range(0, len(rows), max_rows):
+            table_page(pdf, f"{title} ({i // max_rows + 1}/{-(-len(rows) // max_rows)})", header,
+                       rows[i:i + max_rows], note, fontsize, col_widths, max_rows)
+        return
     import matplotlib.pyplot as plt
 
     fig = plt.figure(figsize=(11.69, 8.27))
@@ -323,7 +396,7 @@ def plot_rocs(pdf, P):
     vars_ = [v for v in C.VARIANTS if any(c[0] == v for c in P)]
     fig, axes = plt.subplots(len(vars_), 3, figsize=(11.69, 3.2 * len(vars_) + 1.2), squeeze=False)
     for i, var in enumerate(vars_):
-        for j, name in enumerate(PAIRS):
+        for j, name in enumerate(WP_PAIRS):
             ax = axes[i, j]
             for mask in C.MASKS:
                 if (var, mask) not in P:
@@ -388,8 +461,10 @@ def main():
     print(f"cells: {sorted(P)}", flush=True)
     M = compute(P, a.boot)
     regs = list(M[next(iter(M))]["avg"])
-    L = ladder(M, regs)
+    L = {m: v for m, v in ladder(M, regs).items() if ("baseline", m) in M}
     N = counts(P)
+    RCH = reachability(P)
+    STK = stock_wp(a.boot)
     mva = {m: json.load(open(p)) for m in C.MASKS
            if os.path.exists(p := os.path.join(C.OUT, "mva", m, "heldout_check.json"))}
     samples = next(iter(next(iter(P.values())).values()))["samples"]
@@ -412,6 +487,15 @@ def main():
                                                        for lab, a_, b_ in STEPS},
         "n_bootstrap": a.boot, "jet_counts_train_test": N, "track_mva_heldout": mva,
         "cells": cells, "ladder": L,
+        "working_points": {
+            "definition": "per trained tagger (cell, seed): threshold on D giving 10/1/0.1% background "
+                          "efficiency (loose/medium/tight) on that cell's test jets; D per pair in the "
+                          "module docstring (b/c: background udsg; tau: light+gluon jets)",
+            "thresholds_per_seed": {f"{v}@{m}": {s: {k: x for k, x in M[(v, m)]["seeds"][s]["incl"].items()
+                                                      if "_thr@" in k} for s in M[(v, m)]["seeds"]}
+                                    for (v, m) in M},
+            "expected_bkg_jets_above_threshold": RCH,
+            "stock_ng_tagger": {"cut": f"bTagScore > {STOCK_B_CUT}", "per_mask": STK}},
     }
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "summary.json"), "w") as f:
@@ -460,20 +544,21 @@ def main():
         for mask in [m for m in SP_MASKS if m in L]:
             hdr = ["metric (inclusive)", "L0 (IIII) abs."] + [short(lab) for lab, _, _ in STEPS]
             rows = []
-            for k in KEY_METRICS + ["b_vs_light_auc", "c_vs_light_auc", "tau_vs_jet_auc"] + ALL_AUCS:
+            for k in KEY_METRICS + ["b_vs_udsg_auc", "c_vs_udsg_auc", "tau_vs_jet_auc", "b_vs_light_auc", "c_vs_light_auc"] + ALL_AUCS:
                 m0 = seed_stats(M, L0, "incl", k) if L0 in M else (np.nan, np.nan, 0)
                 rows.append([k, fmt(m0[0], m0[1])] + [fmt_step(L[mask].get(lab, {}).get("incl", {}).get(k))
                                                       for lab, _, _ in STEPS])
             table_page(pdf, f"LADDER ({mask} vs IIII): gain of each step, inclusive test set", hdr, rows,
                        fontsize=6.3, note=STEP_NOTE + " L0 column: absolute value ± seed std.")
         for mask in [m for m in SP_MASKS if m in L]:
-            plot_steps(pdf, L, mask, "region:incl", ALL_AUCS + ["b_vs_light_auc", "c_vs_light_auc", "tau_vs_jet_auc"],
+            plot_steps(pdf, L, mask, "region:incl", ALL_AUCS + ["b_vs_udsg_auc", "c_vs_udsg_auc", "tau_vs_jet_auc", "b_vs_light_auc", "c_vs_light_auc"],
                        [k.replace("auc_", "").replace("_auc", "") for k in
-                        ALL_AUCS + ["b_vs_light_auc", "c_vs_light_auc", "tau_vs_jet_auc"]],
+                        ALL_AUCS + ["b_vs_udsg_auc", "c_vs_udsg_auc", "tau_vs_jet_auc", "b_vs_light_auc", "c_vs_light_auc"]],
                        "step gains per class (one-vs-rest AUC) and pairwise AUCs", "Δ AUC")
             bins = [r for r in regs if r.startswith(("abs_eta:", "pt:"))]
-            for k, lab in (("b_vs_light_eff@10%", "Δ b eff (10% light mistag)"),
-                           ("c_vs_light_eff@10%", "Δ c eff (10% light mistag)"),
+            for k, lab in (("b_vs_udsg_eff@10%", "Δ b eff (loose: 10% udsg mistag)"),
+                           ("b_vs_udsg_eff@1%", "Δ b eff (medium: 1% udsg mistag)"),
+                           ("c_vs_udsg_eff@10%", "Δ c eff (10% udsg mistag)"),
                            ("tau_vs_jet_eff@10%", "Δ tau eff (10% light+gluon mistag)"),
                            ("macro_auc", "Δ macro AUC")):
                 plot_steps(pdf, L, mask, f"metric:{k}", bins, [b.replace("abs_eta:", "|η| ").replace("pt:", "pT ")
@@ -481,16 +566,45 @@ def main():
                            f"step gains in |η| and pT bins: {k}", lab)
             rows = []
             for reg in bins + [r for r in regs if r.startswith("sample:")]:
-                for k in ("b_vs_light_eff@10%", "c_vs_light_eff@10%", "tau_vs_jet_eff@10%", "macro_auc"):
+                for k in ("b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "c_vs_udsg_eff@10%", "tau_vs_jet_eff@10%",
+                          "macro_auc"):
                     m0 = seed_stats(M, L0, reg, k) if L0 in M else (np.nan, np.nan, 0)
                     rows.append([reg, k, fmt(m0[0], m0[1])] + [fmt_step(L[mask].get(lab, {}).get(reg, {}).get(k))
                                                              for lab, _, _ in STEPS])
             table_page(pdf, f"LADDER ({mask}): step gains by region", ["region", "metric", "L0 (IIII) abs."]
                        + [short(lab) for lab, _, _ in STEPS], rows, fontsize=4.8,
                        note=STEP_NOTE + " Efficiencies at the INCLUSIVE 10%-mistag working point of each cell.")
+        # working points per cell
+        for n in WP_PAIRS:
+            rows = []
+            for c in [c for c in [(v, m) for v in C.VARIANTS for m in C.MASKS] if c in M]:
+                row = [f"{c[0]}@{c[1]}"]
+                for x in MISTAGS:
+                    e = seed_stats(M, c, "incl", f"{n}_eff@{pct(x)}")
+                    t = seed_stats(M, c, "incl", f"{n}_thr@{pct(x)}")
+                    nb = RCH[f"{c[0]}@{c[1]}"][n][pct(x)]
+                    flag = " [unreachable]" if nb < 1 else (" [<10 bkg jets]" if nb < 10 else "")
+                    row += [fmt(e[0], e[1]) + flag, fmt(t[0], t[1], 4)]
+                rows.append(row)
+            hdr = ["cell"] + [f"{WP_NAME[x]} ({pct(x)}): {k}" for x in MISTAGS for k in ("eff", "threshold on D")]
+            table_page(pdf, f"Working points per cell: {n} (mean ± seed std over the trained taggers)", hdr,
+                       rows, fontsize=6,
+                       note="Threshold = D value giving the background efficiency on the cell's own test jets "
+                            "(per seed; per-seed values in summary.json working_points). [unreachable]: "
+                            "n_bkg x mistag < 1 test jet; [<10 bkg jets]: the WP rests on < 10 background jets.")
+        if STK:
+            rows = [[m, f"{v['n_b']} / {v['n_udsg']}", fmt(*v["b_eff@cut"]), fmt(*v["udsg_mistag@cut"]),
+                     fmt(*v["light_mistag@cut"]), fmt(*v["b_eff@10%"]), fmt(*v["b_eff@1%"]),
+                     fmt(v["frac_udsg_score0"])] for m, v in STK.items()]
+            table_page(pdf, f"Stock NG tagger (nano scores, not retrained): bTagScore > {STOCK_B_CUT} on each "
+                            "scenario's test jets",
+                       ["mask", "test b / udsg jets", "b eff @cut", "udsg mistag @cut", "light mistag @cut",
+                        "b eff @10% udsg", "b eff @1% udsg", "frac udsg with score 0"], rows,
+                       note="Errors: event bootstrap. The stock model was trained elsewhere on other inputs; it is "
+                            "evaluated as emulated in each scenario's nano (jets re-emulated from that scenario's tracks).")
         # absolute values per cell
         cl = [c for c in [(v, m) for v in C.VARIANTS for m in C.MASKS] if c in M]
-        for chunk in (KEY_METRICS + ["b_vs_light_auc", "c_vs_light_auc", "tau_vs_jet_auc"], ALL_AUCS):
+        for chunk in (KEY_METRICS + ["b_vs_udsg_auc", "c_vs_udsg_auc", "tau_vs_jet_auc", "b_vs_light_auc", "c_vs_light_auc"], ALL_AUCS):
             rows = [[k] + [fmt(*seed_stats(M, c, "incl", k)[:2]) for c in cl] for k in chunk]
             table_page(pdf, "Absolute inclusive values per cell (mean ± seed std)", ["metric"]
                        + [f"{c[0]}@{c[1]}" for c in cl], rows, fontsize=5.3)
