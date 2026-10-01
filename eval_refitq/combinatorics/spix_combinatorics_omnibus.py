@@ -6215,6 +6215,11 @@ def main():
                          "input's ParameterSets when omitted, and checked against it when given")
     ap.add_argument("--only", default=None,
                     help="run only studies whose name contains this substring")
+    ap.add_argument("--skip", nargs="+", default=[],
+                    help="do not run studies whose name contains any of these substrings "
+                         "(recorded as skipped in the status). E.g. the barrel seeding studies "
+                         "12/13, which read only the cluster table (the same for every variant) "
+                         "and peak at ~6.7 GB footprint on 100 events")
     ap.add_argument("--menu-inputs", default=None,
                     help="comma-separated files/globs for study 15's streamed "
                          "census; defaults to -i. The other studies load their "
@@ -6337,12 +6342,20 @@ def main():
     gp = write_glossary(args.outdir)
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
 
+    def skipped_by(name):
+        return next((p for p in args.skip if p in name), None)
+
     def pick(scopes):
-        sel = [(t, d, [g for g in grp if g[3] in scopes and (not args.only or args.only in g[0])])
+        sel = [(t, d, [g for g in grp if g[3] in scopes and (not args.only or args.only in g[0])
+                       and not skipped_by(g[0])])
                for t, d, grp in SECTIONS]
         return [(t, d, g) for t, d, g in sel if g]
     if not pick((VARIANT, SHARED)):
-        raise SystemExit(f"--only {args.only!r} matched no study")
+        raise SystemExit(f"--only {args.only!r} / --skip {args.skip} left no study")
+    status.extend({"page": ".", "study": g[0], "status": f"skipped: --skip {skipped_by(g[0])!r}",
+                   "seconds": 0.0, "max_rss_gb_so_far": None, "max_footprint_gb_so_far": None}
+                  for _, _, grp in SECTIONS for g in grp
+                  if skipped_by(g[0]) and (not args.only or args.only in g[0]))
     # PAGES. One variant: a single page with every study, as before. Several: the
     # shared studies once on <outdir>'s page, the variant studies on one page per
     # variant in <outdir>/<variant>/ -- one grid per build stays readable.
@@ -6376,8 +6389,9 @@ def main():
         json.dump(OSU.jsonable(monitor), fh, indent=1)
     print(f"\nwrote {mp}\n\nSTUDY STATUS")
     for e in status:
-        foot = e["max_footprint_gb_so_far"]
-        print(f"  {e['page']:>10s}  {e['study']:42s} {e['seconds']:7.1f}s  rss<={e['max_rss_gb_so_far']:5.2f}GB  "
+        rss, foot = e["max_rss_gb_so_far"], e["max_footprint_gb_so_far"]
+        print(f"  {e['page']:>10s}  {e['study']:42s} {e['seconds']:7.1f}s  "
+              + ("" if rss is None else f"rss<={rss:5.2f}GB  ")
               + ("" if foot is None else f"footprint<={foot:5.2f}GB  ") + e["status"][:140])
     failed = [e for e in status if e["status"].startswith("FAILED")]
     if failed:
