@@ -178,12 +178,13 @@ def test_sigma_table(OSU, tmp_path):
 
 def test_monitor_diff():
     md = _load("monitor_diff")
-    A = {"provenance": {"build": "x", "created": "t0"}, "R1": {"OT": {"d0": 100.0, "z0": 50.0}}, "flags": ["a"]}
+    A = {"provenance": {"build": "x", "created": "t0"}, "R1": {"OT": {"d0": 100.0, "z0": 50.0}}, "flags": ["a"],
+         "R2": {"ID1": 0.9}}
     B = {"provenance": {"build": "y", "created": "t1"}, "R1": {"OT": {"d0": 110.0, "z0": 50.5}, "SP": {"d0": 1.0}},
-         "flags": ["a"]}
+         "flags": ["a"], "R2": {"ID1": None}}
     prov, ch, only_a, only_b = md.compare(A, B, rel=0.05)
     assert prov == [("build", "x", "y")]                             # 'created' is not a difference
-    assert [c[0] for c in ch] == ["R1.OT.d0"]
+    assert [c[0] for c in ch] == ["R2.ID1", "R1.OT.d0"]               # a number that became None is reported
     assert only_b == ["R1.SP.d0"] and only_a == []
 
 

@@ -70,7 +70,8 @@ def compare(A, B, rel=0.05, abs_=0.0, only=None):
             r = abs(d) / abs(a) if a != 0 else (math.inf if d != 0 else 0.0)
             if abs(d) > abs_ and r > rel:
                 changes.append((k, a, b, d, r))
-        elif a != b and not (_num(a) or _num(b)):
+        elif a != b and not (_num(a) and _num(b)):
+            # non-numeric, or a number that became None/NaN (a sparse or emptied bin)
             changes.append((k, a, b, None, None))
     changes.sort(key=lambda c: -(c[4] if c[4] is not None else math.inf))
     return prov, changes, sorted(set(na) - set(nb)), sorted(set(nb) - set(na))
