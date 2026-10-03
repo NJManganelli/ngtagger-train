@@ -3445,9 +3445,10 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     BY MARGINAL GAIN -- best single seed, then whichever raises the union most --
     and the table reports what each entry uniquely adds, not merely what it finds.
 
-    A seed's recovered set depends only on its own three layers, never on what
-    else is instrumented, so every distinct seed is run ONCE and each build's menu
-    is composed from that cache. Without it this would be fifteen full passes.
+    A build's seeds follow only into ITS OWN surfaces (active IT layers + OT), so
+    the census runs one entry per seed and build -- forming and projecting each
+    seed once -- and each build's menu is composed from its own entries
+    (C["builds"]).
 
     BARREL-ONLY BY DESIGN: the census (tp_findability) enumerates the barrel IT +
     OT barrel seeds only (seed_arity.enumerate_seeds over IL layers); a mask's
@@ -3498,7 +3499,6 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         return
     nev = max(C["n_events"], 1)
     rmed = {int(k): float(v) for k, v in C["calibration"]["r_median"].items()}
-    idx_of = {t: i for i, t in enumerate(C["seed_tags"])}
     above = C["pt"] >= PTMIN
 
     def on_layer(L):
@@ -3508,31 +3508,31 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
     # Per-seed recovered sets, as boolean masks over the census rather than key
     # arrays: the greedy composition is then a popcount of (mask & ~have) instead
     # of an np.setdiff1d over 1e5-element int64 arrays, which is what let the
-    # composition stay cheap once the census grew to millions of TPs.
+    # composition stay cheap once the census grew to millions of TPs. Keyed by
+    # census ENTRY: a seed in two builds is two entries.
     FOUND, COST = {}, {}
-    for tag, i in idx_of.items():
+    for i, sd in enumerate(C["seeds"]):
         c = C["counters"].get(i, {})
         if c.get("infeasible"):
             continue
-        sd = C["seeds"][i]
         m = TF.seed_mask(C, i)
         if not m.any():
             continue
         q = C["qual"].get(i, np.zeros((0, 5), np.float32))
-        FOUND[tag] = m
-        COST[tag] = {"cand": c.get("cand", 0.0) / nev,
-                     "arity": sd.arity, "note": C["seed_notes"][i],
-                     "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
-                     "fit": c.get("fit", 0.0) / nev,
-                     "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
-                     # POST-FIT, from the KF emulation: columns are
-                     # (dkappa, dd0, dcot, dz0, nhit), not the old
-                     # seed-level (dkappa, dcot, dz0).
-                     "sig_kappa": TF.robust_sigma(q[:, 0]),
-                     "sig_d0_cm": TF.robust_sigma(q[:, 1]),
-                     "sig_cot": TF.robust_sigma(q[:, 2]),
-                     "sig_z0_cm": TF.robust_sigma(q[:, 3]),
-                     "mean_nhit": float(q[:, 4].mean()) if len(q) else float("nan")}
+        FOUND[i] = m
+        COST[i] = {"cand": c.get("cand", 0.0) / nev,
+                   "arity": sd.arity, "note": C["seed_notes"][i],
+                   "nlayer": c.get("nlayer_sum", 0.0) / max(c.get("fit", 1.0), 1.0),
+                   "fit": c.get("fit", 0.0) / nev,
+                   "fake": 1.0 - c.get("trip_true", 0.0) / max(c.get("trip", 0.0), 1.0),
+                   # POST-FIT, from the KF emulation: columns are
+                   # (dkappa, dd0, dcot, dz0, nhit), not the old
+                   # seed-level (dkappa, dcot, dz0).
+                   "sig_kappa": TF.robust_sigma(q[:, 0]),
+                   "sig_d0_cm": TF.robust_sigma(q[:, 1]),
+                   "sig_cot": TF.robust_sigma(q[:, 2]),
+                   "sig_z0_cm": TF.robust_sigma(q[:, 3]),
+                   "mean_nhit": float(q[:, 4].mean()) if len(q) else float("nan")}
     if not FOUND:
         for a in ax_row:
             a.axis("off")
@@ -3556,13 +3556,15 @@ def study_seed_menu_by_build(X, K, P, ax_row, out):
         # PER BUILD, including arity: which seeds exist depends on which IT
         # layers are instrumented, and the locality rule that governs mixed
         # seeds is anchored on the OUTERMOST instrumented IT layer, so a build's
-        # seed list is not a subset of a richer build's.
-        for sd in SA.enumerate_seeds(il):
+        # seed list is not a subset of a richer build's. Tags are unique within
+        # a build's menu.
+        for i in C["builds"].get(mask, []):
+            sd = C["seeds"][i]
             la, lb = sd.layers[0], sd.layers[1]
             if float((above & ON[la] & ON[lb]).sum()) / nev < 20.0:
                 continue
-            if sd.tag in FOUND:
-                found[sd.tag], cost[sd.tag] = FOUND[sd.tag], COST[sd.tag]
+            if i in FOUND:
+                found[sd.tag], cost[sd.tag] = FOUND[i], COST[i]
         if not found:
             builds[mask] = {"n_seeds": 0}
             continue

@@ -724,6 +724,7 @@ function layout() {
   g.querySelectorAll('.cellsel').forEach(e => e.addEventListener('change', draw));
 }
 function buildSeeds() {
+  // a build's own entries (seed idx): its seeds, followed into its own surfaces
   const m = S.m, allowed = new Set(m.builds[document.getElementById('build').value]);
   const sc = scenario();
   document.getElementById('scenhint').textContent = SCEN[sc];
@@ -750,7 +751,7 @@ function buildSeeds() {
       pick: (s) => !!s.soft },
   ];
   const vis = m.seeds.filter(s => {
-    if (!allowed.has(s.tag)) return false;
+    if (!allowed.has(s.idx)) return false;
     if (sc === 'refit' && s.sysclass === 2) return false;  // no cross-system
     if (BASELINES[sc]) return false;                       // no menu applies
     return true;
@@ -1278,8 +1279,8 @@ async function drawInner() {
       const seedList = m.seeds.filter(s => idx.includes(s.idx)).map(s => s.idx);
       const builds = Object.keys(m.builds);
       const okSeed = (s) => !(scenario() === 'refit' && s.sysclass === 2);
-      const tagIdx = new Map(m.seeds.map(s => [s.tag, s]));
-      const menuOf = (b) => m.builds[b].map(t => tagIdx.get(t))
+      const byIdx = new Map(m.seeds.map(s => [s.idx, s]));
+      const menuOf = (b) => m.builds[b].map(i => byIdx.get(i))
                                         .filter(s => s && okSeed(s)).map(s => s.idx);
       let ylab, Z, over = 0, nev = m.n_events;
       if (isSeed) {

@@ -100,7 +100,7 @@ var MAN = { built:'test', n_events:2, source:'synthetic', ptmin:2.0,
          {idx:2,tag:'IL4+OL1',layers:[4,11],arity:2,sysclass:2},
          {idx:3,tag:'IL1+IL2 soft',layers:[1,2],arity:2,sysclass:0,soft:true},
          {idx:1,tag:'OL1+OL2',layers:[11,12],arity:2,sysclass:1}],
-  builds:{AAAA:['IL1+IL2','OL1+OL2','IL4+OL1','IL1+IL2 soft']},
+  builds:{AAAA:[0,1,2,3]},
   mva:{ mva_clean_prompt:{auc:0.99,features:['a','b'],population:'all',
         target:'x',auc_displaced:0.97,'keep_rate_at_0.9_clean':{prompt:0.8,displaced:0.6}} },
   tp:{file:'tp.bin',cols:TPCOLS,rows:NTP,dtype:'float32'},
@@ -489,7 +489,7 @@ if (DATA) {
   catch(e){ log.push('real SETUP THREW: '+e.message); }
   setOpen();
   var GRP=function(s){ return s.soft?'soft':['it','ot','mix'][s.sysclass]; };
-  SDBOX=RM.seeds.filter(function(s){ return RM.builds.AAAA.indexOf(s.tag)>=0; })
+  SDBOX=RM.seeds.filter(function(s){ return RM.builds.AAAA.indexOf(s.idx)>=0; })
                 .map(function(s){ return box(GRP(s), String(s.idx)); });
   log.push('AAAA seeds enabled: '+SDBOX.length);
   var c1=drawEta('joint', MULT.concat(['eff_deliv']), 'REAL joint AAAA, DR on');

@@ -40,7 +40,7 @@ conversion electron) can be a photon; ~1.8% of the >= 1 GeV TPs with an IT
 cluster in the 5-event PU200 test file are of that kind.
 """
 from __future__ import annotations
-import argparse, hashlib, json, os, sys, time
+import argparse, hashlib, json, os, sys, time, zlib
 from pathlib import Path
 import numpy as np
 import awkward as ak
@@ -65,7 +65,11 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 22   # 22: per-seed seed multiplicity by |eta| (shard seed_eta).
+FORMAT_VERSION = 23   # 23: entries = seed x build follow set (a build's seeds follow
+                      # only into its active IT layers + OT; manifest seed_follow,
+                      # builds, dr_groups), DR and nonant occupancy per DR group,
+                      # quality sample drawn per (chunk, entry).
+                      # 22: per-seed seed multiplicity by |eta| (shard seed_eta).
                       # 21: TPs identified by tpIdx (L1TTP row; <= -3 matched but not in
                       # L1TTP), census key = M.tp_key(event, tpIdx) with the 22-bit low
                       # word; key-era shards are not comparable.
@@ -220,11 +224,9 @@ SOFT_TARGETS = (1, 2, 3, 4, 11, 12, 13)
 
 
 def seed_universe_over_builds(rmed, masks, seed_classes=None):
-    """Union over builds of each build's own doublet and triplet seeds.
-
-    Which seeds exist depends on which IT layers are instrumented, but a seed's
-    RESULT does not, so every distinct seed is run once and each build composes
-    its menu from that. Enumeration and the locality rule live in seed_arity.
+    """Union over builds of each build's own doublet and triplet seeds, each
+    once, in the census order. Enumeration and the locality rule live in
+    seed_arity; what a seed follows into is per build (census_entries).
     """
     seen, out = {}, []
     for mask in masks:
@@ -248,6 +250,122 @@ def seed_universe_over_builds(rmed, masks, seed_classes=None):
 
 def seed_tag(s):
     return s.tag if hasattr(s, "tag") else SA.Seed(s).tag
+
+
+def census_entries(rmed, masks, targets=None, seed_classes=None, it_ptmin=None):
+    """The census's units of work and each build's menu over them.
+
+    A BUILD'S SURFACES ARE ITS OWN. A mask's letters say which IT layers exist
+    (A = active, I = inactive; character k = ILk), and an inactive layer emits
+    nothing at L1, so a seed run for a build follows only into that build's
+    active IT layers and the OT: the layer rule and the fit then see only those.
+    Following every seed into IL1-IL4 whatever the build credited AAAI with IL4
+    hits (37.6% of its fitted tracks; 26.1% passed the layer rule only through
+    one) and IAAA with IL1 hits (45.7% / 31.1%).
+
+    So an ENTRY is a seed with its follow set: build surfaces within `targets`,
+    minus the seed's own layers. A seed in builds with different surfaces is one
+    entry per distinct follow set, and builds whose follow sets coincide (e.g.
+    OT-only targets) share the entry. Entries come in the seed universe's order,
+    standard before the --it-ptmin recovery entries, each seed's variants in mask
+    order. `masks` None is the full IT (AAAA).
+
+    Returns (entries, builds): entries are SA.Seed with .follow set; builds maps
+    each mask to the indices of its menu's entries.
+    """
+    masks = list(masks) if masks else ["AAAA"]
+    tg = list(targets) if targets else list(SA.IL) + list(SA.OT_BARREL)
+    order = {sd.layers: k for k, sd in
+             enumerate(seed_universe_over_builds(rmed, masks, seed_classes))}
+    rows = []
+    for bi, mask in enumerate(masks):
+        il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
+        menu = [sd for sd in SA.enumerate_seeds(il) if sd.layers in order]
+        if it_ptmin is not None:
+            menu += SA.soft_seeds(menu)
+        for sd in menu:
+            follow = tuple(sorted(L for L in tg
+                                  if (L > 10 or L in il) and L not in sd.layers))
+            rows.append(((sd.soft, order[sd.layers], bi), sd, follow, mask))
+    rows.sort(key=lambda r: r[0])
+    index, entries, builds = {}, [], {m: [] for m in masks}
+    for _, sd, follow, mask in rows:
+        k = (sd.layers, sd.soft, follow)
+        if k not in index:
+            index[k] = len(entries)
+            entries.append(SA.Seed(sd.layers, note=sd.note, soft=sd.soft,
+                                   category=sd.category, follow=follow))
+        builds[mask].append(index[k])
+    return entries, builds
+
+
+def dr_groups(builds, n_entries):
+    """Entries partitioned into the sets duplicate removal runs over.
+
+    DR IS PER BUILD: it collapses one system's duplicates, and the same seed in
+    two builds is two systems' tracks, not a duplicate. A build whose entries are
+    all its own (every build with its IT layers among the targets) is its own
+    group. Builds that SHARE an entry must share its DR, so a group is a
+    connected component of builds linked by shared entries; with OT-only targets
+    every build shares every entry and the group is the whole census.
+    Returns the groups as sorted entry lists, ordered by their first entry.
+    """
+    parent = list(range(n_entries))
+
+    def root(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    for idx in builds.values():
+        for i in idx[1:]:
+            parent[root(i)] = root(idx[0])
+    groups = {}
+    for i in range(n_entries):
+        groups.setdefault(root(i), []).append(i)
+    return sorted(groups.values(), key=lambda g: g[0])
+
+
+def entry_rng(ci, sd):
+    """The random stream for one entry in one chunk (the quality sample).
+
+    PER ENTRY AND CHUNK, not one stream for the run: with a shared stream an
+    entry's sample depended on every entry drawn before it -- i.e. one build's
+    numbers on which other builds the census ran -- and a resumed run, which
+    skips done chunks without drawing, wrote different shards from a straight
+    one."""
+    key = repr((sd.layers, bool(sd.soft), sd.follow)).encode()
+    return np.random.default_rng([12345, int(ci), zlib.crc32(key)])
+
+
+def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0):
+    """Yield (index, result) per entry: SA.run_seed's result for the entry's
+    seed followed into its own follow set, None if the seed formed nothing, or
+    the M.TooWide its formation raised.
+
+    A SEED IS FORMED AND PROJECTED ONCE for all of its entries, over the union of
+    their follow sets (SA.follow_seed); each entry then applies the layer rule to
+    its own (SA.apply_layer_rule). Entries of one seed are contiguous
+    (census_entries), so only the current one is held. ptmin_of(sd) and
+    rule_of(sd) -> (min_it_layers, min_ot_conf) give an entry's floor and rule.
+    """
+    formed, F, err = None, None, None
+    for s_i, sd in enumerate(seeds):
+        if formed != (sd.layers, sd.soft):
+            formed, F, err = (sd.layers, sd.soft), None, None
+            union = sorted({L for e in seeds if (e.layers, e.soft) == formed
+                            for L in e.follow})
+            try:
+                F = SA.follow_seed(U, Q, sd, ptmin_of(sd), union, d0_cm=d0_cm)
+            except M.TooWide as e:
+                err = e
+        if err is not None:
+            yield s_i, err
+            continue
+        mil, moc = rule_of(sd)
+        yield s_i, (None if F is None else SA.apply_layer_rule(
+            F, sd, sd.follow, min_layers=min_layers, min_it_layers=mil,
+            min_ot_conf=moc))
 
 
 # ==========================================================================
@@ -400,20 +518,23 @@ def chunk_census(U):
             "hit_it": hit_it, "hit_ot": hit_ot}
 
 
-def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
-                  export_tracks=0, do_dr=True, targets=None,
+def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
+                  export_tracks=0, do_dr=True,
                   min_layers=SA.MIN_LAYERS, d0_window_cm=0.0, it_ptmin=None,
                   min_it_layers=None, min_ot_conf=0):
-    """Run every seed over one chunk and reduce to census + bitmap + counters.
+    """Run every entry over chunk `ci` and reduce to census + bitmap + counters.
+
+    `seeds` are the census entries (census_entries: a seed and the layers it
+    follows into), `groups` the entry sets duplicate removal runs over
+    (dr_groups). Entries of one seed share its formation and projections
+    (SA.follow_seed); each applies the layer rule to its own follow set.
 
     TWO PASSES, because duplicate removal is inherently cross-seed. The first
-    pass runs each seed through pairing, projection, the 4-layer rule and the KF
-    chi2 acceptance and holds its survivors. DR then runs ONCE over all of them
-    together -- several seeds finding the same track is exactly what it exists
-    to collapse -- and only then is each seed credited with what survived.
-
-    Quality and MVA rows are taken after DR too, so the resolutions and the
-    training sample describe the tracks a real system would actually emit.
+    pass runs each entry through pairing, projection, the 4-layer rule and the
+    KF chi2 acceptance and holds its survivors. DR then runs once per group over
+    all of its entries together -- several seeds finding the same track is
+    exactly what it exists to collapse -- and only then is each entry credited
+    with what survived.
     """
     kf_opts = kf_opts or {}
     # THE pT FLOOR IS PER SEED, not global. The OT stub algorithm's own bend
@@ -465,7 +586,6 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     # survivors, which is what a real system emits.
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
-    targets = list(targets) if targets else list(SA.IL) + list(SA.OT_BARREL)
     counters, qual, trk, hits, ang = {}, {}, {}, {}, {}
     # SEED MULTIPLICITY BY |eta|: every seed object a seed forms (the funnel's
     # seed_objects), binned on SA.SEED_ETA_EDGES. Counts, so chunks add.
@@ -474,17 +594,14 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
     TP = KF.tp_truth_table(U)
     held = {}
-    for s_i, sd in enumerate(seeds):
-        try:
-            pt_s = _ptmin_for(sd)
-            mil, moc = _rule_for(sd)
-            o = SA.run_seed(U, Q, sd, pt_s, targets, min_layers=min_layers,
-                            d0_cm=d0_window_cm, min_it_layers=mil,
-                            min_ot_conf=moc)
-        except M.TooWide as e:
-            counters[s_i] = {"infeasible": 1.0, "n": float(e.n)}
+    for s_i, o in entry_results(U, Q, seeds, _ptmin_for, _rule_for, min_layers,
+                                d0_window_cm):
+        sd = seeds[s_i]
+        pt_s = _ptmin_for(sd)
+        if isinstance(o, M.TooWide):
+            counters[s_i] = {"infeasible": 1.0, "n": float(o.n)}
             continue
-        if o is not None and "seed_eta_hist" in o:
+        if o is not None:
             seed_eta[s_i] = o["seed_eta_hist"]
         if o is None or not o.get("tracks_to_fit"):
             counters[s_i] = {"pairs": 0.0, "cand": 0.0, "fit": 0.0}
@@ -539,6 +656,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
             # seed clusters share a TP, a triplet when all three do.
             "trip": float(len(ta)), "trip_true": float(real.sum())})
         counters[s_i] = base
+        rng = entry_rng(ci, sd)
         idx = np.flatnonzero(real)
         if len(idx):
             if len(idx) > qual_per_chunk:
@@ -594,44 +712,46 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     # Binned on the INNER SEED CLUSTER's azimuth, because a tracklet is
     # processed in the sector its seeding stub falls in -- not on the fitted
     # phi0, which is a property of the track rather than of where the hardware
-    # handled it. Stored as counts per (event, nonant) rather than as a
-    # pass/fail at 108, so the cap can be varied afterwards without re-running.
-    keys = sorted(held)
+    # handled it. Stored as counts per (DR group, event, nonant) rather than as
+    # a pass/fail at 108, so the cap can be varied afterwards without
+    # re-running. Per DR group, i.e. per build: one system's load.
     ev0 = int(U["event"].min()) if len(U["event"]) else 0
     nev_c = int(U["event"].max()) - ev0 + 1 if len(U["event"]) else 0
-    nonant = np.zeros(max(nev_c, 0) * N_REGION, np.int32)
-    if keys and nev_c > 0:
-        gA = [held[i]["o"]["_gA"] for i in keys]
-        ev_all = np.concatenate([U["event"][g] for g in gA])
-        ph_all = np.concatenate([U["globalPhi"][g] for g in gA])
-        # eta of the seed's inner cluster, the same object the phi bin uses
-        et_all = np.concatenate([np.arcsinh(U["globalZ"][g]
-                                            / np.maximum(U["globalR"][g], 1e-6))
-                                 for g in gA])
-        nz = np.clip(((ph_all + np.pi) % (2 * np.pi))
-                     / (2 * np.pi / N_NONANT), 0, N_NONANT - 1e-9).astype(np.int64)
-        es = np.searchsorted(np.asarray(ETA_SECTOR_EDGES), et_all)
-        es = np.clip(es, 0, N_ETA_SECTOR - 1).astype(np.int64)
-        loc = ev_all - ev0                   # chunk-local event index
-        ok_ = (loc >= 0) & (loc < nev_c)
-        nonant = np.bincount(((loc[ok_] * N_NONANT + nz[ok_]) * N_ETA_SECTOR
-                              + es[ok_]),
-                             minlength=nev_c * N_REGION).astype(np.int32)
-    if keys and do_dr:
-        G = np.concatenate([KF.hits_from_seed(U, held[i]["o"]) for i in keys])
-        SC = np.concatenate([held[i]["score"] for i in keys])
-        surv = SA.duplicate_removal(G, SC)
-        off = 0
-        for i in keys:
-            n = len(held[i]["score"])
-            held[i]["dr"] = surv[off:off + n]
-            off += n
-    else:
-        for i in keys:
-            held[i]["dr"] = np.ones(len(held[i]["score"]), bool)
+    nonant = np.zeros((len(groups), max(nev_c, 0) * N_REGION), np.int32)
+    for g, members in enumerate(groups):
+        keys = [i for i in members if i in held]
+        if keys and nev_c > 0:
+            gA = [held[i]["o"]["_gA"] for i in keys]
+            ev_all = np.concatenate([U["event"][x] for x in gA])
+            ph_all = np.concatenate([U["globalPhi"][x] for x in gA])
+            # eta of the seed's inner cluster, the same object the phi bin uses
+            et_all = np.concatenate([np.arcsinh(U["globalZ"][x]
+                                                / np.maximum(U["globalR"][x], 1e-6))
+                                     for x in gA])
+            nz = np.clip(((ph_all + np.pi) % (2 * np.pi))
+                         / (2 * np.pi / N_NONANT), 0, N_NONANT - 1e-9).astype(np.int64)
+            es = np.searchsorted(np.asarray(ETA_SECTOR_EDGES), et_all)
+            es = np.clip(es, 0, N_ETA_SECTOR - 1).astype(np.int64)
+            loc = ev_all - ev0                   # chunk-local event index
+            ok_ = (loc >= 0) & (loc < nev_c)
+            nonant[g] = np.bincount(((loc[ok_] * N_NONANT + nz[ok_]) * N_ETA_SECTOR
+                                     + es[ok_]),
+                                    minlength=nev_c * N_REGION).astype(np.int32)
+        if keys and do_dr:
+            G = np.concatenate([KF.hits_from_seed(U, held[i]["o"]) for i in keys])
+            SC = np.concatenate([held[i]["score"] for i in keys])
+            surv = SA.duplicate_removal(G, SC)
+            off = 0
+            for i in keys:
+                n = len(held[i]["score"])
+                held[i]["dr"] = surv[off:off + n]
+                off += n
+        else:
+            for i in keys:
+                held[i]["dr"] = np.ones(len(held[i]["score"]), bool)
 
     # ---- pass 2: post-DR OWNERSHIP only ---------------------------------
-    for s_i in keys:
+    for s_i in sorted(held):
         h = held[s_i]
         dr = h["dr"]
         counters[s_i]["owned"] = float(dr.sum())
@@ -646,17 +766,10 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     return cen, found, found_dr, counters, qual, trk, hits, ang, nonant, seed_eta
 
 
-def truncation_table(C, cap=TRACKS_PER_REGION):
-    """What the per-region output ceiling would cost this menu.
-
-    Returns None when the census predates the occupancy record rather than
-    reporting zeros, which would read as "no truncation" instead of "not
-    measured".
-    """
-    occ = C.get("nonant")
-    if occ is None or not len(occ):
-        return None
-    occ = np.asarray(occ, np.int64)
+def truncation_table(C, group, cap=TRACKS_PER_REGION):
+    """What the per-region output ceiling would cost DR group `group`'s menu
+    (C["dr_groups"]; one build, or the builds sharing its entries)."""
+    occ = np.asarray(C["nonant"][group], np.int64)
     over = np.maximum(occ - cap, 0)
     n_tracks = int(occ.sum())
     nev = max(len(occ) // N_REGION, 1)
@@ -739,14 +852,13 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             raise SystemExit(f"no cache for key {kh} under {cache_dir}")
         os.makedirs(d, exist_ok=True)
         cal = calibrate(spec, calib_events, ptmin)
-        seeds = (seed_universe_over_builds(cal["r_median"], masks, seed_classes)
-                 if masks else SA.enumerate_seeds(list(SA.IL)))
-        # DEDICATED ENTRIES, APPENDED. The standard seeds above are left exactly
-        # as they are; --it-ptmin adds a parallel set that runs at the lower
-        # floor under the per-system rule. Switching the extension on and off is
-        # then a seed selection, and the 2 GeV numbers cannot move.
-        if it_ptmin is not None:
-            seeds = list(seeds) + SA.soft_seeds(seeds)
+        # DEDICATED ENTRIES, APPENDED. The standard entries are left exactly as
+        # they are; --it-ptmin adds a parallel set (each build's IT-only seeds)
+        # that runs at the lower floor under the per-system rule. Switching the
+        # extension on and off is then a seed selection, and the 2 GeV numbers
+        # cannot move.
+        seeds, builds = census_entries(cal["r_median"], masks, targets,
+                                       seed_classes, it_ptmin)
         if not seeds:
             raise SystemExit("no seeds after filtering; check --seed-classes")
         # bend -> kappa per OT layer, measured from real on-track stubs. Stored
@@ -760,12 +872,16 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 "seed_soft": [bool(sd.soft) for sd in seeds],
                 "seed_notes": [sd.note for sd in seeds],
                 "seed_tags": [sd.tag for sd in seeds],
+                # the layers each entry follows into, and each build's entries
+                "seed_follow": [list(sd.follow) for sd in seeds],
+                "builds": builds,
+                "dr_groups": dr_groups(builds, len(seeds)),
                 "seed_eta_edges": list(SA.SEED_ETA_EDGES),
                 "chunks_done": 0, "n_events": 0}
         json.dump(meta, open(mpath, "w"), indent=1, default=float)
-    _soft = meta.get("seed_soft") or [False] * len(meta["seeds"])
-    seeds = [SA.Seed(tuple(x), soft=bool(s))
-             for x, s in zip(meta["seeds"], _soft)]
+    seeds = [SA.Seed(tuple(x), soft=bool(s), follow=f)
+             for x, s, f in zip(meta["seeds"], meta["seed_soft"],
+                                meta["seed_follow"])]
     sigz = {int(k): float(v) for k, v in meta["calibration"]["sigz_ot"].items()}
     # Set on BOTH paths -- fresh build and cache resume -- because the OT bend
     # gate raises rather than silently falling back to the nominal slope, and a
@@ -774,10 +890,10 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     if obc:
         M.set_ot_bend_cal({int(k): tuple(v) for k, v in obc.items()})
     if verbose:
-        print(f"cache {d}\n  {len(seeds)} seeds, chunk = {chunk} events, "
+        print(f"cache {d}\n  {len(seeds)} entries ({len({(s.layers, s.soft) for s in seeds})} "
+              f"seeds) over {len(meta['builds'])} build(s), chunk = {chunk} events, "
               f"{meta['chunks_done']} chunk(s) already done", flush=True)
 
-    rng = np.random.default_rng(12345)
     done = meta["chunks_done"]
     nev_seen = meta["n_events"]
     need = None if nev is None else max(0, nev - nev_seen)
@@ -792,8 +908,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
             cen, found, found_dr, counters, qual, trk, hits, ang, nonant, seed_eta = process_chunk(
-                U, Q, seeds, ptmin, rng, QUAL_PER_CHUNK, kf_opts,
-                export_tracks, targets=targets, min_layers=min_layers,
+                U, Q, seeds, meta["dr_groups"], ptmin, ci, QUAL_PER_CHUNK, kf_opts,
+                export_tracks, min_layers=min_layers,
                 d0_window_cm=d0_window_cm, it_ptmin=it_ptmin,
                 min_it_layers=min_it_layers, min_ot_conf=min_ot_conf)
             np.savez_compressed(
@@ -838,6 +954,12 @@ def census_dir(path):
 
 def load(d, nev=None, verbose=True, with_tracks=False):
     meta = json.load(open(os.path.join(d, "manifest.json")))
+    # ONLY THIS FORMAT IS READ. A census of another format means other numbers
+    # under the same names -- before 23, every build's seeds followed into all
+    # of IL1-IL4 -- so it is refused, never reinterpreted.
+    if meta.get("format") != FORMAT_VERSION:
+        raise SystemExit(f"{d} is census format {meta.get('format')}; this code "
+                         f"reads {FORMAT_VERSION} only. Rebuild it.")
     shards = sorted(Path(d).glob("chunk_*.npz"))
     if not shards:
         raise SystemExit(f"{d} has no shards")
@@ -856,12 +978,10 @@ def load(d, nev=None, verbose=True, with_tracks=False):
         fnd.append(z["found"])
         fdr.append(z["found_dr"])
         cl_off = cl_tot
-        cl_tot += int(z["n_clusters"]) if "n_clusters" in z.files else 0
+        cl_tot += int(z["n_clusters"])
         nread += int(z["n_events"])
-        if "nonant" in z.files:
-            non.append(z["nonant"])
-        if "seed_eta" in z.files:
-            seta = z["seed_eta"] if seta is None else seta + z["seed_eta"]
+        non.append(z["nonant"])
+        seta = z["seed_eta"] if seta is None else seta + z["seed_eta"]
         for k, v in json.loads(str(z["counters"])).items():
             a = cnt.setdefault(int(k), {})
             for kk, vv in v.items():
@@ -881,25 +1001,29 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["found"] = np.concatenate(fnd, axis=0)
     C["found_dr"] = np.concatenate(fdr, axis=0)
     C["n_events"] = nread
-    C["nonant"] = np.concatenate(non) if non else np.zeros(0, np.int32)
-    # seeds formed per seed and |eta| bin, summed over the events read (None for
-    # a census that predates the record: "not measured", never zeros)
+    # per DR group (C["dr_groups"]): (group, event x region) occupancy
+    C["nonant"] = np.concatenate(non, axis=1)
+    # seeds formed per entry and |eta| bin, summed over the events read
     C["seed_eta"] = seta
-    C["seed_eta_edges"] = meta.get("seed_eta_edges")
-    # the soft flag has to survive the reload too, or the report describes the
-    # recovery entries under the standard floor and the standard rule
-    _sf = meta.get("seed_soft") or [False] * len(meta["seeds"])
-    C["seeds"] = [SA.Seed(tuple(x), soft=bool(f))
-                  for x, f in zip(meta["seeds"], _sf)]
+    C["seed_eta_edges"] = meta["seed_eta_edges"]
+    # the soft flag and the follow set have to survive the reload too, or the
+    # report describes the recovery entries under the standard floor and rule,
+    # or an entry without the build surfaces it ran on
+    C["seeds"] = [SA.Seed(tuple(x), soft=bool(f), follow=fl)
+                  for x, f, fl in zip(meta["seeds"], meta["seed_soft"],
+                                      meta["seed_follow"])]
     C["seed_tags"] = meta["seed_tags"]
-    C["seed_notes"] = meta.get("seed_notes", [""] * len(meta["seeds"]))
+    C["seed_notes"] = meta["seed_notes"]
+    # each build's entries, and the entry sets DR ran over
+    C["builds"] = meta["builds"]
+    C["dr_groups"] = meta["dr_groups"]
     C["calibration"] = meta["calibration"]
-    C["ptmin"] = float(meta["config"].get("ptmin", 2.0))
-    C["min_layers"] = int(meta["config"].get("min_layers", SA.MIN_LAYERS))
-    mil = meta["config"].get("min_it_layers")
+    C["ptmin"] = float(meta["config"]["ptmin"])
+    C["min_layers"] = int(meta["config"]["min_layers"])
+    mil = meta["config"]["min_it_layers"]
     C["min_it_layers"] = None if mil is None else int(mil)
-    C["min_ot_conf"] = int(meta["config"].get("min_ot_conf", 0) or 0)
-    ipm = meta["config"].get("it_ptmin")
+    C["min_ot_conf"] = int(meta["config"]["min_ot_conf"])
+    ipm = meta["config"]["it_ptmin"]
     C["it_ptmin"] = None if ipm is None else float(ipm)
     C["counters"] = {i: cnt.get(i, {}) for i in range(len(C["seeds"]))}
     C["qual"] = {i: (np.concatenate(v) if v else np.zeros((0, 5), np.float32))
@@ -926,7 +1050,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["cache_dir"] = d
     if verbose:
         print(f"loaded {len(fnd)} shard(s): {nread} events, "
-              f"{len(C['key']):,} TPs, {len(C['seeds'])} seeds, "
+              f"{len(C['key']):,} TPs, {len(C['seeds'])} entries, "
               f"{C['found'].nbytes / 1e6:.1f} MB bitmap", flush=True)
     return C
 
@@ -959,8 +1083,18 @@ def robust_sigma(x):
     return float(0.5 * (q[1] - q[0]))
 
 
+def entry_builds(C, i):
+    """The builds whose menus hold entry i."""
+    return [m for m, idx in C["builds"].items() if i in idx]
+
+
+def _builds_label(builds):
+    return ",".join(builds) if len(builds) <= 3 else f"{len(builds)} builds"
+
+
 def seed_table(C):
-    """Per seed: TPs found, cost per event, fake fraction, seed-level resolutions."""
+    """Per entry: TPs found, cost per event, fake fraction, seed-level
+    resolutions, and the builds and follow layers it ran for."""
     def _need_for(C, sd):
         """Confirmations this seed had to find, under whichever rule was set."""
         mil = C.get("min_it_layers")
@@ -977,12 +1111,15 @@ def seed_table(C):
     for i, tag in enumerate(C["seed_tags"]):
         sd = C["seeds"][i]
         c = C["counters"].get(i, {})
+        where = {"builds": entry_builds(C, i),
+                 "follow": [SA.NAME[L] for L in sd.follow]}
         if c.get("infeasible"):
-            rows.append({"seed": tag, "arity": sd.arity, "infeasible": True})
+            rows.append({"seed": tag, "arity": sd.arity, **where,
+                         "infeasible": True})
             continue
         q = C["qual"].get(i, np.zeros((0, 5), np.float32))
         rows.append({
-            "seed": tag, "arity": sd.arity, "note": C["seed_notes"][i],
+            "seed": tag, "arity": sd.arity, **where, "note": C["seed_notes"][i],
             "n_found": int(seed_mask(C, i).sum()),
             "n_found_dr": int(seed_mask(C, i, after_dr=True).sum()),
             # THE RULE THE SEED ACTUALLY RAN UNDER, derived from the stored
@@ -1029,7 +1166,9 @@ def main():
                          "because the OT cannot SEED below its stub threshold "
                          "-- only 4.4%% of 1-2 GeV TPs reach >= 4 OT layers.")
     ap.add_argument("--targets", default=None,
-                    help="layers to follow into, e.g. IL1,IL2,IL3,IL4,OL1,OL2,OL3. "
+                    help="layers to follow into, e.g. IL1,IL2,IL3,IL4,OL1,OL2,OL3, "
+                         "within each build's own surfaces (an inactive IT "
+                         "layer is never followed). "
                          "Soft tracks make OT stubs almost only on OL1-OL3 "
                          "(measured 14.5/25.3/13.4%% at 1.0-1.5 GeV, then ~2%% "
                          "on OL4-OL6), so following the outer three buys "
@@ -1048,8 +1187,9 @@ def main():
                          "against six barrel layers; a 3-layer IT-only build "
                          "cannot supply a fourth from the IT alone.")
     ap.add_argument("--masks", default=",".join(BUILD_MASKS),
-                    help="activeSP builds to enumerate seeds for; 'none' for a "
-                         "flat enumeration over --layers")
+                    help="activeSP builds to run: each build's own seeds, "
+                         "followed into its own active IT layers + OT; 'none' "
+                         "for the full IT (AAAA) alone")
     # SMALLER CHUNKS ARE FASTER HERE, which is backwards from the usual
     # amortisation argument and so is worth stating. MEASURED on the same 16
     # events, same 131 seeds, identical input (127,282 TPs both times, so this is
@@ -1131,37 +1271,37 @@ def main():
     rows.sort(key=lambda r: -r["n_found"])
     print(f"\n{'seed':<20}{'ar':>3}{'found':>9}{'cand/ev':>11}{'fit/ev':>8}"
           f"{'ownDR':>8}{'X2%':>5}{'DR%':>5}{'X2ang':>8}{'nlay':>6}{'fake':>7}"
-          f"{'s(kap)':>9}{'s(d0)um':>9}{'s(cot)':>9}{'s(z0)um':>9}")
+          f"{'s(kap)':>9}{'s(d0)um':>9}{'s(cot)':>9}{'s(z0)um':>9}  builds")
     for r in rows[:30]:
         print(f"{r['seed']:<20}{r['arity']:>3}{r['n_found']:>9,}{r['cand']:>11,.0f}"
               f"{r['fit']:>8,.0f}{r['n_found_dr']:>8,}"
               f"{100 * r['chi2_pass']:>5.0f}{100 * r['dr_pass']:>5.0f}"
               f"{r['chi2_angle_per_cl']:>8.1f}{r['nlayer']:>6.1f}"
               f"{r['fake']:>7.3f}{r['sig_kappa']:>9.4f}{1e4 * r['sig_d0_cm']:>9.0f}"
-              f"{r['sig_cot']:>9.4f}{1e4 * r['sig_z0_cm']:>9.0f}")
-    trunc = truncation_table(C)
-    if trunc:
-        print(f"\n=== per-region load, against the tuned ceiling of "
-              f"{TRACKS_PER_REGION} tracks per region per event "
-              f"({N_NONANT} nonants x {N_ETA_SECTOR} eta sectors = "
-              f"{N_REGION * TRACKS_PER_REGION}/event) ===")
-        print(f"  fitted tracks           {trunc['n_tracks']:12,d}"
-              f"   ({trunc['per_event']:.0f}/event, {trunc['per_region']:.1f}/region)")
-        print(f"  fraction of the budget  {100 * trunc['frac_of_budget']:12.1f}%")
-        print(f"  busiest region seen     {trunc['max_occ']:12,d}")
-        print(f"  region-events over cap  {trunc['n_over_bins']:12,d}"
-              f"   of {trunc['n_bins']:,} ({100 * trunc['frac_bins_over']:.2f}%)")
-        print(f"  TRACKS DROPPED          {trunc['n_dropped']:12,d}"
-              f"   ({100 * trunc['frac_dropped']:.2f}% of all fitted tracks)")
-        print("  occupancy percentiles   "
-              + "  ".join(f"p{p}={v:.0f}" for p, v in trunc["pct"].items()))
-        print("  dropped at other caps:  "
-              + "  ".join(f"{c}:{100 * f:.2f}%" for c, f in trunc["scan"].items()))
-        print("  NOTE: the cut is arbitrary with respect to quality -- there is "
-              "no ranking where it is applied, so a good displaced track is as "
-              "likely to go as a fake. The eta-sector boundary is ASSUMED at "
-              "eta = 0 (L1TTrack_etaSector is unfilled in these ntuples); that "
-              "redistributes load between two bins but cannot change the total.")
+              f"{r['sig_cot']:>9.4f}{1e4 * r['sig_z0_cm']:>9.0f}  {_builds_label(r['builds'])}")
+    # PER DR GROUP: one build's menu (or the builds sharing its entries) is one
+    # system, and its load is what the ceiling applies to
+    trunc = [{"builds": [m for m, idx in C["builds"].items()
+                         if any(i in g for i in idx)],
+              **truncation_table(C, k)}
+             for k, g in enumerate(C["dr_groups"])]
+    print(f"\n=== per-region load per build, against the tuned ceiling of "
+          f"{TRACKS_PER_REGION} tracks per region per event "
+          f"({N_NONANT} nonants x {N_ETA_SECTOR} eta sectors = "
+          f"{N_REGION * TRACKS_PER_REGION}/event); fitted tracks entering DR ===")
+    print(f"  {'build(s)':<20}{'fit/ev':>9}{'budget%':>9}{'max':>7}{'over cap':>10}"
+          f"{'dropped%':>10}{'p50':>6}{'p99':>6}  dropped at 52/104/208/416")
+    for t in trunc:
+        print(f"  {_builds_label(t['builds']):<20}{t['per_event']:>9,.0f}"
+              f"{100 * t['frac_of_budget']:>9.1f}{t['max_occ']:>7,d}"
+              f"{t['n_over_bins']:>10,d}{100 * t['frac_dropped']:>10.2f}"
+              f"{t['pct'][50]:>6.0f}{t['pct'][99]:>6.0f}  "
+              + "/".join(f"{100 * f:.2f}%" for f in t["scan"].values()))
+    print("  NOTE: the cut is arbitrary with respect to quality -- there is "
+          "no ranking where it is applied, so a good displaced track is as "
+          "likely to go as a fake. The eta-sector boundary is ASSUMED at "
+          "eta = 0 (L1TTrack_etaSector is unfilled in these ntuples); that "
+          "redistributes load between two bins but cannot change the total.")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "n_tp": int(len(C["key"])),

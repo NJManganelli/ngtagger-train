@@ -495,12 +495,6 @@ def main():
     C = TF.load(src, nev=a.nev, with_tracks=True)
     os.makedirs(a.outdir, exist_ok=True)
 
-    has_soft = any(getattr(sd, "soft", False) for sd in C["seeds"])
-
-    def _build_menu(il, with_soft):
-        base = SA.enumerate_seeds(il)
-        return base + (SA.soft_seeds(base) if with_soft else [])
-
     TPA, found, found_dr, tp_keys = build_tp_table(C)
     seed_counts = {i: len(v) for i, v in C["tracks"].items()}
     T, col, n_no_owner, order_orig = build_track_table(C, tp_keys)
@@ -513,7 +507,17 @@ def main():
         # the conflict graph, built once here rather than per interaction in the
         # browser. 178 s at full scale against ~10 s per menu change, so it
         # belongs on this side of the wire.
-        H = np.concatenate([C["hits"][i] for i in sorted(C["hits"])])[order_orig]
+        # ONLY WITHIN A BUILD. DR runs over one build's menu (census DR group),
+        # and the same seed in several builds shares its hits, so a graph over
+        # every track would mostly hold cross-build edges no DR ever reads (7x
+        # the edges on 15 builds). Each group's clusters get their own index range.
+        grp = np.empty(len(C["seeds"]), np.int64)
+        for k, g in enumerate(C["dr_groups"]):
+            grp[g] = k
+        H = np.concatenate([C["hits"][i] for i in sorted(C["hits"])])
+        tg = np.concatenate([np.full(len(C["hits"][i]), grp[i])
+                             for i in sorted(C["hits"])])
+        H = np.where(H >= 0, H + tg[:, None] * (int(H.max()) + 1), -1)[order_orig]
         t0 = time.perf_counter()
         edges, st = DRS.conflict_edges(H)
         # ea/eb, not a/b: `a` is the argparse namespace in this scope, and
@@ -594,35 +598,30 @@ def main():
         # groups separately: it is an IT-only seed by layers but it runs at its
         # own floor under its own rule, so lumping it with the standard IT
         # seeds would make the pT extension impossible to switch off.
+        # one per census ENTRY: a seed with the layers it follows into, which
+        # are its build's surfaces, so the same tag appears once per build
         "seeds": [{"idx": i, "tag": t,
                    "layers": list(C["seeds"][i].layers),
+                   "follow": list(C["seeds"][i].follow),
+                   "builds": TF.entry_builds(C, i),
                    "arity": C["seeds"][i].arity,
-                   "soft": bool(getattr(C["seeds"][i], "soft", False)),
+                   "soft": bool(C["seeds"][i].soft),
                    "sysclass": KF.sysclass_of(C["seeds"][i].layers)}
                   for i, t in enumerate(C["seed_tags"])],
-        # which seeds each activeSP build can form, so the page can gate the
-        # seed selector on the build rather than offering seeds a build cannot
-        # physically produce
-        # THE BUILD MAP MUST LIST THE RECOVERY SEEDS TOO. The page gates the
-        # seed menu on this set, so a tag missing here is a seed the user
-        # cannot select no matter what the census contains -- which is exactly
-        # how the sub-2-GeV entries went invisible: enumerate_seeds returns the
-        # standard menu, and the recovery duplicates are appended afterwards by
-        # tp_findability. Mirror that here, and only when this census actually
-        # has them, so a 2 GeV-only site does not advertise seeds it lacks.
-        "builds": {m: sorted({s.tag for s in _build_menu(
-            [TF.IL_OF[i] for i, ch in enumerate(m) if ch == "A"], has_soft)})
-            for m in TF.BUILD_MASKS},
+        # each activeSP build's entries (seed idx), as the census ran them, so
+        # the page offers a build only its own seeds, followed into its own
+        # surfaces -- the recovery entries included, when the census has them
+        "builds": C["builds"],
         "eta_ranges": {"edges": [0.0, ETA_RANGE_LO, float(a.eta_x), ETA_RANGE_HI],
                        "x": float(a.eta_x)},
         "acceptance": {"eta_max": float(TF.M.ETA_MATCHED),
                        "text": ACCEPTANCE_TEXT.format(eta=TF.M.ETA_MATCHED)},
-        # SEEDS FORMED per seed and |eta| bin (the funnel's seed_objects), summed
-        # over the census events; the seed's |eta| is asinh of its pair cot
-        **({"seed_eta": {"edges": list(C["seed_eta_edges"]),
-                         "counts": C["seed_eta"].tolist(),
-                         "n_events": C["n_events"]}}
-           if C.get("seed_eta") is not None else {}),
+        # SEEDS FORMED per entry and |eta| bin (the funnel's seed_objects),
+        # summed over the census events; the seed's |eta| is asinh of its pair
+        # cot. Formation is the seed's, so a seed's entries carry equal counts.
+        "seed_eta": {"edges": list(C["seed_eta_edges"]),
+                     "counts": C["seed_eta"].tolist(),
+                     "n_events": C["n_events"]},
         "coverage": coverage,
         "tp": {"file": "tp.bin", "cols": list(TP_COLS), "rows": int(len(TPA)),
                "dtype": "float32"},
@@ -658,7 +657,10 @@ def main():
             "chi2_rphi_per_layer is per LAYER, not per dof, so it is not "
             "directly comparable to the hardware chi2/dof bin tables.",
             "Seed quality columns describe each seed's STANDALONE population; "
-            "post-DR ownership is a separate bitmap (found_dr).",
+            "post-DR ownership is a separate bitmap (found_dr), from a DR the "
+            "census ran over each build's full menu.",
+            "Each build's seeds follow only into that build's active IT layers "
+            "and the OT, so a seed shared by builds is one entry per build.",
             "Track truth is referenced to the MAJORITY OWNER of the hits, not "
             "to the seed cluster. Measured over 200 events, 45.8% of accepted "
             "tracks have an owner that is not the seed's TP, and the seed "

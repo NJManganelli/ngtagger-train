@@ -70,18 +70,18 @@ def rows_for_tracks(U, Q, TP, gk, trip, fit, seed_idx, arity, sysclass, rank,
     return np.concatenate([base, ex], axis=1)
 
 
-def collect(spec, nev, chunk, sigz, seeds, ptmin, targets, min_layers,
+def collect(spec, nev, chunk, sigz, seeds, groups, ptmin, min_layers,
             verbose=True):
+    """The census entries' tracks, each followed into its own build's layers
+    (Seed.follow), with DR run per census DR group as the census runs it."""
     parts, t0 = [], time.time()
     for ci, ((U, Q), ev) in enumerate(TF.unified_chunks(spec, nev, chunk, sigz)):
         TP = KF.tp_truth_table(U)
         held = []
-        for s_i, sd in enumerate(seeds):
-            try:
-                o = SA.run_seed(U, Q, sd, ptmin, targets, min_layers=min_layers)
-            except M.TooWide:
-                continue
-            if o is None or not o.get("tracks_to_fit"):
+        for s_i, o in TF.entry_results(U, Q, seeds, lambda sd: ptmin,
+                                       lambda sd: (None, 0), min_layers):
+            sd = seeds[s_i]
+            if isinstance(o, M.TooWide) or o is None or not o.get("tracks_to_fit"):
                 continue
             gidx = KF.hits_from_seed(U, o)
             gc = o.get("_gC")
@@ -102,22 +102,26 @@ def collect(spec, nev, chunk, sigz, seeds, ptmin, targets, min_layers,
             del o, fit
         if not held:
             continue
-        # DR exactly as the census runs it, but the survivors are a FLAG rather
-        # than a filter: the losers are what populate the contaminated cells,
-        # and dropping them would measure resolution on a sample already
-        # cleaned by the very correlation under study.
-        surv = SA.duplicate_removal(
-            np.concatenate([h["gk"] for h in held]),
-            np.concatenate([h["score"] for h in held]))
-        off = 0
-        for h in held:
-            n = len(h["score"])
-            fit = KF.fit_tracks(U, Q, h["trip"], gidx=h["gk"], use_angles=False)
-            parts.append(rows_for_tracks(
-                U, Q, TP, h["gk"], h["trip"], fit, h["s_i"], h["sd"].arity,
-                KF.sysclass_of(h["sd"].layers), h["score"],
-                surv[off:off + n]))
-            off += n
+        # DR exactly as the census runs it (per DR group), but the survivors are
+        # a FLAG rather than a filter: the losers are what populate the
+        # contaminated cells, and dropping them would measure resolution on a
+        # sample already cleaned by the very correlation under study.
+        for g in groups:
+            hg = [h for h in held if h["s_i"] in g]
+            if not hg:
+                continue
+            surv = SA.duplicate_removal(
+                np.concatenate([h["gk"] for h in hg]),
+                np.concatenate([h["score"] for h in hg]))
+            off = 0
+            for h in hg:
+                n = len(h["score"])
+                fit = KF.fit_tracks(U, Q, h["trip"], gidx=h["gk"], use_angles=False)
+                parts.append(rows_for_tracks(
+                    U, Q, TP, h["gk"], h["trip"], fit, h["s_i"], h["sd"].arity,
+                    KF.sysclass_of(h["sd"].layers), h["score"],
+                    surv[off:off + n]))
+                off += n
         if verbose:
             print(f"  chunk {ci:>3}  {len(ev):>3} ev  "
                   f"{sum(len(p) for p in parts):>9,} tracks  "
@@ -368,14 +372,18 @@ def main():
     ds = sorted(glob.glob(f"{a.cache_dir}/tpcensus_*"))
     if not ds:
         raise SystemExit(f"no census under {a.cache_dir} to take calibration from")
-    meta = json.load(open(Path(ds[-1]) / "manifest.json"))
+    d = ds[-1]
+    meta = json.load(open(Path(d) / "manifest.json"))
+    if meta["format"] != TF.FORMAT_VERSION:
+        raise SystemExit(f"{d} is census format {meta['format']}; this code reads "
+                         f"{TF.FORMAT_VERSION} only. Rebuild it.")
     sigz = {int(k): float(v) for k, v in meta["calibration"]["sigz_ot"].items()}
-    seeds = [SA.Seed(tuple(x)) for x in meta["seeds"]]
-    targets = list(SA.IL) + list(SA.OT_BARREL)
-    print(f"calibration and {len(seeds)} seeds from {Path(ds[-1]).name}, "
+    seeds = [SA.Seed(tuple(x), follow=f)
+             for x, f in zip(meta["seeds"], meta["seed_follow"])]
+    print(f"calibration and {len(seeds)} entries from {Path(d).name}, "
           f"{a.nev} events, ptmin {a.ptmin}", flush=True)
-    R = collect(a.input, a.nev, a.chunk, sigz, seeds, a.ptmin, targets,
-                meta["config"].get("min_layers", SA.MIN_LAYERS))
+    R = collect(a.input, a.nev, a.chunk, sigz, seeds, meta["dr_groups"], a.ptmin,
+                meta["config"]["min_layers"])
     if not len(R):
         raise SystemExit("no tracks")
     c = {n: i for i, n in enumerate(COLS)}

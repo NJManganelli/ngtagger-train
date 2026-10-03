@@ -71,7 +71,7 @@ OT_DOUBLETS = ((11, 12), (12, 13), (13, 14), (15, 16))
 # relabelling here; it builds a different combinatorial set.
 OT_TRIPLETS = ((13, 14, 12), (15, 16, 14))
 MIN_LAYERS = 4
-# |eta| bins of the SEED MULTIPLICITY record (run_seed's seed_eta_hist): 0.1 wide
+# |eta| bins of the SEED MULTIPLICITY record (follow_seed's seed_eta_hist): 0.1 wide
 # to 2.4, then one overflow bin. The seed's |eta| is asinh of its own pair cot.
 SEED_ETA_EDGES = tuple(round(0.1 * k, 1) for k in range(25)) + (10.0,)
 
@@ -83,10 +83,15 @@ def seed_eta_hist(cot):
 
 
 class Seed:
-    __slots__ = ("arity", "layers", "tag", "note", "soft", "category")
+    __slots__ = ("arity", "layers", "tag", "note", "soft", "category", "follow")
 
-    def __init__(self, layers, note="", soft=False, category="default"):
+    def __init__(self, layers, note="", soft=False, category="default",
+                 follow=None):
         self.layers = tuple(layers)
+        # THE LAYERS THIS SEED FOLLOWS INTO, for a census entry: its build's
+        # surfaces (active IT layers + OT) minus its own layers. None outside the
+        # census, where the caller passes the targets.
+        self.follow = None if follow is None else tuple(follow)
         # MENU CATEGORY (see enumerate_seeds): "default" seeds make up the menu;
         # "long-lever" and "nonconforming" seeds stay enumerable for studies
         # (widen DEFAULT_CATEGORIES) but are not in the default menu.
@@ -105,7 +110,9 @@ class Seed:
 
     def __repr__(self):
         kind = 'doublet' if self.arity == 2 else 'triplet'
-        return f"<{'soft ' if self.soft else ''}{kind} {self.tag}>"
+        fl = "" if self.follow is None else \
+            " -> " + ",".join(NAME[L] for L in self.follow)
+        return f"<{'soft ' if self.soft else ''}{kind} {self.tag}{fl}>"
 
     def min_proj(self, strict_cmssw=False):
         """Confirmed projections still required to reach a 4-layer track."""
@@ -230,16 +237,32 @@ def menu_fingerprint():
 def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
              strict_cmssw=False, d0_cm=0.0, min_layers=None,
              min_it_layers=None, min_ot_conf=0):
-    """Run one seed and follow it to EVERY target layer.
+    """Run one seed, follow it to EVERY target layer and apply the layer rule:
+    follow_seed then apply_layer_rule over the same targets."""
+    F = follow_seed(U, Q, seed, ptmin, targets, use_angles, d0_cm)
+    if F is None:
+        return None
+    return apply_layer_rule(F, seed, targets, strict_cmssw, min_layers,
+                            min_it_layers, min_ot_conf)
+
+
+def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
+    """Form one seed's objects and project them to every layer in `targets`.
 
     A doublet projects to all of them with a d0 = 0 helix. A triplet first
     requires its named third layer, re-solves the helix with solve3 so d0 is
     MEASURED, and then projects along that trajectory -- which is why its
     windows need no d0 allowance where the doublet's do.
 
-    Cost counters are summed over targets, so doublet and triplet costs are
-    finally commensurable: the old accounting charged a seed for ONE projection
-    where the OT does four.
+    EACH TARGET IS PROJECTED INDEPENDENTLY of the others, so the result for any
+    subset of `targets` is the subset of these projections: apply_layer_rule
+    takes that subset. A seed shared by builds with different surfaces is
+    therefore formed and projected once, and each build keeps only its own
+    surfaces.
+
+    Returns None when the seed forms nothing, else the formation counters
+    ("out"), the seed objects and, per target layer, the projection matches
+    ("hits": pair rows and matched cluster) and the candidates tried ("cand").
     """
     allidx = np.arange(len(U["layer"]))
     la, lb = seed.layers[0], seed.layers[1]
@@ -289,26 +312,42 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
         return None
     out["seed_eta_hist"] = seed_eta_hist(cot)
     # ---- follow to every remaining layer --------------------------------
-    nconf = np.zeros(len(gA), np.int32)
-    nconf_it = np.zeros(len(gA), np.int32)
-    nconf_ot = np.zeros(len(gA), np.int32)
-    hits = {}
-    cand_tot = 0
+    hits, cand = {}, {}
     for L in targets:
         if L in used:
             continue
         oj = M.it_project(U, Q, {}, gA, gB, kap, cot, z0p, idx, la, lb, L,
                           ptmin, False, d0_cm, use_angles=use_angles,
                           d0_meas=d0m, seed_layers=seed.layers)
-        cand_tot += int(oj.get("match_cand", 0))
-        if "_pairidx" not in oj:
-            continue
-        pi = oj["_pairidx"]
+        cand[L] = int(oj.get("match_cand", 0))
+        if "_pairidx" in oj:
+            hits[L] = (oj["_pairidx"], oj["_trip"][2])
+    return {"out": out, "gA": gA, "gB": gB, "gC": gC, "d0m": d0m,
+            "hits": hits, "cand": cand}
+
+
+def apply_layer_rule(F, seed, targets, strict_cmssw=False, min_layers=None,
+                     min_it_layers=None, min_ot_conf=0):
+    """The seed's result when it follows into `targets` only: confirmations,
+    the layer rule and the surviving tracks with their hits, from follow_seed's
+    projections. `targets` must be a subset of the layers F followed into; a
+    layer it did not follow would read as never confirmed."""
+    unfollowed = [L for L in targets
+                  if L not in seed.layers and L not in F["cand"]]
+    if unfollowed:
+        raise ValueError(f"{seed.tag}: targets {unfollowed} were not followed")
+    gA, gB, gC, d0m = F["gA"], F["gB"], F["gC"], F["d0m"]
+    out = dict(F["out"])
+    follow = [L for L in targets if L not in seed.layers]
+    nconf = np.zeros(len(gA), np.int32)
+    nconf_it = np.zeros(len(gA), np.int32)
+    nconf_ot = np.zeros(len(gA), np.int32)
+    hits = {L: F["hits"][L] for L in follow if L in F["hits"]}
+    for L, (pi, _gc) in hits.items():
         nconf[pi] += 1
         (nconf_ot if L > 10 else nconf_it)[pi] += 1
-        hits[L] = (pi, oj["_trip"][2])
-    out["cand_all_targets"] = cand_tot
-    out["targets_followed"] = len([L for L in targets if L not in used])
+    out["cand_all_targets"] = sum(F["cand"][L] for L in follow)
+    out["targets_followed"] = len(follow)
     # ---- the 4-layer rule -----------------------------------------------
     # min_layers overrides the 4-layer rule. It has to be settable: the rule is
     # defined against six OT barrel layers, and a soft IT-only configuration may
