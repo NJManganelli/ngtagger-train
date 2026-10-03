@@ -43,7 +43,14 @@ from ngtagger.data import spix_nano as SPN
 IT_TABLE, OT_TABLE = SPN.CLUSTER_TABLE, SPN.OT_TABLE
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
 Z_LUMI, NSIG = 15.0, 3.0
-SIG_PULL_INFLATE = 1.21          # sigGlobalClusterCotTheta measured 21% optimistic
+# Scale on sigGlobalClusterCotTheta in the IT seed z0 gate (s_z0, it_prepare).
+# MEASURED on canon_v2 f03-f10 (site_v2/emu_pulls_table.{txt,json}: barrel
+# clusters linked to a charged TP with a consistent helix, core RMS about zero
+# of a mode-seeded 3-sigma clip): the beta pull core is 0.83-0.85 on IL1-IL4 at
+# scale 1, so the reported sigma is ~16% PESSIMISTIC. The earlier 1.21 ("21%
+# optimistic") dates from 2026-09-09, before the payload-units fix and the
+# canon_v2 nanos.
+SIG_PULL_INFLATE = 0.84
 THETA_MS_MRAD = 1.36             # per ~1% X0 layer at 1 GeV  [ASSUMED]
 ETA_MATCHED = 1.4
 PT_MINS = (2.0, 1.5, 1.0)

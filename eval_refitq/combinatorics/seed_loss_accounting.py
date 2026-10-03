@@ -30,7 +30,6 @@ import tracklet_topology_cost as M   # noqa: E402
 T = "L1TSmartPixelsCluster"
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
 Z_LUMI, NSIG = 15.0, 3.0
-SIG_PULL_INFLATE = 1.21
 THETA_MS_MRAD = 1.36
 
 STAGES = ["no_cluster_on_layer", "angle_capped", "alpha_veto", "phi_window", "kappa_cut",
@@ -89,8 +88,8 @@ def trace_one(D, ia, ib, ic, ptmin, d0_cm, rA, rB, dr):
         sk = D["sigGlobalClusterPhi"][i] * abs(np.cos(h)) / (C_BEND * D["globalR"][i])
         if abs(kap - ka) > NSIG * max(sk, 1e-9):
             return "alpha_consistency"
-    sza = D["globalR"][ia] * D["sigGlobalClusterCotTheta"][ia] * SIG_PULL_INFLATE
-    szb = D["globalR"][ib] * D["sigGlobalClusterCotTheta"][ib] * SIG_PULL_INFLATE
+    sza = D["globalR"][ia] * D["sigGlobalClusterCotTheta"][ia] * M.SIG_PULL_INFLATE
+    szb = D["globalR"][ib] * D["sigGlobalClusterCotTheta"][ib] * M.SIG_PULL_INFLATE
     z0a = D["globalZ"][ia] - D["globalR"][ia] * D["globalClusterCotTheta"][ia]
     z0b = D["globalZ"][ib] - D["globalR"][ib] * D["globalClusterCotTheta"][ib]
     if abs(z0a - z0b) > NSIG * np.hypot(sza, szb):

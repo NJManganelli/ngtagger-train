@@ -735,18 +735,21 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     return fit
 
 
-# MEASURED per-layer pull widths of the SmartPixels angles against TRUTH
-# (tpGlobalClusterPhi / tpGlobalClusterCotTheta, 60 events, tpPt > 2), and
-# independently against the fitted track, which agree: alpha is calibrated to
-# within 8% and beta reads about 20% optimistic on every layer. These scale the
-# reported sigmas so an angle pull is a pull.
+# MEASURED per-layer pull widths of the SmartPixels angles at scale 1, which
+# scale the reported sigmas so an angle pull is a pull. Source: canon_v2
+# f03-f10 (site_v2/emu_pulls_table.{txt,json}): barrel clusters linked to a
+# charged TP with a consistent helix, core RMS about zero of a mode-seeded
+# 3-sigma clip, pT >= 2 (1-2 GeV within 0.03). Alpha 0.958/0.988/0.915/0.899 and
+# beta 0.836/0.831/0.837/0.845 on IL1-IL4: on this payload both sigmas are
+# PESSIMISTIC (alpha by 1-10%, beta by ~16%). They replace the 2026-09-15 values (alpha 1.089/1.045/1.079/0.922,
+# beta 1.231/1.191/1.124/1.131; 60 events, before the payload-units fix).
 #
 # This supersedes an earlier inference that the sigmas were ~6.6x optimistic,
 # taken from a MEAN chi2_angle per cluster of 44-50. That mean was arithmetic,
 # not calibration: with ~2% of surviving tracks contaminated and carrying angle
-# pulls near 40, those few dominate the average. The clean-track pull is 1.0-1.26.
-ALPHA_PULL_SCALE = {1: 1.089, 2: 1.045, 3: 1.079, 4: 0.922}
-BETA_PULL_SCALE = {1: 1.231, 2: 1.191, 3: 1.124, 4: 1.131}
+# pulls near 40, those few dominate the average.
+ALPHA_PULL_SCALE = {1: 0.96, 2: 0.99, 3: 0.92, 4: 0.90}
+BETA_PULL_SCALE = {1: 0.84, 2: 0.83, 3: 0.84, 4: 0.85}
 
 
 def _layer_scales(layers):
