@@ -65,7 +65,10 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 23   # 23: entries = seed x build follow set (a build's seeds follow
+FORMAT_VERSION = 24   # 24: KF.majority_owner fixed (track owner columns n_own,
+                      # own_tpidx, n_wrong, is_clean, tp_*, d_* were wrong on
+                      # tracks with many empty layers since format 21).
+                      # 23: entries = seed x build follow set (a build's seeds follow
                       # only into its active IT layers + OT; manifest seed_follow,
                       # builds, dr_groups), DR and nonant occupancy per DR group,
                       # quality sample drawn per (chunk, entry).

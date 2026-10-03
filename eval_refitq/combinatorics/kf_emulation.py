@@ -937,7 +937,12 @@ def majority_owner(tp, valid):
     that owns a minority of the hits.
     """
     none = np.iinfo(np.int64).min
-    v = np.where(valid & SPN.tp_matched(tp), tp, none).astype(np.int64)
+    # int64 BEFORE the sentinel goes in. tpIdx is int32, and NumPy 2 casts an
+    # out-of-range Python int to the array's own dtype in np.where: int64-min
+    # became 0, so every empty layer and every unmatched hit VOTED FOR tpIdx 0,
+    # and a 4-hit track (six empty layers) was "owned" by the event's first
+    # L1TTP particle. Broken from 813be3e (tpKey -> int32 tpIdx) to here.
+    v = np.where(valid & SPN.tp_matched(tp), np.asarray(tp, np.int64), np.int64(none))
     S = np.sort(v, axis=1)[:, ::-1]          # real values first, `none` trailing
     cur_v = S[:, 0].copy()
     cur_n = (S[:, 0] != none).astype(np.int64)
