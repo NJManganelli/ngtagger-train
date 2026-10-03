@@ -35,6 +35,13 @@ table.kv th { text-align: right; font-weight: 600; color: #666; }
 table.kv td { font-variant-numeric: tabular-nums; }
 .soft { color: #b4590a; }
 input.slide { width: 150px; vertical-align: middle; }
+/* |eta| ranges outside the acceptance of the collection shown: a distinct,
+   hatched state, never just a small number */
+tr.outacc td { background: repeating-linear-gradient(45deg, #e4e4e4, #e4e4e4 4px,
+               #f7f7f7 4px, #f7f7f7 8px); color: #666; font-style: italic; }
+tr.partacc td:first-child { background: repeating-linear-gradient(45deg, #e4e4e4,
+               #e4e4e4 4px, #f7f7f7 4px, #f7f7f7 8px); font-style: italic; }
+.accnote { color: #8a4b00; }
 </style>
 <div id="sidebar">
   <fieldset><legend>scenario</legend>
@@ -145,6 +152,11 @@ input.slide { width: 150px; vertical-align: middle; }
   <fieldset><legend>by pT band</legend>
     <div id="bands"></div>
     <p class="hint" id="softhint"></p>
+  </fieldset>
+  <fieldset><legend>by |eta| range</legend>
+    <div id="etabands"></div>
+    <p class="hint" id="etahint"></p>
+    <div id="etacov" class="hint"></div>
   </fieldset>
   <fieldset><legend>sigma(d0) by wrong hits</legend><div id="sbw"></div></fieldset>
   <fieldset><legend>fake definition</legend>
@@ -321,6 +333,10 @@ const METRICS = {
   angle_b_layer: 'cluster beta measured, by layer',
   funnel: 'loss funnel, selected seeds',
   lossd0: 'efficiency vs true |d0|, per seed',
+  mult_seed: 'seed multiplicity vs |eta|, per seed type [seeds/event]',
+  mult_seed_build: 'seed multiplicity vs |eta|, per build [seeds/event]',
+  mult_trk: 'track multiplicity vs |eta|, per seed type [tracks/event]',
+  mult_trk_build: 'track multiplicity vs |eta|, per build, before DR [tracks/event]',
   map_it: 'seed map, inner tracker',
   map_ot: 'seed map, outer tracker',
   map_all: 'seed map, IT + OL1-OL3'
@@ -428,6 +444,25 @@ const SCEN = {
       + 'does not land on the baseline, a gap between the joint scenario and '
       + 'the baseline cannot be attributed to the inner tracker.',
 };
+
+// A PANEL IS A PLOT OR A MESSAGE, NEVER BOTH. Writing innerHTML over a plot
+// removes its DOM but leaves Plotly's state on the div (js-plotly-plot,
+// _fullData, _fullLayout), so a later Plotly.react takes its update path and
+// draws into the detached nodes: the old message stayed on screen and the plot
+// never came back -- e.g. after a scenario switch that had shown "not defined
+// for this collection". So a message purges the plot first, and a plot clears
+// a message first (then react starts a fresh plot on the purged div).
+function panelMsg(p, html) {
+  const el = document.getElementById('pp' + p);
+  if (el._fullLayout) Plotly.purge(el);
+  el.innerHTML = html;
+  el._spMsg = true;
+}
+function panelPlot(p, traces, layout, config) {
+  const el = document.getElementById('pp' + p);
+  if (el._spMsg) { el.innerHTML = ''; el._spMsg = false; }
+  return Plotly.react(el, traces, layout, config);
+}
 
 function prog(frac, text, busy) {
   const f = document.getElementById('progfill');
@@ -538,7 +573,12 @@ function setup() {
         + `${m.angle.rows.toLocaleString()} residuals, 1 track in `
         + `${m.angle.sample}</td></tr>` : '')
     + `<tr><th>DR</th><td>${cf ? `${cf.edges.toLocaleString()} conflicts, `
-        + `&ge;${cf.min_shared} shared hits` : 'not available'}</td></tr></table>`;
+        + `&ge;${cf.min_shared} shared hits` : 'not available'}</td></tr>`
+    + `<tr><th>|eta| ranges</th><td>${((m.eta_ranges || {}).edges
+        || ETA_RANGES_DEFAULT).join(' / ')}</td></tr>`
+    + `<tr><th>emulated |eta|</th><td>${m.acceptance
+        ? `&le; ${m.acceptance.eta_max.toFixed(1)}: ${m.acceptance.text}`
+        : 'not stated in this export'}</td></tr></table>`;
   document.getElementById('progtext').textContent +=
     m.built ? `  |  dataset built ${m.built}` : '';
   buildSeeds(); layout();
@@ -776,6 +816,52 @@ function TBL() {
   return { t: S.trk, cols: m.track.cols, n: m.track.rows, isBaseline: false };
 }
 
+// ---- the acceptance edge of the collection shown ---------------------------
+// Our scenarios: the emulation's |eta| reach (manifest acceptance: barrel-only IT
+// seeding, no OT disks, OT barrel stubs to |eta| 1.4). A baseline: the |eta| cut
+// its export applied. Beyond the edge every |eta| panel and the |eta| table show
+// a DISTINCT, labelled state -- never a bare number that reads as performance.
+// Read per draw from the manifest and the active scenario (no cached state).
+const ETA_RANGES_DEFAULT = [0, 1.1, 1.8, 2.4];
+const ETA_VIS_MAX = 2.4;
+function accEdge(TB) {
+  const m = S.m;
+  return TB.isBaseline ? (m[scenario()] || {}).eta_max : (m.acceptance || {}).eta_max;
+}
+function accLabel(TB) {
+  return (TB.isBaseline && scenario() === 'baseline')
+    ? 'beyond this export’s |eta| cut' : 'outside the emulated acceptance';
+}
+// Shaded rectangles over the out-of-acceptance part of an eta axis spanning
+// [lo, hi]; signed axes shade both sides. Returns {shapes, annotations}.
+function accDecor(axis, lo, hi, edge, signed, label) {
+  const shapes = [], ann = [];
+  if (!(edge > 0)) return { shapes, annotations: ann };
+  const spans = [];
+  if (hi > edge) spans.push([Math.max(lo, edge), hi]);
+  if (signed && lo < -edge) spans.push([lo, Math.min(hi, -edge)]);
+  const other = axis === 'x' ? 'y' : 'x';
+  spans.forEach(([a, b], k) => {
+    shapes.push({ type: 'rect', [axis + 'ref']: axis, [other + 'ref']: 'paper',
+                  [axis + '0']: a, [axis + '1']: b, [other + '0']: 0, [other + '1']: 1,
+                  fillcolor: 'rgba(110,110,110,0.30)', line: { width: 0 },
+                  layer: 'above' });
+    shapes.push({ type: 'line', [axis + 'ref']: axis, [other + 'ref']: 'paper',
+                  [axis + '0']: k === 0 ? a : b, [axis + '1']: k === 0 ? a : b,
+                  [other + '0']: 0, [other + '1']: 1,
+                  line: { color: '#8a4b00', width: 1.5, dash: 'dash' } });
+    if (k === 0) {
+      ann.push({ text: `${label} (|eta| > ${edge.toFixed(1)})`, showarrow: false,
+                 [axis + 'ref']: axis, [other + 'ref']: 'paper',
+                 [axis]: 0.5 * (a + b), [other]: 0.5, textangle: axis === 'x' ? -90 : 0,
+                 font: { size: 9, color: '#5a3200' },
+                 bgcolor: 'rgba(255,255,255,0.75)' });
+    }
+  });
+  return { shapes, annotations: ann };
+}
+const isEtaAxis = (n) => n === 'eta' || n === 'tp_eta';
+
 let drawing = false;
 async function draw() {
   if (drawing) { S.again = true; return; }
@@ -849,6 +935,9 @@ async function drawInner() {
   // an OT-seeded track may attach IT clusters during the follow stage, and
   // including those would hand the baseline the very information it exists to
   // exclude. n_it_right + n_it_wrong is the IT hit count on the track.
+  // the DR survivors before any cut, for the |eta| summaries, which apply every
+  // cut except eta (they split on |eta| themselves)
+  const selRows = rows;
   const before = rows.length;
   // A BASELINE CARRIES NO DISCRIMINANT OF OURS, so both the score TABLE and the
   // score CUTS have to go. Dropping only the table left the selected cut names
@@ -1027,6 +1116,100 @@ async function drawInner() {
     + `<p class="hint">Per TrackingParticle, not per candidate: this selection `
     + `holds ${dt > 0 ? (rows.length / dt).toFixed(1) : '--'} tracks per `
     + `findable TP.</p>`;
+
+  // ---- |eta| ranges: efficiency, seeds and tracks per event ----------------
+  // Every cut above applies EXCEPT eta, which this table splits on. Efficiency
+  // is for true pT >= the seeding floor; tracks are the shown selection binned
+  // by fitted |eta|; seeds are those the selected seeds form, binned by the
+  // seed's own |eta| (its pair cot). All of it per draw.
+  const ER = (m.eta_ranges && m.eta_ranges.edges) || ETA_RANGES_DEFAULT;
+  const edgeE = accEdge(TB), labE = accLabel(TB);
+  const blk = TB.isBaseline ? m[scenario()] : null;
+  const cutsNoEta = Object.assign({}, cuts);
+  delete cutsNoEta.eta;
+  const keepE = C.tpSplit(S.tp, m.tp.cols, S.nTp,
+    C.tpSelect(S.tp, m.tp.cols, S.nTp, Object.assign({}, cutsNoEta,
+      { pt: [Math.max(cuts.pt[0], pm), cuts.pt[1]] })), split, D0_SPLIT_CM);
+  const rowsE = C.filterTracks(TB.t, TB.cols, selRows, cutsNoEta, scCuts, SCa);
+  const delivE = FM.eff_deliv
+    ? C.deliveredMask(TB.t, TB.cols, rowsE, S.nTp, owndef) : null;
+  const effSE = FM.eff_seed
+    ? C.effByRanges(S.tp, m.tp.cols, S.nTp, keepE, FM.eff_seed, ER, minLay, 'eta')
+    : null;
+  const effDE = delivE
+    ? C.effByRanges(S.tp, m.tp.cols, S.nTp, keepE, delivE, ER, minLay, 'eta') : null;
+  const nevT = TB.isBaseline
+    ? (((blk || {}).eta_hist || {}).n_events || (blk || {}).n_events || m.n_events)
+    : m.n_events;
+  const trkE = C.countByBin(TB.t, TB.cols, rowsE, SCa, 'eta', ER, true);
+  let seedE = null;
+  if (!TB.isBaseline && m.seed_eta) {
+    const fine = new Float64Array(m.seed_eta.edges.length - 1);
+    idx.forEach(i => (m.seed_eta.counts[i] || []).forEach((v, b) => { fine[b] += v; }));
+    seedE = C.rangeSums(fine, m.seed_eta.edges, ER);
+  }
+  const allE = (blk && blk.eta_hist)
+    ? C.rangeSums(blk.eta_hist.all_l1ttrack, blk.eta_hist.edges, ER) : null;
+  const effRef = effSE || effDE;
+  const pcE = (n, d) => d > 0 ? (100 * n / d).toFixed(1) + '%' : '--';
+  const f1 = (v) => Number.isFinite(v) ? v.toFixed(1) : '--';
+  const MARK = { in: '', partial: ' &Dagger;', out: ' &dagger;' };
+  const states = ER.slice(0, -1).map((lo, k) => C.accState(lo, ER[k + 1], edgeE));
+  document.getElementById('etabands').innerHTML =
+    '<table class="kv"><tr><th align="left">|eta|</th><th>findable</th>'
+    + '<th>seed</th><th>delivered</th><th>seeds/ev</th><th>tracks/ev</th></tr>'
+    + ER.slice(0, -1).map((lo, k) => {
+        const s = states[k];
+        const cls = s === 'out' ? ' class="outacc"' : s === 'partial' ? ' class="partacc"' : '';
+        const lab = k === 0 ? `&lt; ${ER[1]}` : `${lo}&ndash;${ER[k + 1]}`;
+        const tr = f1(trkE[k] / nevT)
+          + (allE && s !== 'in' ? ` <span class="accnote">(L1TTrack ${f1(allE[k] / blk.eta_hist.n_events)})</span>` : '');
+        return `<tr${cls}><td>${lab}${MARK[s]}</td>`
+          + `<td align="right">${effRef ? effRef.den[k].toLocaleString() : '--'}</td>`
+          + `<td align="right">${effSE ? pcE(effSE.num[k], effSE.den[k]) : 'n/a'}</td>`
+          + `<td align="right">${effDE ? pcE(effDE.num[k], effDE.den[k]) : 'n/a'}</td>`
+          + `<td align="right">${seedE ? f1(seedE[k] / m.seed_eta.n_events) : 'n/a'}</td>`
+          + `<td align="right">${tr}</td></tr>`;
+      }).join('') + '</table>';
+  const anyOut = states.some(s => s !== 'in');
+  document.getElementById('etahint').innerHTML =
+    `Efficiency for true pT &ge; ${pm.toFixed(1)} GeV; every cut above applies `
+    + `except eta, which this table splits on. Tracks/ev: the shown selection by `
+    + `fitted |eta|. `
+    + (TB.isBaseline ? 'Seeds: none of ours (finished tracks). '
+       : (m.seed_eta ? 'Seeds/ev: seeds the selected seeds form, by the seed’s '
+                       + 'own |eta| (its pair cot), before any track is built. '
+                     : 'Seeds/ev: not in this export. '))
+    + (anyOut ? '<br><span class="accnote">'
+       + `&dagger; ${labE} (|eta| &gt; ${f1(edgeE)}); &Dagger; partly so. `
+       + (TB.isBaseline && scenario() === 'baseline'
+          ? `The block keeps barrel tracks with |eta| &le; ${f1(edgeE)} and &ge; 4 `
+            + `barrel stubs. In brackets: every L1TTrack in the range (pT &ge; `
+            + `${f1(blk.ptmin)} GeV, any stubs, disks included), which this block `
+            + `does not carry. `
+          : `${(m.acceptance || {}).text || ''} `)
+       + 'In those ranges the efficiency denominator holds only particles that '
+       + 'still cross &ge; 4 barrel layers (coverage below), so an efficiency '
+       + 'there is not forward performance.</span>' : '');
+  const cov = m.coverage;
+  if (cov) {
+    const cC = C.rangeSums(cov.census, cov.edges, ER), cA = C.rangeSums(cov.all, cov.edges, ER);
+    document.getElementById('etacov').innerHTML =
+      `<b>Denominator coverage</b> (pT &ge; ${f1(cov.ptmin)} GeV, no other cut): `
+      + 'particles per event the efficiency denominator holds, of those with '
+      + '&ge; 4 layers hit counting every layer (IT discs and OT disks '
+      + 'included):<table class="kv">'
+      + ER.slice(0, -1).map((lo, k) =>
+          `<tr${states[k] === 'out' ? ' class="outacc"' : states[k] === 'partial'
+                ? ' class="partacc"' : ''}><td>${k === 0 ? '&lt; ' + ER[1]
+                : lo + '&ndash;' + ER[k + 1]}${MARK[states[k]]}</td>`
+          + `<td align="right">${f1(cC[k] / cov.n_events)} of ${f1(cA[k] / cov.n_events)}</td>`
+          + `<td align="right">${pcE(cC[k], cA[k])}</td></tr>`).join('')
+      + '</table>';
+  } else {
+    document.getElementById('etacov').innerHTML =
+      'Denominator coverage: not in this export.';
+  }
   try {
     const sb = C.sigmaByWrong(TB.t, TB.cols, rows);
     document.getElementById('sbw').innerHTML =
@@ -1068,6 +1251,101 @@ async function drawInner() {
     prog((p + 1) / panels.length, `binning panel ${p + 1} of ${panels.length}`, true);
     await yieldFrame();
     const metric = panels[p];
+    // MULTIPLICITY vs |eta|, as heatmaps: seeds formed (census record, by the
+    // seed's own |eta|) or tracks (fitted |eta|), per seed type or per build.
+    // Every cut except eta applies, as in the |eta| table; bins of 0.1 to 2.4.
+    if (metric.startsWith('mult_')) {
+      const bySeed = metric === 'mult_seed' || metric === 'mult_trk';
+      const isSeed = metric.startsWith('mult_seed');
+      if (TB.isBaseline && (isSeed || !bySeed)) {
+        panelMsg(p, '<p class="hint">Finished tracks: no seed menu of ours '
+          + 'applies to this collection, so there are no seeds or builds to split '
+          + 'by. Use track multiplicity per seed type, which shows this '
+          + 'collection as one row.</p>');
+        continue;
+      }
+      if (isSeed && !m.seed_eta) {
+        panelMsg(p, '<p class="hint">This export carries no seed |eta| record '
+          + '(census format &lt; 22).</p>');
+        continue;
+      }
+      const FE = isSeed ? m.seed_eta.edges : (m.coverage || {}).edges
+                 || Array.from({ length: 25 }, (_, k) => +(0.1 * k).toFixed(1));
+      const nVis = FE.findIndex(x => Math.abs(x - ETA_VIS_MAX) < 1e-6);
+      const vis = FE.slice(0, nVis + 1);
+      const xs = vis.slice(0, -1).map((x, k) => 0.5 * (x + vis[k + 1]));
+      // the rows: enabled seeds, or every build's menu in this scenario
+      const seedList = m.seeds.filter(s => idx.includes(s.idx)).map(s => s.idx);
+      const builds = Object.keys(m.builds);
+      const okSeed = (s) => !(scenario() === 'refit' && s.sysclass === 2);
+      const tagIdx = new Map(m.seeds.map(s => [s.tag, s]));
+      const menuOf = (b) => m.builds[b].map(t => tagIdx.get(t))
+                                        .filter(s => s && okSeed(s)).map(s => s.idx);
+      let ylab, Z, over = 0, nev = m.n_events;
+      if (isSeed) {
+        const cnt = m.seed_eta.counts;
+        nev = m.seed_eta.n_events;
+        const rowOf = (list) => vis.slice(0, -1).map((_, b) =>
+          list.reduce((a, i) => a + ((cnt[i] || [])[b] || 0), 0) / nev);
+        const overOf = (list) => list.reduce((a, i) =>
+          a + (cnt[i] || []).slice(nVis).reduce((x, y) => x + y, 0), 0) / nev;
+        if (bySeed) {
+          ylab = seedList.map(i => m.seeds.find(s => s.idx === i).tag);
+          Z = seedList.map(i => rowOf([i]));
+          over = overOf(seedList);
+        } else {
+          ylab = builds;
+          Z = builds.map(b => rowOf(menuOf(b)));
+        }
+      } else if (TB.isBaseline) {
+        const h = C.countByBin(TB.t, TB.cols, rowsE, SCa, 'eta', vis, true);
+        ylab = [`${(blk || {}).label || scenario()} (as exported)`];
+        nev = nevT;
+        Z = [Array.from(h, v => v / nev)];
+        if (blk && blk.eta_hist) {
+          ylab.push(`L1TTrack, all (pT ≥ ${f1(blk.ptmin)} GeV, any stubs)`);
+          Z.push(vis.slice(0, -1).map((_, b) =>
+            blk.eta_hist.all_l1ttrack[b] / blk.eta_hist.n_events));
+        }
+      } else if (bySeed) {
+        const r = C.countBySeedBin(TB.t, TB.cols, rowsE, S.seedOf, seedList, 'eta', vis);
+        ylab = seedList.map(i => m.seeds.find(s => s.idx === i).tag);
+        Z = seedList.map((_, k) => Array.from(r.val.slice(k * r.nb, (k + 1) * r.nb),
+                                               v => v / nev));
+      } else {
+        const bos = [];
+        builds.forEach((b, k) => menuOf(b).forEach(i => (bos[i] = bos[i] || []).push(k)));
+        const r = C.countByBuildBin(TB.t, TB.cols, S.nTrk, S.seedOf, bos, builds.length,
+                                    'eta', vis, cutsNoEta, scCuts, SCa);
+        ylab = builds;
+        Z = builds.map((_, k) => Array.from(r.val.slice(k * r.nb, (k + 1) * r.nb),
+                                            v => v / nev));
+      }
+      const dec = accDecor('x', 0, ETA_VIS_MAX, edgeE, false, labE);
+      const what = isSeed ? 'seed |eta| from its pair cot(theta) [unitless]'
+                          : 'fitted track |eta| [unitless]';
+      const how = isSeed ? 'seeds formed' + (bySeed ? '' : ', each build’s full menu')
+        : bySeed ? (TB.isBaseline ? 'this collection' : (useDr ? 'after DR' : 'no DR'))
+                   + ', cuts and scores applied'
+        : 'every candidate of each build’s full menu, cuts and scores applied';
+      panelPlot(p, [{
+        type: 'heatmap', z: Z, x: xs, y: ylab, colorscale: 'Viridis',
+        hovertemplate: '%{y}<br>|eta| %{x:.2f}: %{z:.3g}<extra></extra>',
+        colorbar: { thickness: 10, len: 0.9,
+                    title: { text: labUnit(METRICS[metric]), side: 'right',
+                             font: { size: 9 } } }
+      }], { margin: { l: 120, r: 6, t: 30, b: 40 },
+            title: { text: `${labName(METRICS[metric])} — ${how}`
+                           + (over > 0 ? ` (+${over.toFixed(1)}/event at |eta| > ${ETA_VIS_MAX})` : ''),
+                     font: { size: 11 } },
+            xaxis: { title: { text: what }, range: [0, ETA_VIS_MAX], tickfont: { size: 9 } },
+            yaxis: { title: { text: (bySeed ? (TB.isBaseline ? 'collection' : 'seed type')
+                                            : 'build (activeSP)') + ' [category]' },
+                     tickfont: { size: 8 }, automargin: true },
+            shapes: dec.shapes, annotations: dec.annotations
+          }, { responsive: true, displayModeBar: false });
+      continue;
+    }
     // THE LOSS FUNNEL. Counted during the census, because the candidates killed
     // before a fit never become track rows and so cannot be recovered from any
     // per-track table.
@@ -1115,7 +1393,7 @@ async function drawInner() {
                     : '')
         : `none of the ${menu.length} selected seeds fits here `
           + '\u2014 try the IT + OL1-OL3 map';
-      Plotly.react('pp' + p, traces, {
+      panelPlot(p, traces, {
         margin: { l: 52, r: 8, t: 30, b: 56 }, showlegend: shown.length <= 14,
         legend: { font: { size: 9 } },
         title: { text: `${V.title} \u2014 ${shown.length} of ${menu.length} `
@@ -1132,9 +1410,9 @@ async function drawInner() {
     if (metric === 'funnel') {
       const st = m.funnel_stages || [];
       if (!m.counters || !st.length) {
-        document.getElementById('pp' + p).innerHTML =
+        panelMsg(p,
           '<p class="hint">This export carries no per-seed counters; the funnel '
-          + 'arrives with the next export.</p>';
+          + 'arrives with the next export.</p>');
         continue;
       }
       const sum = (k) => idx.reduce(
@@ -1147,7 +1425,7 @@ async function drawInner() {
       // the projection cost is a HIT-level count and does not belong in a
       // track-level chain, so it is quoted rather than plotted as a stage
       const cost = sum('cand') / m.n_events;
-      Plotly.react('pp' + p, [{
+      panelPlot(p, [{
         type: 'bar', orientation: 'h', x: per,
         y: st.map(k => lab[k] || k), text: txt,
         textposition: 'outside', hovertemplate: '%{y}: %{x:.1f}/event<extra></extra>',
@@ -1172,8 +1450,8 @@ async function drawInner() {
       const sp = DIST_SPEC[metric];
       const vname = sp.v || scCuts[0][0];
       if (!vname) {
-        document.getElementById('pp' + p).innerHTML =
-          '<p class="hint">Pick a score in slot A to see its distribution.</p>';
+        panelMsg(p,
+          '<p class="hint">Pick a score in slot A to see its distribution.</p>');
         continue;
       }
       // An angle panel bins the CLUSTER table, restricted to clusters whose
@@ -1182,14 +1460,14 @@ async function drawInner() {
       let dt = TB.t, dcols = TB.cols, drows = rows, dSC = SCa;
       if (sp.src === 'angle') {
         if (!S.ang || !m.angle) {
-          document.getElementById('pp' + p).innerHTML =
-            '<p class="hint">This export carries no per-cluster angle table.</p>';
+          panelMsg(p,
+            '<p class="hint">This export carries no per-cluster angle table.</p>');
           continue;
         }
         if (TB.isBaseline) {
-          document.getElementById('pp' + p).innerHTML =
+          panelMsg(p,
             '<p class="hint">Cluster angles are a SmartPixels measurement; the '
-            + 'baseline collections have no inner-tracker clusters.</p>';
+            + 'baseline collections have no inner-tracker clusters.</p>');
           continue;
         }
         const fl = C.trackFlags(rows, S.nTrk);
@@ -1243,7 +1521,7 @@ async function drawInner() {
         });
       });
       const ttl = sp.v ? METRICS[metric] : `${vname} score, by wrong hits`;
-      Plotly.react('pp' + p, traces,
+      panelPlot(p, traces,
         { margin: { l: 58, r: 6, t: 18, b: 72 }, shapes: shapes,
           title: { text: `${ttl}  (solid = median, dotted = median +- width)`,
                    font: { size: 11 } },
@@ -1262,10 +1540,10 @@ async function drawInner() {
     // by whether that individual cluster is the contaminating one.
     if (metric === 'angle_a' || metric === 'angle_b') {
       if (!S.ang || !m.angle) {
-        document.getElementById('pp' + p).innerHTML =
+        panelMsg(p,
           '<p class="hint">This export carries no per-cluster angle table. It '
           + 'arrives with the next census build (one emitted track in 12 '
-          + 'contributes its IT cluster residuals).</p>';
+          + 'contributes its IT cluster residuals).</p>');
         continue;
       }
       const side = metric === 'angle_a' ? 'a' : 'b';
@@ -1282,7 +1560,7 @@ async function drawInner() {
         }),
         text: xs.map((_, i) => `N=${g.cnt[k * g.nx + i]}`),
       }));
-      Plotly.react('pp' + p, traces,
+      panelPlot(p, traces,
         { margin: { l: 62, r: 6, t: 18, b: 40 },
           title: { text: side === 'a'
                    ? 'spread of (cluster alpha - track alpha) at the sensor'
@@ -1319,13 +1597,16 @@ async function drawInner() {
         }),
         text: xs.map((_, i) => `N=${w.cnt[k * w.nx + i]}`),
       }));
-      Plotly.react('pp' + p, traces,
+      const dx = isEtaAxis(xName) ? accDecor('x', xE[0], xE[xE.length - 1], edgeE, true, labE)
+                                  : { shapes: [], annotations: [] };
+      panelPlot(p, traces,
         { margin: { l: 54, r: 6, t: 18, b: 40 },
           title: { text: 'sigma(d0) by wrong-hit count', font: { size: 11 } },
           xaxis: { title: { text: AXLAB[xName] || xName }, tickfont: { size: 9 } },
           yaxis: { title: { text: 'sigma(d0) [um]' }, type: 'log',
                    tickfont: { size: 9 } },
           legend: { font: { size: 9 } },
+          shapes: dx.shapes, annotations: dx.annotations,
         }, { responsive: true, displayModeBar: false });
       continue;
     }
@@ -1341,7 +1622,7 @@ async function drawInner() {
         y: D0_BAND_NAMES.map((_, b) =>
           g.den[b] > 0 ? g.num[k * g.nb + b] / g.den[b] : null),
       }));
-      Plotly.react('pp' + p, traces,
+      panelPlot(p, traces,
         { margin: { l: 48, r: 6, t: 18, b: 46 },
           title: { text: 'seed efficiency vs true |d0|', font: { size: 11 } },
           xaxis: { title: { text: 'true |d0| [cm]' }, tickfont: { size: 9 } },
@@ -1358,26 +1639,26 @@ async function drawInner() {
     }
     let z, text, nx, ny;
     if (metric === 'eff_seed' && !FM.eff_seed) {
-      document.getElementById('pp' + p).innerHTML =
+      panelMsg(p,
         '<p class="hint">Seed-truthful efficiency is not defined for this '
         + 'collection &mdash; its tracks are not produced by the seed menu and '
-        + 'never entered the seed bitmaps. The delivered efficiency is.</p>';
+        + 'never entered the seed bitmaps. The delivered efficiency is.</p>');
       continue;
     }
     if (metric === 'eff_deliv' && !FM.eff_deliv) {
-      document.getElementById('pp' + p).innerHTML =
+      panelMsg(p,
         '<p class="hint">This export has no tp_row column, so a track cannot be '
         + 'matched to its particle exactly and the delivered efficiency is '
         + 'unavailable. (tp_key cannot do it: a 30-bit key does not survive '
-        + 'float32.) Use the seed-truthful efficiency.</p>';
+        + 'float32.) Use the seed-truthful efficiency.</p>');
       continue;
     }
     const trkAxis = (n) => TRACK_ONLY[n] || C.scoreCol(SCa, n) >= 0;
     if (metric.startsWith('eff') && (trkAxis(xName) || trkAxis(yName))) {
-      document.getElementById('pp' + p).innerHTML =
+      panelMsg(p,
         '<p class="hint">Efficiency bins TrackingParticles, which carry no '
         + 'hit-composition columns. Pick pT, eta, phi, d0, z0 or layer count '
-        + 'for both axes, or choose a track quantity for this panel.</p>';
+        + 'for both axes, or choose a track quantity for this panel.</p>');
       continue;
     }
     if (metric.startsWith('eff')) {
@@ -1395,10 +1676,10 @@ async function drawInner() {
     } else {
       const spec = STAT_SPEC[metric];
       if (spec[0] && !TB.cols.includes(spec[0])) {
-        document.getElementById('pp' + p).innerHTML =
+        panelMsg(p,
           `<p class="hint">This export has no <code>${spec[0]}</code> column, so `
           + `${METRICS[metric]} is unavailable. It arrives with the next census `
-          + `build.</p>`;
+          + `build.</p>`);
         continue;
       }
       const r = C.binnedStat(TB.t, TB.cols, rows, xName, yName, xE, yE,
@@ -1410,7 +1691,12 @@ async function drawInner() {
     const zz = [], tt = [];
     for (let j = 0; j < ny; j++) { zz.push(z.slice(j * nx, (j + 1) * nx));
                                    tt.push(text.slice(j * nx, (j + 1) * nx)); }
-    Plotly.react('pp' + p, [{
+    // an eta axis reaching past the acceptance edge gets the shaded state
+    const dx = isEtaAxis(xName) ? accDecor('x', xE[0], xE[xE.length - 1], edgeE, true, labE)
+                                : { shapes: [], annotations: [] };
+    const dy = isEtaAxis(yName) ? accDecor('y', yE[0], yE[yE.length - 1], edgeE, true, labE)
+                                : { shapes: [], annotations: [] };
+    panelPlot(p, [{
       type: 'heatmap', z: zz, text: tt, hoverinfo: 'x+y+z+text',
       x: Array.from({ length: nx }, (_, i) => 0.5 * (xE[i] + xE[i + 1])),
       y: Array.from({ length: ny }, (_, j) => 0.5 * (yE[j] + yE[j + 1])),
@@ -1421,7 +1707,9 @@ async function drawInner() {
     }], { margin: { l: 48, r: 6, t: 18, b: 34 },
           title: { text: labName(METRICS[metric]), font: { size: 11 } },
           xaxis: { title: { text: AXLAB[xName] || xName }, tickfont: { size: 9 } },
-          yaxis: { title: { text: AXLAB[yName] || yName }, tickfont: { size: 9 } }
+          yaxis: { title: { text: AXLAB[yName] || yName }, tickfont: { size: 9 } },
+          shapes: dx.shapes.concat(dy.shapes),
+          annotations: dx.annotations.concat(dy.annotations)
         }, { responsive: true, displayModeBar: false });
   }
   prog(1, `ready — ${(performance.now() - t0).toFixed(0)} ms`);

@@ -2,6 +2,11 @@
 //
 //   osascript -l JavaScript site_src/test_explorer_jxa.js            # tests site_src/
 //   osascript -l JavaScript site_src/test_explorer_jxa.js site/       # tests a deployed copy
+//   osascript -l JavaScript site_src/test_explorer_jxa.js site_src/ DATA/   # + a REAL export
+//
+// With a second directory (an export_site output), the page's code is also run
+// on that REAL data: every .bin of its manifest is loaded as boot() would load
+// it and drawInner runs on every scenario with the |eta| panels and table.
 //
 // JXA (macOS JavaScriptCore via osascript), NOT node. It evaluates the page's
 // real sources against a small synthetic dataset with the same SHAPE as an
@@ -70,8 +75,20 @@ function Option(a,b){ return {label:a, value:b}; }
 // throws into a rejected promise that JXA never surfaces, and the harness
 // reports 'no synchronous rejection' while nothing has actually run.
 var performance={ now:function(){ return 0; } };
-var Plotly={ react:function(id,tr,lay){ plots.push({id:id, traces:tr.length,
-                                          title:(lay.title&&lay.title.text)||''}); } };
+function ttl(a){ return a && a.title ? (a.title.text!==undefined ? a.title.text : a.title) : ''; }
+// react/purge model the div state the page has to manage: a plotted div carries
+// _fullLayout (as in Plotly), purge removes it. The page's panelMsg/panelPlot
+// must purge before a message and clear a message before a plot.
+var purges=[];
+var Plotly={ purge:function(el){ purges.push(el.id); delete el._fullLayout; },
+  react:function(el,tr,lay){ var id=(typeof el==='string')?el:el.id;
+  if (typeof el!=='string') el._fullLayout={};
+  plots.push({id:id, traces:tr.length,
+  title:(lay.title&&lay.title.text)||'',
+  cb:(tr[0]&&tr[0].colorbar&&tr[0].colorbar.title&&tr[0].colorbar.title.text)||'',
+  xt:ttl(lay.xaxis), yt:ttl(lay.yaxis), shapes:(lay.shapes||[]).length,
+  ann:(lay.annotations||[]).map(function(a){ return a.text; }),
+  z:(tr[0]&&tr[0].z)||null, y:(tr[0]&&tr[0].y)||null}); } };
 // ---- a synthetic dataset with the same SHAPE as the real one -------------
 var NTP=8, NTRK=6, NW=1, NSC=2;
 var TPCOLS=['key','event','pt','eta','phi','d0','z0','vr','hit_it','hit_ot','n_layers'];
@@ -97,17 +114,29 @@ var MAN = { built:'test', n_events:2, source:'synthetic', ptmin:2.0,
   funnel_labels:{pairs:'pairs',seed_objects:'seeds',before_chi2:'layer rule',
                  fit:'chi2',owned:'after DR'},
   notes:[] };
+var E25=[]; for (var k=0;k<25;k++) E25.push(Math.round(k)/10); E25.push(10);
+function hist25(f){ var a=[]; for (var k=0;k<25;k++) a.push(f(k)); return a; }
+MAN.eta_ranges={edges:[0,1.1,1.8,2.4], x:1.8};
+MAN.acceptance={eta_max:1.4, text:'IT barrel only; OT stubs to |eta| 1.4.'};
+// seeds formed per seed (by idx) and |eta| bin: seed s has (s+1) per bin
+MAN.seed_eta={edges:E25, n_events:2,
+  counts:[0,1,2,3].map(function(s){ return hist25(function(){ return s+1; }); })};
+MAN.coverage={edges:E25, n_events:2, ptmin:2.0,
+  census:hist25(function(k){ return k<14 ? 10 : 1; }),
+  all:hist25(function(k){ return 10; })};
 function f32(n){ var a=new Float32Array(n); for(var i=0;i<n;i++) a[i]=0; return a; }
 var TPB=f32(NTP*TPCOLS.length), TRB=f32(NTRK*TRKCOLS.length);
 for (var i=0;i<NTP;i++){ var b=i*TPCOLS.length;
   TPB[b+2]=3+i; TPB[b+3]=0.1*i-0.4; TPB[b+4]=0.2; TPB[b+5]=0.001*(i%4);
   TPB[b+6]=1.0; TPB[b+10]=6; }
+TPB[6*TPCOLS.length+3]=1.5; TPB[7*TPCOLS.length+3]=2.0;   // two forward TPs
 for (var i=0;i<NTRK;i++){ var b=i*TRKCOLS.length;
   TRB[b+0]=i%2; TRB[b+1]=i<5?i:-1; TRB[b+2]=i<5?i:-1; TRB[b+3]=4+i; TRB[b+4]=0.1;
   TRB[b+5]=0.2; TRB[b+6]=0.002; TRB[b+7]=1.0; TRB[b+8]=6; TRB[b+9]=6; TRB[b+10]=6-(i%3);
   TRB[b+11]=4; TRB[b+12]=i%2; TRB[b+13]=2; TRB[b+14]=0; TRB[b+15]=0.0016;
   TRB[b+16]=i%3; TRB[b+17]=0.004*(1+(i%3)); TRB[b+18]=0.01; TRB[b+19]=0.005;
   TRB[b+20]=0.001; TRB[b+21]=0.002; }
+TRB[4*TRKCOLS.length+5]=2.0;   // one forward track (fitted eta)
 var FOUND=new Uint32Array(NTP); for (var i=0;i<NTP;i++) FOUND[i]=(i%3)?1:3;
 var SCB=new Uint8Array(NTRK*NSC); for (var i=0;i<NTRK*NSC;i++) SCB[i]=40+30*i;
 var BUF={ 'manifest.json':MAN, 'tp.bin':TPB.buffer, 'found.bin':FOUND.buffer,
@@ -203,10 +232,13 @@ for (var i=0;i<NB;i++){ BB[i*BCOLS.length+BCOLS.indexOf('pt')]=5;
 var BSC1=new Uint8Array(NB*2), BSC2=new Uint8Array(NB*2);
 for (var i=0;i<NB*2;i++){ BSC1[i]=Math.round(255*(i%8)/7); BSC2[i]=20+40*i; }
 MAN.baseline={file:'baseline.bin',cols:BCOLS,rows:NB,label:'Phase-2 baseline',
+  eta_max:1.4, ptmin:2.0,
+  eta_hist:{edges:E25, n_events:2, all_l1ttrack:hist25(function(k){ return 4; }),
+            exported:hist25(function(k){ return k<14 ? 4 : 0; })},
   score:{file:'baseline_score.bin',cols:['cmssw_tq_hw3','cmssw_tq_float'],rows:NB,scale:255,
          default:['cmssw_tq_hw3',''],mva:{cmssw_tq_hw3:{what:'3-bit word',levels:8},
          cmssw_tq_float:{what:'float'}}}};
-MAN.baseline_emu={file:'baseline_emu.bin',cols:BCOLS,rows:NB,
+MAN.baseline_emu={file:'baseline_emu.bin',cols:BCOLS,rows:NB, eta_max:1.4, ptmin:2.0, n_events:2,
                   label:'Phase-2 baseline (re-emulated)',
   score:{file:'baseline_emu_score.bin',cols:['mva_tq_prompt','mva_tq_displaced'],rows:NB,scale:255,
          default:['mva_tq_prompt','mva_tq_displaced'],
@@ -347,4 +379,130 @@ PANELS=['eff_deliv','dist_score','eff_seed','sd0_wrong'];
     + ' | pp2(eff_seed): '+String((els['pp2']||{}).innerHTML||'').slice(0,50)
     + ' | bands: '+String((els['bands']||{}).innerHTML||'').slice(0,70));
 });
+// ---- |eta| ranges: table, multiplicity heatmaps, acceptance state ---------
+// THE PER-DRAW BUG FAMILY: the table and panels must follow the seeds and the
+// scenario on EVERY draw. Each check below changes one input and redraws.
+function strip(h){ return String(h||'').replace(/<[^>]*>/g,' ').replace(/&[a-zA-Z]+;/g,'').replace(/\s+/g,' ').trim(); }
+function etaRows(){ var h=String((els['etabands']||{}).innerHTML||'');
+  return h.split('<tr').slice(2).map(function(r){
+    var cls=(r.match(/^ class="([a-z]+)"/)||[])[1]||'in';
+    return cls+': '+strip('<tr'+r); }); }
+function setOpen(){
+  [['pt',0,25],['eta',-1.6,1.6],['phi',-3.2,3.2],['d0',-0.05,0.05],['z0',-20,20],['n_layers',3,16]]
+    .forEach(function(c){ document.getElementById('lo_'+c[0]).value=String(c[1]);
+                          document.getElementById('hi_'+c[0]).value=String(c[2]); });
+  els['minlay']=mkEl('minlay'); els['minlay'].value='4';
+  els['tpsplit']=mkEl('tpsplit'); els['tpsplit'].value='all';
+  els['owndef']=mkEl('owndef'); els['owndef'].value='majority';
+  els['fakedef']=mkEl('fakedef'); els['fakedef'].value='unusable';
+  document.getElementById('cutA').value='0'; document.getElementById('cutB').value='0';
+  document.getElementById('xbins').value='20'; document.getElementById('ybins').value='16';
+}
+function drawEta(sc, panels, label){
+  scen=sc; PANELS=panels; plots.length=0; var caught=null;
+  try { HS.fillScoreMenus(); els['cutA'].value='0'; els['cutB'].value='0'; HS.drawInner(); }
+  catch(e){ caught=e; }
+  drainQ();
+  log.push('[eta] '+label+': '+(caught ? 'THREW '+(caught.name||'')+': '+caught.message : 'ran'));
+  etaRows().forEach(function(r){ log.push('   row '+r); });
+  log.push('   hint: '+strip((els['etahint']||{}).innerHTML).slice(0,150));
+  plots.forEach(function(q){ log.push('   plot "'+q.title.slice(0,70)+'" cb['+q.cb+'] x['+q.xt+'] y['+q.yt
+    +'] shapes '+q.shapes+(q.ann.length?' ann '+JSON.stringify(q.ann):'')
+    +(q.y?' rows '+JSON.stringify(q.y):'')); });
+  for (var k=0;k<panels.length;k++){ var t=strip((els['pp'+k]||{}).innerHTML); if (t) log.push('   pp'+k+' text: '+t.slice(0,90)); }
+  return caught;
+}
+setOpen();
+SDBOX=[box('it','0'), box('ot','1'), box('mix','2'), box('soft','3')];
+var MULT=['mult_seed','mult_seed_build','mult_trk','mult_trk_build'];
+drawEta('joint', MULT, 'joint, all 4 seeds (expect seeds/ev 5/3.5/3 per range = (1+2+3+4)*bins/2 ev: <1.1 11 bins -> 55.0, 1.1-1.8 7 -> 35.0, 1.8-2.4 6 -> 30.0; rows in/partacc/outacc)');
+var before=etaRows().join('|');
+SDBOX[0].checked=false; SDBOX[3].checked=false;      // drop seeds 0 and 3
+drawEta('joint', MULT, 'joint, seeds 1+2 only (expect seeds/ev (2+3)*bins/2: 27.5/17.5/15.0)');
+log.push('   per-draw: table changed with the seed selection: '+(etaRows().join('|')!==before));
+SDBOX.forEach(function(x){ x.checked=true; });
+drawEta('baseline', ['mult_seed','mult_trk','eff_deliv'], 'CMSSW baseline (expect seeds n/a, "(L1TTrack 4.0..)" style brackets in partial/out rows, mult_seed message, mult_trk 2 rows)');
+drawEta('baseline_emu', ['mult_trk','mult_trk_build'], 're-emulated baseline (expect 1 row, build panel message)');
+// A PANEL THAT SHOWED A MESSAGE MUST PLOT AGAIN: plot (joint) -> message
+// (baseline: no seeds) -> plot (joint). In Plotly a div that held a plot and
+// was overwritten with innerHTML keeps its plot state, so react would draw into
+// detached nodes and the message would stay; the page purges/clears instead.
+var pur0=purges.length;
+drawEta('baseline', ['mult_seed'], 'CMSSW baseline, mult_seed only (expect a message in pp0)');
+var stale0=strip(els['pp0'].innerHTML), hadFL=!!els['pp0']._fullLayout;
+drawEta('joint', MULT, 'joint again (expect identical to the first joint draw)');
+log.push('   stale-message check: on the baseline pp0 held "'+stale0.slice(0,40)+'..." with plot state '
+  +(hadFL?'LEFT ON THE DIV (bug)':'purged')+' (purges +'+(purges.length-pur0)+'); after the joint draw it holds "'
+  +strip(els['pp0'].innerHTML)+'" (expect empty) and a plot was drawn into it: '
+  +plots.some(function(q){ return q.id==='pp0'; }));
+log.push('   per-draw: back on joint, table identical to the first draw: '+(etaRows().join('|')===before));
+log.push('   coverage: '+strip((els['etacov']||{}).innerHTML).slice(0,200));
+PANELS=['eff_deliv']; scen='joint';
+els['xcol'].value='eta'; els['ycol'].value='pt';
+plots.length=0; try { HS.drawInner(); } catch(e){ log.push('eff heatmap THREW '+e.message); }
+log.push('[eta] efficiency heatmap over eta in [-1.6,1.6]: shapes '+(plots[0]||{}).shapes
+  +' (expect 4: two shaded |eta|>1.4 sides + two edge lines) ann '+JSON.stringify((plots[0]||{}).ann));
+
+// ---- REAL DATA ------------------------------------------------------------
+var DATA = REST.length > 1 ? REST[1].replace(/\/$/, '') : null;
+var B64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+var B64L = new Uint8Array(256); for (var k=0;k<64;k++) B64L[B64.charCodeAt(k)]=k;
+function b64dec(t){
+  var n=t.length, pad=(t.charAt(n-1)==='='?1:0)+(t.charAt(n-2)==='='?1:0);
+  var out=new Uint8Array(n/4*3-pad), o=0;
+  for (var i=0;i<n;i+=4){
+    var v=(B64L[t.charCodeAt(i)]<<18)|(B64L[t.charCodeAt(i+1)]<<12)|(B64L[t.charCodeAt(i+2)]<<6)|B64L[t.charCodeAt(i+3)];
+    out[o++]=(v>>16)&255; if (o<out.length) out[o++]=(v>>8)&255; if (o<out.length) out[o++]=v&255;
+  }
+  return out;
+}
+function rdBin(f, Type){
+  var d=$.NSData.dataWithContentsOfFile(DATA+'/'+f);
+  if (!d || d.isNil()) throw new Error('cannot read '+f);
+  return new Type(b64dec(d.base64EncodedStringWithOptions(0).js).buffer);
+}
+if (DATA) {
+  log.push('=== REAL DATA '+DATA+' ===');
+  var RM=JSON.parse(rd(DATA+'/manifest.json'));
+  var R=HS.S; for (var k in R) delete R[k];
+  R.m=RM;
+  R.tp=rdBin(RM.tp.file,Float32Array); R.found=rdBin(RM.found.file,Uint32Array);
+  R.foundDr=rdBin(RM.found_dr.file,Uint32Array); R.trk=rdBin(RM.track.file,Float32Array);
+  if (RM.score) R.score=rdBin(RM.score.file,Uint8Array);
+  if (RM.baseline) R.baseline=rdBin(RM.baseline.file,Float32Array);
+  if (RM.baseline_emu) R.baselineEmu=rdBin(RM.baseline_emu.file,Float32Array);
+  if (RM.angle) R.ang=rdBin(RM.angle.file,Float32Array);
+  if (RM.conflict){ R.indptr=rdBin(RM.conflict.indptr,Int32Array); R.nbr=rdBin(RM.conflict.neighbours,Int32Array);
+                    R.order=rdBin(RM.conflict.order,Int32Array); }
+  R.nTp=RM.tp.rows; R.nW=RM.found.words; R.nTrk=RM.track.rows;
+  R.SC=RM.score?{data:R.score, cols:RM.score.cols, scale:RM.score.scale||255}:null;
+  R.SCbase={};
+  [['baseline','baselineScore'],['baseline_emu','baselineEmuScore']].forEach(function(q){
+    if (RM[q[0]]&&RM[q[0]].score){ R[q[1]]=rdBin(RM[q[0]].score.file,Uint8Array);
+      R.SCbase[q[0]]={data:R[q[1]], cols:RM[q[0]].score.cols, scale:RM[q[0]].score.scale||255}; } });
+  var nc=RM.track.cols.length, js=RM.track.cols.indexOf('seed_idx');
+  R.seedOf=new Int32Array(RM.track.rows); for (var i=0;i<RM.track.rows;i++) R.seedOf[i]=R.trk[i*nc+js];
+  log.push('loaded: '+R.nTp+' TPs, '+R.nTrk+' tracks, '+RM.seeds.length+' seeds, seed_eta '+(!!RM.seed_eta)
+    +', coverage '+(!!RM.coverage)+', eta_ranges '+JSON.stringify(RM.eta_ranges));
+  els={}; scen='joint';
+  try { HS.setup(); log.push('real setup() completed; prov: '+strip(els['prov'].innerHTML).slice(-160)); }
+  catch(e){ log.push('real SETUP THREW: '+e.message); }
+  setOpen();
+  var GRP=function(s){ return s.soft?'soft':['it','ot','mix'][s.sysclass]; };
+  SDBOX=RM.seeds.filter(function(s){ return RM.builds.AAAA.indexOf(s.tag)>=0; })
+                .map(function(s){ return box(GRP(s), String(s.idx)); });
+  log.push('AAAA seeds enabled: '+SDBOX.length);
+  var c1=drawEta('joint', MULT.concat(['eff_deliv']), 'REAL joint AAAA, DR on');
+  var first=etaRows().join('|');
+  SDBOX.forEach(function(x){ x.checked = x.dataset.g!=='soft'; });
+  drawEta('joint', ['mult_seed','mult_trk'], 'REAL joint AAAA, soft group off (expect smaller seeds/tracks)');
+  log.push('   per-draw: table changed with the soft group: '+(etaRows().join('|')!==first));
+  SDBOX.forEach(function(x){ x.checked=true; });
+  drawEta('refit', ['mult_seed_build'], 'REAL refit (no mixed seeds)');
+  drawEta('baseline', ['mult_trk','eff_deliv','mult_seed'], 'REAL CMSSW baseline');
+  drawEta('baseline_emu', ['mult_trk','eff_deliv'], 'REAL re-emulated baseline');
+  drawEta('joint', ['mult_seed'], 'REAL joint again');
+  log.push('   per-draw: back on joint, table identical: '+(etaRows().join('|')===first));
+  log.push('   coverage: '+strip((els['etacov']||{}).innerHTML));
+}
 log.join('\n');

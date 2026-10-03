@@ -53,6 +53,95 @@ def _u32(b):
     return np.ascontiguousarray(b.astype(np.uint64)).view(np.uint32)
 
 
+# THE |eta| RANGES of the page summaries: |eta| < 1.1, 1.1 <= |eta| < X and
+# X <= |eta| <= 2.4 (user, 2026-09-27; X = 1.8 decided 2026-10-02).
+ETA_RANGE_LO, ETA_RANGE_HI = 1.1, 2.4
+
+# WHAT THE EMULATION SEES. Its IT seeding is barrel-only (IL1-IL4), it has no OT
+# disk seeds or targets, and it keeps OT barrel stubs only up to |stub eta|
+# M.ETA_MATCHED. Beyond that the census denominator (particles crossing >= 4 of
+# those barrel layers) holds a sliver of the particles there, so the page marks
+# those |eta| bins as a distinct state instead of printing a bare efficiency.
+ACCEPTANCE_TEXT = ("IT seeding uses the barrel layers IL1-IL4 only; there are no IT "
+                   "disc (ID1-ID4) seeds, no OT disk seeds or targets, and OT barrel "
+                   "stubs are kept only up to |eta| {eta:.1f}.")
+
+
+def _popcount(bits):
+    b = np.ascontiguousarray(np.asarray(bits, np.uint32))
+    return np.unpackbits(b.view(np.uint8).reshape(-1, 4), axis=1).sum(1)
+
+
+def denominator_coverage(paths, nev, ptmin, edges):
+    """Particles per |eta| bin that the census denominator holds, against all of
+    them: L1TTP particles with pT >= ptmin and >= 4 layers hit, counted
+      census  as the census counts layers: IL1-IL4 clusters, OT barrel stubs with
+              |stub eta| <= M.ETA_MATCHED (tp_findability._unify)
+      all     every SmartPixels layer in the cluster table (IL1-IL4, ID1-ID4) and
+              every OT layer (barrel at any |eta|, disks D1-D5).
+    Read from the census's own input files, same events. Returns per-bin counts.
+    """
+    import awkward as ak
+    import uproot
+    from ngtagger.data import spix_nano as SPN
+    M = TF.M
+    keys = uproot.open(f"{paths[0]}:Events").keys()
+    br = (SPN.cluster_branches(keys, ["surface", "tpIdx"])
+          + SPN.branch_names(keys, SPN.OT_TABLE, ["layer", "isBarrel", "tpIdx", "z", "r"])
+          + SPN.branch_names(keys, SPN.TP_TABLE, ["pt", "eta"]))
+    nb = len(edges) - 1
+    out = {"census": np.zeros(nb, np.int64), "all": np.zeros(nb, np.int64)}
+    seen = 0
+    for A in uproot.iterate([f"{p}:Events" for p in paths], br, step_size=25):
+        if nev is not None:
+            if seen >= nev:
+                break
+            A = A[:nev - seen]
+        J = SPN.cluster_columns(A, ["surface", "tpIdx"])
+        O = SPN.table_columns(A, SPN.OT_TABLE, ["layer", "isBarrel", "tpIdx", "z", "r"])
+        T = SPN.table_columns(A, SPN.TP_TABLE, ["pt", "eta"])
+        ntp = ak.to_numpy(ak.num(T["pt"]))
+        toff = np.r_[0, np.cumsum(ntp)[:-1]]
+
+        def flat(arr):
+            n = ak.to_numpy(ak.num(arr))
+            return ak.to_numpy(ak.flatten(arr)), np.repeat(np.arange(len(n)), n)
+        surf, ev_c = flat(J["surface"])
+        tpc = ak.to_numpy(ak.flatten(J["tpIdx"])).astype(np.int64)
+        lay, ev_o = flat(O["layer"])
+        isb = ak.to_numpy(ak.flatten(O["isBarrel"])) > 0
+        tpo = ak.to_numpy(ak.flatten(O["tpIdx"])).astype(np.int64)
+        seta = np.abs(np.arcsinh(ak.to_numpy(ak.flatten(O["z"]))
+                                 / np.maximum(ak.to_numpy(ak.flatten(O["r"])), 1e-6)))
+        surf = surf.astype(np.int64)
+        # layer bits: IL1-4 -> 0-3, ID1-4 -> 4-7, OL1-6 -> 8-13, OD1-5 -> 14-18
+        code_c = np.where(surf <= 4, surf - 1, 4 + surf - 11)
+        code_o = np.where(isb, 8 + lay.astype(np.int64) - 1, 14 + lay.astype(np.int64) - 1)
+        row = np.r_[toff[ev_c] + tpc, toff[ev_o] + tpo]
+        code = np.r_[code_c, code_o]
+        in_census = np.r_[surf <= 4, isb & (seta <= M.ETA_MATCHED)]
+        m = np.r_[tpc >= 0, tpo >= 0]
+        all_bits = np.zeros(int(ntp.sum()), np.uint32)
+        cen_bits = np.zeros(int(ntp.sum()), np.uint32)
+        np.bitwise_or.at(all_bits, row[m], (1 << code[m]).astype(np.uint32))
+        mc = m & in_census
+        np.bitwise_or.at(cen_bits, row[mc], (1 << code[mc]).astype(np.uint32))
+        pt = ak.to_numpy(ak.flatten(T["pt"]))
+        aeta = np.minimum(np.abs(ak.to_numpy(ak.flatten(T["eta"]))), edges[-1] - 1e-9)
+        sel = pt >= ptmin
+        for k, b in (("census", cen_bits), ("all", all_bits)):
+            s = sel & (_popcount(b) >= 4)
+            out[k] += np.histogram(aeta[s], bins=np.asarray(edges))[0]
+        seen += len(ntp)
+    return {"edges": list(edges), "n_events": seen, "ptmin": float(ptmin),
+            "census": out["census"].tolist(), "all": out["all"].tolist(),
+            "what": "particles (L1TTP) with pT >= ptmin and >= 4 layers hit: 'census' "
+                    "counts IL1-IL4 clusters and OT barrel stubs up to the census's "
+                    "|eta| cut (its efficiency denominator); 'all' counts every "
+                    "SmartPixels layer IL1-IL4 + ID1-ID4 and every OT barrel layer and "
+                    "disk. Totals over n_events, no other cuts."}
+
+
 def build_tp_table(C):
     """Per-TP rows plus the two seed bitmaps, restricted to a usable denominator.
 
@@ -392,7 +481,16 @@ def main():
                          "OT targets, no inner tracker. Omit to leave it out.")
     ap.add_argument("--baseline-nev", type=int, default=None)
     ap.add_argument("--baseline-ptmin", type=float, default=2.0)
+    ap.add_argument("--eta-x", type=float, default=1.8,
+                    help="X of the page's |eta| summary ranges: |eta| < 1.1, "
+                         "1.1-X, X-2.4")
     a = ap.parse_args()
+    # on the 0.1 grid of SA.SEED_ETA_EDGES, so the seed and coverage counts
+    # split exactly at X
+    if not (ETA_RANGE_LO < a.eta_x < ETA_RANGE_HI
+            and round(a.eta_x, 1) in SA.SEED_ETA_EDGES and abs(a.eta_x - round(a.eta_x, 1)) < 1e-9):
+        raise SystemExit(f"--eta-x must be a multiple of 0.1 in ({ETA_RANGE_LO}, {ETA_RANGE_HI})")
+    a.eta_x = round(a.eta_x, 1)
     src = TF.census_dir(a.cache_dir)
     C = TF.load(src, nev=a.nev, with_tracks=True)
     os.makedirs(a.outdir, exist_ok=True)
@@ -442,6 +540,27 @@ def main():
     T, C["track_cols"] = trim_for_browser(T, list(C["track_cols"]), [])
     print(f"  track table trimmed {n_before} -> {len(C['track_cols'])} browser "
           f"columns, {T.nbytes / 1e9:.2f} GB")
+    # HOW MUCH OF EACH |eta| BIN THE DENOMINATOR HOLDS, from the census's inputs
+    edges = [float(x) for x in SA.SEED_ETA_EDGES]
+    inputs = [r["path"] for r in json.load(open(os.path.join(src, "manifest.json")))["inputs"]]
+    coverage = denominator_coverage(inputs, C["n_events"], float(C.get("ptmin", 2.0)), edges)
+    # the 'census' count must reproduce the exported denominator exactly
+    tpc = {c: i for i, c in enumerate(TP_COLS)}
+    m = (TPA[:, tpc["pt"]] >= coverage["ptmin"]) & (TPA[:, tpc["n_layers"]] >= 4)
+    mine = np.histogram(np.minimum(np.abs(TPA[m, tpc["eta"]]), edges[-1] - 1e-9),
+                        bins=np.asarray(edges))[0]
+    if mine.tolist() != coverage["census"]:
+        raise SystemExit(f"denominator coverage disagrees with the TP table: "
+                         f"{coverage['census']} vs {mine.tolist()}")
+    cuts = sorted({0.0, ETA_RANGE_LO, float(TF.M.ETA_MATCHED), float(a.eta_x),
+                   ETA_RANGE_HI, edges[-1]})
+    at = [edges.index(x) for x in cuts]
+    print(f"  denominator coverage, pT >= {coverage['ptmin']:.1f}, particles/event "
+          f"(census denominator / >= 4 layers anywhere):")
+    for i0, i1 in zip(at[:-1], at[1:]):
+        c = sum(coverage["census"][i0:i1]) / max(coverage["n_events"], 1)
+        t = sum(coverage["all"][i0:i1]) / max(coverage["n_events"], 1)
+        print(f"    |eta| {edges[i0]:.1f}-{edges[i1]:.1f}: {c:7.1f} / {t:7.1f}")
     meta = {
         "built": time.strftime("%Y-%m-%d %H:%M:%S"),
         "n_events": C["n_events"],
@@ -494,6 +613,17 @@ def main():
         "builds": {m: sorted({s.tag for s in _build_menu(
             [TF.IL_OF[i] for i, ch in enumerate(m) if ch == "A"], has_soft)})
             for m in TF.BUILD_MASKS},
+        "eta_ranges": {"edges": [0.0, ETA_RANGE_LO, float(a.eta_x), ETA_RANGE_HI],
+                       "x": float(a.eta_x)},
+        "acceptance": {"eta_max": float(TF.M.ETA_MATCHED),
+                       "text": ACCEPTANCE_TEXT.format(eta=TF.M.ETA_MATCHED)},
+        # SEEDS FORMED per seed and |eta| bin (the funnel's seed_objects), summed
+        # over the census events; the seed's |eta| is asinh of its pair cot
+        **({"seed_eta": {"edges": list(C["seed_eta_edges"]),
+                         "counts": C["seed_eta"].tolist(),
+                         "n_events": C["n_events"]}}
+           if C.get("seed_eta") is not None else {}),
+        "coverage": coverage,
         "tp": {"file": "tp.bin", "cols": list(TP_COLS), "rows": int(len(TPA)),
                "dtype": "float32"},
         "found": {"file": "found.bin", "rows": int(len(TPA)),

@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M      # noqa: E402
 import kf_emulation as KF               # noqa: E402
 import tp_findability as TF             # noqa: E402
+import seed_arity as SA                 # noqa: E402
 from ot_oracle import load, stub_truth   # noqa: E402
 
 # THE TP LINK. Both baselines carry, per track, its majority owner's row in the
@@ -159,7 +160,19 @@ def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
     }
     keep = np.flatnonzero(sel)
     names = list(COLS) + list(EXTRA_CMSSW)
-    info = {"join_barrel_frac": frac}
+    # WHAT THE BLOCK LEAVES OUT. It keeps barrel tracks (|eta| <= eta_max, >= 4
+    # barrel stubs) to match the emulation; L1TTrack itself reaches |eta| 2.4
+    # with disk stubs. Counted per |eta| bin so the page can show those tracks
+    # exist instead of reading an empty forward bin as "none".
+    edges = np.asarray(SA.SEED_ETA_EDGES)
+    aeta = np.minimum(np.abs(T["eta"]), edges[-1] - 1e-9)
+    info = {"join_barrel_frac": frac,
+            "eta_hist": {"edges": edges.tolist(), "n_events": int(len(T["_n"])),
+                         "all_l1ttrack": np.histogram(aeta[T["pt"] >= ptmin], bins=edges)[0].tolist(),
+                         "exported": np.histogram(aeta[sel], bins=edges)[0].tolist(),
+                         "what": f"L1TTrack per |eta| bin, totals over n_events: every "
+                                 f"track with pT >= {ptmin} (any stubs, barrel or disk) "
+                                 f"against the tracks this block keeps"}}
     if tp_keys is not None:
         # owner = majority owner over the track's genuine stubs, as above; its
         # stubs are the track's owned hits (no IT hits on a baseline)

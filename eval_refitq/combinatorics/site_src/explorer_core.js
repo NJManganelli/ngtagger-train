@@ -709,6 +709,123 @@ function linEdges(lo, hi, n) {
   return e;
 }
 
+// ---- |eta| ranges ----------------------------------------------------------
+// The summaries split on |eta| into a few RANGES (edges [0, 1.1, X, 2.4]) whose
+// last one includes its upper edge -- binIndex's convention, which is why these
+// do not reuse effByBand (half-open on every band).
+function effByRanges(tp, cols, nRows, keep, fmask, edges, minLayers, colName) {
+  const nc = cols.length;
+  const jv = need(cols, colName || 'eta', 'effByRanges');
+  const jl = need(cols, 'n_layers', 'effByRanges');
+  const nb = edges.length - 1;
+  const num = new Float64Array(nb), den = new Float64Array(nb);
+  for (let i = 0; i < nRows; i++) {
+    if (!keep[i]) continue;
+    if (tp[i * nc + jl] < minLayers) continue;
+    const b = binIndex(Math.abs(tp[i * nc + jv]), edges);
+    if (b < 0) continue;
+    den[b] += 1;
+    if (fmask[i]) num[b] += 1;
+  }
+  return { num, den };
+}
+
+// Tracks per |value| bin over a row list (absolute: the |eta| summaries).
+function countByBin(trk, cols, rows, SC, name, edges, absolute) {
+  const g = axisGetter(trk, cols, SC, name, 'countByBin');
+  const out = new Float64Array(edges.length - 1);
+  for (const i of rows) {
+    const v = g(i);
+    const b = binIndex(absolute ? Math.abs(v) : v, edges);
+    if (b >= 0) out[b] += 1;
+  }
+  return out;
+}
+
+// Tracks per (seed, |eta| bin) over a row list, one pass. seedList gives the
+// output row order; a track whose seed is not listed is skipped.
+function countBySeedBin(trk, cols, rows, seedOf, seedList, name, edges) {
+  const g = axisGetter(trk, cols, null, name, 'countBySeedBin');
+  const nb = edges.length - 1, ns = seedList.length;
+  const pos = new Map(seedList.map((s, k) => [s, k]));
+  const out = new Float64Array(ns * nb);
+  for (const i of rows) {
+    const k = pos.get(seedOf[i]);
+    if (k === undefined) continue;
+    const b = binIndex(Math.abs(g(i)), edges);
+    if (b >= 0) out[k * nb + b] += 1;
+  }
+  return { val: out, ns, nb };
+}
+
+// Tracks per (build, |eta| bin) BEFORE duplicate removal, in one pass over the
+// whole table, with the track cuts and score thresholds applied inline (no row
+// list is materialised: the table is ~10M rows). buildsOfSeed[s] lists the
+// builds whose menu holds seed s; a track counts once in each of them.
+function countByBuildBin(trk, cols, nRows, seedOf, buildsOfSeed, nBuilds, name,
+                         edges, cuts, scoreCuts, SC) {
+  const nc = cols.length;
+  const g = axisGetter(trk, cols, null, name, 'countByBuildBin');
+  const lim = [];
+  for (const k in cuts) {
+    const j = cols.indexOf(k);
+    if (j >= 0) lim.push([j, cuts[k][0], cuts[k][1]]);
+  }
+  const sl = [];
+  for (const [nm, lo] of (scoreCuts || [])) {
+    if (!nm || !(lo > 0)) continue;
+    const j = scoreCol(SC, nm);
+    if (j < 0) throw new Error(`countByBuildBin: no score "${nm}"`);
+    sl.push([j, lo * SC.scale]);
+  }
+  const snc = SC ? SC.cols.length : 0;
+  const nb = edges.length - 1;
+  const out = new Float64Array(nBuilds * nb);
+  outer:
+  for (let i = 0; i < nRows; i++) {
+    const bl = buildsOfSeed[seedOf[i]];
+    if (!bl || !bl.length) continue;
+    const b0 = i * nc;
+    for (const [j, lo, hi] of lim) {
+      const v = trk[b0 + j];
+      if (!(v >= lo && v <= hi)) continue outer;
+    }
+    for (const [j, lo] of sl) if (!(SC.data[i * snc + j] >= lo)) continue outer;
+    const b = binIndex(Math.abs(g(i)), edges);
+    if (b < 0) continue;
+    for (const k of bl) out[k * nb + b] += 1;
+  }
+  return { val: out, nb };
+}
+
+// Sums of fine-bin counts over coarser ranges. A range edge that is not a fine
+// edge (to 1e-6) makes that range NaN rather than silently splitting a bin.
+function rangeSums(counts, fineEdges, rangeEdges) {
+  const idx = Array.from(rangeEdges, (x) => {
+    for (let k = 0; k < fineEdges.length; k++)
+      if (Math.abs(fineEdges[k] - x) < 1e-6) return k;
+    return -1;
+  });
+  const out = new Float64Array(rangeEdges.length - 1);
+  for (let r = 0; r < out.length; r++) {
+    const a = idx[r], b = idx[r + 1];
+    if (a < 0 || b < 0) { out[r] = NaN; continue; }
+    let s = 0;
+    for (let k = a; k < b; k++) s += counts[k];
+    out[r] = s;
+  }
+  return out;
+}
+
+// Where an |eta| range sits against an acceptance edge: wholly inside, partly
+// outside, or wholly outside.
+function accState(lo, hi, etaMax) {
+  if (!(etaMax > 0)) return 'in';
+  if (lo >= etaMax - 1e-9) return 'out';
+  if (hi > etaMax + 1e-9) return 'partial';
+  return 'in';
+}
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = { seedMaskWords, anyBitSet, tpSelect, binIndex,
                      bitmapMask, deliveredMask, OWN_DEFS, tpSplit, effGridPerSeed,
@@ -719,5 +836,7 @@ if (typeof module !== 'undefined' && module.exports) {
                      filterTracks, fakeFractions, scoreKept, scoreCol, axisGetter, DERIVED,
                      statByWrong, histByWrong, classWidths, WRONG_CLASSES,
                      HIT_CLASSES, CLASS_SPECS,
-                     angleProfile, trackFlags, ANGLE_CLASSES };
+                     angleProfile, trackFlags, ANGLE_CLASSES,
+                     effByRanges, countByBin, countBySeedBin, countByBuildBin,
+                     rangeSums, accState };
 }
