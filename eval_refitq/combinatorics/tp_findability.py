@@ -65,7 +65,8 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 21   # 21: TPs identified by tpIdx (L1TTP row; <= -3 matched but not in
+FORMAT_VERSION = 22   # 22: per-seed seed multiplicity by |eta| (shard seed_eta).
+                      # 21: TPs identified by tpIdx (L1TTP row; <= -3 matched but not in
                       # L1TTP), census key = M.tp_key(event, tpIdx) with the 22-bit low
                       # word; key-era shards are not comparable.
                       # 20: the IT seeder vetoes clusters whose global direction
@@ -466,6 +467,9 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
     found_dr = np.zeros((ntp, nw), np.uint64)
     targets = list(targets) if targets else list(SA.IL) + list(SA.OT_BARREL)
     counters, qual, trk, hits, ang = {}, {}, {}, {}, {}
+    # SEED MULTIPLICITY BY |eta|: every seed object a seed forms (the funnel's
+    # seed_objects), binned on SA.SEED_ETA_EDGES. Counts, so chunks add.
+    seed_eta = np.zeros((len(seeds), len(SA.SEED_ETA_EDGES) - 1), np.int64)
 
     # ---- pass 1: seed, follow, fit, chi2-accept --------------------------
     TP = KF.tp_truth_table(U)
@@ -480,6 +484,8 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         except M.TooWide as e:
             counters[s_i] = {"infeasible": 1.0, "n": float(e.n)}
             continue
+        if o is not None and "seed_eta_hist" in o:
+            seed_eta[s_i] = o["seed_eta_hist"]
         if o is None or not o.get("tracks_to_fit"):
             counters[s_i] = {"pairs": 0.0, "cand": 0.0, "fit": 0.0}
             continue
@@ -637,7 +643,7 @@ def process_chunk(U, Q, seeds, ptmin, rng, qual_per_chunk, kf_opts=None,
         if len(rkeys):
             p = np.searchsorted(cen["key"], rkeys)
             found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-    return cen, found, found_dr, counters, qual, trk, hits, ang, nonant
+    return cen, found, found_dr, counters, qual, trk, hits, ang, nonant, seed_eta
 
 
 def truncation_table(C, cap=TRACKS_PER_REGION):
@@ -754,6 +760,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 "seed_soft": [bool(sd.soft) for sd in seeds],
                 "seed_notes": [sd.note for sd in seeds],
                 "seed_tags": [sd.tag for sd in seeds],
+                "seed_eta_edges": list(SA.SEED_ETA_EDGES),
                 "chunks_done": 0, "n_events": 0}
         json.dump(meta, open(mpath, "w"), indent=1, default=float)
     _soft = meta.get("seed_soft") or [False] * len(meta["seeds"])
@@ -784,7 +791,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, found_dr, counters, qual, trk, hits, ang, nonant = process_chunk(
+            cen, found, found_dr, counters, qual, trk, hits, ang, nonant, seed_eta = process_chunk(
                 U, Q, seeds, ptmin, rng, QUAL_PER_CHUNK, kf_opts,
                 export_tracks, targets=targets, min_layers=min_layers,
                 d0_window_cm=d0_window_cm, it_ptmin=it_ptmin,
@@ -798,7 +805,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 # n_clusters lets load() offset the chunk-local cluster indices
                 # into a global space; chunks are written independently and
                 # resumably, so the offset cannot be baked in at write time
-                n_clusters=len(U["layer"]), nonant=nonant,
+                n_clusters=len(U["layer"]), nonant=nonant, seed_eta=seed_eta,
                 **{f"trk_{k}": v for k, v in trk.items()},
                 **{f"hit_{k}": v for k, v in hits.items()},
                 **{f"ang_{k}": v for k, v in ang.items()})
@@ -838,6 +845,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     parts = {c: [] for c in cols}
     fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
     non = []
+    seta = None
     cl_tot = cl_off = 0
     for sh in shards:
         if nev is not None and nread >= nev:
@@ -852,6 +860,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
         nread += int(z["n_events"])
         if "nonant" in z.files:
             non.append(z["nonant"])
+        if "seed_eta" in z.files:
+            seta = z["seed_eta"] if seta is None else seta + z["seed_eta"]
         for k, v in json.loads(str(z["counters"])).items():
             a = cnt.setdefault(int(k), {})
             for kk, vv in v.items():
@@ -872,6 +882,10 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["found_dr"] = np.concatenate(fdr, axis=0)
     C["n_events"] = nread
     C["nonant"] = np.concatenate(non) if non else np.zeros(0, np.int32)
+    # seeds formed per seed and |eta| bin, summed over the events read (None for
+    # a census that predates the record: "not measured", never zeros)
+    C["seed_eta"] = seta
+    C["seed_eta_edges"] = meta.get("seed_eta_edges")
     # the soft flag has to survive the reload too, or the report describes the
     # recovery entries under the standard floor and the standard rule
     _sf = meta.get("seed_soft") or [False] * len(meta["seeds"])

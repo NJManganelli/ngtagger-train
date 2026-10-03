@@ -71,6 +71,15 @@ OT_DOUBLETS = ((11, 12), (12, 13), (13, 14), (15, 16))
 # relabelling here; it builds a different combinatorial set.
 OT_TRIPLETS = ((13, 14, 12), (15, 16, 14))
 MIN_LAYERS = 4
+# |eta| bins of the SEED MULTIPLICITY record (run_seed's seed_eta_hist): 0.1 wide
+# to 2.4, then one overflow bin. The seed's |eta| is asinh of its own pair cot.
+SEED_ETA_EDGES = tuple(round(0.1 * k, 1) for k in range(25)) + (10.0,)
+
+
+def seed_eta_hist(cot):
+    """Counts of seeds per SEED_ETA_EDGES bin, from each seed's pair cot(theta)."""
+    a = np.minimum(np.abs(np.arcsinh(np.asarray(cot, np.float64))), SEED_ETA_EDGES[-1] - 1e-9)
+    return np.histogram(a, bins=np.asarray(SEED_ETA_EDGES))[0].astype(np.int64)
 
 
 class Seed:
@@ -278,6 +287,7 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
         out["seed_objects"] = int(len(gA))
     if not len(gA):
         return None
+    out["seed_eta_hist"] = seed_eta_hist(cot)
     # ---- follow to every remaining layer --------------------------------
     nconf = np.zeros(len(gA), np.int32)
     nconf_it = np.zeros(len(gA), np.int32)
