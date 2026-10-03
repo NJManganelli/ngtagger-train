@@ -24,7 +24,7 @@ the same variant window. That is scale-free, per-parameter and per-variant.
 Consumes the census cache (needs --export-tracks).
 """
 from __future__ import annotations
-import argparse, glob, json, sys, time
+import argparse, json, sys, time
 from pathlib import Path
 import numpy as np
 
@@ -55,18 +55,13 @@ def sig(x, nmin=100):
 
 
 def load(cache_dir, nev=None, census=None):
-    if census:
-        ds = [census]
-    else:
-        ds = sorted(glob.glob(f"{cache_dir}/tpcensus_*"),
-                    key=lambda p: Path(p).stat().st_mtime)
-        if not ds:
-            raise SystemExit(f"no census under {cache_dir}")
-    C = TF.load(ds[-1], nev=nev, with_tracks=True)
+    """Track rows of the census at --census, else the one under --cache-dir."""
+    d = TF.census_dir(census or cache_dir)
+    C = TF.load(d, nev=nev, with_tracks=True)
     if not C["tracks"]:
         raise SystemExit("census carries no track rows; rerun --export-tracks")
     T = np.concatenate([C["tracks"][i] for i in sorted(C["tracks"])])
-    return T, {c: j for j, c in enumerate(C["track_cols"])}, Path(ds[-1]).name
+    return T, {c: j for j, c in enumerate(C["track_cols"])}, d
 
 
 def make_target(T, c, name, win):
@@ -115,10 +110,10 @@ def main():
     ap.add_argument("--cache-dir", default=str(Path(__file__).parent / "cache"))
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--census", default=None,
-                    help="an explicit census directory, instead of the most "
-                         "recent one under --cache-dir. Needed to point at a "
-                         "quantised scan build rather than the full-precision "
-                         "census.")
+                    help="an explicit census directory, instead of the one "
+                         "under --cache-dir (refused when that holds several). "
+                         "Needed to point at a quantised scan build rather than "
+                         "the full-precision census.")
     ap.add_argument("--max-train", type=int, default=1_500_000)
     ap.add_argument("--drop", default="",
                     help="comma list of features to withhold, e.g. "
@@ -130,7 +125,8 @@ def main():
     ap.add_argument("-o", "--out", default=None)
     a = ap.parse_args()
 
-    T, c, cname = load(a.cache_dir, a.nev, a.census)
+    T, c, cdir = load(a.cache_dir, a.nev, a.census)
+    cname = Path(cdir).name
     drop = {x.strip() for x in a.drop.split(",") if x.strip()}
     feats = [f for f in KF.MVA_FEATURES if f in c and f not in drop]
     if drop:
@@ -147,13 +143,7 @@ def main():
         print(f"  window {k:<10} |fitted d0| {'<=' if k == 'prompt' else '>'} "
               f"{D0_SPLIT_CM * 1e4:.0f} um : {int(w.sum()):>10,} tracks")
 
-    bench = None
-    try:
-        bench = json.load(open(Path(a.census or "").parent
-                               / Path(a.census or "").name
-                               / "manifest.json"))["config"].get("bench")
-    except Exception:
-        pass
+    bench = json.load(open(Path(cdir) / "manifest.json"))["config"]["bench"]
     print(f"  alpha/beta quantisation: "
           f"{'none (full float)' if not bench else str(bench) + ' bits'}")
     J = {"census": cname, "bench": bench, "features": feats, "d0_split_um": D0_SPLIT_CM * 1e4,

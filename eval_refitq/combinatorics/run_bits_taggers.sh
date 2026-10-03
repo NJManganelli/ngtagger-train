@@ -33,7 +33,10 @@ for b in 3 5 7; do
       --alpha-bits "$b" --beta-bits "$b" --export-tracks \
       --cache-dir "$CACHE" -o "$OUT/bits_tracks_a${b}_b${b}.json" \
       > "$OUT/$tag.census.log" 2>&1 || { echo "[bt] census FAILED"; continue; }
-  dir=$(ls -dt $CACHE/tpcensus_* | head -1)
+  # the census this run built, as it reports itself -- not the newest of the
+  # three under $CACHE, which is whichever happened to be touched last
+  dir=$($PY -c 'import json, sys; print(json.load(open(sys.argv[1]))["cache_dir"])' \
+        "$OUT/bits_tracks_a${b}_b${b}.json")
   echo "[bt] taggers on $dir  $(date +%H:%M:%S)"
   $PY -u $S/quality_taggers.py --census "$dir" --only clean,d0 \
       -o "$OUT/$tag.json" > "$OUT/$tag.log" 2>&1 \

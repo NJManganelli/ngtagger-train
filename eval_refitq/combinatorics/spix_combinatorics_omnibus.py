@@ -3984,11 +3984,11 @@ def study_cluster_angles_by_layer(X, K, P, ax_row, out):
     TF = _mod("tp_findability")
     KF = TF.KF
     cdir = out.get("_menu_cache") or os.path.join(_here, "cache")
-    ds = sorted(_glob.glob(os.path.join(cdir, "tpcensus_*")))
-    if not ds:
-        return _skip("no census under %s; run the menu study first, or point "
-                     "--menu-cache at one" % cdir)
-    C = TF.load(ds[-1], with_tracks=True)
+    try:                        # the census there, never one picked from several
+        C = TF.load(TF.census_dir(cdir), with_tracks=True)
+    except SystemExit as e:
+        return _skip("%s; run the menu study first, or point --menu-cache at "
+                     "one census" % e)
     per_seed = [v for v in C.get("angles", {}).values() if len(v)]
     if not per_seed:
         return _skip("that census carries no angle rows; re-run it with "

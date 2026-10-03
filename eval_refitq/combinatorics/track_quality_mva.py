@@ -28,7 +28,7 @@ is distinguishable from the reverse.
 Run tp_findability.py with --features-per-chunk to produce the training rows.
 """
 from __future__ import annotations
-import argparse, glob, json, sys
+import argparse, json, sys
 from pathlib import Path
 import numpy as np
 
@@ -47,10 +47,7 @@ def robust_sigma(x):
 
 
 def load_rows(cache_dir):
-    ds = sorted(glob.glob(f"{cache_dir}/tpcensus_*"))
-    if not ds:
-        raise SystemExit(f"no census under {cache_dir}")
-    C = TF.load(ds[-1], verbose=False, with_tracks=True)
+    C = TF.load(TF.census_dir(cache_dir), verbose=False, with_tracks=True)
     if not C["tracks"]:
         raise SystemExit("census has no track rows; rerun with --export-tracks")
     T = np.concatenate([C["tracks"][i] for i in sorted(C["tracks"])])

@@ -20,7 +20,7 @@ Independent of the census cache except for its calibration and seed list, since
 the composition columns do not exist in the shards.
 """
 from __future__ import annotations
-import argparse, glob, json, sys, time
+import argparse, json, sys, time
 from pathlib import Path
 import numpy as np
 
@@ -369,10 +369,7 @@ def main():
     ap.add_argument("-o", "--out", default=None, help="write the report as JSON")
     a = ap.parse_args()
 
-    ds = sorted(glob.glob(f"{a.cache_dir}/tpcensus_*"))
-    if not ds:
-        raise SystemExit(f"no census under {a.cache_dir} to take calibration from")
-    d = ds[-1]
+    d = TF.census_dir(a.cache_dir)
     meta = json.load(open(Path(d) / "manifest.json"))
     if meta["format"] != TF.FORMAT_VERSION:
         raise SystemExit(f"{d} is census format {meta['format']}; this code reads "

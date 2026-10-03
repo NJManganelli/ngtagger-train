@@ -93,6 +93,18 @@ def main():
         head = "alpha/beta bits"
     if not rows:
         raise SystemExit(f"no runs matching mode={a.mode} yet")
+    # ONE CENSUS PER SETTING. Two under the same knob value (e.g. a stale one
+    # beside its rebuild) would print as two rows with one label, and which is
+    # which would be the hash order: refused, never picked.
+    same = {}
+    for r in rows:
+        same.setdefault(key(r), []).append(r["dir"])
+    clash = {k: v for k, v in same.items() if len(v) > 1}
+    if clash:
+        raise SystemExit("several censuses per setting under "
+                         f"{a.cache_dir}: " + "; ".join(
+                             f"{k}: {', '.join(v)}" for k, v in clash.items())
+                         + ". Move the ones not to compare out of it.")
     print(f"{len(rows)} run(s), {rows[0]['n_events']} events each\n")
     print(f"{head:>16} {'pairs/ev':>10} {'proj/ev':>12} {'fit/ev':>9} "
           f"{'own/ev':>8} {'s(d0)um':>9} {'s(1/pT)':>9} " +
