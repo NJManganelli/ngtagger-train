@@ -618,6 +618,8 @@ def main():
                    "labels": {s: TF.M.ANGLE_STAGES[s][0]
                               for s in C["angle_use"].key()["stages"]}},
         "angle_res": C["angle_res"],
+        # how a projection picked one hit among its candidates (M.POS_ARB)
+        "pos_arb": C["pos_arb"],
         "eta_ranges": {"edges": [0.0, ETA_RANGE_LO, float(a.eta_x), ETA_RANGE_HI],
                        "x": float(a.eta_x)},
         "acceptance": {"eta_max": float(TF.M.ETA_MATCHED),

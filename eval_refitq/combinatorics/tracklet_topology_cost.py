@@ -1822,7 +1822,8 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
 
 def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                displaced=False, d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM,
-               use_angles=True, d0_meas=None, seed_layers=None, role="follow"):
+               use_angles=True, d0_meas=None, seed_layers=None, role="follow",
+               pos_arb="dphi"):
     """STAGE 2: project a set of cluster pairs to ONE target layer.
 
     Called once by a triplet seed (for its required third layer, role
@@ -1834,9 +1835,16 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     target layer's clusters), S3 (attach: the alpha/beta pull window on the third
     hit), S4w (follow: the same window on a follow-layer candidate) and S4a (the
     one-hit-per-pair arbitration on position + angle pulls, either role).
+
+    pos_arb, THE POSITION PART OF THE ONE-HIT-PER-PAIR CHOICE (POS_ARB):
+    "dphi" the smallest |dphi|; "rphiz" the smallest (dphi/sigma_phi)^2 +
+    (dz/sigma_z)^2, each with the sigma its window is built from. S4a adds its
+    angle pulls^2 to that same position term.
     """
     if role not in ("attach", "follow"):
         raise ValueError(f"role {role!r}")
+    if pos_arb not in POS_ARB:
+        raise ValueError(f"pos_arb {pos_arb!r}")
     ang = AngleUse.coerce(use_angles)
     kmax = 1.0 / ptmin
     idx = dict(idx)
@@ -1951,7 +1959,8 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
         dphi = np.abs(wrap(D["globalPhi"][gC] - phiC_i))
         zwin = NSIG * szp_i * z_widen
         zwin = zwin if cap_z is None else np.minimum(zwin, cap_z)
-        good = np.abs(D["globalZ"][gC] - zC_i) <= zwin
+        dz = np.abs(D["globalZ"][gC] - zC_i)
+        good = dz <= zwin
         if displaced:
             # THE EXACT THREE-POINT SOLVE IS THE DISCRIMINANT HERE, not a phi
             # window. With three azimuths in hand, (phi0, d0, kappa) are
@@ -1969,7 +1978,11 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
         else:
             pwin = NSIG * sph if cap_phi is None else min(NSIG * sph, cap_phi)
             good &= dphi <= pwin
-        score = dphi
+        # THE POSITION TERM of the arbitration, the same for every angle
+        # configuration; S4a adds its angle pulls to it below
+        pos = (np.square(dphi / sph) + np.square(dz / szp_i)) if pos_arb == "rphiz" \
+            else None
+        score = dphi if pos is None else pos
         if (win_nsig is not None or arb) and good.any():
             pa_, pb_ = cand_angle_pulls(Q, gC, kap[ja] - dm[ja] / (C_BEND * rc_i * rc_i),
                                         cot[ja])
@@ -1982,10 +1995,11 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                 good &= ~u_ | inw
                 n_ang_rej += g0 - int(good.sum())
             if arb:
-                # (dphi / sigma_phi)^2 ranks exactly as dphi does, so with no
-                # usable angle the choice is the position-only one
-                score = np.square(dphi / sph) + ang.arb_weight * np.where(
-                    u_, pa_ * pa_ + pb_ * pb_, 0.0)
+                # on top of the position term: under "dphi" that term is
+                # (dphi / sigma_phi)^2, which ranks exactly as dphi does, so with
+                # no usable angle the choice is the position-only one either way
+                score = ((np.square(dphi / sph) if pos is None else pos)
+                         + ang.arb_weight * np.where(u_, pa_ * pa_ + pb_ * pb_, 0.0))
         if not good.any():
             continue
         sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(score[good])
@@ -2000,7 +2014,7 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     out["match_cand_z"] = int(len(pa))
     # ARBITRATE ONCE, over every radial bin together: a cluster pair's candidates
     # are spread across bins, so a per-yield argmin would pick a different winner.
-    # The score is dphi, or the combined position + angle pull^2 under S4a.
+    # The score is the position term (pos_arb), plus the angle pulls^2 under S4a.
     o = np.lexsort((pr, pa))
     first = np.r_[True, pa[o][1:] != pa[o][:-1]]
     pk = o[first]
@@ -2012,6 +2026,14 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     # which of its pairs each confirmation came from to count layers per track.
     out["_pairidx"] = pa[pk]
     return out
+
+
+# THE POSITION ARBITRATION when a projection window holds several candidates
+# for one cluster pair. "dphi" (smallest |dphi|) ignores the z residual the
+# window already measured, so an angle arbitration that uses beta would get
+# credit for z information the positions carry: the census default is "rphiz"
+# (user, 2026-10-03, after an independent review). Other callers keep "dphi".
+POS_ARB = ("dphi", "rphiz")
 
 
 def cand_angle_pulls(Q, g, kap_pred, cot_pred):

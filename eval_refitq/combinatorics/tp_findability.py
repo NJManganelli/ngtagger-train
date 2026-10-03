@@ -65,7 +65,9 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 25   # 25: the angle stages (M.ANGLE_STAGES, config "angles") and
+FORMAT_VERSION = 26   # 26: the position arbitration of a projection's candidates
+                      # (config "pos_arb", M.POS_ARB; default r-phi + z pulls).
+                      # 25: the angle stages (M.ANGLE_STAGES, config "angles") and
                       # the resolution knob ("angle_res") are in the identity;
                       # angle sigmas carry the per-layer pull scales at every stage;
                       # counters pairs_phi, s3/s4w/s6 rejections.
@@ -216,6 +218,11 @@ def calibrate(spec, nev, ptmin):
     return {"sigz_ot": sigz, "r_median": rmed, "calib_events": nI}
 
 
+# the census's position arbitration (M.POS_ARB): r-phi and z pulls, each in its
+# own window sigma, so no angle configuration is compared against a
+# z-blind baseline
+POS_ARB_DEFAULT = "rphiz"
+
 BUILD_MASKS = ["AAAA", "AAAI", "AAIA", "AIAA", "IAAA", "AAII", "AIAI",
                "AIIA", "IAAI", "IAIA", "IIAA", "AIII", "IAII", "IIAI", "IIIA"]
 IL_OF = {0: 1, 1: 2, 2: 3, 3: 4}
@@ -346,7 +353,7 @@ def entry_rng(ci, sd):
 
 
 def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0,
-                  ang=None):
+                  ang=None, pos_arb=None):
     """Yield (index, result) per entry: SA.run_seed's result for the entry's
     seed followed into its own follow set, None if the seed formed nothing, or
     the M.TooWide its formation raised.
@@ -356,9 +363,11 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0,
     its own (SA.apply_layer_rule). Entries of one seed are contiguous
     (census_entries), so only the current one is held. ptmin_of(sd) and
     rule_of(sd) -> (min_it_layers, min_ot_conf) give an entry's floor and rule.
-    `ang` is the census's M.AngleUse (None: every stage).
+    `ang` is the census's M.AngleUse (None: every stage), `pos_arb` its position
+    arbitration (M.POS_ARB; None: POS_ARB_DEFAULT).
     """
     ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
+    pos_arb = POS_ARB_DEFAULT if pos_arb is None else pos_arb
     formed, F, err = None, None, None
     for s_i, sd in enumerate(seeds):
         if formed != (sd.layers, sd.soft):
@@ -366,7 +375,8 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0,
             union = sorted({L for e in seeds if (e.layers, e.soft) == formed
                             for L in e.follow})
             try:
-                F = SA.follow_seed(U, Q, sd, ptmin_of(sd), union, ang, d0_cm)
+                F = SA.follow_seed(U, Q, sd, ptmin_of(sd), union, ang, d0_cm,
+                                   pos_arb)
             except M.TooWide as e:
                 err = e
         if err is not None:
@@ -576,7 +586,7 @@ def chunk_census(U):
 def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
                   export_tracks=0, do_dr=True,
                   min_layers=SA.MIN_LAYERS, d0_window_cm=0.0, it_ptmin=None,
-                  min_it_layers=None, min_ot_conf=0, ang=None):
+                  min_it_layers=None, min_ot_conf=0, ang=None, pos_arb=None):
     """Run every entry over chunk `ci` and reduce to census + bitmap + counters.
 
     `seeds` are the census entries (census_entries: a seed and the layers it
@@ -587,6 +597,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     `ang` (M.AngleUse; None = every stage) says where the SmartPixels angles
     are used: the seeding stages S1-S4 inside the follow, the KF update S5, the
     acceptance S6 and the DR rank S7 here (S8 is the exporters' feature set).
+    `pos_arb` is the position part of every one-hit-per-pair choice (M.POS_ARB).
 
     TWO PASSES, because duplicate removal is inherently cross-seed. The first
     pass runs each entry through pairing, projection, the 4-layer rule and the
@@ -660,7 +671,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     TP = KF.tp_truth_table(U)
     held = {}
     for s_i, o in entry_results(U, Q, seeds, _ptmin_for, _rule_for, min_layers,
-                                d0_window_cm, ang):
+                                d0_window_cm, ang, pos_arb):
         sd = seeds[s_i]
         pt_s = _ptmin_for(sd)
         if isinstance(o, M.TooWide):
@@ -874,10 +885,11 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           export_tracks=0, seed_classes=None, targets=None,
           min_layers=SA.MIN_LAYERS, bench=None, d0_window_cm=0.0,
           it_ptmin=None, min_it_layers=None, min_ot_conf=0, ang=None,
-          res=None):
+          res=None, pos_arb=None):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
-    `ang` is the M.AngleUse (None = every stage) and `res` the angle resolution
+    `pos_arb` is the position arbitration (M.POS_ARB; None = POS_ARB_DEFAULT),
+    `ang` the M.AngleUse (None = every stage) and `res` the angle resolution
     knob {"alpha_k", "beta_k" in [0, 1], "sigma", "ref"} (None = as emulated);
     both are in the identity. A k < 1 census carries ANGLE_REF_CAVEAT with its
     measured reference coverage in the manifest ("angle_res_caveat").
@@ -898,6 +910,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     # shard, so a cache built with one angle weighting or d0 prior must not be
     # silently extended by a run using another.
     ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
+    pos_arb = POS_ARB_DEFAULT if pos_arb is None else pos_arb
     res = {"alpha_k": 1.0, "beta_k": 1.0, **(res or {})}
     improve = res["alpha_k"] < 1.0 or res["beta_k"] < 1.0
     if not improve:
@@ -917,8 +930,11 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
            "min_ot_conf": int(min_ot_conf),
            # part of the identity: a bit width changes the candidates themselves
            "bench": list(bench) if bench else None,
+           # how a projection picks one hit among its candidates: position
+           # policy, the same for every angle configuration
+           "pos_arb": pos_arb,
            # WHERE THE ANGLES ARE USED and at what resolution: every stage
-           # switch and window, and the degradation factor applied at input
+           # switch and window, and the improvement factor applied at input
            "angles": ang.key(),
            "angle_res": {k: (float(v) if k.endswith("_k") else v)
                          for k, v in sorted(res.items())},
@@ -1021,7 +1037,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 U, Q, seeds, meta["dr_groups"], ptmin, ci, QUAL_PER_CHUNK, kf_opts,
                 export_tracks, min_layers=min_layers,
                 d0_window_cm=d0_window_cm, it_ptmin=it_ptmin,
-                min_it_layers=min_it_layers, min_ot_conf=min_ot_conf, ang=ang)
+                min_it_layers=min_it_layers, min_ot_conf=min_ot_conf, ang=ang,
+                pos_arb=pos_arb)
             np.savez_compressed(
                 _shard_path(d, ci), found=found, found_dr=found_dr,
                 n_events=len(ev),
@@ -1137,6 +1154,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     # follows S8 (KF.mva_features), so an exporter cannot train on angles the
     # census was told not to use
     C["angle_use"] = M.AngleUse.from_key(meta["config"]["angles"])
+    C["pos_arb"] = meta["config"]["pos_arb"]
     C["angle_res"] = meta["config"]["angle_res"]
     C["angle_res_caveat"] = meta.get("angle_res_caveat")
     C["mva_features"] = KF.mva_features(C["angle_use"])
@@ -1358,6 +1376,11 @@ def main():
                          f"or 'none'. Stages: {stages}")
     ap.add_argument("--angle-stages-off", default="",
                     help="stages to remove from --angle-stages (leave-one-out)")
+    ap.add_argument("--pos-arb", default=POS_ARB_DEFAULT, choices=M.POS_ARB,
+                    help="how a projection picks one hit among its candidates: "
+                         "rphiz = smallest (dphi/sigma)^2 + (dz/sigma)^2, dphi = "
+                         "smallest |dphi| (before 2026-10-03; it ignores the z "
+                         "residual, so beta in S4a gets credit for z information)")
     P = M.AngleUse.PARAMS
     ap.add_argument("--attach-nsig", type=float, default=P["attach_nsig"],
                     help="S3 window on the third hit's alpha and beta pulls")
@@ -1410,13 +1433,14 @@ def main():
         raise SystemExit("--alpha-k/--beta-k must be in [0, 1]: the knob only "
                          "improves the emulated angles")
     print(f"angle stages: {ang.label()}; resolution k alpha {a.alpha_k:g}, "
-          f"beta {a.beta_k:g}", flush=True)
+          f"beta {a.beta_k:g}; position arbitration {a.pos_arb}", flush=True)
     C = build(a.input, a.nev, a.ptmin, layers, a.n_adjacent, a.chunk,
               a.cache_dir, a.cache, a.hash_content, a.calib_events, masks=masks,
               kf_opts={"alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
                        "d0_prior_cm": a.d0_prior_cm},
               ang=ang, res={"alpha_k": a.alpha_k, "beta_k": a.beta_k,
                             "sigma": a.angle_k_sigma, "ref": a.angle_ref},
+              pos_arb=a.pos_arb,
               export_tracks=a.export_tracks, seed_classes=scl, targets=tgt,
               min_layers=a.min_layers, min_it_layers=a.min_it_layers,
               min_ot_conf=a.min_ot_conf,
@@ -1470,6 +1494,7 @@ def main():
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "n_tp": int(len(C["key"])),
                    "pt_min": a.ptmin, "cache_dir": C["cache_dir"],
+                   "pos_arb": C["pos_arb"],
                    "angles": C["angle_use"].key(), "angle_res": C["angle_res"],
                    **({"angle_res_caveat": C["angle_res_caveat"]}
                       if C["angle_res_caveat"] else {}),

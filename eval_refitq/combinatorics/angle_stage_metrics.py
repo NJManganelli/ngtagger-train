@@ -179,7 +179,8 @@ def main():
         col = {c: j for j, c in enumerate(C["track_cols"])}
         P = tp_rows(C)
         nev = C["n_events"]
-        r = {"angles": C["angle_use"].key(), "angle_res": C["angle_res"],
+        r = {"pos_arb": C["pos_arb"],
+             "angles": C["angle_use"].key(), "angle_res": C["angle_res"],
              "label": C["angle_use"].label(), "n_events": nev, "builds": {}}
         if C["angle_res_caveat"]:
             # a k < 1 census: its numbers travel with the caveat

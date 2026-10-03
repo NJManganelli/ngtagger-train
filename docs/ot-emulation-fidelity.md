@@ -147,6 +147,13 @@ and it is position-only in fact, not just in name:
 - the pair and target-layer median radii that set the position windows are taken
   on each layer's full cluster set, before the alpha veto, so both arms run the
   same windows;
+- when a projection window holds several candidates for one seed, the census
+  keeps the one with the smallest r-phi + z position pull, (dphi/sigma_phi)^2 +
+  (dz/sigma_z)^2 with each window's own sigma (`--pos-arb rphiz`, the default
+  since 2026-10-03, after an independent review). The earlier smallest-|dphi|
+  choice (`--pos-arb dphi`) ignored the z residual the window had already
+  measured, so an angle arbitration using beta was credited with z information
+  the positions carry. S4a adds the angle pulls^2 to the same position term;
 - every angle sigma carries the same per-layer pull scale
   (`ALPHA_PULL_SCALE` / `BETA_PULL_SCALE`) at every stage, and every angle any
   stage reads is the one `it_prepare` prepared once (resolution knob

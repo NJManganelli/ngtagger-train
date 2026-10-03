@@ -236,17 +236,18 @@ def menu_fingerprint():
 
 def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
              strict_cmssw=False, d0_cm=0.0, min_layers=None,
-             min_it_layers=None, min_ot_conf=0):
+             min_it_layers=None, min_ot_conf=0, pos_arb="dphi"):
     """Run one seed, follow it to EVERY target layer and apply the layer rule:
     follow_seed then apply_layer_rule over the same targets."""
-    F = follow_seed(U, Q, seed, ptmin, targets, use_angles, d0_cm)
+    F = follow_seed(U, Q, seed, ptmin, targets, use_angles, d0_cm, pos_arb)
     if F is None:
         return None
     return apply_layer_rule(F, seed, targets, strict_cmssw, min_layers,
                             min_it_layers, min_ot_conf)
 
 
-def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
+def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0,
+                pos_arb="dphi"):
     """Form one seed's objects and project them to every layer in `targets`.
 
     A doublet projects to all of them with a d0 = 0 helix. A triplet first
@@ -262,7 +263,8 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
 
     use_angles: an M.AngleUse (or the bool shorthand, M.AngleUse.coerce), handed
     to the pair stage and to every projection: the third layer as the triplet
-    ATTACH, every other target as a FOLLOW layer.
+    ATTACH, every other target as a FOLLOW layer. pos_arb is the position part
+    of their one-hit-per-pair choice (M.POS_ARB).
 
     Returns None when the seed forms nothing, else the formation counters
     ("out"), the seed objects and, per target layer, the projection matches
@@ -291,7 +293,7 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
         # innerThirdTable_ and will not fake it with the wrong table.
         o3 = M.it_project(U, Q, dict(out), gA, gB, kap, cot, z0p, idx,
                           la, lb, lc, ptmin, False, d0_cm,
-                          use_angles=use_angles, role="attach")
+                          use_angles=use_angles, role="attach", pos_arb=pos_arb)
         if "_trip" not in o3:
             return None
         ta, tb, tc = o3["_trip"]
@@ -322,7 +324,8 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
             continue
         oj = M.it_project(U, Q, {}, gA, gB, kap, cot, z0p, idx, la, lb, L,
                           ptmin, False, d0_cm, use_angles=use_angles,
-                          d0_meas=d0m, seed_layers=seed.layers, role="follow")
+                          d0_meas=d0m, seed_layers=seed.layers, role="follow",
+                          pos_arb=pos_arb)
         cand[L] = int(oj.get("match_cand", 0))
         out["follow_angle_rejected"] = (out.get("follow_angle_rejected", 0)
                                         + int(oj.get("angle_window_rejected", 0)))
