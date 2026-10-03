@@ -813,6 +813,22 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     return load(d, nev=nev, verbose=verbose)
 
 
+def census_dir(path):
+    """The census at `path`: `path` itself when it is one (holds manifest.json),
+    else the ONLY tpcensus_* directory under it. More than one is refused: the
+    names are hashes with no order, so taking the last of a sorted listing picks
+    an arbitrary census -- e.g. the stale one left beside a rebuild."""
+    if os.path.exists(os.path.join(path, "manifest.json")):
+        return str(path)
+    ds = sorted(Path(path).glob("tpcensus_*"))
+    if not ds:
+        raise SystemExit(f"no census under {path}")
+    if len(ds) > 1:
+        raise SystemExit(f"{len(ds)} censuses under {path} ({', '.join(d.name for d in ds)}); "
+                         f"pass the one to use as the path itself")
+    return str(ds[0])
+
+
 def load(d, nev=None, verbose=True, with_tracks=False):
     meta = json.load(open(os.path.join(d, "manifest.json")))
     shards = sorted(Path(d).glob("chunk_*.npz"))

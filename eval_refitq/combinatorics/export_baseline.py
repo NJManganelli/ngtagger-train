@@ -16,7 +16,7 @@ truth but not per-stub truth, and the contamination axes the page bins on are
 per stub.
 """
 from __future__ import annotations
-import sys, json, glob, argparse
+import sys, json, argparse
 from pathlib import Path
 import numpy as np
 from ngtagger.truth_helix import tp_phi0
@@ -232,10 +232,7 @@ def _train_tq_variants(T, c, keep):
 
 
 def from_census(cache_dir, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
-    ds = sorted(glob.glob(f"{cache_dir}/tpcensus_*"))
-    if not ds:
-        raise SystemExit(f"no census under {cache_dir}")
-    C = TF.load(ds[-1], nev=nev, with_tracks=True)
+    C = TF.load(TF.census_dir(cache_dir), nev=nev, with_tracks=True)
     if not C.get("tracks"):
         raise SystemExit("that census carries no track rows; re-run it with "
                          "--export-tracks")

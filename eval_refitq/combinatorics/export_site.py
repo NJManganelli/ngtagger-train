@@ -34,7 +34,7 @@ approximations introduced before anything has been verified are how a tool
 starts lying quietly.
 """
 from __future__ import annotations
-import argparse, re, glob, json, os, sys, time
+import argparse, re, json, os, sys, time
 from pathlib import Path
 import numpy as np
 
@@ -393,10 +393,8 @@ def main():
     ap.add_argument("--baseline-nev", type=int, default=None)
     ap.add_argument("--baseline-ptmin", type=float, default=2.0)
     a = ap.parse_args()
-    ds = sorted(glob.glob(f"{a.cache_dir}/tpcensus_*"))
-    if not ds:
-        raise SystemExit(f"no census under {a.cache_dir}")
-    C = TF.load(ds[-1], nev=a.nev, with_tracks=True)
+    src = TF.census_dir(a.cache_dir)
+    C = TF.load(src, nev=a.nev, with_tracks=True)
     os.makedirs(a.outdir, exist_ok=True)
 
     has_soft = any(getattr(sd, "soft", False) for sd in C["seeds"])
@@ -447,7 +445,7 @@ def main():
     meta = {
         "built": time.strftime("%Y-%m-%d %H:%M:%S"),
         "n_events": C["n_events"],
-        "source": ds[-1],
+        "source": src,
         # so the page can tell whether a pT band is below the seeding threshold
         # rather than asserting it in baked-in prose
         "ptmin": float(C.get("ptmin", 2.0)),

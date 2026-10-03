@@ -1146,6 +1146,10 @@ def numerics_key():
                            for k, v in sorted(ALPHA_PULL_SCALE.items())},
             "beta_pull": {str(k): float(v)
                           for k, v in sorted(BETA_PULL_SCALE.items())},
+            # the IT seed z0 gate's sigma scale (s_z0 in it_prepare): it moves
+            # which cluster pairs exist exactly as the KF angle scales move the
+            # chi2, so retuning it must not resume a cache built under another
+            "sig_pull_inflate": float(M.SIG_PULL_INFLATE),
             "ot": M.ot_numerics_key()}
 
 

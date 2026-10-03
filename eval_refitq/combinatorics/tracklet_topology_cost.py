@@ -146,6 +146,8 @@ def ot_numerics_key():
     why a table of match windows has to participate in cache identity.
     """
     return {"policy_version": int(OT_POLICY_VERSION),
+            # the OT barrel stubs the census keeps (|stub eta| <= this)
+            "eta_matched": float(ETA_MATCHED),
             "nsig": float(NSIG), "z_lumi": float(Z_LUMI),
             "theta_ms_mrad": float(THETA_MS_MRAD), "c_bend": float(C_BEND),
             "triplet_d0_max_cm": float(TRIPLET_D0_MAX_CM),
