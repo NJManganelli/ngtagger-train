@@ -43,14 +43,22 @@ from ngtagger.data import spix_nano as SPN
 IT_TABLE, OT_TABLE = SPN.CLUSTER_TABLE, SPN.OT_TABLE
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
 Z_LUMI, NSIG = 15.0, 3.0
-# Scale on sigGlobalClusterCotTheta in the IT seed z0 gate (s_z0, it_prepare).
-# MEASURED on canon_v2 f03-f10 (site_v2/emu_pulls_table.{txt,json}: barrel
-# clusters linked to a charged TP with a consistent helix, core RMS about zero
-# of a mode-seeded 3-sigma clip): the beta pull core is 0.83-0.85 on IL1-IL4 at
-# scale 1, so the reported sigma is ~16% PESSIMISTIC. The earlier 1.21 ("21%
-# optimistic") dates from 2026-09-09, before the payload-units fix and the
-# canon_v2 nanos.
-SIG_PULL_INFLATE = 0.84
+# MEASURED per-layer pull widths of the SmartPixels angles at scale 1, which
+# scale the reported per-cluster sigmas (sigGlobalClusterPhi for alpha,
+# sigGlobalClusterCotTheta for beta) so an angle pull is a pull. Source: canon_v2
+# f03-f10 (site_v2/emu_pulls_table.{txt,json}): barrel clusters linked to a
+# charged TP with a consistent helix, core RMS about zero of a mode-seeded
+# 3-sigma clip, pT >= 2 (1-2 GeV within 0.03). Alpha 0.958/0.988/0.915/0.899 and
+# beta 0.836/0.831/0.837/0.845 on IL1-IL4: on this payload both sigmas are
+# PESSIMISTIC (alpha by 1-10%, beta by ~16%).
+#
+# ONE SET OF SCALES FOR EVERY STAGE. it_prepare applies them to the sigmas it
+# hands on (s_kap, s_z0, s_cot), so every gate, the KF update and the angle chi2
+# read the same calibrated sigma. Until 2026-10-03 the seeding scaled beta by a
+# single SIG_PULL_INFLATE = 0.84 and alpha not at all, the KF update used the raw
+# sigmas, and only the angle chi2 applied these -- three conventions at once.
+ALPHA_PULL_SCALE = {1: 0.96, 2: 0.99, 3: 0.92, 4: 0.90}
+BETA_PULL_SCALE = {1: 0.84, 2: 0.83, 3: 0.84, 4: 0.85}
 THETA_MS_MRAD = 1.36             # per ~1% X0 layer at 1 GeV  [ASSUMED]
 ETA_MATCHED = 1.4
 PT_MINS = (2.0, 1.5, 1.0)
@@ -1077,30 +1085,266 @@ def log_angle_cap(census, where):
                  "angle-using seeds" if ang == "direction" else ""))
 
 
-def it_prepare(D, bench):
-    """Per-cluster kappa_alpha, z0 and their effective sigmas, after quantization.
+# ==========================================================================
+# WHERE THE SMARTPIXELS ANGLES ARE USED: one switch per stage
+# ==========================================================================
+# The census exists to measure what the angles add, so every use of them is a
+# named stage that can be switched on its own, and the switches travel in the
+# census cache key and manifest. With every stage off the census is the
+# POSITION-ONLY system: the same position windows and policy, no angle anywhere
+# (the "do not handicap the baseline" rule, docs/ot-emulation-fidelity.md).
+#
+# What each stage compares, in one place (pull = residual / per-cluster sigma,
+# the sigma scaled by ALPHA_/BETA_PULL_SCALE):
+#   alpha: the cluster's kappa_alpha = sin(phi_pos - phi_dir) / (c r) against
+#          the predicted kappa - d0 / (c r^2) (TTTrack d0; d0 = 0 for a pair)
+#   beta:  the cluster's cot(theta) against the predicted cot(theta); at the
+#          pair stage, equivalently, the two clusters' z0 = z - r cot(theta)
+# A cluster without a usable direction (dir_ok False: an angle absent or past the
+# |cot| <= 12 cap) or an OT stub is a WILDCARD for every comparison: it passes
+# every angle gate and contributes no angle pull.
+ANGLE_STAGES = {
+    "veto": ("S1", "cluster preselection: alpha against the pT floor, and the "
+                   "angle cap (dir_ok)"),
+    "pair_alpha": ("S2a", "pair formation: each cluster's alpha against the "
+                          "pair curvature"),
+    "pair_z0": ("S2z", "pair formation: the two clusters' beta-derived z0 agree"),
+    "pair_joint": ("S2j", "pair formation: the joint (z0, phi) pairing pre-gate "
+                          "on the beta-derived z0"),
+    "attach": ("S3", "triplet third-hit attach: its alpha/beta against the "
+                     "pair's curvature and cot"),
+    "proj_window": ("S4w", "projection to a follow layer: an alpha/beta pull "
+                           "window on each candidate"),
+    "proj_arb": ("S4a", "hit arbitration (third hit and follow layers): "
+                        "position + angle pulls instead of smallest dphi"),
+    "kf": ("S5", "KF update with alpha and beta"),
+    "accept": ("S6", "track acceptance: angle chi2 at the final state"),
+    "dr": ("S7", "duplicate-removal ranking: angle chi2 weight"),
+    "mva": ("S8", "quality-MVA angle features"),
+}
+# what use_angles=True meant before the stages existed: the seeding gates only
+LEGACY_ANGLE_STAGES = ("veto", "pair_alpha", "pair_z0", "pair_joint")
+
+
+class AngleUse:
+    """Which stages use the SmartPixels angles, and their window parameters.
+
+    attach_nsig  S3 window, in pulls, on alpha and on beta separately
+    proj_nsig    S4w window, likewise
+    arb_weight   S4a: weight of the angle pulls^2 against the position pull^2
+    accept_chi2  S6: cut on the final-state angle chi2 PER ANGLE MEASUREMENT
+    dr_weight    S7: (doublet, triplet) weight of the angle chi2 per cluster in
+                 the duplicate-removal rank
+    """
+    PARAMS = {"attach_nsig": 3.0, "proj_nsig": 3.0, "arb_weight": 1.0,
+              "accept_chi2": 9.0, "dr_weight": (0.30, 0.03)}
+
+    def __init__(self, on=(), **params):
+        on = frozenset(on)
+        bad = on - set(ANGLE_STAGES)
+        if bad:
+            raise ValueError(f"unknown angle stages {sorted(bad)}")
+        badp = set(params) - set(self.PARAMS)
+        if badp:
+            raise ValueError(f"unknown angle parameters {sorted(badp)}")
+        self.on = on
+        p = dict(self.PARAMS, **params)
+        self.attach_nsig = float(p["attach_nsig"])
+        self.proj_nsig = float(p["proj_nsig"])
+        self.arb_weight = float(p["arb_weight"])
+        self.accept_chi2 = float(p["accept_chi2"])
+        self.dr_weight = tuple(float(x) for x in p["dr_weight"])
+
+    def __call__(self, stage):
+        if stage not in ANGLE_STAGES:
+            raise KeyError(stage)
+        return stage in self.on
+
+    @classmethod
+    def coerce(cls, x):
+        """An AngleUse as is; a bool is the pre-stage use_angles shorthand: True
+        = the seeding gates (LEGACY_ANGLE_STAGES), False = no angle at all."""
+        if isinstance(x, cls):
+            return x
+        return cls(LEGACY_ANGLE_STAGES if x else ())
+
+    @classmethod
+    def parse(cls, on="all", off="", **params):
+        """From CLI lists: stage names or their S-labels, 'all' or 'none'."""
+        alias = {v[0].lower(): k for k, v in ANGLE_STAGES.items()}
+
+        def names(spec):
+            out = set()
+            for t in (x.strip().lower() for x in spec.split(",")):
+                if not t or t == "none":
+                    continue
+                if t == "all":
+                    out |= set(ANGLE_STAGES)
+                elif t in ANGLE_STAGES:
+                    out.add(t)
+                elif t in alias:
+                    out.add(alias[t])
+                elif t in ("s2", "s4"):        # a whole family
+                    out |= {k for k, v in ANGLE_STAGES.items()
+                            if v[0].lower().startswith(t)}
+                else:
+                    raise SystemExit(f"unknown angle stage {t!r}; known: "
+                                     + ", ".join(f"{v[0]}={k}" for k, v
+                                                 in ANGLE_STAGES.items()))
+            return out
+        return cls(names(on) - names(off), **params)
+
+    def key(self):
+        """The identity of this configuration, for cache keys and manifests."""
+        return {"stages": sorted(self.on), "attach_nsig": self.attach_nsig,
+                "proj_nsig": self.proj_nsig, "arb_weight": self.arb_weight,
+                "accept_chi2": self.accept_chi2,
+                "dr_weight": list(self.dr_weight)}
+
+    @classmethod
+    def from_key(cls, k):
+        return cls(k["stages"], **{p: k[p] for p in cls.PARAMS})
+
+    def label(self):
+        return ",".join(ANGLE_STAGES[s][0] for s in ANGLE_STAGES if s in self.on) \
+            or "none"
+
+
+# ---- the RESOLUTION KNOB: better angles, applied once at input ---------------
+# k in [0, 1] moves each cluster's angle toward a REFERENCE angle:
+#     angle'(k) = ref + k * (angle - ref)
+# k = 1 is the emulated SmartPixels output, k = 0 the reference itself. Only
+# IMPROVEMENT is offered: the emulated angles are already several times worse
+# than SmartPixels is expected to deliver, so degrading them further would say
+# nothing (user, 2026-10-03).
+#
+# THE REFERENCE is the emulator's own truth for its class-T clusters
+# (tpEmuClass == 1: linked to a TP, charged, helix crossing within 1 cm, the
+# emulator's class definition, not a re-derivation): the producer's truth
+# direction tpGlobalClusterPhi / tpGlobalClusterCotTheta, i.e. the census's angle
+# representation. CLASS-C CLUSTERS (unlinked, or linked with unusable truth) HAVE
+# NO REFERENCE in the nanos and keep their emulated angles (ANGLE_REF_CAVEAT). A
+# future per-cluster reference -- the emulator's internal pseudo-truth, CNN +
+# drawn residual, for EVERY cluster -- plugs in as `ref` with ok = everywhere.
+#
+# ANGLE SPACE, NEVER COT. The arithmetic is on angles, never wrapped; cot only
+# at output (the emulator's rule, cluster_cnn/v2_emu_angle.py): alpha as half =
+# phi_pos - phi_dir (the direction's azimuth relative to the radial), beta as
+# lambda = atan(cot theta). angle' lies between the emitted angle and the
+# reference, so it cannot cross the grazing plane and needs no saturation; a
+# cluster whose emitted and reference alpha are more than 90 deg apart keeps its
+# emitted angle. A cluster the knob does not move keeps its value bit for bit.
+#
+# THE STAGE SIGMAS: "fixed" keeps every cluster's sigma (the windows of the k = 1
+# system; better angles then pass the gates more easily but the gates do not
+# tighten); "scaled" multiplies every cluster's sigma by k (a system tuned to the
+# better resolution -- for every cluster alike, since a real system cannot know
+# a cluster's class, so class-C clusters then face windows narrower than their
+# own resolution).
+ANGLE_REF_CAVEAT = (
+    "the improvement scales only clusters with usable truth (class T); clusters "
+    "without it (class C) keep the emulated angles, so at small k the linked and "
+    "unlinked populations become more distinguishable than real SmartPixels data "
+    "would make them, and gains from angle-based fake rejection are likely "
+    "overstated. Class C = 20% of IL1, 35% of IL2-IL4 clusters (canon_v2). The "
+    "emulator's class-C pseudo-truth error (full RMS, the floor class C could "
+    "reach): IL2-4 alpha 11.1 / beta 18.4 deg, IL1 9.3 / 27.9 deg, against class-T "
+    "emitted 6.9 / 15.1 and 6.6 / 11.9 deg.")
+
+
+def improve_angle(a, ref, ok, k):
+    """(angle' = ref + k (angle - ref), moved): where ok and the two are within
+    90 deg; elsewhere the angle as it was."""
+    d = a - ref
+    use = ok & (np.abs(d) <= np.pi / 2)
+    out = np.array(a, copy=True)
+    out[use] = (ref + k * d)[use]
+    return out, use
+
+
+def it_prepare(D, bench, res=None, ref=None):
+    """Per-cluster kappa_alpha, z0, cot(theta) and their sigmas, as every angle
+    stage sees them: pull-scaled, then moved toward the reference (res), then
+    quantized (bench).
+
+    res = {"alpha_k", "beta_k" in [0, 1], "sigma": "fixed" | "scaled"} is the
+    resolution knob above; ref = {"phi", "cot", "ok"}: the reference direction
+    (global azimuth, cot theta) per cluster and where it exists.
+    bench = (alpha_bits, beta_bits): alpha is the sin(half) word over
+    ALPHA_RANGE, beta the per-cluster z0 word over Z0_RANGE; cot_b is derived
+    FROM the quantized z0, so the bit width reaches every beta use, not only the
+    pair z0 gate.
 
     dir_ok: SPN.direction_usable. The angle-derived quantities of a cluster
     without it are garbage (built from a capped or absent angle); alpha_veto
-    removes such a cluster from every angle-using seed and projection target."""
+    removes such a cluster from every angle-using seed and projection target,
+    and every other stage treats it as a wildcard."""
+    r = D["globalR"]
+    lay = np.clip(np.asarray(D["layer"]).astype(np.int64), 0, 4)
+    # in the sigma columns' own precision, so that scales of 1 reproduce the
+    # unscaled arithmetic bit for bit
+    dt = np.asarray(D["sigGlobalClusterPhi"]).dtype
+    sa = np.array([ALPHA_PULL_SCALE.get(L, 1.0) for L in range(5)], dt)[lay]
+    sb = np.array([BETA_PULL_SCALE.get(L, 1.0) for L in range(5)], dt)[lay]
     half = wrap(D["globalPhi"] - D["globalClusterPhi"])
-    cot_a = np.sin(half) / (C_BEND * D["globalR"])          # kappa implied by alpha
-    z0 = D["globalZ"] - D["globalR"] * D["globalClusterCotTheta"]
-    s_kap = D["sigGlobalClusterPhi"] * np.abs(np.cos(half)) / (C_BEND * D["globalR"])
-    s_z0 = D["globalR"] * D["sigGlobalClusterCotTheta"] * SIG_PULL_INFLATE
+    cot = D["globalClusterCotTheta"]
+    sig_half = D["sigGlobalClusterPhi"] * sa
+    s_cot = D["sigGlobalClusterCotTheta"] * sb
+    res = res or {}
+    ka, kb = float(res.get("alpha_k", 1.0)), float(res.get("beta_k", 1.0))
+    if not (0.0 <= ka <= 1.0 and 0.0 <= kb <= 1.0):
+        raise ValueError(f"angle resolution k must be in [0, 1] (alpha {ka}, beta {kb})")
+    scaled = res.get("sigma", "fixed") == "scaled"
+    moved = {"alpha": 0, "beta": 0}
+    if (ka < 1.0 or kb < 1.0) and ref is None:
+        raise ValueError("angle resolution k < 1 needs a reference angle (ref)")
+    if ka < 1.0:
+        half, m = improve_angle(half, wrap(D["globalPhi"] - ref["phi"]), ref["ok"], ka)
+        moved["alpha"] = int(m.sum())
+        if scaled:
+            sig_half = sig_half * ka
+    if kb < 1.0:
+        lam, m = improve_angle(np.arctan(cot), np.arctan(ref["cot"]), ref["ok"], kb)
+        cot = np.array(cot, copy=True)
+        cot[m] = np.tan(lam[m])
+        moved["beta"] = int(m.sum())
+        if scaled:
+            s_cot = s_cot * kb
+    cot_a = np.sin(half) / (C_BEND * r)          # kappa implied by alpha
+    s_kap = sig_half * np.abs(np.cos(half)) / (C_BEND * r)
+    z0 = D["globalZ"] - r * cot
+    s_z0 = r * s_cot if (scaled and kb < 1.0) else r * D["sigGlobalClusterCotTheta"] * sb
     ovf_a = np.zeros(len(z0), bool)
     ovf_z = np.zeros(len(z0), bool)
     if bench is not None:
         ab, bb = bench
-        # alpha is encoded as cot(alpha); convert the range through c*r
-        cota_raw = np.sin(half)
-        q, ovf_a, lsb_a = quantize(cota_raw, ab, ALPHA_RANGE)
-        cot_a = q / (C_BEND * D["globalR"])
-        s_kap = np.hypot(s_kap, quant_sigma(ab, ALPHA_RANGE) / (C_BEND * D["globalR"]))
+        # alpha is encoded as sin(half); convert the range through c*r
+        q, ovf_a, lsb_a = quantize(np.sin(half), ab, ALPHA_RANGE)
+        cot_a = q / (C_BEND * r)
+        s_kap = np.hypot(s_kap, quant_sigma(ab, ALPHA_RANGE) / (C_BEND * r))
         z0, ovf_z, lsb_z = quantize(z0, bb, Z0_RANGE)
         s_z0 = np.hypot(s_z0, quant_sigma(bb, Z0_RANGE))
+        cot = (D["globalZ"] - z0) / r
+        s_cot = s_z0 / r
     return {"kap_a": cot_a, "s_kap": s_kap, "z0": z0, "s_z0": s_z0,
-            "ovf_a": ovf_a, "ovf_z": ovf_z, "dir_ok": SPN.direction_usable(D)}
+            "cot_b": cot, "s_cot": s_cot,
+            "ovf_a": ovf_a, "ovf_z": ovf_z, "dir_ok": SPN.direction_usable(D),
+            "n_moved": moved}
+
+
+# keys of an it_prepare result that are per-cluster arrays, with the value an OT
+# stub (no angle at all) carries: huge sigmas make every angle gate pass and give
+# a zero pull, and the joint (z0, phi) pairing treats the stub as a phi-only
+# wildcard
+OT_STUB_ANGLES = {"kap_a": 0.0, "s_kap": 1e9, "z0": 0.0, "s_z0": 1e9,
+                  "cot_b": 0.0, "s_cot": 1e9, "ovf_a": False, "ovf_z": False,
+                  "dir_ok": True}
+
+
+def q_with_ot_stubs(QI, n):
+    """An it_prepare result extended by n trailing OT stubs (OT_STUB_ANGLES), for
+    the combined IT + OT hit arrays."""
+    return {k: np.r_[QI[k], np.full(n, v)] for k, v in OT_STUB_ANGLES.items()}
 
 
 # ---- projecting to the third layer: SEARCH ON z, CONFIRM ON phi -----------
@@ -1256,12 +1500,13 @@ PHI_STRIDE = 24.0       # > 6*pi, the span the +-2pi duplication occupies
 Z0_SPLIT_Q = 99.0       # percentile of sigma(z0) above which a cluster is wild
 
 
-def build_phi_z0_index(z0, phi, s_z0, event):
+def build_phi_z0_index(z0, phi, s_z0, event, usable=None):
     """Sharp clusters keyed by (event, z0 bucket, phi); wild ones by phi alone.
 
     Every key duplicates phi at +-2pi so a wrap-around window is a plain
     interval search. PHI_STRIDE exceeds the 6*pi span those copies occupy, so one
-    bucket's band can never reach its neighbour's.
+    bucket's band can never reach its neighbour's. `usable` False (no usable
+    direction, so no z0) makes a cluster wild whatever its sigma says.
     """
     if not len(z0):
         return None
@@ -1273,8 +1518,9 @@ def build_phi_z0_index(z0, phi, s_z0, event):
     # A single global percentile would therefore be a disguised cut on radius --
     # measured 65.8% of its wildcards at L4 against 2.3% at L1 -- and would gut
     # the L2L3L4 configuration's z0 search power for a purely geometric reason.
-    s_split = float(np.percentile(s_z0, Z0_SPLIT_Q))
-    wild = s_z0 > s_split
+    us = np.ones(len(z0), bool) if usable is None else np.asarray(usable, bool)
+    s_split = float(np.percentile(s_z0[us], Z0_SPLIT_Q)) if us.any() else 0.0
+    wild = (s_z0 > s_split) | ~us
     sharp = ~wild
     med = float(np.median(s_z0[sharp])) if sharp.any() else 1.0
     w = max(2.0 * NSIG * np.sqrt(2.0) * med, 0.05)
@@ -1310,11 +1556,12 @@ def build_phi_z0_index(z0, phi, s_z0, event):
 
 
 def pairs_joint_z0_phi(evA, phiA, z0A, sA, B, half_phi,
-                       ceiling=DEFAULT_TRIPLET_CEILING):
+                       ceiling=DEFAULT_TRIPLET_CEILING, usableA=None):
     """Yield (ia, ib) for cluster pairs consistent in BOTH z0 and phi.
 
     ib indexes the array handed to build_phi_z0_index, matching
-    pairs_in_window_slices so the caller is unchanged.
+    pairs_in_window_slices so the caller is unchanged. `usableA` False makes an
+    A cluster a wildcard (searched on phi alone), as for build_phi_z0_index.
     """
     nb, w, z_lo = B["nb"], B["w"], B["z_lo"]
     total = 0
@@ -1333,6 +1580,8 @@ def pairs_joint_z0_phi(evA, phiA, z0A, sA, B, half_phi,
     # between two different lever arms and answers a question nobody asked.
     reach_max = NSIG * np.hypot(sA, B["bmax"].max() if B["nb"] else 0.0)
     wildA = reach_max > B["kmax_off"] * B["w"]
+    if usableA is not None:
+        wildA = wildA | ~np.asarray(usableA, bool)
     sharpA = ~wildA
     for off in range(-B["kmax_off"], B["kmax_off"] + 1):
         bt = bA + off
@@ -1376,9 +1625,6 @@ def pairs_joint_z0_phi(evA, phiA, z0A, sA, B, half_phi,
             yield _expand(ss, lo[a0:a1], cnt[a0:a1], a0)
 
 
-_JOINT_PAIRING = True
-
-
 def alpha_veto(D, Q, idxL, kmax, displaced):
     """Single-cluster alpha veto. Independent per layer, so doublet and triplet
     seeds apply exactly the same test to whichever layers they use."""
@@ -1403,9 +1649,13 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
     The event is folded into the pair-matching sort key, so cross-event pairs are
     impossible by construction rather than by iteration.
 
+    use_angles: an AngleUse (or the bool shorthand, AngleUse.coerce); this
+    stage reads S1 (veto), S2a (pair_alpha), S2z (pair_z0), S2j (pair_joint).
+
     Returns (out, gA, gB, kap, cot, z0p, idx) where idx carries the
     alpha-vetoed cluster index sets for la and lb.
     """
+    ang = AngleUse.coerce(use_angles)
     idx = {L: ev_idx[D["layer"][ev_idx] == L] for L in (la, lb)}
     if z_inner is not None:
         # The VMRouter gate on the seed's inner stub. la is the inner layer
@@ -1414,16 +1664,22 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
         idx[la] = idx[la][(az >= z_inner[0]) & (az <= z_inner[1])]
     out = {"in_A": len(idx[la]), "in_B": len(idx[lb])}
     none = (out, None, None, None, None, None, idx)
-    if min(len(v) for v in idx.values()) < 2:
+    if min(len(idx[L]) for L in (la, lb)) < 2:
         return none
     kmax = 1.0 / ptmin
-    if use_angles:
+    # THE POSITION WINDOWS ARE BUILT ON THE LAYERS' FULL CLUSTER SETS, before
+    # any angle preselection, so every angle configuration -- the no-angle arm
+    # included -- runs exactly the same windows. (Until 2026-10-03 the median
+    # radii were taken after the alpha veto.)
+    rA = np.median(D["globalR"][idx[la]]); rB = np.median(D["globalR"][idx[lb]])
+    if ang("veto"):
         for L in (la, lb):
             idx[L] = alpha_veto(D, Q, idx[L], kmax, displaced)
         out["after_alpha_veto"] = sum(len(idx[L]) for L in (la, lb))
-    if min(len(v) for v in idx.values()) < 2:
+    if min(len(idx[L]) for L in (la, lb)) < 2:
         return none
-    rA = np.median(D["globalR"][idx[la]]); rB = np.median(D["globalR"][idx[lb]])
+    # the same radii for every projection of these pairs (it_project)
+    idx["r_med"] = {la: rA, lb: rB}
     dr = abs(rB - rA)
     ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
     # d0 allowance: prompt seeds assume d0=0; displaced must open the window by
@@ -1447,13 +1703,18 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
     # layer-A x layer-B never exists at once.
     keepA, keepB, keepK, keepC, keepZ = [], [], [], [], []
     n_phi = n_kap = n_z0l = n_aok = n_zok = n_bok = 0
+    # S2j, THE JOINT (z0, phi) PRE-GATE: pairs are searched only within the
+    # beta-derived z0 reach of each other. Its reach covers the S2z test exactly
+    # (bucket sigma >= each cluster's), so with S2z on it only saves work; with
+    # S2z off it is a looser beta gate of its own. Off: phi alone.
     Bx = (build_phi_z0_index(Q["z0"][idx[lb]], D["globalPhi"][idx[lb]],
-                             Q["s_z0"][idx[lb]], D["event"][idx[lb]])
-          if _JOINT_PAIRING else None)
+                             Q["s_z0"][idx[lb]], D["event"][idx[lb]],
+                             usable=Q["dir_ok"][idx[lb]])
+          if ang("pair_joint") else None)
     if Bx is not None:
         pair_gen = pairs_joint_z0_phi(
             D["event"][idx[la]], D["globalPhi"][idx[la]], Q["z0"][idx[la]],
-            Q["s_z0"][idx[la]], Bx, half_w)
+            Q["s_z0"][idx[la]], Bx, half_w, usableA=Q["dir_ok"][idx[la]])
     else:
         pair_gen = pairs_in_window_slices(
             D["event"][idx[la]], D["globalPhi"][idx[la]],
@@ -1512,7 +1773,7 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
                 ok &= np.abs(D["bend"][g_]
                              - bend_expected(D["layer"][g_] - 10, kap)) <= tol
             n_bok += int(ok.sum())
-        if use_angles:
+        if ang("pair_alpha"):
             # OVERFLOW SEMANTICS, and they are opposite for the two targets. The
             # code ranges are set AT the physics boundary (+-0.17 in cot alpha is
             # the 0.5 GeV floor; +-15 cm in z0 is the luminous region), so for a
@@ -1522,15 +1783,18 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
             # ungated and makes coarser quantization look BETTER than none, which
             # is how the bug announced itself. For a DISPLACED seed the same
             # overflow carries no information against the hypothesis, so it is
-            # permissive.
+            # permissive. A cluster without a usable direction is a wildcard.
             for g_ in (gA, gB):
                 cons = np.abs(kap - Q["kap_a"][g_]) <= NSIG * np.maximum(Q["s_kap"][g_], 1e-9)
-                ok &= (cons | Q["ovf_a"][g_]) if displaced else (cons & ~Q["ovf_a"][g_])
+                ok &= ~Q["dir_ok"][g_] | ((cons | Q["ovf_a"][g_]) if displaced
+                                          else (cons & ~Q["ovf_a"][g_]))
             n_aok += int(ok.sum())
+        if ang("pair_z0"):
             sz = np.hypot(Q["s_z0"][gA], Q["s_z0"][gB])
             consz = np.abs(Q["z0"][gA] - Q["z0"][gB]) <= NSIG * sz
             anyovf = Q["ovf_z"][gA] | Q["ovf_z"][gB]
-            ok &= (consz | anyovf) if displaced else (consz & ~anyovf)
+            ok &= ~(Q["dir_ok"][gA] & Q["dir_ok"][gB]) | ((consz | anyovf) if displaced
+                                                         else (consz & ~anyovf))
             n_zok += int(ok.sum())
         if ok.any():
             keepA.append(gA[ok]); keepB.append(gB[ok])
@@ -1540,9 +1804,10 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
     out["kappa_slack"] = float(kap_slack)
     if not displaced:
         out["pairs_z0lumi"] = n_z0l
-    if use_angles:
-        out["pairs_bend_ok"] = n_bok
+    out["pairs_bend_ok"] = n_bok
+    if ang("pair_alpha"):
         out["pairs_alpha_ok"] = n_aok
+    if ang("pair_z0"):
         out["pairs_z0_ok"] = n_zok
     out["tracklets"] = int(sum(len(x) for x in keepA))
     if not keepA:
@@ -1557,22 +1822,34 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
 
 def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                displaced=False, d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM,
-               use_angles=True, d0_meas=None, seed_layers=None):
+               use_angles=True, d0_meas=None, seed_layers=None, role="follow"):
     """STAGE 2: project a set of cluster pairs to ONE target layer.
 
-    Called once by a triplet seed (for its required third layer) and once per
-    remaining layer by a doublet seed, so both pay the same per-target cost and
-    the counters are commensurable.
+    Called once by a triplet seed (for its required third layer, role
+    "attach") and once per remaining layer by a doublet seed (role "follow"),
+    so both pay the same per-target cost and the counters are commensurable.
+    `idx` is it_pairs' (it carries the pairs' position radii, "r_med").
+
+    use_angles: an AngleUse (AngleUse.coerce). This stage reads S1 (veto of the
+    target layer's clusters), S3 (attach: the alpha/beta pull window on the third
+    hit), S4w (follow: the same window on a follow-layer candidate) and S4a (the
+    one-hit-per-pair arbitration on position + angle pulls, either role).
     """
+    if role not in ("attach", "follow"):
+        raise ValueError(f"role {role!r}")
+    ang = AngleUse.coerce(use_angles)
     kmax = 1.0 / ptmin
     idx = dict(idx)
     idx[lc] = np.arange(len(D["layer"]))[D["layer"] == lc]
-    if use_angles:
+    # the target layer's radius from its FULL cluster set, like the pair radii
+    # (it_pairs), so the position windows do not depend on the angle stages
+    rCmed = float(np.median(D["globalR"][idx[lc]])) if len(idx[lc]) else 0.0
+    if ang("veto"):
         idx[lc] = alpha_veto(D, Q, idx[lc], kmax, displaced)
     out["in_C"] = len(idx[lc])
     if len(idx[lc]) < 1:
         return out
-    rA = np.median(D["globalR"][idx[la]]); rB = np.median(D["globalR"][idx[lb]])
+    rA, rB = idx["r_med"][la], idx["r_med"][lb]
     dr = abs(rB - rA)
     ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
     d0_eff = D0_DISPLACED_CM if displaced else d0_cm
@@ -1601,7 +1878,6 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     # findable prompt-core tracks at the z step, while an independent residual
     # measurement showed the window contains 93.4% of correct triples -- i.e. the
     # entire "core efficiency loss" was this bug, not physics.
-    rCmed = float(np.median(rC))
     # AN OT TARGET GETS THE REAL TABULATED WINDOW, AS A CEILING.
     # Everything below derives a window from resolution + scattering + a d0
     # allowance, which is the right thing for an IT layer read by a pixel CPE
@@ -1634,6 +1910,15 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     sct = np.hypot(np.maximum(D["sigY"][gA], 1e-6),
                    np.maximum(D["sigY"][gB], 1e-6)) / max(dr, 0.1)
     out["projections"] = int(len(gA))
+    # ---- the ANGLE window and arbitration (S3 / S4w / S4a) ------------------
+    # Each candidate's alpha and beta against the seed's prediction at its own
+    # radius: kappa_alpha = kappa - d0/(c r^2) (d0 = the triplet's solved d0, 0
+    # for a pair) and cot(theta) = the pair's. A cluster without a usable
+    # direction, or an OT stub, is a wildcard (no window, no pull).
+    win_nsig = (ang.attach_nsig if role == "attach" and ang("attach") else
+                ang.proj_nsig if role == "follow" and ang("proj_window") else None)
+    arb = ang("proj_arb")
+    n_ang_rej = 0
 
     # ---- stage 2: CANDIDATE TRIPLETS, found by z, confirmed by phi ---------
     zidx = build_layer_z_index(cC, D["event"][cC], rC, zC, sgC)
@@ -1684,9 +1969,28 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
         else:
             pwin = NSIG * sph if cap_phi is None else min(NSIG * sph, cap_phi)
             good &= dphi <= pwin
+        score = dphi
+        if (win_nsig is not None or arb) and good.any():
+            pa_, pb_ = cand_angle_pulls(Q, gC, kap[ja] - dm[ja] / (C_BEND * rc_i * rc_i),
+                                        cot[ja])
+            u_ = Q["dir_ok"][gC]
+            if win_nsig is not None:
+                ovf = Q["ovf_a"][gC] | Q["ovf_z"][gC]
+                inw = (np.abs(pa_) <= win_nsig) & (np.abs(pb_) <= win_nsig)
+                inw = (inw | ovf) if displaced else (inw & ~ovf)
+                g0 = int(good.sum())
+                good &= ~u_ | inw
+                n_ang_rej += g0 - int(good.sum())
+            if arb:
+                # (dphi / sigma_phi)^2 ranks exactly as dphi does, so with no
+                # usable angle the choice is the position-only one
+                score = np.square(dphi / sph) + ang.arb_weight * np.where(
+                    u_, pa_ * pa_ + pb_ * pb_, 0.0)
         if not good.any():
             continue
-        sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(dphi[good])
+        sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(score[good])
+    if win_nsig is not None:
+        out["angle_window_rejected"] = n_ang_rej
     out["match_cand"] = n_cand
     if not sv_p:
         out["match_cand_z"] = 0
@@ -1696,6 +2000,7 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     out["match_cand_z"] = int(len(pa))
     # ARBITRATE ONCE, over every radial bin together: a cluster pair's candidates
     # are spread across bins, so a per-yield argmin would pick a different winner.
+    # The score is dphi, or the combined position + angle pull^2 under S4a.
     o = np.lexsort((pr, pa))
     first = np.r_[True, pa[o][1:] != pa[o][:-1]]
     pk = o[first]
@@ -1707,6 +2012,16 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     # which of its pairs each confirmation came from to count layers per track.
     out["_pairidx"] = pa[pk]
     return out
+
+
+def cand_angle_pulls(Q, g, kap_pred, cot_pred):
+    """(alpha pull, beta pull) of clusters g against a predicted kappa_alpha and
+    cot(theta), with the stage sigmas of it_prepare (pull-scaled, degraded,
+    quantized). The wildcard mask is Q["dir_ok"][g]; an OT stub's huge sigmas
+    make its pulls ~0."""
+    pa = (Q["kap_a"][g] - kap_pred) / np.maximum(Q["s_kap"][g], 1e-9)
+    pb = (Q["cot_b"][g] - cot_pred) / np.maximum(Q["s_cot"][g], 1e-9)
+    return pa, pb
 
 
 def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
@@ -1722,7 +2037,7 @@ def it_pair_seed(D, Q, ev_idx, la, lb, lc, ptmin, use_angles, displaced=False,
     if gA is None:
         return out
     return it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
-                      displaced, d0_cm, d0_max, use_angles)
+                      displaced, d0_cm, d0_max, use_angles, role="attach")
 
 
 def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
@@ -2066,10 +2381,12 @@ def selftest(a):
                     got = {}
                     for mode in (False, True):
                         _EXHAUSTIVE = mode
-                        globals()["_JOINT_PAIRING"] = not mode
+                        # the reference pairs on phi alone (no S2j pre-gate)
+                        ang = AngleUse(set(LEGACY_ANGLE_STAGES)
+                                       - ({"pair_joint"} if mode else set()))
                         try:
                             o = it_pair_seed(D, Q, allidx, la, lb, lc, 2.0,
-                                             True, disp, d0c)
+                                             ang, disp, d0c)
                         except TooWide:
                             got = None
                             break

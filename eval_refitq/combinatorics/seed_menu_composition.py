@@ -68,14 +68,7 @@ def build(src, nev, ptmin):
     QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, None)
     # an OT stub carries no alpha/beta: huge sigmas make every angle gate pass,
     # and the joint (z0,phi) pairing then treats it as a wildcard on phi alone.
-    Q = {"kap_a": np.r_[QI["kap_a"], np.zeros(nO)],
-         "s_kap": np.r_[QI["s_kap"], np.full(nO, 1e9)],
-         "z0": np.r_[QI["z0"], np.zeros(nO)],
-         "s_z0": np.r_[QI["s_z0"], np.full(nO, 1e9)],
-         "ovf_a": np.r_[QI["ovf_a"], np.zeros(nO, bool)],
-         "ovf_z": np.r_[QI["ovf_z"], np.zeros(nO, bool)],
-         # the angle cap gates IT clusters only; a stub's angles are wildcards
-         "dir_ok": np.r_[QI["dir_ok"], np.ones(nO, bool)]}
+    Q = M.q_with_ot_stubs(QI, nO)
     return U, Q, n
 
 

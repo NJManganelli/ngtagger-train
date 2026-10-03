@@ -65,14 +65,7 @@ U={"layer":np.r_[M.it_barrel_codes(I["layer"], "combined_it_ot_seeding"), O["lay
 # classes them as wildcards and searches them on phi alone, which is correct --
 # an OT stub has no per-hit z0 estimate to contribute.
 QI=M.it_prepare({k:I[k] for k in M.IT_COLS}, None)
-Q={"kap_a":np.r_[QI["kap_a"], np.zeros(nO)],
-   "s_kap":np.r_[QI["s_kap"], np.full(nO,1e9)],
-   "z0":np.r_[QI["z0"], np.zeros(nO)],
-   "s_z0":np.r_[QI["s_z0"], np.full(nO,1e9)],
-   "ovf_a":np.r_[QI["ovf_a"], np.zeros(nO,bool)],
-   "ovf_z":np.r_[QI["ovf_z"], np.zeros(nO,bool)],
-   # the angle cap gates IT clusters only; a stub's angles are wildcards
-   "dir_ok":np.r_[QI["dir_ok"], np.ones(nO,bool)]}
+Q=M.q_with_ot_stubs(QI, nO)
 M.set_limits(M.triplets_for_budget(1.5), 6.0)
 NM={1:"IT L1",2:"IT L2",3:"IT L3",4:"IT L4",11:"OT L1",12:"OT L2",13:"OT L3",
     14:"OT L4",15:"OT L5",16:"OT L6"}

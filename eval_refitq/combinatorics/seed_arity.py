@@ -260,6 +260,10 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
     therefore formed and projected once, and each build keeps only its own
     surfaces.
 
+    use_angles: an M.AngleUse (or the bool shorthand, M.AngleUse.coerce), handed
+    to the pair stage and to every projection: the third layer as the triplet
+    ATTACH, every other target as a FOLLOW layer.
+
     Returns None when the seed forms nothing, else the formation counters
     ("out"), the seed objects and, per target layer, the projection matches
     ("hits": pair rows and matched cluster) and the candidates tried ("cand").
@@ -287,7 +291,7 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
         # innerThirdTable_ and will not fake it with the wrong table.
         o3 = M.it_project(U, Q, dict(out), gA, gB, kap, cot, z0p, idx,
                           la, lb, lc, ptmin, False, d0_cm,
-                          use_angles=use_angles)
+                          use_angles=use_angles, role="attach")
         if "_trip" not in o3:
             return None
         ta, tb, tc = o3["_trip"]
@@ -318,8 +322,10 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0):
             continue
         oj = M.it_project(U, Q, {}, gA, gB, kap, cot, z0p, idx, la, lb, L,
                           ptmin, False, d0_cm, use_angles=use_angles,
-                          d0_meas=d0m, seed_layers=seed.layers)
+                          d0_meas=d0m, seed_layers=seed.layers, role="follow")
         cand[L] = int(oj.get("match_cand", 0))
+        out["follow_angle_rejected"] = (out.get("follow_angle_rejected", 0)
+                                        + int(oj.get("angle_window_rejected", 0)))
         if "_pairidx" in oj:
             hits[L] = (oj["_pairidx"], oj["_trip"][2])
     return {"out": out, "gA": gA, "gB": gB, "gC": gC, "d0m": d0m,

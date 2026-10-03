@@ -266,13 +266,12 @@ def _solve(J, w, res, prior_prec_x, x_now, th2, k_now):
 
 def angle_pulls_local(inp, fit_x, gbl):
     """SmartPixels angle pulls against the LOCAL smoothed direction at each IT
-    hit (kinks inside the hit turn it), same measurement variance and layer
-    scales as kf_emulation.angle_pulls. alpha measures x0 + d0_eff/r^2 with
+    hit (kinks inside the hit turn it), same measurement variance (pull-scaled
+    in it_prepare) as kf_emulation.angle_pulls. alpha measures x0 + d0_eff/r^2 with
     d0_eff = d0 + sum sec*theta*r_s over the kinks inside; beta measures the
     local cot = cot + sum sec^2*theta_L."""
     T = inp["T"]
     r = np.maximum(T["R"], 1e-3)
-    sa, sb = KF._layer_scales(T["layers"])
     x0, x4, x2 = fit_x[:, 0], fit_x[:, 2], fit_x[:, 3]
     d0_eff = np.broadcast_to(x4[:, None], r.shape).copy()
     cot_loc = np.broadcast_to(x2[:, None], r.shape).copy()
@@ -280,8 +279,8 @@ def angle_pulls_local(inp, fit_x, gbl):
         sec = np.sqrt(1.0 + x2 * x2)
         d0_eff = d0_eff + sec[:, None] * np.einsum("tls,ts,s->tl", gbl["act"], gbl["kT"], gbl["srad"])
         cot_loc = cot_loc + (1.0 + x2 * x2)[:, None] * np.einsum("tls,ts->tl", gbl["act"], gbl["kL"])
-    pa = ((-M.C_BEND * T["KA"]) - (x0[:, None] + d0_eff / (r * r))) / (M.C_BEND * np.maximum(T["SKA"], 1e-9) * sa)
-    pb = (T["CT"] - cot_loc) / (np.maximum(T["SCT"], 1e-9) * sb)
+    pa = ((-M.C_BEND * T["KA"]) - (x0[:, None] + d0_eff / (r * r))) / (M.C_BEND * np.maximum(T["SKA"], 1e-9))
+    pb = (T["CT"] - cot_loc) / np.maximum(T["SCT"], 1e-9)
     use = T["VALID"] & T["ANG"]
     return np.where(use, pa, 0.0), np.where(use, pb, 0.0), use
 

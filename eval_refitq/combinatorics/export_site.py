@@ -396,7 +396,7 @@ def build_scores(T, col, C):
     y_leg = (T[:, col["n_wrong"]] <= 1)
     refit = T[:, col["sysclass"]] != KF.SYS_MIX
     for name, spec in LEGACY_DEFS.items():
-        feats = [c for c in (spec["feats"] or KF.MVA_FEATURES) if c in col]
+        feats = [c for c in (spec["feats"] or C["mva_features"]) if c in col]
         X = fmat(feats)
         ok = np.isfinite(X).all(axis=1)
         if spec["pop"] == "refit":
@@ -414,7 +414,7 @@ def build_scores(T, col, C):
         print(f"  {name:<22} AUC {auc:.4f}  ({len(feats)} features)")
 
     # ---- the variant matrix, d0-derived features withheld ---------------
-    feats = [c for c in KF.MVA_FEATURES
+    feats = [c for c in C["mva_features"]
              if c in col and c not in D0_LAUNDER_FEATS]
     X = fmat(feats)
     finite = np.isfinite(X).all(axis=1)
@@ -612,6 +612,12 @@ def main():
         # the page offers a build only its own seeds, followed into its own
         # surfaces -- the recovery entries included, when the census has them
         "builds": C["builds"],
+        # where the census used the SmartPixels angles (TF.M.ANGLE_STAGES) and
+        # at what resolution, so an export says which angle configuration it is
+        "angles": {**C["angle_use"].key(),
+                   "labels": {s: TF.M.ANGLE_STAGES[s][0]
+                              for s in C["angle_use"].key()["stages"]}},
+        "angle_res": C["angle_res"],
         "eta_ranges": {"edges": [0.0, ETA_RANGE_LO, float(a.eta_x), ETA_RANGE_HI],
                        "x": float(a.eta_x)},
         "acceptance": {"eta_max": float(TF.M.ETA_MATCHED),

@@ -65,7 +65,11 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 24   # 24: KF.majority_owner fixed (track owner columns n_own,
+FORMAT_VERSION = 25   # 25: the angle stages (M.ANGLE_STAGES, config "angles") and
+                      # the resolution knob ("angle_res") are in the identity;
+                      # angle sigmas carry the per-layer pull scales at every stage;
+                      # counters pairs_phi, s3/s4w/s6 rejections.
+                      # 24: KF.majority_owner fixed (track owner columns n_own,
                       # own_tpidx, n_wrong, is_clean, tp_*, d_* were wrong on
                       # tracks with many empty layers since format 21).
                       # 23: entries = seed x build follow set (a build's seeds follow
@@ -341,7 +345,8 @@ def entry_rng(ci, sd):
     return np.random.default_rng([12345, int(ci), zlib.crc32(key)])
 
 
-def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0):
+def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0,
+                  ang=None):
     """Yield (index, result) per entry: SA.run_seed's result for the entry's
     seed followed into its own follow set, None if the seed formed nothing, or
     the M.TooWide its formation raised.
@@ -351,7 +356,9 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0):
     its own (SA.apply_layer_rule). Entries of one seed are contiguous
     (census_entries), so only the current one is held. ptmin_of(sd) and
     rule_of(sd) -> (min_it_layers, min_ot_conf) give an entry's floor and rule.
+    `ang` is the census's M.AngleUse (None: every stage).
     """
+    ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
     formed, F, err = None, None, None
     for s_i, sd in enumerate(seeds):
         if formed != (sd.layers, sd.soft):
@@ -359,7 +366,7 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0):
             union = sorted({L for e in seeds if (e.layers, e.soft) == formed
                             for L in e.follow})
             try:
-                F = SA.follow_seed(U, Q, sd, ptmin_of(sd), union, d0_cm=d0_cm)
+                F = SA.follow_seed(U, Q, sd, ptmin_of(sd), union, ang, d0_cm)
             except M.TooWide as e:
                 err = e
         if err is not None:
@@ -374,14 +381,15 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0):
 # ==========================================================================
 # chunked unified IT+OT table
 # ==========================================================================
-def unified_chunks(spec, nev, step, sigz_ot, bench=None):
+def unified_chunks(spec, nev, step, sigz_ot, bench=None, res=None):
     """Yield one unified IT+OT hit table per chunk of `step` events.
 
-    `bench` is (alpha_bits, beta_bits) for M.it_prepare, or None for full float.
-    It is applied HERE rather than at fit time because the quantised angle feeds
-    the seeding and projection windows through kap_a/s_kap as well as the KF
-    update, so a bit width changes which candidates exist, not merely how well
-    they are fitted.
+    `bench` is (alpha_bits, beta_bits) for M.it_prepare, or None for full float,
+    and `res` the angle resolution knob ({"alpha_k", "beta_k", "sigma", "ref"};
+    angle_ref_columns). Both are applied HERE, once, rather than at fit time,
+    because the angles feed the seeding and projection windows as well as the KF
+    update: a bit width or a resolution changes which candidates exist, not
+    merely how well they are fitted, and every stage must see the same angles.
 
     Event numbering carries a running offset across chunks AND across files, so
     (event, tpIdx) stays globally unique and chunk censuses concatenate.
@@ -389,7 +397,11 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
     paths = M.expand_inputs(spec)
     M.require_tp_table(paths)
     srcs = [f"{p}:Events" for p in paths]
-    itk = M.table_branches(paths[0], M.IT_TABLE, M.IT_COLS)
+    # the reference angles of the resolution knob, when it moves anything
+    improve = res is not None and (res.get("alpha_k", 1.0) < 1.0
+                                   or res.get("beta_k", 1.0) < 1.0)
+    ref_cols = angle_ref_columns(res["ref"]) if improve else []
+    itk = M.table_branches(paths[0], M.IT_TABLE, M.IT_COLS + ref_cols)
     otk = M.table_branches(paths[0], M.OT_TABLE, OT_COLS)
     seen = 0
     for A in uproot.iterate(srcs, itk + otk + M.tp_branches(paths[0]), step_size=step):
@@ -400,7 +412,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
                 return
             if len(A) > nev - seen:
                 A = A[:nev - seen]
-        JI = M.table_columns(A, M.IT_TABLE, M.IT_COLS)      # TBPX only
+        JI = M.table_columns(A, M.IT_TABLE, M.IT_COLS + ref_cols)  # TBPX only
         JO = M.table_columns(A, M.OT_TABLE, OT_COLS)
         nI = ak.to_numpy(ak.num(JI[M.IT_COLS[0]]))
         nO = ak.to_numpy(ak.num(JO[OT_COLS[0]]))
@@ -410,13 +422,60 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None):
         O = {c: ak.to_numpy(ak.flatten(JO[c])) for c in OT_COLS}
         O["event"] = np.repeat(ev, nO)
         seen += len(nI)
-        U, Q = _unify(I, O, sigz_ot, bench)
+        ref = (angle_ref(res["ref"], {c: ak.to_numpy(ak.flatten(JI[c]))
+                                      for c in ref_cols})
+               if improve else None)
+        U, Q = _unify(I, O, sigz_ot, bench, res, ref)
         M.attach_tp_truth(U, M.tp_table(A, ev))
         yield (U, Q), ev
         del A, I, O, U, Q
 
 
-def _unify(I, O, sigz_ot, bench=None):
+# ---- the reference of the angle resolution knob (M.it_prepare) ------------
+# "classT": the emulator's truth direction on its class-T clusters only (the
+# nano's tpEmuClass == 1), class C as emitted (M.ANGLE_REF_CAVEAT).
+# "columns:PHI,COT": any per-cluster reference direction columns, used wherever
+# finite -- where the emulator's pseudo-truth for every cluster plugs in.
+ANGLE_REF_CLASS_T = ("tpEmuClass", "tpGlobalClusterPhi", "tpGlobalClusterCotTheta")
+
+
+def angle_ref_columns(spec):
+    if spec == "classT":
+        return list(ANGLE_REF_CLASS_T)
+    if spec.startswith("columns:"):
+        cols = spec.split(":", 1)[1].split(",")
+        if len(cols) != 2:
+            raise SystemExit(f"--angle-ref {spec!r}: give columns:PHI,COTTHETA")
+        return cols
+    raise SystemExit(f"--angle-ref {spec!r}: classT or columns:PHI,COTTHETA")
+
+
+def angle_ref(spec, R):
+    """{"phi", "cot", "ok"} for M.it_prepare from the columns of angle_ref_columns."""
+    if spec == "classT":
+        phi, cot = R["tpGlobalClusterPhi"], R["tpGlobalClusterCotTheta"]
+        ok = R["tpEmuClass"] == 1
+    else:
+        phi, cot = (R[c] for c in angle_ref_columns(spec))
+        ok = np.ones(len(phi), bool)
+    return {"phi": phi, "cot": cot, "ok": ok & np.isfinite(phi) & np.isfinite(cot)}
+
+
+def angle_ref_coverage(spec, nev, ref_spec):
+    """Fraction of TBPX clusters WITHOUT a reference (they keep the emulated
+    angles), all and TP-linked, for IL1 and IL2-IL4, over the first nev events."""
+    D, _, _ = M.load_flat(spec, M.IT_TABLE, ["layer", "tpIdx"] + angle_ref_columns(ref_spec), nev)
+    ok = angle_ref(ref_spec, D)["ok"]
+    lk = SPN.tp_matched(D["tpIdx"])
+    out = {}
+    for g, m in (("IL1", D["layer"] == 1), ("IL2-IL4", D["layer"] >= 2)):
+        out[g] = {"no_reference": float(1.0 - ok[m].mean()),
+                  "no_reference_among_linked": float(1.0 - ok[m & lk].mean()),
+                  "no_reference_among_unlinked": float(1.0 - ok[m & ~lk].mean())}
+    return out
+
+
+def _unify(I, O, sigz_ot, bench=None, res=None, ref=None):
     eta = np.abs(np.arcsinh(O["z"] / np.maximum(O["r"], 1e-6)))
     bar = (O["isBarrel"] > 0) & (eta <= M.ETA_MATCHED)
     n = int(bar.sum())
@@ -451,9 +510,6 @@ def _unify(I, O, sigz_ot, bench=None):
          # an OT stub has no r-phi CPE sigma of its own; ot_variances builds its
          # variance from pitch and scattering instead, so this is never read there
          "sigX": np.r_[I["sigX"], sig],
-         "globalClusterCotTheta": np.r_[I["globalClusterCotTheta"], np.zeros(n)],
-         "sigGlobalClusterCotTheta": np.r_[I["sigGlobalClusterCotTheta"],
-                                           np.full(n, 1e9)],
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          # 0 on every IT cluster: the code is only defined for an OT stub, and
@@ -463,17 +519,13 @@ def _unify(I, O, sigz_ot, bench=None):
          # for OT doublet seeds, so the IT zeros are never compared
          "bend": np.r_[np.zeros(len(I["layer"])), O["bend"][bar]],
          "event": np.r_[I["event"], O["event"][bar]]}
-    QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, bench)
-    # An OT stub carries no alpha/beta. Huge sigmas make every angle gate pass,
-    # and the joint (z0,phi) pairing then treats the stub as a phi-only wildcard.
-    Q = {"kap_a": np.r_[QI["kap_a"], np.zeros(n)],
-         "s_kap": np.r_[QI["s_kap"], np.full(n, 1e9)],
-         "z0": np.r_[QI["z0"], np.zeros(n)],
-         "s_z0": np.r_[QI["s_z0"], np.full(n, 1e9)],
-         "ovf_a": np.r_[QI["ovf_a"], np.zeros(n, bool)],
-         "ovf_z": np.r_[QI["ovf_z"], np.zeros(n, bool)],
-         # the angle cap gates IT clusters only; a stub's angles are wildcards
-         "dir_ok": np.r_[QI["dir_ok"], np.ones(n, bool)]}
+    # EVERY angle any stage reads comes from here: pull-scaled, degraded by the
+    # resolution knob, quantized. An OT stub carries no alpha/beta: huge sigmas
+    # make every angle gate pass, and the joint (z0,phi) pairing then treats the
+    # stub as a phi-only wildcard (M.OT_STUB_ANGLES).
+    QI = M.it_prepare({c: I[c] for c in M.IT_COLS}, bench, res, ref)
+    Q = M.q_with_ot_stubs(QI, n)
+    Q["n_moved"] = QI["n_moved"]
     return U, Q
 
 
@@ -524,13 +576,17 @@ def chunk_census(U):
 def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
                   export_tracks=0, do_dr=True,
                   min_layers=SA.MIN_LAYERS, d0_window_cm=0.0, it_ptmin=None,
-                  min_it_layers=None, min_ot_conf=0):
+                  min_it_layers=None, min_ot_conf=0, ang=None):
     """Run every entry over chunk `ci` and reduce to census + bitmap + counters.
 
     `seeds` are the census entries (census_entries: a seed and the layers it
     follows into), `groups` the entry sets duplicate removal runs over
     (dr_groups). Entries of one seed share its formation and projections
     (SA.follow_seed); each applies the layer rule to its own follow set.
+
+    `ang` (M.AngleUse; None = every stage) says where the SmartPixels angles
+    are used: the seeding stages S1-S4 inside the follow, the KF update S5, the
+    acceptance S6 and the DR rank S7 here (S8 is the exporters' feature set).
 
     TWO PASSES, because duplicate removal is inherently cross-seed. The first
     pass runs each entry through pairing, projection, the 4-layer rule and the
@@ -575,7 +631,13 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         if it_ptmin is None:
             return min_it_layers, min_ot_conf   # one floor: rule applies to all
         return (min_it_layers, min_ot_conf) if sd.soft else (None, 0)
-    d0_opt = {k: v for k, v in kf_opts.items() if k == "d0_prior_cm"}
+    ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
+    # every fit of the census: angles in the update only under S5, with the
+    # KF weights (--alpha-scale/--beta-scale) on top of the pull-scaled sigmas
+    fopt = {"use_angles": ang("kf"),
+            **{k: v for k, v in kf_opts.items()
+               if k in ("d0_prior_cm", "alpha_scale", "beta_scale")}}
+    sopt = {k: v for k, v in kf_opts.items() if k in ("alpha_scale", "beta_scale")}
     cen = chunk_census(U)
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
     # TWO BITMAPS, and the distinction is not bookkeeping.
@@ -589,7 +651,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     # survivors, which is what a real system emits.
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
-    counters, qual, trk, hits, ang = {}, {}, {}, {}, {}
+    counters, qual, trk, hits, angr = {}, {}, {}, {}, {}
     # SEED MULTIPLICITY BY |eta|: every seed object a seed forms (the funnel's
     # seed_objects), binned on SA.SEED_ETA_EDGES. Counts, so chunks add.
     seed_eta = np.zeros((len(seeds), len(SA.SEED_ETA_EDGES) - 1), np.int64)
@@ -598,7 +660,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     TP = KF.tp_truth_table(U)
     held = {}
     for s_i, o in entry_results(U, Q, seeds, _ptmin_for, _rule_for, min_layers,
-                                d0_window_cm):
+                                d0_window_cm, ang):
         sd = seeds[s_i]
         pt_s = _ptmin_for(sd)
         if isinstance(o, M.TooWide):
@@ -613,19 +675,30 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         gidx_all = KF.hits_from_seed(U, o)
         gc0 = o.get("_gC")
         trip0 = (o["_gA"], o["_gB"], gc0 if gc0 is not None else o["_gB"])
-        fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, use_angles=False,
-                             **d0_opt)
+        fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, **fopt)
         keep, chi2s = KF.good_state(fit0, pt_s)
         base = {"arity": float(sd.arity), "before_chi2": float(n_pre),
                 "seed_objects": float(o.get("seed_objects", 0)),
                 "pairs": float(o.get("tracklets", 0)),
+                # cluster pairs EXAMINED (after the S2j pre-gate, before the
+                # pair gates): the pair stage's work
+                "pairs_phi": float(o.get("pairs_phi", 0)),
+                "s3_rejected": float(o.get("angle_window_rejected", 0)),
+                "s4w_rejected": float(o.get("follow_angle_rejected", 0)),
                 "cand": float(o.get("cand_all_targets", 0)),
                 "before_minlayers": float(o.get("tracks_before_minlayers", 0)),
                 "fit": 0.0}
+        if ang("accept"):
+            # S6, after the position chi2 acceptance: the final-state angle chi2
+            # per angle measurement (KF.angle_gate)
+            k6 = KF.angle_gate(fit0["chi2_angle"], fit0["n_angle_meas"],
+                               ang.accept_chi2)
+            base["s6_rejected"] = float((keep & ~k6).sum())
+            keep = keep & k6
         if not keep.any():
             counters[s_i] = base
             continue
-        w_ang = 0.30 if sd.arity == 2 else 0.03
+        w_ang = ang.dr_weight[0 if sd.arity == 2 else 1] if ang("dr") else 0.0
         # STANDALONE, before DR can reassign anything. Everything the menu uses
         # -- reach, fake rate, layer count, resolutions, MVA rows -- is recorded
         # here, because composition asks "if I add this seed, what does it
@@ -665,8 +738,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
             if len(idx) > qual_per_chunk:
                 idx = idx[rng.choice(len(idx), qual_per_chunk, replace=False)]
             tq = tuple(x[idx] for x in tripk)
-            fq = KF.fit_tracks(U, Q, tq, gidx=gk[idx], use_angles=False,
-                               **d0_opt)
+            fq = KF.fit_tracks(U, Q, tq, gidx=gk[idx], **fopt)
             dk, dd, dc, dz, rm = KF.truth_residuals(U, tq, fq, TP)
             # dd is a TTTrack-convention d0 residual. Shards written before
             # 2026-09-23 hold it with the OPPOSITE sign (the KF then computed in
@@ -686,10 +758,10 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
                 ks = rng.choice(len(ks), export_tracks, replace=False)
             tf = tuple(x[ks] for x in tripk)
             Tf = KF.gather_hits(U, Q, gk[ks], KF.LAYER_ORDER)
-            ff = KF.fit_tracks(U, Q, tf, gidx=gk[ks], use_angles=False,
-                               **d0_opt)
+            ff = KF.fit_tracks(U, Q, tf, gidx=gk[ks], **fopt)
             trk[s_i] = KF.track_rows(U, Q, Tf, ff, tf, TP, s_i, sd.arity,
-                                     KF.sysclass_of(sd.layers), h_score[ks])
+                                     KF.sysclass_of(sd.layers), h_score[ks],
+                                     **sopt)
             # HIT LISTS, for duplicate removal the way a real system does it.
             # DR conflicts on >= 3 SHARED HITS, which cannot be reconstructed
             # from fitted parameters, so the cluster indices have to travel with
@@ -705,9 +777,9 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
             if len(asel):
                 ta = tuple(x[ks][asel] for x in tripk)
                 Ta = KF.gather_hits(U, Q, gk[ks][asel], KF.LAYER_ORDER)
-                fa = KF.fit_tracks(U, Q, ta, gidx=gk[ks][asel],
-                                   use_angles=False, **d0_opt)
-                ang[s_i] = KF.angle_rows(U, Ta, fa, ta, asel.astype(np.int64))
+                fa = KF.fit_tracks(U, Q, ta, gidx=gk[ks][asel], **fopt)
+                angr[s_i] = KF.angle_rows(U, Ta, fa, ta, asel.astype(np.int64),
+                                          **sopt)
         held[s_i] = {"o": o_keep, "sd": sd, "score": h_score}
         del o, fit0
 
@@ -766,7 +838,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         if len(rkeys):
             p = np.searchsorted(cen["key"], rkeys)
             found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-    return cen, found, found_dr, counters, qual, trk, hits, ang, nonant, seed_eta
+    return cen, found, found_dr, counters, qual, trk, hits, angr, nonant, seed_eta
 
 
 def truncation_table(C, group, cap=TRACKS_PER_REGION):
@@ -801,8 +873,14 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           budget_gb=0.4, rss_gb=8.0, masks=None, kf_opts=None,
           export_tracks=0, seed_classes=None, targets=None,
           min_layers=SA.MIN_LAYERS, bench=None, d0_window_cm=0.0,
-          it_ptmin=None, min_it_layers=None, min_ot_conf=0):
+          it_ptmin=None, min_it_layers=None, min_ot_conf=0, ang=None,
+          res=None):
     """Build (or load) the census. Returns a dict of concatenated arrays.
+
+    `ang` is the M.AngleUse (None = every stage) and `res` the angle resolution
+    knob {"alpha_k", "beta_k" in [0, 1], "sigma", "ref"} (None = as emulated);
+    both are in the identity. A k < 1 census carries ANGLE_REF_CAVEAT with its
+    measured reference coverage in the manifest ("angle_res_caveat").
 
     The cache is a DIRECTORY OF PER-CHUNK SHARDS, not one file, so a run that
     dies or is killed at chunk 40 of 63 resumes at 41 instead of starting over.
@@ -819,6 +897,12 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     # kf_opts IS part of the identity. It changes the quality columns in every
     # shard, so a cache built with one angle weighting or d0 prior must not be
     # silently extended by a run using another.
+    ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
+    res = {"alpha_k": 1.0, "beta_k": 1.0, **(res or {})}
+    improve = res["alpha_k"] < 1.0 or res["beta_k"] < 1.0
+    if not improve:
+        # at k = 1 the window policy and the reference mean nothing
+        res = {"alpha_k": 1.0, "beta_k": 1.0}
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
            "chunk": chunk, "calib_events": calib_events, "masks": masks,
            "kf_opts": dict(sorted((kf_opts or {}).items())),
@@ -833,6 +917,11 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
            "min_ot_conf": int(min_ot_conf),
            # part of the identity: a bit width changes the candidates themselves
            "bench": list(bench) if bench else None,
+           # WHERE THE ANGLES ARE USED and at what resolution: every stage
+           # switch and window, and the degradation factor applied at input
+           "angles": ang.key(),
+           "angle_res": {k: (float(v) if k.endswith("_k") else v)
+                         for k, v in sorted(res.items())},
            # the impact-parameter allowance the projection windows carry. A
            # doublet assumes d0 = 0, so at r = 3 cm a real 1 mm displacement
            # throws the azimuth by 33 mrad and falls outside the window: this is
@@ -881,6 +970,15 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 "dr_groups": dr_groups(builds, len(seeds)),
                 "seed_eta_edges": list(SA.SEED_ETA_EDGES),
                 "chunks_done": 0, "n_events": 0}
+        if improve:
+            # THE CAVEAT TRAVELS WITH EVERY k < 1 CENSUS, with the measured
+            # share of clusters the improvement cannot touch
+            meta["angle_res_caveat"] = {
+                "text": (M.ANGLE_REF_CAVEAT if res["ref"] == "classT" else
+                         "reference from the columns " + res["ref"]),
+                **{k: res[k] for k in ("alpha_k", "beta_k", "sigma", "ref")},
+                "clusters_without_reference": angle_ref_coverage(
+                    spec, calib_events, res["ref"])}
         json.dump(meta, open(mpath, "w"), indent=1, default=float)
     seeds = [SA.Seed(tuple(x), soft=bool(s), follow=f)
              for x, s, f in zip(meta["seeds"], meta["seed_soft"],
@@ -892,6 +990,15 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     obc = meta.get("ot_bend_cal")
     if obc:
         M.set_ot_bend_cal({int(k): tuple(v) for k, v in obc.items()})
+    if verbose and meta.get("angle_res_caveat"):
+        cv = meta["angle_res_caveat"]
+        print(f"  ANGLE RESOLUTION k alpha {cv['alpha_k']:g} beta {cv['beta_k']:g} "
+              f"(sigma {cv['sigma']}, reference {cv['ref']}). CAVEAT: {cv['text']} "
+              f"Measured without reference: "
+              + "; ".join(f"{g} {100 * v['no_reference']:.1f}% of clusters, "
+                          f"{100 * v['no_reference_among_linked']:.1f}% of linked"
+                          for g, v in cv["clusters_without_reference"].items()),
+              flush=True)
     if verbose:
         print(f"cache {d}\n  {len(seeds)} entries ({len({(s.layers, s.soft) for s in seeds})} "
               f"seeds) over {len(meta['builds'])} build(s), chunk = {chunk} events, "
@@ -906,15 +1013,15 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                      min(rss_gb, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
         want = None if nev is None else nev
         for ci, ((U, Q), ev) in enumerate(
-                unified_chunks(spec, want, chunk, sigz, bench)):
+                unified_chunks(spec, want, chunk, sigz, bench, res)):
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, found_dr, counters, qual, trk, hits, ang, nonant, seed_eta = process_chunk(
+            cen, found, found_dr, counters, qual, trk, hits, angr, nonant, seed_eta = process_chunk(
                 U, Q, seeds, meta["dr_groups"], ptmin, ci, QUAL_PER_CHUNK, kf_opts,
                 export_tracks, min_layers=min_layers,
                 d0_window_cm=d0_window_cm, it_ptmin=it_ptmin,
-                min_it_layers=min_it_layers, min_ot_conf=min_ot_conf)
+                min_it_layers=min_it_layers, min_ot_conf=min_ot_conf, ang=ang)
             np.savez_compressed(
                 _shard_path(d, ci), found=found, found_dr=found_dr,
                 n_events=len(ev),
@@ -927,14 +1034,19 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 n_clusters=len(U["layer"]), nonant=nonant, seed_eta=seed_eta,
                 **{f"trk_{k}": v for k, v in trk.items()},
                 **{f"hit_{k}": v for k, v in hits.items()},
-                **{f"ang_{k}": v for k, v in ang.items()})
+                **{f"ang_{k}": v for k, v in angr.items()})
             done, nev_seen = ci + 1, nev_seen + len(ev)
             meta["chunks_done"], meta["n_events"] = done, nev_seen
             json.dump(meta, open(mpath, "w"), indent=1, default=float)
             if verbose:
                 el = time.time() - t0
+                mv = Q["n_moved"]
                 print(f"  chunk {ci:>4}  {len(ev):>3} ev  {len(cen['key']):>8,} TPs"
-                      f"  {el:7.1f}s  peak {M.peak_gb():.2f} GB", flush=True)
+                      f"  {el:7.1f}s  peak {M.peak_gb():.2f} GB"
+                      + (f"  clusters moved toward the reference: alpha {mv['alpha']:,} "
+                         f"beta {mv['beta']:,} of {int((U['layer'] <= 4).sum()):,}"
+                         if improve else ""),
+                      flush=True)
             del U, Q, cen, found
     return load(d, nev=nev, verbose=verbose)
 
@@ -1021,6 +1133,13 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["builds"] = meta["builds"]
     C["dr_groups"] = meta["dr_groups"]
     C["calibration"] = meta["calibration"]
+    # where the angles were used and at what resolution; the MVA feature set
+    # follows S8 (KF.mva_features), so an exporter cannot train on angles the
+    # census was told not to use
+    C["angle_use"] = M.AngleUse.from_key(meta["config"]["angles"])
+    C["angle_res"] = meta["config"]["angle_res"]
+    C["angle_res_caveat"] = meta.get("angle_res_caveat")
+    C["mva_features"] = KF.mva_features(C["angle_use"])
     C["ptmin"] = float(meta["config"]["ptmin"])
     C["min_layers"] = int(meta["config"]["min_layers"])
     mil = meta["config"]["min_it_layers"]
@@ -1224,17 +1343,50 @@ def main():
                          "(cm). Widens the phi road by d0/r, which is what a "
                          "doublet seed cannot otherwise afford.")
     ap.add_argument("--alpha-bits", type=int, default=None,
-                    help="quantise cot(alpha) to this many bits over "
-                         "ALPHA_RANGE before seeding, projection and fitting; "
-                         "omit for full float")
+                    help="quantise the alpha word (sin of the direction's "
+                         "azimuth relative to the radial) to this many bits over "
+                         "ALPHA_RANGE, once at input, for every stage; omit for "
+                         "full float")
     ap.add_argument("--beta-bits", type=int, default=None,
-                    help="same for the beta-derived per-cluster z0 over "
-                         "Z0_RANGE. Both must be given together.")
+                    help="same for the beta-derived per-cluster z0 word over "
+                         "Z0_RANGE (every beta use derives from it). Both must "
+                         "be given together.")
+    stages = "; ".join(f"{v[0]}={k}: {v[1]}" for k, v in M.ANGLE_STAGES.items())
+    ap.add_argument("--angle-stages", default="all",
+                    help="where the SmartPixels angles are used: comma list of "
+                         "stages (names or S-labels; S2/S4 = the family), 'all' "
+                         f"or 'none'. Stages: {stages}")
+    ap.add_argument("--angle-stages-off", default="",
+                    help="stages to remove from --angle-stages (leave-one-out)")
+    P = M.AngleUse.PARAMS
+    ap.add_argument("--attach-nsig", type=float, default=P["attach_nsig"],
+                    help="S3 window on the third hit's alpha and beta pulls")
+    ap.add_argument("--proj-nsig", type=float, default=P["proj_nsig"],
+                    help="S4w window on a follow-layer candidate's angle pulls")
+    ap.add_argument("--arb-weight", type=float, default=P["arb_weight"],
+                    help="S4a weight of the angle pulls^2 against the "
+                         "position pull^2 in the hit arbitration")
+    ap.add_argument("--accept-chi2", type=float, default=P["accept_chi2"],
+                    help="S6 cut on the final-state angle chi2 per angle "
+                         "measurement")
+    ap.add_argument("--alpha-k", type=float, default=1.0,
+                    help="angle RESOLUTION knob, 0 <= k <= 1: alpha' = ref + "
+                         "k (alpha - ref) toward the reference (--angle-ref), "
+                         "once at input. CAVEAT (classT): only clusters with "
+                         "usable truth improve; see M.ANGLE_REF_CAVEAT")
+    ap.add_argument("--beta-k", type=float, default=1.0, help="same for beta")
+    ap.add_argument("--angle-k-sigma", default="fixed", choices=["fixed", "scaled"],
+                    help="k < 1: every stage's angle sigma unchanged (fixed) or "
+                         "x k for every cluster (scaled)")
+    ap.add_argument("--angle-ref", default="classT",
+                    help="k < 1 reference: classT (the emulator's truth on its "
+                         "class-T clusters, tpEmuClass == 1) or "
+                         "columns:PHI,COTTHETA (a per-cluster reference direction)")
     ap.add_argument("--d0-prior-cm", type=float, default=KF.D0_PRIOR_CM)
-    ap.add_argument("--kf-angles", default="on", choices=["on", "off"],
-                    help="use the SmartPixels alpha/beta in the KF updates")
     ap.add_argument("--alpha-scale", type=float, default=1.0,
-                    help="scale on the alpha sigma; <1 trusts it more")
+                    help="KF weight: scale on the alpha sigma in the S5 update "
+                         "and the angle chi2 (S6-S8), on top of the per-layer "
+                         "pull scale; <1 trusts it more")
     ap.add_argument("--beta-scale", type=float, default=1.0)
     ap.add_argument("--hash-content", action="store_true",
                     help="digest file contents instead of trusting size+mtime")
@@ -1251,11 +1403,20 @@ def main():
            if a.seed_classes else None)
     tgt = ([CODE[x.strip()] for x in a.targets.split(",") if x.strip()]
            if a.targets else None)
+    ang = M.AngleUse.parse(a.angle_stages, a.angle_stages_off,
+                           attach_nsig=a.attach_nsig, proj_nsig=a.proj_nsig,
+                           arb_weight=a.arb_weight, accept_chi2=a.accept_chi2)
+    if not (0.0 <= a.alpha_k <= 1.0 and 0.0 <= a.beta_k <= 1.0):
+        raise SystemExit("--alpha-k/--beta-k must be in [0, 1]: the knob only "
+                         "improves the emulated angles")
+    print(f"angle stages: {ang.label()}; resolution k alpha {a.alpha_k:g}, "
+          f"beta {a.beta_k:g}", flush=True)
     C = build(a.input, a.nev, a.ptmin, layers, a.n_adjacent, a.chunk,
               a.cache_dir, a.cache, a.hash_content, a.calib_events, masks=masks,
-              kf_opts={"use_angles": a.kf_angles == "on",
-                       "alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
+              kf_opts={"alpha_scale": a.alpha_scale, "beta_scale": a.beta_scale,
                        "d0_prior_cm": a.d0_prior_cm},
+              ang=ang, res={"alpha_k": a.alpha_k, "beta_k": a.beta_k,
+                            "sigma": a.angle_k_sigma, "ref": a.angle_ref},
               export_tracks=a.export_tracks, seed_classes=scl, targets=tgt,
               min_layers=a.min_layers, min_it_layers=a.min_it_layers,
               min_ot_conf=a.min_ot_conf,
@@ -1309,6 +1470,9 @@ def main():
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "n_tp": int(len(C["key"])),
                    "pt_min": a.ptmin, "cache_dir": C["cache_dir"],
+                   "angles": C["angle_use"].key(), "angle_res": C["angle_res"],
+                   **({"angle_res_caveat": C["angle_res_caveat"]}
+                      if C["angle_res_caveat"] else {}),
                    "truncation": trunc,
                    "seeds": seed_table(C)}, open(a.out, "w"), indent=1)
         print(f"\nwrote {a.out}")

@@ -183,7 +183,7 @@ D0_PRIOR_CM = 1.0        # uniform half-range for the d0 prior; see kf_run
 def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
            has_angle=None, d0_prior_cm=D0_PRIOR_CM, ms_scale=MS_SCALE,
            it_ot_scale=IT_OT_SCALE, pt_for_ms=None, layers=None,
-           reverse=False, ho=None):
+           reverse=False, ho=None, has_beta=None):
     """Vectorised FIVE-parameter KF over ntrack x nlayer arrays, inner to outer.
 
     THE MODEL, and it is the same one the exact three-point solve uses:
@@ -218,7 +218,8 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     the sample. It is exposed so it can be scanned rather than assumed.
 
     ma/va and mb/vb are the OPTIONAL per-cluster SmartPixels angle measurements.
-    An OT stub has neither, which has_angle records.
+    An OT stub has neither, which has_angle records (for alpha; has_beta for
+    beta, default has_angle: a quantized word can overflow in one angle only).
 
       alpha measures  x0 + x4 / r^2 , NOT x0 alone. From the same helix model the
         local direction gives  half = -d0/r + c*kappa*r , so the alpha-implied
@@ -234,10 +235,11 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     a tuning choice.
 
     Returns (kappa, phi0, d0, cot, z0, var_kappa, var_d0, var_cot, var_z0,
-             nhit, ok).
+             nhit, ok, chi2_rphi, chi2_rz, var_phi0).
     """
     nt, nl = H.shape
     ANG = has_angle is not None and ma is not None
+    has_b = has_angle if has_beta is None else has_beta
     # ---- DIFFUSE PRIOR, NOT A TWO-POINT SEED -----------------------------
     # calcSeeds' exact two-point initialisation is valid only for the
     # 4-parameter fit, where two azimuths determine two r-phi parameters. With
@@ -261,7 +263,6 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     C22 = np.full(nt, 100.0); C23 = np.zeros(nt); C33 = np.full(nt, 1.0e4)
     nseen = np.zeros(nt, np.int32)
     chi2_rphi = np.zeros(nt); chi2_rz = np.zeros(nt)
-    chi2_ang = np.zeros(nt); nang = np.zeros(nt, np.int32)
     ok = valid.sum(axis=1) >= 2
 
     def upd3(h0, h1, h4, resid, v, use, chi2=None):
@@ -383,23 +384,26 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
         r_prev = np.where(use, r, r_prev)
         seen_any = seen_any | use
     # ---- SmartPixels angles, on every instrumented layer including the seed --
+    # The angle consistency of a track is NOT accumulated here: it is the
+    # final-state angle_chi2, one definition whether or not the angles were fed
+    # to the fit (fit_tracks).
     if ANG:
         for L in range(nl):
             ua = valid[:, L] & has_angle[:, L] & ok
-            if not ua.any():
-                continue
-            r = np.where(ua, np.maximum(H[:, L], 1e-3), 1.0)
-            h4 = 1.0 / (r * r)                     # alpha term: x0 + d0 / r^2 (TTTrack d0)
-            pred = x0 + x4 * h4
-            upd3(np.ones(nt), np.zeros(nt), h4,
-                 np.where(ua, ma[:, L] - pred, 0.0), va[:, L], ua, chi2_ang)
-            upd2(np.ones(nt), np.zeros(nt),
-                 np.where(ua, mb[:, L] - x2, 0.0), vb[:, L], ua, chi2_ang)
-            nang = np.where(ua, nang + 1, nang)
+            ub = valid[:, L] & has_b[:, L] & ok
+            if ua.any():
+                r = np.where(ua, np.maximum(H[:, L], 1e-3), 1.0)
+                h4 = 1.0 / (r * r)                 # alpha term: x0 + d0 / r^2 (TTTrack d0)
+                pred = x0 + x4 * h4
+                upd3(np.ones(nt), np.zeros(nt), h4,
+                     np.where(ua, ma[:, L] - pred, 0.0), va[:, L], ua)
+            if ub.any():
+                upd2(np.ones(nt), np.zeros(nt),
+                     np.where(ub, mb[:, L] - x2, 0.0), vb[:, L], ub)
     kappa = -x0 / M.C_BEND
     return (kappa, x1, x4, x2, x3,
             C00 / (M.C_BEND ** 2), C44, C22, C33, nseen, ok,
-            chi2_rphi, chi2_rz, chi2_ang, nang, C11)
+            chi2_rphi, chi2_rz, C11)
 
 
 # ==========================================================================
@@ -456,7 +460,7 @@ def _selftest():
                             ("d0", out[2], d0), ("cot", out[3], cot),
                             ("z0", out[4], z0))
            if np.abs(a - b).max() > 1e-6]
-    assert len(out) == 16
+    assert len(out) == 14
     print("(1a) linear core, first-order hits, ho=False: "
           + ("FAIL " + "; ".join(bad) if bad else "exact"))
     # (1b) with the third-order terms on BOTH sides the filter is a
@@ -615,6 +619,12 @@ def gather_hits(U, Q, GIDX, layers):
     -1 means the track has nothing on that layer. Shared by the standalone
     projection path and by the seed follow stage, which has already chosen its
     hits and must not choose different ones here.
+
+    The angle quantities are it_prepare's (Q): kappa_alpha and cot(theta) with
+    their pull-scaled, resolution-degraded, quantized sigmas, i.e. exactly what
+    the seeding stages saw. ANG marks an IT cluster with a usable direction
+    (dir_ok); ANG_A / ANG_B additionally drop a quantized word that overflowed,
+    which carries a bound, not a measurement.
     """
     nt, nl = GIDX.shape
     z = lambda: np.zeros((nt, nl))
@@ -622,6 +632,8 @@ def gather_hits(U, Q, GIDX, layers):
     KA, SKA, CT, SCT = z(), z(), z(), z()
     VALID = GIDX >= 0
     ANG = np.zeros((nt, nl), bool)
+    ANG_A = np.zeros((nt, nl), bool)
+    ANG_B = np.zeros((nt, nl), bool)
     for j in range(nl):
         m = VALID[:, j]
         if not m.any():
@@ -632,14 +644,18 @@ def gather_hits(U, Q, GIDX, layers):
         Z[m, j] = U["globalZ"][gg]
         SY[m, j] = np.maximum(U["sigY"][gg], 1e-6)
         SX[m, j] = np.maximum(U.get("sigX", U["sigY"])[gg], 1e-6)
-        isit = U["layer"][gg] <= 4
-        ANG[np.flatnonzero(m)[isit], j] = True
+        has = (U["layer"][gg] <= 4) & Q["dir_ok"][gg]
+        rows = np.flatnonzero(m)
+        ANG[rows, j] = has
+        ANG_A[rows, j] = has & ~Q["ovf_a"][gg]
+        ANG_B[rows, j] = has & ~Q["ovf_z"][gg]
         KA[m, j] = Q["kap_a"][gg]
         SKA[m, j] = Q["s_kap"][gg]
-        CT[m, j] = U["globalClusterCotTheta"][gg]
-        SCT[m, j] = U["sigGlobalClusterCotTheta"][gg]
+        CT[m, j] = Q["cot_b"][gg]
+        SCT[m, j] = Q["s_cot"][gg]
     return dict(R=R, PH=PH, Z=Z, SX=SX, SY=SY, KA=KA, SKA=SKA, CT=CT, SCT=SCT,
-                VALID=VALID, ANG=ANG, GIDX=GIDX, layers=np.array(layers))
+                VALID=VALID, ANG=ANG, ANG_A=ANG_A, ANG_B=ANG_B, GIDX=GIDX,
+                layers=np.array(layers))
 
 
 def hits_from_seed(U, out, layers=None):
@@ -663,10 +679,6 @@ def hits_from_seed(U, out, layers=None):
         if L in lpos and len(rows):
             GIDX[rows, lpos[L]] = gc
     return GIDX
-
-
-    return dict(R=R, PH=PH, Z=Z, SX=SX, SY=SY, KA=KA, SKA=SKA, CT=CT, SCT=SCT,
-                VALID=VALID, ANG=ANG, GIDX=GIDX, layers=np.array(layers))
 
 
 def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
@@ -701,15 +713,16 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
     v0 = np.where(is_ot, o0, i0)
     v1 = np.where(is_ot, o1, i1)
-    ma = va = mb = vb = ang = None
+    ma = va = mb = vb = ang = angb = None
     if use_angles:
-        # alpha and beta enter as measurements of x0 - x4/r^2 and of x2; the
-        # scales are the retuned weights, applied to the VARIANCE.
+        # alpha and beta enter as measurements of x0 + x4/r^2 and of x2, with
+        # the same pull-scaled sigmas as every seeding stage and the angle chi2
+        # (it_prepare); alpha_scale / beta_scale multiply them on top.
         ma = -M.C_BEND * T["KA"]
         va = (M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale) ** 2
         mb = T["CT"]
         vb = (np.maximum(T["SCT"], 1e-9) * beta_scale) ** 2
-        ang = T["ANG"]
+        ang, angb = T["ANG_A"], T["ANG_B"]
     # azimuth relative to each track's own first hit, so no 2pi wrap enters
     ref = np.where(T["VALID"], T["PH"], 0.0)
     first = np.argmax(T["VALID"], axis=1)
@@ -717,45 +730,34 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     m0 = M.wrap(T["PH"] - phi_ref[:, None])
     out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb, ang,
                  d0_prior_cm, ms_scale, it_ot_scale,
-                 pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse)
+                 pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse,
+                 has_beta=angb)
     (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
-     c2p, c2z, c2a, nang, vphi) = out
+     c2p, c2z, vphi) = out
     fit = {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,
            "cot": cot, "z0": z0, "var_kappa": vk, "var_d0": vd,
            "var_cot": vc, "var_z0": vz, "var_phi0": vphi,
            "nhit": nhit, "ok": ok, "hits": T,
            "chi2_rphi": c2p, "chi2_rz": c2z}
-    if use_angles:
-        # angles were consumed by the fit, so their residuals are no longer an
-        # independent test; report what the updates contributed
-        fit["chi2_angle"], fit["n_angle"] = c2a, nang
-    else:
-        fit["chi2_angle"], fit["n_angle"] = angle_chi2(T, fit, alpha_scale,
-                                                       beta_scale)
+    # THE FINAL-STATE ANGLE CHI2, whether or not the angles entered the fit, so
+    # that the stages reading it (S6 acceptance, S7 rank, S8 features) see one
+    # definition and switching S5 changes the state, not the yardstick.
+    fit["chi2_angle"], fit["n_angle"] = angle_chi2(T, fit, alpha_scale, beta_scale)
+    fit["n_angle_meas"] = ((T["VALID"] & T["ANG_A"]).sum(axis=1)
+                           + (T["VALID"] & T["ANG_B"]).sum(axis=1)).astype(np.int32)
     return fit
 
 
-# MEASURED per-layer pull widths of the SmartPixels angles at scale 1, which
-# scale the reported sigmas so an angle pull is a pull. Source: canon_v2
-# f03-f10 (site_v2/emu_pulls_table.{txt,json}): barrel clusters linked to a
-# charged TP with a consistent helix, core RMS about zero of a mode-seeded
-# 3-sigma clip, pT >= 2 (1-2 GeV within 0.03). Alpha 0.958/0.988/0.915/0.899 and
-# beta 0.836/0.831/0.837/0.845 on IL1-IL4: on this payload both sigmas are
-# PESSIMISTIC (alpha by 1-10%, beta by ~16%). They replace the 2026-09-15 values (alpha 1.089/1.045/1.079/0.922,
-# beta 1.231/1.191/1.124/1.131; 60 events, before the payload-units fix).
+# THE PER-LAYER PULL SCALES (M.ALPHA_PULL_SCALE / M.BETA_PULL_SCALE) are
+# applied once, in it_prepare, to the sigmas every stage reads (T["SKA"],
+# T["SCT"]), so nothing here multiplies them again. They replace the 2026-09-15
+# values (alpha 1.089/1.045/1.079/0.922, beta 1.231/1.191/1.124/1.131; 60
+# events, before the payload-units fix).
 #
 # This supersedes an earlier inference that the sigmas were ~6.6x optimistic,
 # taken from a MEAN chi2_angle per cluster of 44-50. That mean was arithmetic,
 # not calibration: with ~2% of surviving tracks contaminated and carrying angle
 # pulls near 40, those few dominate the average.
-ALPHA_PULL_SCALE = {1: 0.96, 2: 0.99, 3: 0.92, 4: 0.90}
-BETA_PULL_SCALE = {1: 0.84, 2: 0.83, 3: 0.84, 4: 0.85}
-
-
-def _layer_scales(layers):
-    a = np.array([ALPHA_PULL_SCALE.get(int(L), 1.0) for L in layers])
-    b = np.array([BETA_PULL_SCALE.get(int(L), 1.0) for L in layers])
-    return a[None, :], b[None, :]
 
 
 def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
@@ -777,10 +779,19 @@ def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
     only has to be monotonic.
     """
     pa, pb = angle_pulls(T, fit, alpha_scale, beta_scale)
-    use = T["VALID"] & T["ANG"]
-    c2 = (np.where(use, pa * pa, 0.0).sum(axis=1)
-          + np.where(use, pb * pb, 0.0).sum(axis=1))
-    return c2, use.sum(axis=1).astype(np.int32)
+    c2 = (np.where(T["VALID"] & T["ANG_A"], pa * pa, 0.0).sum(axis=1)
+          + np.where(T["VALID"] & T["ANG_B"], pb * pb, 0.0).sum(axis=1))
+    return c2, (T["VALID"] & T["ANG"]).sum(axis=1).astype(np.int32)
+
+
+def angle_gate(chi2_angle, n_meas, accept_chi2):
+    """S6: keep a track (or, with KF branching, a state) whose angle chi2 per
+    angle measurement is at most accept_chi2. A track with no angle
+    measurement (OT-only, or no usable IT direction) passes: no angle, no
+    verdict. Takes any angle chi2 -- the final-state one today, a state's
+    predicted one when the per-state gate arrives -- so the cut carries over."""
+    n = np.asarray(n_meas)
+    return (n == 0) | (np.asarray(chi2_angle) <= accept_chi2 * np.maximum(n, 1))
 
 
 def angle_pulls(T, fit, alpha_scale=1.0, beta_scale=1.0):
@@ -791,13 +802,12 @@ def angle_pulls(T, fit, alpha_scale=1.0, beta_scale=1.0):
     a suspect hit, where one summed bend-chi2 cannot.
     """
     r = np.maximum(T["R"], 1e-3)
-    sa, sb = _layer_scales(T["layers"])
     x0 = -M.C_BEND * fit["kappa"][:, None]
     pred_a = x0 + fit["d0"][:, None] / (r * r)
     res_a = (-M.C_BEND * T["KA"]) - pred_a
-    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * sa * alpha_scale
+    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale
     res_b = T["CT"] - fit["cot"][:, None]
-    sig_b = np.maximum(T["SCT"], 1e-9) * sb * beta_scale
+    sig_b = np.maximum(T["SCT"], 1e-9) * beta_scale
     return res_a / sig_a, res_b / sig_b
 
 
@@ -826,14 +836,13 @@ def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
     r = np.maximum(T["R"], 1e-3)
     lay = np.asarray(T["layers"])[None, :]
     use = T["VALID"] & T["ANG"] & (lay <= 4)
-    sa, sb = _layer_scales(T["layers"])
     x0 = -M.C_BEND * fit["kappa"][:, None]
     pred_a = x0 + fit["d0"][:, None] / (r * r)
     res_a = (-M.C_BEND * T["KA"]) - pred_a
-    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * sa * alpha_scale
+    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale
     pred_b = np.broadcast_to(fit["cot"][:, None], T["CT"].shape)
     res_b = T["CT"] - pred_b
-    sig_b = np.maximum(T["SCT"], 1e-9) * sb * beta_scale
+    sig_b = np.maximum(T["SCT"], 1e-9) * beta_scale
     # ownership, per hit, against the same majority owner the residuals use
     G = T["GIDX"]
     on = G >= 0
@@ -1127,6 +1136,20 @@ MVA_FEATURES = tuple(c for c in TRACK_COLS if c not in (
     "tp_z0", "tp_phi0",
     "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0"))
 SYS_IT, SYS_OT, SYS_MIX = 0, 1, 2
+# the MVA features that carry SmartPixels angle information: withheld when a
+# census runs without S8. rank_score EMBEDS the angle chi2 whenever the DR rank
+# used it (S7), so it is withheld with them then (track_quality_mva's ablation
+# found the same leak).
+ANGLE_MVA_FEATURES = ("n_angle", "chi2_angle_per_cl", "max_angle_pull",
+                      "second_angle_pull")
+
+
+def mva_features(angle_use=None):
+    """MVA_FEATURES as an angle configuration (M.AngleUse) allows; None = all."""
+    if angle_use is None or angle_use("mva"):
+        return MVA_FEATURES
+    drop = set(ANGLE_MVA_FEATURES) | ({"rank_score"} if angle_use("dr") else set())
+    return tuple(c for c in MVA_FEATURES if c not in drop)
 
 
 def numerics_key():
@@ -1150,14 +1173,13 @@ def numerics_key():
             "mult_scatt_term": float(MULT_SCATT_TERM),
             "chi2_rphi_scale": float(CHI2_RPHI_SCALE),
             "kf_pt_toler": [float(x) for x in KF_PT_TOLER],
+            # the per-layer angle pull scales: they set every angle gate's
+            # sigma (it_prepare), the KF angle weights and the angle chi2, so
+            # retuning them must not resume a cache built under others
             "alpha_pull": {str(k): float(v)
-                           for k, v in sorted(ALPHA_PULL_SCALE.items())},
+                           for k, v in sorted(M.ALPHA_PULL_SCALE.items())},
             "beta_pull": {str(k): float(v)
-                          for k, v in sorted(BETA_PULL_SCALE.items())},
-            # the IT seed z0 gate's sigma scale (s_z0 in it_prepare): it moves
-            # which cluster pairs exist exactly as the KF angle scales move the
-            # chi2, so retuning it must not resume a cache built under another
-            "sig_pull_inflate": float(M.SIG_PULL_INFLATE),
+                          for k, v in sorted(M.BETA_PULL_SCALE.items())},
             "ot": M.ot_numerics_key()}
 
 
@@ -1184,8 +1206,8 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     is_it = use & (lay <= 4)
     is_ot = use & (lay > 10)
     pa, pb = angle_pulls(T, fit, alpha_scale, beta_scale)
-    uang = use & T["ANG"]
-    apull = np.where(uang, np.maximum(np.abs(pa), np.abs(pb)), 0.0)
+    apull = np.maximum(np.where(use & T["ANG_A"], np.abs(pa), 0.0),
+                       np.where(use & T["ANG_B"], np.abs(pb), 0.0))
     srt = np.sort(apull, axis=1)[:, ::-1]
     r = np.maximum(T["R"], 1e-3)
     dz = T["Z"] - (fit["cot"][:, None] * r + fit["z0"][:, None])

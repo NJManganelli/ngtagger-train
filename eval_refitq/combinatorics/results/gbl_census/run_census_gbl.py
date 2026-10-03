@@ -71,7 +71,7 @@ def process(U, Q, shard, verify=False):
                             d0_prior_cm=D0P, ho=False)
             g0 = G.gbl_fit(inp, np.zeros((len(gidx), 5)), rmed, kinks=False, ho=False, n_iter=1)
             kref = np.stack([-M.C_BEND * ref[0], ref[1], ref[2], ref[3], ref[4]], 1)
-            sd = np.sqrt(np.stack([ref[5] * M.C_BEND ** 2, ref[15], ref[6], ref[7], ref[8]], 1))
+            sd = np.sqrt(np.stack([ref[5] * M.C_BEND ** 2, ref[13], ref[6], ref[7], ref[8]], 1))
             ok = ref[10]
             checks.setdefault("GBL(no kinks,HO off) vs kf_run(HO off): max |d|/sigma", []).append(
                 float(np.max(np.abs(g0["x"][ok] - kref[ok]) / sd[ok])) if ok.any() else 0.0)

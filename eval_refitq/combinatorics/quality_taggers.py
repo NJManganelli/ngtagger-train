@@ -30,7 +30,6 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tp_findability as TF   # noqa: E402
-import kf_emulation as KF     # noqa: E402
 from ngtagger.data import spix_nano as SPN   # noqa: E402
 
 # label -> (residual column, scale, unit) ; None = the cleanliness target
@@ -55,13 +54,16 @@ def sig(x, nmin=100):
 
 
 def load(cache_dir, nev=None, census=None):
-    """Track rows of the census at --census, else the one under --cache-dir."""
+    """Track rows of the census at --census, else the one under --cache-dir,
+    their column index, the census directory and the MVA features its angle
+    configuration allows (TF.load's mva_features)."""
     d = TF.census_dir(census or cache_dir)
     C = TF.load(d, nev=nev, with_tracks=True)
     if not C["tracks"]:
         raise SystemExit("census carries no track rows; rerun --export-tracks")
     T = np.concatenate([C["tracks"][i] for i in sorted(C["tracks"])])
-    return T, {c: j for j, c in enumerate(C["track_cols"])}, d
+    return (T, {c: j for j, c in enumerate(C["track_cols"])}, d,
+            C["mva_features"])
 
 
 def make_target(T, c, name, win):
@@ -125,10 +127,10 @@ def main():
     ap.add_argument("-o", "--out", default=None)
     a = ap.parse_args()
 
-    T, c, cdir = load(a.cache_dir, a.nev, a.census)
+    T, c, cdir, mva_feats = load(a.cache_dir, a.nev, a.census)
     cname = Path(cdir).name
     drop = {x.strip() for x in a.drop.split(",") if x.strip()}
-    feats = [f for f in KF.MVA_FEATURES if f in c and f not in drop]
+    feats = [f for f in mva_feats if f in c and f not in drop]
     if drop:
         print(f"withheld: {', '.join(sorted(drop))}")
     want = {x.strip() for x in a.only.split(",") if x.strip()} or set(TARGETS)

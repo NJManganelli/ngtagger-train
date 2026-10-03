@@ -129,6 +129,60 @@ the policy windows above on both arms. This is the single easiest way to
 accidentally overstate the SmartPixels case, and it is why the window fix comes
 before any further angle study.
 
+### The no-angle arm, and one switch per angle use (2026-10-03)
+
+Every use of the cluster angles in the census is a named stage
+(`tracklet_topology_cost.ANGLE_STAGES`, `tp_findability --angle-stages`), in the
+cache key and the census manifest: S1 cluster preselection (alpha against the pT
+floor, the angle cap), S2a/S2z/S2j pair formation (alpha against the pair
+curvature, beta-derived z0 agreement, the joint (z0, phi) pairing pre-gate),
+S3 the triplet's third-hit attach, S4w/S4a the projection window and the hit
+arbitration, S5 the KF update, S6 an angle-chi2 track acceptance, S7 the DR rank
+weight, S8 the quality-MVA features. `--angle-stages none` is the no-angle arm,
+and it is position-only in fact, not just in name:
+
+- the joint (z0, phi) pre-gate is an angle use (beta-derived z0). Before
+  2026-10-03 it ran whatever `use_angles` said, so the "no angles" seeding still
+  pruned pairs on beta;
+- the pair and target-layer median radii that set the position windows are taken
+  on each layer's full cluster set, before the alpha veto, so both arms run the
+  same windows;
+- every angle sigma carries the same per-layer pull scale
+  (`ALPHA_PULL_SCALE` / `BETA_PULL_SCALE`) at every stage, and every angle any
+  stage reads is the one `it_prepare` prepared once (resolution knob
+  `--alpha-k/--beta-k`, quantisation `--alpha-bits/--beta-bits`).
+
+### The angle resolution knob: improvement only, class T only (2026-10-03)
+
+`--alpha-k/--beta-k` in [0, 1] move every angle, once at input, toward a
+reference: angle' = ref + k (angle - ref), in angle space (the direction's
+azimuth relative to the radial, and atan(cot theta)), never wrapped; k = 1 is the
+emulated output, k = 0 the reference. Degrading the angles (k > 1) is not
+offered: the emulated angles are already several times worse than SmartPixels is
+expected to be, so only improvements are indicative. `--angle-k-sigma` says
+whether every stage's angle sigma stays as at k = 1 (`fixed`) or follows k for
+every cluster (`scaled`).
+
+The reference (`--angle-ref classT`) is the emulator's own truth on its class-T
+clusters (the nano's `tpEmuClass == 1`: linked to a TP, charged, helix crossing
+within 1 cm -- the emulator's class definition): the producer's truth direction
+`tpGlobalClusterPhi` / `tpGlobalClusterCotTheta`. **Class-C clusters (unlinked,
+or linked with unusable truth) have no reference in the nanos and keep their
+emulated angles**: 20% of IL1 and 35% of IL2-IL4 clusters on canon_v2 (10% and
+26% of the TP-linked ones). They could not get much better anyway: the
+emulator's class-C pseudo-truth (CNN + drawn residual) has, as full RMS on
+linked clusters, IL2-4 alpha 11.1 / beta 18.4 deg, IL1 9.3 / 27.9, discs
+6.5 / 6.6 -- against class-T emitted 6.9 / 15.1, 6.6 / 11.9, 6.6 / 18.2. A
+per-cluster pseudo-truth column for every cluster plugs in as
+`--angle-ref columns:PHI,COTTHETA`.
+
+CAVEAT, carried by every k < 1 census (manifest `angle_res_caveat`, its log and
+JSON): the improvement scales only clusters with usable truth (class T);
+clusters without it (class C) keep the emulated angles, so at small k the linked
+and unlinked populations become more distinguishable than real SmartPixels data
+would make them, and gains from angle-based fake rejection are likely
+overstated.
+
 ## FIDELITY FIXES APPLIED TO THE OT SIDE
 
 1. Adopt `OT_RPHI_CUT`/`OT_Z_CUT` in the `it_project` path, widened by the

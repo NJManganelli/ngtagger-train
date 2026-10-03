@@ -34,7 +34,6 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tp_findability as TF   # noqa: E402
-import kf_emulation as KF     # noqa: E402
 
 
 def robust_sigma(x):
@@ -55,7 +54,8 @@ def load_rows(cache_dir):
     # The MVA may see only the quality columns. Identity, fitted kinematics and
     # every truth column are excluded by name, so a column added to TRACK_COLS
     # for the interactive page cannot leak into training by accident.
-    fidx = [col[c] for c in KF.MVA_FEATURES]
+    # the census's own feature set: without S8 its angle features are withheld
+    fidx = [col[c] for c in C["mva_features"]]
     X = T[:, fidx]
     # ---- DERIVED DOF FEATURES, for the soft-track regime -----------------
     # The r-phi half has 3 free parameters and r-z has 2, so a track's degrees
@@ -99,7 +99,7 @@ def main():
     from sklearn.inspection import permutation_importance
 
     X, Y, seed, C = load_rows(a.cache_dir)
-    nm = list(KF.MVA_FEATURES) + ["dof_rphi", "dof_rz",
+    nm = list(C["mva_features"]) + ["dof_rphi", "dof_rz",
                                   "chi2_rphi_per_dof", "chi2_rz_per_dof"]
     nw, d0res = Y[:, 0], Y[:, 3]
     print(f"{len(X):,} tracks, {len(nm)} features, "

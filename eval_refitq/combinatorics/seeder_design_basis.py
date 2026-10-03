@@ -76,7 +76,7 @@ def study_geometry(a):
 def study_sigma_z0(a):
     """Where sigma(z0) comes from. Justifies the per-layer wildcard split.
 
-    s_z0 = globalR * sigGlobalClusterCotTheta * SIG_PULL_INFLATE, so it is a
+    s_z0 = globalR * sigGlobalClusterCotTheta * BETA_PULL_SCALE[layer], so it is a
     propagated per-cluster uncertainty, not a measured spread. sigma(cot theta) is
     flat across layers, so the whole per-layer difference is LEVER ARM: z0
     extrapolates to r = 0 and the outer layers sit further away. A single global
@@ -87,7 +87,7 @@ def study_sigma_z0(a):
     s, sct, r, lay = Q["s_z0"], D["sigGlobalClusterCotTheta"], D["globalR"], D["layer"]
     gsplit = float(np.percentile(s, M.Z0_SPLIT_Q))
     print(f"=== sigma-z0   s_z0 = globalR * sigGlobalClusterCotTheta"
-          f" * {M.SIG_PULL_INFLATE}\n")
+          f" * BETA_PULL_SCALE {M.BETA_PULL_SCALE}\n")
     print(f"{'layer':<7}{'r med':>8}{'sig(cot) med':>14}{'s_z0 med':>11}"
           f"{'s_z0 q99':>10}{'share of global-q99 wildcards':>31}")
     nw = int((s > gsplit).sum())

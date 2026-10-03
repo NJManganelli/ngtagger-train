@@ -64,7 +64,8 @@ def trace_one(D, ia, ib, ic, ptmin, d0_cm, rA, rB, dr):
     for i in (ia, ib, ic):
         h = wrap(D["globalPhi"][i] - D["globalClusterPhi"][i])
         ka = np.sin(h) / (C_BEND * D["globalR"][i])
-        sk = D["sigGlobalClusterPhi"][i] * abs(np.cos(h)) / (C_BEND * D["globalR"][i])
+        sk = (D["sigGlobalClusterPhi"][i] * M.ALPHA_PULL_SCALE.get(int(D["layer"][i]), 1.0)
+              * abs(np.cos(h)) / (C_BEND * D["globalR"][i]))
         if abs(ka) > kmax + NSIG * sk:
             return "alpha_veto"
     d0_allow = d0_cm / min(rA, rB)
@@ -85,11 +86,14 @@ def trace_one(D, ia, ib, ic, ptmin, d0_cm, rA, rB, dr):
     for i in (ia, ib):
         h = wrap(D["globalPhi"][i] - D["globalClusterPhi"][i])
         ka = np.sin(h) / (C_BEND * D["globalR"][i])
-        sk = D["sigGlobalClusterPhi"][i] * abs(np.cos(h)) / (C_BEND * D["globalR"][i])
+        sk = (D["sigGlobalClusterPhi"][i] * M.ALPHA_PULL_SCALE.get(int(D["layer"][i]), 1.0)
+              * abs(np.cos(h)) / (C_BEND * D["globalR"][i]))
         if abs(kap - ka) > NSIG * max(sk, 1e-9):
             return "alpha_consistency"
-    sza = D["globalR"][ia] * D["sigGlobalClusterCotTheta"][ia] * M.SIG_PULL_INFLATE
-    szb = D["globalR"][ib] * D["sigGlobalClusterCotTheta"][ib] * M.SIG_PULL_INFLATE
+    sza = (D["globalR"][ia] * D["sigGlobalClusterCotTheta"][ia]
+           * M.BETA_PULL_SCALE.get(int(D["layer"][ia]), 1.0))
+    szb = (D["globalR"][ib] * D["sigGlobalClusterCotTheta"][ib]
+           * M.BETA_PULL_SCALE.get(int(D["layer"][ib]), 1.0))
     z0a = D["globalZ"][ia] - D["globalR"][ia] * D["globalClusterCotTheta"][ia]
     z0b = D["globalZ"][ib] - D["globalR"][ib] * D["globalClusterCotTheta"][ib]
     if abs(z0a - z0b) > NSIG * np.hypot(sza, szb):
