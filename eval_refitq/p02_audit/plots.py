@@ -287,7 +287,7 @@ def page_classes(pdf, R):
         scen_bars(ax, hc, lambda s, k: A[s][f"hit_class_share_{lab}"][k])
         ax.set_xticks(range(len(hc))); ax.set_xticklabels(["shared, own\ndominant", "shared, other\ndominant",
                                                            "wrong,\nclass T", "wrong,\nclass C", "noise"], fontsize=7)
-        corr = "\n".join(f"{s} {fmt(A[s][f'hit_class_share_{lab}']['correct'])}" for s in SCEN)
+        corr = "\n".join(f"{s} {fmt(A[s][f'hit_class_share_{lab}']['correct'], nd=2)}" for s in SCEN)
         ax.set_title(f"all accepted hits on {lab} prompt tracks")
         ax.text(0.02, 0.97, "correct hits:\n" + corr, transform=ax.transAxes, ha="left", va="top", fontsize=7,
                 color=INK2)
@@ -444,7 +444,7 @@ def page_tables(pdf, R):
                         + [f"{v(H[s]['d0'])[0]:.2f} / {v(H[s]['z0'])[0]:.2f}%" for s in SCEN] + [f"{H['AAAA']['n']:,}"])
     table_page(pdf, "Replay reference: H (harmed fraction of prompt tracks) per bin",
                "Bootstrap standard errors (variances and per-event counts in the JSON / npz for paired checks)", rows, fs=6.8)
-    rows = [["surface"] + [f"P {s} all" for s in SCEN] + [f"P {s} prompt" for s in SCEN] + [f"attach. {s} (prompt)" for s in SCEN]]
+    rows = [["surface"] + [f"P {s} all" for s in SCEN] + [f"P {s} prmpt" for s in SCEN] + [f"attach {s} prompt" for s in SCEN]]
     for x in SURF:
         r = [x]
         for key in ("P", "P_prompt"):
