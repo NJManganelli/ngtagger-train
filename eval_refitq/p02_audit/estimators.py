@@ -4,8 +4,11 @@ B.1 core (plan App. B.1 / C.2 P11): the RMS about zero of a mode-seeded iterativ
 algorithm of the census pull table (site_v2/scripts/emu_pulls_table.py ``core``): seed the centre at the mode of
 a 400-bin histogram over the 0.5-99.5% quantile range and the width at the 68.27% quantile of |x - mode|;
 iterate mean / std over |x - c| < 3 s; return the RMS about zero of the kept values and the fraction outside.
-No shared module holds it yet (WP-A1 creates the definition sheet), so it is written here once, with
-frequency weights so that every bootstrap replica re-fits it (C.2 P7), on pre-sorted values (O(n) per replica).
+It is written here, with frequency weights so that every bootstrap replica re-fits it (C.2 P7), on pre-sorted
+values (O(n) per replica). WP-A1's shared ngtagger.definitions.estimators.core (uncommitted when this was
+written) is the same algorithm but unweighted, and drops |x| >= 1e3 as sentinels: on d0 / z0 residuals in um
+that would silently drop every track beyond 1 mm, so this audit does not apply that cut. To be reconciled
+when the definition sheet is committed (P11).
 
 Bootstrap: event-level, multinomial counts over the events (``replica_weights``); one weight matrix is shared
 by every arm and scenario of a run, so differences are paired.
@@ -42,12 +45,14 @@ class SortedSample:
         return core_sorted(self.xs, np.ones(self.n) if w is None else w)
 
     def core_reps(self, W):
-        """core for every replica row of the event-weight matrix W -> (R, 4) array."""
+        """core for every replica row of the event-weight matrix W -> (R, 4) array. Whether a cell is
+        quoted is decided once, on the sample itself (n >= CORE_MIN_N); a quoted cell is re-fitted in
+        every replica, an unquoted one gets no replicas."""
         out = np.full((W.shape[0], 4), np.nan)
-        if self.n == 0:
+        if self.n < CORE_MIN_N:
             return out
         for r in range(W.shape[0]):
-            out[r] = core_sorted(self.xs, W[r, self.es])
+            out[r] = core_sorted(self.xs, W[r, self.es], min_n=0)
         return out
 
 
@@ -58,13 +63,13 @@ def _seg(c, i0, i1):
     return c[i1 - 1] - (c[i0 - 1] if i0 > 0 else 0.0)
 
 
-def core_sorted(xs, w):
+def core_sorted(xs, w, min_n=CORE_MIN_N):
     """B.1 core of sorted values xs with frequency weights w.
 
-    Returns (core_rms_about_zero, centre, sigma, outside_fraction); NaNs when the total weight (the
-    resampled track count; the plain count when unweighted) is below CORE_MIN_N."""
+    Returns (core_rms_about_zero, centre, sigma, outside_fraction); NaNs when the total weight is below
+    min_n (bootstrap replicas of a quoted cell pass min_n=0: the cut is applied once, to the sample)."""
     nan4 = (np.nan, np.nan, np.nan, np.nan)
-    if len(xs) == 0 or w.sum() < CORE_MIN_N:
+    if len(xs) == 0 or w.sum() <= 0 or w.sum() < min_n:
         return nan4
     cw = np.cumsum(w)
     W = cw[-1]
@@ -137,6 +142,8 @@ def summ(v, reps):
     se = float(np.std(good, ddof=1)) if len(good) > 2 else float("nan")
     out = {"v": None if v is None or not np.isfinite(v) else float(v),
            "se": se if np.isfinite(se) else None}
+    if out["v"] is None:            # an unquoted value carries no error
+        out["se"] = None
     out["var"] = None if out["se"] is None else out["se"] ** 2
     if len(good) < len(reps):
         out["n_rep_valid"] = int(len(good))

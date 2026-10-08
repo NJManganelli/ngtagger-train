@@ -304,7 +304,9 @@ class SigmaTable:
 
     def at(self, w_ev):
         from estimators import core_sorted
-        return {p: np.array([core_sorted(S.xs, w_ev[S.es])[0] for S in L]) for p, L in self.samples.items()}
+        # every bin is quotable on the sample (asserted in fallback()); replicas are always re-fitted
+        return {p: np.array([core_sorted(S.xs, w_ev[S.es], min_n=0 if S.n >= CORE_MIN_N else CORE_MIN_N)[0]
+                             for S in L]) for p, L in self.samples.items()}
 
 
 def fb_chi2(res_sp, res_ot, rb, tab_sp, tab_ot):
@@ -710,9 +712,10 @@ def fallback(ctx, s, T0, arms, hs, pop, org, rb, ev, fit_ev, test_ev, Ts):
             from estimators import core_sorted
             def fbcore(x, w):
                 o = np.argsort(x, kind="stable")
-                return core_sorted(x[o], w[o])
+                return core_sorted(x[o], w[o], min_n=0 if len(x) >= CORE_MIN_N else CORE_MIN_N)
             nomfb = fbcore(fbn, np.ones(len(fbn)))
-            rfb = np.array([fbcore(np.where(rev_reps[i][m], ot, sp), W[i][e]) for i in range(W.shape[0])])
+            rfb = (np.array([fbcore(np.where(rev_reps[i][m], ot, sp), W[i][e]) for i in range(W.shape[0])])
+                   if len(fbn) >= CORE_MIN_N else np.full((W.shape[0], 4), np.nan))
             cp["FB"] = {"core": s_of(nomfb[0], rfb[:, 0]), "outside_core": s_of(nomfb[3], rfb[:, 3])}
             nsp = {}
             for t in thr_list:
