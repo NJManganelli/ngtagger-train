@@ -20,11 +20,15 @@ PROBE = "src/ngtagger/spops/probe"
 
 
 def _mini_copy(code_root, dest, remove=()):
+    """A writable miniature copy (the code root itself may be a read-only frozen copy)."""
     src = os.path.join(code_root, "src", "ngtagger")
-    shutil.copytree(src, os.path.join(dest, "src", "ngtagger"),
+    shutil.copytree(src, os.path.join(dest, "src", "ngtagger"), copy_function=shutil.copyfile,
                     ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
+    for d, _, _ in os.walk(dest):
+        os.chmod(d, 0o755)
     os.makedirs(os.path.join(dest, ".spguard"))
-    shutil.copy2(os.path.join(src, "spops", "guard", "sitecustomize.py"), os.path.join(dest, ".spguard"))
+    shutil.copyfile(os.path.join(src, "spops", "guard", "sitecustomize.py"),
+                    os.path.join(dest, ".spguard", "sitecustomize.py"))
     for r in remove:
         os.remove(os.path.join(dest, r))
 
