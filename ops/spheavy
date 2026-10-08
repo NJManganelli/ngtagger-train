@@ -1,0 +1,12 @@
+#!/bin/bash
+# The heavy-lane launcher (python -m ngtagger.spops.launch): every heavy job -- census,
+# tagger training, replay scan, CMSSW cmsRun or build in Docker -- goes through it.
+#   ops/spheavy run --name NAME --kind KIND [--frozen --tree DIR ...] [--data FILE ...] -- CMD ...
+#   ops/spheavy status        lock holder, legacy jobs, Docker, resources (read-only)
+#   ops/spheavy log [-n N]    the last lane events (~/smartpixels/heavy_lane/heavy.log)
+# The launcher itself runs from the shared tree with the repo's pixi interpreter (never
+# `pixi run`, which could re-resolve the environment); a frozen job runs from its copy.
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="${SP_LAUNCHER_PYTHON:-$here/.pixi/envs/default/bin/python}"
+[ -x "$PY" ] || PY=python3
+PYTHONPATH="$here/src" exec "$PY" -m ngtagger.spops.launch "$@"
