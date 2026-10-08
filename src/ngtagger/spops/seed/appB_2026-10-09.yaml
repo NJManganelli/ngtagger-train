@@ -1,0 +1,687 @@
+# Registry seed: every number of plan.md Appendix B (round 7, 2026-10-06), plus the App. A /
+# D.1 items whose status D.1 names, registered on 2026-10-09 with the statuses of D.1's exit and
+# of the user's decisions of 2026-10-08/09.
+#   python -m ngtagger.spops.registry seed src/ngtagger/spops/seed/appB_2026-10-09.yaml
+# Rules used: a status named by D.1 / B.2 / a decision wins; otherwise numbers tagged [R] / [M]
+# (reviewer / project memory) without a recorded provenance are "exploratory (provenance unknown)";
+# numbers tagged [V] (verified by a planner, plan App. J.1) keep their content status (valid,
+# refit-v2, in-sample, ...) with provenance.known = false (no commit or patch was recorded).
+# Values keep the plan's wording where it gives a range ("24/36/54" = per |eta| bin).
+common:
+  definition_sheet: "pre-v1 (registered from plan.md App. B; measured before the sheet existed)"
+  provenance:
+    known: false
+    source: "/Users/nmangane/smartpixels/.agent-work/sp-review-2026-10/plan.md (round 7, 2026-10-06)"
+results:
+
+# ---------------------------------------------------------------- B.1 T1-T3 (refit v2 tracking)
+- id: appb.t1.attachment
+  title: "Refit v2: correct-hit attachment per surface"
+  values: [{name: "attachment per surface (range)", value: "0.87-0.96", unit: fraction}]
+  status: refit-v2
+  status_note: "[V r2] planner-verified; no commit or patch recorded"
+  bias: "correct for refit v2 (position-only hit choice); a bound on SmartPixels only after the refit investigation"
+  sources: ["plan B.1 T1"]
+  provenance: {tag: "[V r2]"}
+- id: appb.t1.refit-fraction
+  title: "Refit v2: fraction of OT tracks refitted (AAAA)"
+  values: [{name: refit fraction AAAA, value: 0.998, unit: fraction}]
+  status: exploratory
+  status_note: "provenance unknown ([M]); refit v2"
+  bias: "not stated in the source"
+  sources: ["plan B.1 T1"]
+  provenance: {tag: "[M]"}
+- id: appb.t2.d0-core
+  title: "Refit v2 vs OT: d0 resolution core and full RMS, prompt, |eta| < 1.1 / 1.1-1.8 / 1.8-2.4"
+  values:
+  - {name: "SP d0 core per |eta| bin", value: "24/36/54", unit: um}
+  - {name: "OT d0 core per |eta| bin", value: "438/669/841", unit: um}
+  - {name: "full RMS SP vs OT (|eta| < 1.1)", value: "1.73 vs 0.58", unit: mm}
+  status: refit-v2
+  status_note: "[V r2]; B.2 lists it 'valid (refit v2)'"
+  bias: "core robust; the tails are refit v2's harm (B.2)"
+  sources: ["plan B.1 T2", "plan B.2 row 5", "report finding 1"]
+  provenance: {tag: "[V r2]"}
+- id: appb.t2.harm
+  title: "Refit v2 harm: prompt tracks worse than OT by > 0.5 mm in d0 / > 1 mm in z0; secondaries"
+  values:
+  - {name: "harmed prompt fraction (d0)", value: "~0.05", unit: fraction}
+  - {name: "harmed fraction, born beyond 2.5 cm (d0)", value: "~0.40", unit: fraction}
+  - {name: "harmed prompt fraction (z0) per |eta| bin", value: "2.2/4.7/5.7", unit: "%"}
+  status: exploratory
+  status_note: "provenance unknown ([R]); refit v2; re-measured with provenance by the refit-v2 audit (registry p02.h-prompt.*, p02.harm-origin.*)"
+  bias: "correct for refit v2; pessimistic as a bound on SmartPixels (B.3)"
+  sources: ["plan B.1 T2", "report finding 1"]
+  provenance: {tag: "[R]"}
+- id: appb.t2.covariance-pulls
+  title: "Refit v2 covariance: pull widths"
+  values: [{name: "pull width (range)", value: "2-4"}]
+  status: refit-v2
+  status_note: "[V r2, R]; optimistic errors: half the Highland angle, no path length, no material inside the first hit"
+  bias: "IP significance and error-weighted vertexing optimistic (most at low pT and for IAAA) (B.3)"
+  sources: ["report finding 1", "plan B.3 refit v2 covariance row"]
+  provenance: {tag: "[V r2, R]"}
+- id: appb.t3.wrong-hit-rates
+  title: "Refit v2 wrong-hit rate per surface (inclusive tracks)"
+  values:
+  - {name: "IL1/IL2/IL3/IL4", value: "9.4/7.4/5.3/4.7", unit: "%"}
+  - {name: "discs (range)", value: "10.1-14.6", unit: "%"}
+  status: refit-v2
+  status_note: "[V r2]"
+  bias: "inclusive (pile-up dominated) tracks: overstates what any angle method gains for b daughters (B.2)"
+  sources: ["plan B.1 T3", "plan B.2 row 6"]
+  provenance: {tag: "[V r2]"}
+- id: appb.t3.hf-same-interaction
+  title: "Wrong IT hits of heavy-flavour daughters from their own interaction"
+  values: [{name: "same-interaction share (range)", value: "41-53", unit: "%"}]
+  status: exploratory
+  status_note: "provenance unknown ([R])"
+  bias: "inclusive purity gains are optimistic for b tagging, up to ~2x (B.3)"
+  sources: ["plan B.1 T3", "plan B.3 inclusive-purity row"]
+  provenance: {tag: "[R]"}
+- id: appb.t2.phi0-core
+  title: "phi0 core OT vs SP (refit v2)"
+  values: [{name: "phi0 core OT", value: "3.0-0.6", unit: mrad}, {name: "phi0 core SP", value: "0.9-0.19", unit: mrad}]
+  status: exploratory
+  status_note: "provenance unknown ([R]); refit v2"
+  bias: "any SP phi0 or pT gain claimed against a 5-parameter OT baseline is optimistic (a 4-par beam-constrained fit recovers most of it)"
+  sources: ["plan B.3 5-par OT baseline row"]
+  provenance: {tag: "[R]"}
+- id: appb.d.d0-sigma68-il1-vs-il4
+  title: "Held-out d0 sigma68, AAAI vs IAAA"
+  values: [{name: "AAAI vs IAAA", value: "54 vs 117", unit: um}, {name: "background clusters per projection, IL1 vs IL4", value: "5.5 vs 0.09"}]
+  status: refit-v2
+  status_note: "[V r1]"
+  bias: "toward IL1: radiation damage, IL1 3D emulated with drift, IL1 occupancy unmodelled; toward IAAA: two unmodelled kinks inside its innermost hit (B.1 row D)"
+  sources: ["plan B.1 row D"]
+  provenance: {tag: "[V r1]"}
+
+# ---------------------------------------------------------------- B.1 T7 vertexing
+- id: appb.t7.vertexing
+  title: "Vertexing with refit-v2 tracks (AAAA): correct-vertex fraction, purity, z core"
+  values:
+  - {name: "FastHisto correct vertex OT -> SP", value: "88.9 -> 94.6", unit: "%"}
+  - {name: "NN+MVA correct vertex OT -> SP", value: "89.6 -> 96.6", unit: "%"}
+  - {name: "purity OT -> SP", value: "67.7 -> 87.6", unit: "%"}
+  - {name: "z core OT -> SP (FastHisto / NN+MVA)", value: "678 -> 420 / 179", unit: um}
+  status: refit-v2
+  status_note: "provenance unknown ([M]); B.2: 'refit-v2 label; bracket pending'"
+  bias: "mixed: float, OT-tuned binning, angle features in the MVA heads; correct-vertex ID in per-arm windows favours OT (B.2, B.3)"
+  sources: ["plan B.1 T7", "plan B.2 row 4"]
+  provenance: {tag: "[M]"}
+
+# ---------------------------------------------------------------- B.1 J1/J4 / B.2: the deployed tagger
+- id: appb.j1.stock-tagger-matched-mistag
+  title: "Deployed (stock) NG tagger on every arm at matched udsg mistag (ties split, all jets, event-paired)"
+  values:
+  - {name: "b eff IIII at the menu point", value: 0.784}
+  - {name: "b eff SP arms at the menu point", value: "0.797-0.812"}
+  - {name: "delta menu AAAA", value: 0.028, error: 0.010}
+  - {name: "delta menu AAAI", value: 0.028, error: 0.010}
+  - {name: "delta menu IAAA", value: 0.013, error: 0.010}
+  - {name: "delta 10% AAAA", value: 0.094, error: 0.017}
+  - {name: "delta 10% AAAI", value: 0.091, error: 0.017}
+  - {name: "delta 10% IAAA", value: 0.054, error: 0.017}
+  - {name: "delta 1% AAAA", value: 0.067, error: 0.02}
+  - {name: "delta 1% AAAI", value: 0.071, error: 0.02}
+  - {name: "delta 1% IAAA", value: 0.054, error: 0.02}
+  - {name: "common jets (4,997): delta menu AAAA/AAAI/IAAA", value: "+0.024/+0.023/+0.012", error: 0.011}
+  - {name: "common jets: delta 10% AAAA/AAAI/IAAA", value: "+0.099/+0.092/+0.059", error: 0.017}
+  - {name: "excluding TTbar files 1-2: delta menu", value: "+0.034/+0.031/+0.021"}
+  - {name: "jets per arm (b / udsg / tau)", value: "1.43-1.44k / 2.43-2.45k / 396-410"}
+  status: not-used
+  status_note: "not used: the deployed tagger was trained on 4-parameter tracks (no fitted d0), all our scenarios use 5-parameter tracks (user decision 2026-10-09, report finding 6)"
+  bias: "not a fair comparison (training-track mismatch); B.2's own line: pessimistic if trained on 5-parameter tracks, optimistic if 4-parameter -- the decision settles it as 4-parameter; TTbar files 1-2 class-C angles in-sample. The common-population join key (event, label, truth pT) is not unique (~5% of jets; fast-gate item tagger.join_keys)"
+  sources: ["plan B.1 J1", "plan B.2 row 1", "report finding 6"]
+  provenance: {tag: "[V, planning check]"}
+- id: appb.j4.stock-tagger-charm-tau
+  title: "Deployed NG tagger: charm (c / (c + uds + g)) at matched udsg mistag; tau counts"
+  values:
+  - {name: "charm delta 30% AAAA/AAAI/IAAA", value: "+0.025/+0.024/+0.010", error: 0.021}
+  - {name: "charm delta 10% AAAA/AAAI/IAAA", value: "-0.003/+0.008/-0.001", error: 0.016}
+  - {name: "charm delta 1% AAAA/AAAI/IAAA", value: "-0.005/-0.002/-0.007", error: 0.007}
+  - {name: "taus per arm (all jets)", value: "396-410"}
+  status: not-used
+  status_note: "not used: deployed tagger trained on 4-parameter tracks (user decision 2026-10-09)"
+  bias: "as appb.j1.stock-tagger-matched-mistag; the 78 um first dxy bin is a candidate cause of the charm null, not a verified one"
+  sources: ["plan B.1 J4", "plan J.1 round 6"]
+  provenance: {tag: "[V, planning check]"}
+- id: appb.d.stock-tagger-aaai-minus-iaaa
+  title: "Deployed NG tagger: AAAI minus IAAA (all jets, paired)"
+  values:
+  - {name: "menu", value: 0.015, error: 0.009}
+  - {name: "10%", value: 0.037, error: 0.013}
+  - {name: "1%", value: 0.016, error: 0.019}
+  status: not-used
+  status_note: "not used: deployed tagger trained on 4-parameter tracks (user decision 2026-10-09)"
+  bias: "as appb.j1.stock-tagger-matched-mistag; row D's IL1-vs-IL4 biases (B.1)"
+  sources: ["plan B.1 row D", "plan J.1 round 6"]
+  provenance: {tag: "[V, planning check]"}
+- id: appb.j1.stock-round1-4
+  title: "Round 1-4 stock-tagger working points ('no difference at the menu point')"
+  values: [{name: "SP arms' realised mistag at the menu point (ties dropped)", value: "46.6-48.4 vs 49.5", unit: "%"}]
+  status: superseded
+  status_note: "superseded: a threshold artefact (tied jets dropped) plus 5x fewer jets and no pairing (D.1 exit: round-1-4 stock working points superseded)"
+  bias: "pessimistic: SP arms compared 1.1-2.9 pt tighter in mistag (B.3)"
+  sources: ["plan B.2 row 2", "plan B.3 stock working points row"]
+  provenance: {tag: "[V r5, R]"}
+- id: appb.j1.stock-ties-dropped-tightness
+  title: "How much tighter the tie-dropping thresholds made the SP arms"
+  values: [{name: "test jets", value: "1.1-2.9", unit: "pt mistag"}, {name: "all jets", value: "1.5-2.8", unit: "pt mistag"}]
+  status: superseded
+  status_note: "superseded with the round-1-4 stock working points; matched working points (tie split) replace them"
+  bias: "pessimistic for SmartPixels"
+  sources: ["plan B.3"]
+  provenance: {tag: "[V r5, V]"}
+
+# ---------------------------------------------------------------- ladder (retrained taggers)
+- id: appb.j1.ladder-l1-minus-l0
+  title: "Tagging ladder L1 - L0 at 10% udsg mistag"
+  values: [{name: "L1 - L0 at 10%", value: "+0.12 to +0.16"}]
+  status: superseded
+  status_note: "superseded (B.2); pathology-affected: collapsed (ReLU-logit) and working trainings averaged"
+  bias: "sign unknown (B.2)"
+  sources: ["plan B.2 row 3"]
+  provenance: {tag: "[M]"}
+- id: appb.j2.ladder-l2-l3
+  title: "Ladder L2 / L3 rungs and controls"
+  values: [{name: "L2/L3 gain", value: "not significant"}, {name: "controls", value: "~0"}, {name: "test taus (retrained ladder)", value: 78}]
+  status: pathology-affected
+  status_note: "ReLU on the class logits: 60 of 80 ladder trainings collapsed (report finding 7); provenance unknown ([M])"
+  bias: "sign unknown; SP arms under-trained (seed SD 2-5x IIII)"
+  sources: ["plan B.1 J2"]
+  provenance: {tag: "[M]"}
+- id: appb.j1.ladder-l0-below-stock
+  title: "Ladder L0 (framework tagger on IIII) vs stock"
+  values: [{name: "L0 vs stock (b eff)", value: "0.724 vs 0.781"}]
+  status: pathology-affected
+  status_note: "framework tagger with ReLU logits (60 of 80 ladder seeds collapsed); from scratch on ~1.1k b jets"
+  bias: "sign of delta unknown; L0 handicapped (B.3)"
+  sources: ["plan B.3 tagger-from-scratch row"]
+  provenance: {tag: "[V r3/M]"}
+- id: appb.j1.tagger-seed-spread
+  title: "Retrained linout taggers: seed AUC spread per arm (8 cells each)"
+  values:
+  - {name: "IIII seed AUC SD", value: "0.013-0.017 (pooled 0.0145)"}
+  - {name: "AAAA seed AUC SD", value: "0.026-0.068"}
+  - {name: "AAAI seed AUC SD", value: "0.036-0.062"}
+  - {name: "IAAA seed AUC SD", value: "0.027-0.050"}
+  - {name: "linout degenerate seeds", value: "0 of 320 (ladder ReLU-logit: 60 of 80)"}
+  status: exploratory
+  status_note: "recipe not certified saturated; SP arms under-trained (cap-runners best and still improving)"
+  bias: "pessimistic and arm-dependent: AAAA truncated more than IIII (B.3 budget row)"
+  sources: ["plan B.3 tagger budget row", "plan J.1 round 7"]
+  provenance: {tag: "[V]"}
+
+# ---------------------------------------------------------------- d0 study
+- id: appb.j2.d0-upper-bound-study
+  title: "d0 upper-bound study (linout ladder, 10 matched seeds): d0 w.r.t. the true PV; d0 significance"
+  values:
+  - {name: "B - A (true-PV d0) |z| over 8 cells x 2 points", value: "<= 2.1"}
+  - {name: "true-PV transverse offset rms", value: 8.5, unit: um}
+  - {name: "C - A (d0 significance) at 10% mistag, SP cells", value: "+0.024 to +0.071 (0.9-2.4 sigma paired)"}
+  - {name: "C - A at 10%, IIII L2 / L3", value: "+0.005 / +0.006"}
+  - {name: "D - C", value: "~0 (within 1.8 sigma)"}
+  status: exploratory
+  status_note: "exploratory (recipe not certified saturated) (D.1 exit)"
+  bias: "SP cells under-trained, so the significance gain is either sign; the true-PV null holds only for samples with the beamspot at the origin (B.2)"
+  sources: ["plan B.1 J2", "plan B.2 last row", "report finding 8"]
+  provenance: {tag: "[V]", outputs: "/Volumes/WDMac/smartpixels_scratch/tagger_sp/d0_upper_bound/summary.json"}
+
+# ---------------------------------------------------------------- rates
+- id: appb.r1.matched-wp-rates
+  title: "Rates at matched working points"
+  values: [{name: "rate change", value: "consistent with 0; uninformative beyond +-1 MHz"}]
+  status: exploratory
+  status_note: "provenance unknown ([M]); 700 MinBias events"
+  bias: "uninformative beyond +-1 MHz (B.2)"
+  sources: ["plan B.1 R1", "plan B.2 row 8"]
+  provenance: {tag: "[M]"}
+- id: appa.rates.fixed-cut-btag-drop
+  title: "Fixed-cut b-tag rate drop"
+  values: [{name: "rate drop", value: "(as quoted in the work queue)"}]
+  status: superseded
+  status_note: "superseded by matched working points (App. A rates row)"
+  bias: "a fixed cut compares arms at different mistag"
+  sources: ["plan App. A rates row"]
+  provenance: {tag: "[M]"}
+
+# ---------------------------------------------------------------- census before format 24 / 813be3e
+- id: appb.census.owner-bug-void
+  title: "Owner-referenced census and site numbers of 2026-09-29 (813be3e) to format 24 (WP1, site_v2 tests)"
+  values:
+  - {name: "AAAA delivered |eta| < 1.1 (buggy)", value: 0.862}
+  - {name: "1-2 GeV recovery (buggy)", value: 0.573}
+  - {name: "sigma(d0) (buggy)", value: 380, unit: um}
+  - {name: "scope", value: "every owner-referenced quantity: delivered efficiency, fakes, resolutions, MVA targets"}
+  status: void
+  status_note: "void (owner bug): int64 sentinel next to int32 tpIdx, silently TP 0 under NumPy 2 from 813be3e to format 24 (2276406)"
+  bias: "n/a (wrong numbers)"
+  sources: ["plan B.2 census row", "plan App. A census row", "D.1 exit"]
+  provenance: {tag: "[M]"}
+- id: appb.census.owner-fix-values
+  title: "The same census quantities right after the owner fix (format 24)"
+  values:
+  - {name: "AAAA delivered |eta| < 1.1", value: 0.913}
+  - {name: "1-2 GeV recovery", value: 0.898}
+  - {name: "sigma(d0)", value: 45, unit: um}
+  status: superseded
+  status_note: "superseded (WP1 / WP2): format 24, before the WP2 changes of formats 25-26; provenance unknown ([M])"
+  bias: "pre-closure census (App. A); majority-owner delivery"
+  sources: ["plan B.2 census row"]
+  provenance: {tag: "[M]"}
+- id: appb.census.counts-before-format24
+  title: "Census counts and costs before format 24 (e.g. the x3.3 pair reduction)"
+  values: [{name: "pair reduction (pre-WP1)", value: "x3.3"}]
+  status: superseded
+  status_note: "superseded (WP1 / WP2) (D.1 exit); counts were not touched by the owner bug"
+  bias: "pre-WP1 census"
+  sources: ["plan B.1 T6", "plan B.2 census row", "D.1 exit"]
+  provenance: {tag: "[M]"}
+- id: appb.census.before-813be3e
+  title: "Every census number before 813be3e (2026-09-29)"
+  values: [{name: "scope", value: "all census numbers before 813be3e"}]
+  status: superseded
+  status_note: "superseded (WP1 / WP2) (D.1 exit)"
+  bias: "pre-WP1 census"
+  sources: ["D.1 exit", "plan App. A census row"]
+  provenance: {tag: "[V]"}
+
+# ---------------------------------------------------------------- census WP2 (16 events)
+- id: appb.wp2.reductions
+  title: "Census WP2: all angle stages on vs the no-angle arm -- combinatorics (AAAA / AAAI / IAAA)"
+  values:
+  - {name: "pairs", value: "-38 to -47", unit: "%"}
+  - {name: "fitted candidates", value: "-53 to -59", unit: "%"}
+  - {name: "DR survivors", value: "-60 to -66", unit: "%"}
+  - {name: "S2a alone, pairs", value: "-32 / -24 / -40", unit: "%"}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery (D.1 exit)"
+  bias: &wp2bias "majority-owner delivery scores the rejection of tracks with wrong IT hits as an efficiency loss (pess. for the angle stages; the d0 > 1 mm loss is such rejection, the 1-2 GeV recovery cost is not); per-cut class-T loss 0.3-4.9% at 3 census sigma, compounding (pess. for efficiency); per-bin gate widths off by x0.55-1.39 (mixed); fakes in points at a 97-98% fake fraction without a quality selection (understates the x0.3 reduction per event); prompt-assuming alpha costs b / c daughters little at k = 1; scaled-sigma k results optimistic for rejection and pessimistic for heavy flavour; bit-width results void (plan B.2)"
+  sources: ["plan App. A WP2 row", "plan B.1 T6", "plan B.2 WP2 row"]
+  provenance: &wp2prov {tag: "[M, C, V]", census_commit: 547d670, census_format: 26, input: "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root (first 16 events)", outputs: "/Volumes/WDMac/smartpixels_scratch/site_v2/wp2 (cz/, tables_stage_rphiz.txt sha256 19d6ded65c534bc4d46a8c104e254bbe2166ff34d4b67dcf78d8a624dbadc1ad)"}
+- id: appb.wp2.fakes
+  title: "Census WP2: post-DR fakes (DR survivors with >= 2 wrong hits) per event, no quality selection"
+  values:
+  - {name: "fakes per event AAAA", value: "5.1k -> 1.65k"}
+  - {name: "fakes per event AAAI", value: "4.5k -> 1.6k"}
+  - {name: "fakes per event IAAA", value: "3.3k -> 1.2k"}
+  - {name: "fake fraction", value: "97-98 -> 92-93", unit: "%"}
+  - {name: "S8 GBDT AUC clean vs fake, without / with angle features", value: "0.983 / 0.992"}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery; no working point (D.1 exit)"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row", "plan B.1 T5"]
+  provenance: *wp2prov
+- id: appb.wp2.delivered-efficiency
+  title: "Census WP2: delivered efficiency (majority owner), |eta| < 1.1, all-on vs no-angle"
+  values: [{name: "delivered efficiency change", value: "-1.0 to -1.2", unit: pt}]
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row", "plan B.1 T6"]
+  provenance: *wp2prov
+- id: appb.wp2.hit-purity
+  title: "Census WP2: delivered tracks (pT >= 2, |eta| < 1.1) with >= 1 wrong IT hit / with |dz0| > 1 mm"
+  values:
+  - {name: "wrong IT hit AAAA / AAAI / IAAA", value: "9.5 -> 7.3 / 11.5 -> 8.4 / 7.9 -> 6.1", unit: "%"}
+  - {name: "|dz0| > 1 mm AAAA / AAAI / IAAA", value: "7.7 -> 6.6 / 10.3 -> 8.6 / 7.1 -> 6.2", unit: "%"}
+  - {name: "delivered prompt tracks with |dd0| > 0.2 mm, change", value: "+13 +- 9 / +6 +- 6 / +3 +- 9"}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row", "plan B.1 T3", "report finding 3"]
+  provenance: *wp2prov
+- id: appb.wp2.s4w
+  title: "Census WP2: the follow window S4w alone / removed from all-on (delivered efficiency)"
+  values: [{name: "S4w alone", value: "+0.07 to +0.47", unit: pt}, {name: "S4w removed from all-on", value: "-0.87 to -1.00", unit: pt}]
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row"]
+  provenance: *wp2prov
+- id: appb.wp2.d0-above-1mm
+  title: "Census WP2: TPs with d0 > 1 mm (101 TPs) lost by all-on"
+  values:
+  - {name: "lost AAAA / AAAI / IAAA", value: "12 / 9 / 10"}
+  - {name: "of which delivered by the no-angle arm only through tracks with wrong IT hits", value: "11 / 9 / 9"}
+  - {name: "efficiency, no wrong IT hit, no-angle -> all-on", value: "0.109 -> 0.119 / 0.040 -> 0.059 / 0.119 -> 0.129"}
+  - {name: "efficiency, no wrong hit at all", value: "0.089 -> 0.099 / 0.030 -> 0.050 / 0.089 -> 0.099"}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row", "report finding 3"]
+  provenance: *wp2prov
+- id: appb.wp2.bc-daughters
+  title: "Census WP2: b / c daughters (61 in the denominator)"
+  values:
+  - {name: "delivered efficiency AAAA / AAAI / IAAA (majority owner)", value: "0.951 -> 0.934 / unchanged / unchanged"}
+  - {name: "lost under no-wrong-IT-hit delivery", value: "2 / 1 / 1 of 61"}
+  - {name: "the 14 with |d0| > 0.2 mm", value: unchanged}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row"]
+  provenance: *wp2prov
+- id: appb.wp2.recovery-1to2gev
+  title: "Census WP2: 1-2 GeV recovery efficiency change, all-on vs no-angle"
+  values:
+  - {name: "majority owner AAAA / AAAI / IAAA", value: "-1.9 / -8.3 / -6.5", unit: pt}
+  - {name: "no wrong IT hit", value: "-1.3 / -8.0 / -6.6", unit: pt}
+  - {name: "no wrong hit at all (base ~0.46)", value: "+0.8 / -3.7 / -3.4", unit: pt}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row", "report finding 3"]
+  provenance: *wp2prov
+- id: appb.wp2.d0-0p2-1mm
+  title: "Census WP2 column `dlvHF`: delivered-efficiency change in the |d0| 0.2-1 mm bin (NOT heavy-flavour genealogy), all-on vs no-angle, |eta| < 1.1"
+  values:
+  - {name: "|d0| 0.2-1 mm AAAA", value: -2.27, unit: pt}
+  - {name: "|d0| 0.2-1 mm AAAI", value: -2.27, unit: pt}
+  - {name: "|d0| 0.2-1 mm IAAA", value: 0.0, unit: pt}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery; the column named dlvHF is the |d0| 0.2-1 mm bin (D.1 exit)"
+  bias: *wp2bias
+  sources: ["site_v2/wp2/tables_stage_rphiz.txt (z_all rows)", "D.1 exit"]
+  provenance: *wp2prov
+- id: appb.wp2.s7-and-k-knob
+  title: "Census WP2: S7 effect on sigma(d0); the k knob in both sigma modes"
+  values:
+  - {name: "S7 change of sigma(d0)", value: "1.4-1.9% (not significant; ~2% statistical error)"}
+  - {name: "class-tell AUC gain at k = 1 / k = 0 (scaled)", value: "+0.012 / +0.033"}
+  - {name: "fixed-sigma k", value: "saturates by k = 0.5"}
+  status: exploratory
+  status_note: "exploratory: 16 events, canon_v2, pre-D10/D11, pre-closure, majority-owner delivery"
+  bias: *wp2bias
+  sources: ["plan App. A WP2 row", "plan B.3 class C row"]
+  provenance: *wp2prov
+- id: appb.wp2.bit-width
+  title: "Census WP2 angle bit-width results (1-2 GeV recovery at 3/5 and 4/6 bits)"
+  values: [{name: "1-2 GeV recovery", value: "-10 to -22", unit: pt}]
+  status: void
+  status_note: "void (ranges overflow): the alpha range +-0.17 was sized for payload-era resolution (D.1 exit, D9 row 21)"
+  bias: "pessimistic (overflow)"
+  sources: ["plan B.3 angle quantisation row", "D.1 exit"]
+  provenance: {tag: "[M, C]"}
+
+# ---------------------------------------------------------------- angle errors and scales
+- id: appa.census.angle-scales
+  title: "Census per-layer angle pull scales (tracklet_topology_cost.py:40-61)"
+  values:
+  - {name: "ALPHA_PULL_SCALE IL1-IL4", value: "0.96 / 0.99 / 0.92 / 0.90"}
+  - {name: "BETA_PULL_SCALE IL1-IL4", value: "0.84 / 0.83 / 0.84 / 0.85"}
+  status: in-sample
+  status_note: "in-sample on files 3-10: fitted on canon_v2 f03-f10 (D.1 exit, B.3); replaced by the per-bin angle-uncertainty table"
+  bias: "folded per layer: weighting consumers mixed by bin, cutting consumers mis-set per bin (B.3)"
+  sources: ["eval_refitq/combinatorics/tracklet_topology_cost.py:40-61 (547d670)", "plan B.3 census-scales row"]
+  provenance: {tag: "[V r4]", commit: 547d670}
+- id: appa.replay.v3-ab-scales
+  title: "Replay (refit_calibration_v3.json) a/b angle scales"
+  values: [{name: "beta scale off the plateau", value: "x1.7-1.8 the emulated response"}]
+  status: payload-era
+  status_note: "payload-era (D.1 exit); replaced by the angle-uncertainty table import (E1)"
+  bias: "pessimistic for the angles' refit value (B.3)"
+  sources: ["plan B.3 replay angle sigmas row", "D.1 exit"]
+  provenance: {tag: "[V r3]"}
+- id: appb.angles.folded-scale-misfit
+  title: "Folded per-layer angle errors vs the per-bin truth (class T, pT >= 2, files 3-10, census scales)"
+  values:
+  - {name: "beta weight too loose at |cot| 0.55-0.67", value: "x1.6-1.9"}
+  - {name: "beta weight too tight at |cot| 0.3-0.4", value: "x1.2"}
+  - {name: "alpha at small |cot|", value: "1.1-1.3"}
+  - {name: "per-cut class-T efficiency at 3 census sigma", value: "95-99.7% by bin (mean 97.5-97.6%)"}
+  - {name: "class-T beta core widths in census sigma (signed sub-bins)", value: "0.55-1.39"}
+  status: in-sample
+  status_note: "in-sample on files 3-10 (the census scales were fitted there)"
+  bias: "mixed by bin (B.3)"
+  sources: ["plan B.3 angle errors row", "plan F D10", "report finding 5"]
+  provenance: {tag: "[V, R]", input: "site_v2/emu_pulls_f03_f10.npz"}
+- id: appb.angles.d19-levels
+  title: "Census cut levels in today's census sigma (84 signed barrel bins per angle, class T, pT >= 2, files 3-10)"
+  values:
+  - {name: "beta half-width at 95 / 97.5 / 99 / 99.7% (min/median/max)", value: "1.53/2.17/2.81; 1.98/2.78/3.93; 2.66/4.15/5.68; 4.24/6.30/17.1"}
+  - {name: "alpha half-width at 95 / 97.5 / 99 / 99.7%", value: "1.92/2.36/2.92; 2.33/2.97/3.77; 2.58/4.20/6.24; 2.96/5.89/11.3"}
+  - {name: "today's class-T efficiency: S1 / S2z / S2a / S6", value: "97.5 / 97.5 / 95.4 / 98.0-98.3%"}
+  - {name: "S6 97.5% quantile per measurement", value: "7.0-7.4"}
+  status: in-sample
+  status_note: "in-sample on files 3-10 (census scales); the decided level is 99% per consumer (decision 2), re-measured in each consumer's own statistic on canon_v3"
+  bias: "at 99% the gates widen (x0.86-2.08 the flat background): rejection value reads lower than at today's working point (B.3)"
+  sources: ["plan F D19", "plan B.3 cut-level row"]
+  provenance: {tag: "[V]"}
+- id: appb.angles.non-gaussian-tails
+  title: "Class-T angle tails beyond 3 core widths per signed sub-bin"
+  values:
+  - {name: "fraction beyond 3 core widths", value: "0.5-8% (4-8% at |cot| 0.55-0.8; Gaussian 0.3%)"}
+  - {name: "core vs MAD at true |cot theta| 0.3-0.4", value: "1.32-1.39 vs 1.83-1.88"}
+  status: valid
+  status_note: "planner-verified ([V]); no commit or patch recorded; files 3-10"
+  bias: "pessimistic for efficiency of a 3-core-width cut; pessimistic for the purity value under core-width weighting (B.3)"
+  sources: ["plan B.3 tails rows", "plan F D10"]
+  provenance: {tag: "[V, R]"}
+- id: appb.angles.disc-bins
+  title: "Disc class-T clusters in barrel-style bins"
+  values:
+  - {name: "share with |cot theta| > 2.5 ID1/ID2/ID3/ID4", value: "0.747 / 0.868 / 0.957 / 0.977"}
+  - {name: "beta pull width in that bin, ID1 / ID4", value: "1.55-2.26 / 1.89-3.48 (across tan theta)"}
+  - {name: "single barrel bin width ID1 -> ID4", value: "1.96 -> 3.02"}
+  - {name: "beta centres across tan theta 0-0.4", value: "-0.96 to -2.27"}
+  status: valid
+  status_note: "planner-verified ([V]), canon_v2 AAAA f03 / f03+f04; disc angles labelled unvalidated (decision 7)"
+  bias: "mixed by sub-bin and hidden by the test (B.3)"
+  sources: ["plan B.3 disc rows row", "plan J.1 round 6"]
+  provenance: {tag: "[V]"}
+- id: appb.angles.disc-facings
+  title: "Disc beta by module facing; disc beta resolution"
+  values:
+  - {name: "median residual, the two facings (|beta_true| 5-20 deg)", value: "+9.5 vs +2.8", unit: deg}
+  - {name: "clipped widths, the two facings", value: "19.9 vs 16.1", unit: deg}
+  - {name: "facing-dependent bias", value: "+8.4 / -2.3", unit: deg}
+  - {name: "single-cluster resolution on beta_true", value: "~25-45", unit: deg}
+  status: exploratory
+  status_note: "provenance unknown ([R], [M])"
+  bias: "unknown direction; every disc angle result provisional (B.3)"
+  sources: ["plan B.3 disc emulation row"]
+  provenance: {tag: "[M, R]"}
+- id: appb.angles.shared-clusters
+  title: "Shared / merged clusters given clean class-T angles"
+  values: [{name: "share of class T", value: "1.0-3.3", unit: "%"}]
+  status: valid
+  status_note: "planner-verified ([V r1]); no commit recorded"
+  bias: "optimistic (B.3)"
+  sources: ["plan B.3 shared clusters row"]
+  provenance: {tag: "[V r1]"}
+- id: appb.angles.class-c-in-refit
+  title: "Class of refit hits: correct hits all class T, wrong ones partly class C"
+  values: [{name: "correct refit hits class T", value: "100", unit: "%"}, {name: "wrong refit hits class C", value: "12-30", unit: "%"}]
+  status: exploratory
+  status_note: "provenance unknown ([R]); refit v2"
+  bias: "class C under k < 1: fixed pess.; scaled opt. for rejection, pess. for efficiency; MVAs may learn the T/C split (B.3)"
+  sources: ["plan B.3 class C row"]
+  provenance: {tag: "[R]"}
+- id: appb.angles.p03-class-c-share
+  title: "Class-C share of rejectable clusters (angle ROC)"
+  values: [{name: "class-C share", value: "27-54", unit: "%"}]
+  status: exploratory
+  status_note: "provenance unknown ([R])"
+  bias: "likely pessimistic at k = 1 (B.3)"
+  sources: ["plan B.3 P0.3 rejection row"]
+  provenance: {tag: "[R]"}
+
+# ---------------------------------------------------------------- emulator / sensor
+- id: appb.emulator.geometry-and-threshold
+  title: "PixelAV vs the Phase-2 sensor"
+  values:
+  - {name: "thickness / pitch advantage of the PixelAV geometry", value: "4/3"}
+  - {name: "plateau edge PixelAV vs Phase-2", value: "27 vs 34 deg (|eta| < 0.48 vs < 0.62)"}
+  - {name: "threshold", value: "307 e vs ~1000 e"}
+  - {name: "share of the x1.5 inflation used by geometry alone", value: "~1.33 of 1.5 (arithmetic)"}
+  status: exploratory
+  status_note: "provenance unknown ([R], [M], [I] inference, arithmetic)"
+  bias: "optimistic (B.3)"
+  sources: ["plan B.3 emulator rows", "plan B.4 plateau edge"]
+  provenance: {tag: "[R, M, I]"}
+- id: appb.emulator.il1-beta
+  title: "IL1 (3D) class-T beta full RMS vs IL2-IL4"
+  values: [{name: "IL1 vs IL2-IL4", value: "11.9 vs 15.1", unit: deg}]
+  status: exploratory
+  status_note: "provenance unknown ([M])"
+  bias: "optimistic for IL1 beta; tilts AAAI vs IAAA toward IL1 (B.3)"
+  sources: ["plan B.3 IL1 row"]
+  provenance: {tag: "[M]"}
+
+# ---------------------------------------------------------------- replay
+- id: appa.replay.forced-hit-closure
+  title: "Forced-hit replay state vs CMSSW (canon_v2 AAAA f03)"
+  values:
+  - {name: "first visited surface IL4 / ID4", value: exact}
+  - {name: "p99 |du| IL3/IL2/IL1", value: "9.8 / 31.6 / 25.2", unit: um}
+  - {name: "p99 |dv| IL3/IL2/IL1", value: "17.9 / 136.2 / 259.2", unit: um}
+  - {name: "du/sigma p99 IL3/IL2/IL1", value: "0.47 / 1.90 / 1.38"}
+  - {name: "widths within 2% IL3/IL2/IL1 ; ID1-ID3", value: "0.819/0.900/0.935 ; 0.624/0.586/0.614"}
+  - {name: "crossings (discs)", value: "77,010 (27,168)"}
+  status: valid
+  status_note: "planner-verified ([V], omnibus_v2 replay_vs_cmssw); the ~1% state tail after the first update is undiagnosed"
+  bias: "unknown direction (the tail may be CMSSW's numerical Jacobian; B.3)"
+  sources: ["plan App. A replay row", "plan J.1 round 6 replay closure"]
+  provenance: {tag: "[V]", output: "omnibus_v2/canon_v2_AAAA_f03/spix_combinatorics_omnibus.json"}
+- id: appb.replay.planes
+  title: "Replay material planes start at 4.17 cm (no IL1 module, no beam pipe)"
+  values: [{name: "first plane radius", value: 4.17, unit: cm}, {name: "low-pT d0 prior b term", value: "~2-3x too good"}]
+  status: exploratory
+  status_note: "first-plane radius planner-verified ([V r3]); the 2-3x is an inference"
+  bias: "low-pT d0 prior and POCA pulls optimistic (B.3)"
+  sources: ["plan B.3 replay planes row"]
+  provenance: {tag: "[V r3, I]"}
+
+# ---------------------------------------------------------------- B.4 priors
+- id: appb.priors.geometry
+  title: "D121 inner-tracker barrel geometry"
+  values: [{name: "IL1-IL4 module centres", value: "2.75-3.50, 5.9-6.65, 10.2-10.95, 14.4-15.15", unit: cm}, {name: "thickness", value: 150, unit: um}]
+  status: valid
+  status_note: "geometry (planner-verified [V r2])"
+  bias: "none (geometry)"
+  sources: ["plan B.4"]
+  provenance: {tag: "[V r2]"}
+- id: appb.priors.d0-vs-pt
+  title: "d0(pT) prior and the refit-v2 reference resolution (prompt, |eta| < 1.1, with an IL1 hit)"
+  values:
+  - {name: "IL1 module / beam pipe material", value: "~1.85% / ~0.3% X0"}
+  - {name: "b terms from them", value: "~47 and 13 um GeV"}
+  - {name: "reference sigma(d0) at pT 2-3/3-5/5-10/10-20/>20 GeV", value: "27 / 20 / 15.5 / 8.2 / 6.7", unit: um}
+  - {name: "reported sigma(d0)", value: "5.7 -> 3.5 um (nearly flat)"}
+  status: exploratory
+  status_note: "provenance unknown ([R]); refit v2"
+  bias: "a prior (a report, not a gate): deviations beyond x1.5 flag a bug"
+  sources: ["plan B.4"]
+  provenance: {tag: "[R]"}
+- id: appb.priors.alpha
+  title: "Alpha prior: curvature term vs the class-T core"
+  values:
+  - {name: "curvature term at 2 GeV, IL1 / IL4", value: "0.49 / 2.4", unit: deg}
+  - {name: "class-T alpha core (full RMS)", value: "3.9-4.7 (6.6-7.0)", unit: deg}
+  - {name: "pT vetoed by alpha", value: "below ~0.3-0.5 GeV (mainly IL3/IL4)"}
+  status: exploratory
+  status_note: "provenance unknown ([R])"
+  bias: "a prior"
+  sources: ["plan B.4"]
+  provenance: {tag: "[R]"}
+- id: appb.priors.alpha-displacement
+  title: "Alpha and displacement: heavy-flavour daughters"
+  values:
+  - {name: "|d0| median / 75th / 90th percentile", value: "112 / 276 / 529", unit: um}
+  - {name: "alpha shift at IL1 for the 75th / 90th percentile", value: "0.5 / 1.0", unit: deg}
+  - {name: "in units of the class-T core at k = 1", value: "0.1-0.26 sigma (~1 sigma at k = 0.25, 1-2.6 sigma at k = 0.1, scaled)"}
+  - {name: "|d0| <= 0.2 / 0.2-1 / > 1 mm (pT >= 2, |eta| < 1.1, born inside 2.5 cm)", value: "64 / 33 / 2.3", unit: "%"}
+  status: exploratory
+  status_note: "provenance unknown ([R])"
+  bias: "pessimistic for HF efficiency in the scaled-k rows (B.3)"
+  sources: ["plan B.4", "plan B.3 prompt-origin row"]
+  provenance: {tag: "[R]"}
+- id: appb.priors.angle-weight
+  title: "Angle weight in a KF update"
+  values:
+  - {name: "alpha core vs OT phi0 error", value: "68-82 mrad vs 0.6-3 mrad"}
+  - {name: "dcot theta vs OT tanL error", value: ">= 0.07 vs a few 1e-3"}
+  - {name: "angle weight at k = 1 / k = 0.05 (scaled)", value: "<~0.5% / ~40%"}
+  status: exploratory
+  status_note: "provenance unknown ([R])"
+  bias: "a prior: at k = 1 any resolution gain from angles comes through hit selection"
+  sources: ["plan B.4"]
+  provenance: {tag: "[R]"}
+- id: appb.priors.beta
+  title: "Beta priors: pair reduction, pointing, response"
+  values:
+  - {name: "pair reduction at n = 3 off the plateau, IL1 / IL4", value: "x4-8 / x1-1.6 (inference)"}
+  - {name: "luminous region sigma_z", value: "4.1-4.25", unit: cm}
+  - {name: "pointing rejection within |dz_vtx| < 1 / 2 cm, measured vs predicted", value: "11% vs 13% / 20-23% vs 27%"}
+  - {name: "emitted vs true cot theta slope", value: "~0.74-0.88"}
+  - {name: "IL1 mean emitted at true 0.45 / 0.55 / 0.86", value: "0.33 / 0.44 / 0.76"}
+  status: exploratory
+  status_note: "provenance unknown ([R], [I])"
+  bias: "priors"
+  sources: ["plan B.4"]
+  provenance: {tag: "[R, I]"}
+- id: appb.priors.plateau-steps
+  title: "Class-T beta width steps (barrel |cot theta|, disc tan theta)"
+  values:
+  - {name: "barrel steps at |cot theta|", value: "0.5, 0.55, 0.6, 0.67, 0.8"}
+  - {name: "ID1 width at tan theta 0.4-0.5 / 0.5-0.6", value: "1.08 / 0.63"}
+  status: valid
+  status_note: "planner-verified ([V]); no commit recorded"
+  bias: "a prior (binning input of the angle-uncertainty table)"
+  sources: ["plan B.4"]
+  provenance: {tag: "[V]"}
+- id: appb.priors.disc
+  title: "Disc priors: beta pointing and alpha"
+  values:
+  - {name: "sigma(z0) from beta pointing at |eta| 1.7, r = 10 cm, dbeta = 4 deg", value: "~6", unit: cm}
+  - {name: "disc alpha bending incidence at 2 GeV vs resolution", value: "0.002-0.01 vs 0.02-0.04 (in cot alpha)"}
+  - {name: "disc-orientation study AUC", value: "0.49-0.54"}
+  status: exploratory
+  status_note: "provenance unknown ([R], [I], [M])"
+  bias: "a barrel GO carried to the discs is optimistic for angle elements (B.3)"
+  sources: ["plan B.4", "plan B.3 barrel-only rows"]
+  provenance: {tag: "[R, I, M]"}
+- id: appb.priors.dxy-code
+  title: "PF/PUPPI dxy code (input to the stock tagger)"
+  values:
+  - {name: "LSB", value: "1/64 sqrt(cm) (track word d0 LSB 1/256 cm)"}
+  - {name: "codes 3 / 7 / 9 / 11 / 12 / 13 for |dxy|", value: "0-78 / 78-156 / ... / 391-469 um"}
+  status: superseded
+  status_note: "superseded by definition sheet v1 frame.puppi_dxy: the |dxy| bins hold for d0 > 0 only; code 3 covers d0 in [-39, +78) um (hwD0 floors a signed d0), measured on canon_v2 TTbar AAAA file 3 (fast-gate item puppi.dxy_lut)"
+  bias: "pessimistic for charm (B.3 downstream row)"
+  sources: ["plan B.4"]
+  provenance: {tag: "[V r4]"}
+- id: appb.census.prompt-assumption
+  title: "Census angle gates assume a prompt origin: heavy-flavour cost"
+  values: [{name: "alpha shift of the 75th / 90th percentile b / c daughter at IL1, in class-T core units at k = 1", value: "0.1-0.26"}]
+  status: exploratory
+  status_note: "provenance unknown ([R])"
+  bias: "pessimistic for HF efficiency in scaled-k rows; not a cost for the d0 > 1 mm WP2 loss (B.3)"
+  sources: ["plan B.3 prompt-origin row"]
+  provenance: {tag: "[R]"}
+- id: appb.census.closure-tolerance-draft
+  title: "Draft census-vs-CMSSW closure tolerance"
+  values: [{name: "draft tolerance", value: "0.02-0.03"}]
+  status: superseded
+  status_note: "a draft (not a measurement); replaced by the D.0 procedure in the closure package's plan"
+  bias: "an SP gain of a few points would sit inside it (B.3)"
+  sources: ["plan B.3 closure tolerance row"]
+  provenance: {tag: "[R]"}
+- id: appb.tagger.downstream-pv-dz
+  title: "Beamspot and primary-vertex offsets in these samples"
+  values: [{name: "beamspot", value: "(1, 0.4)", unit: um}, {name: "true-PV transverse offset rms", value: 8.5, unit: um}]
+  status: valid
+  status_note: "sample properties (planner-verified [V]); the real-data beam offset question stays open"
+  bias: "optimistic: a residual real-data offset shifts every track's IP coherently (B.3)"
+  sources: ["plan B.3 beamspot row"]
+  provenance: {tag: "[R, V]"}
+- id: appb.downstream.charm-daughters-dxy
+  title: "Charm daughters and the stock tagger's first dxy code"
+  values: [{name: "charm-daughter |d0|", value: "~50-150", unit: um}, {name: "share beyond code 3", value: "about half"}]
+  status: exploratory
+  status_note: "provenance unknown ([R], [I]); the 78 um bin is a candidate cause of the charm null, not a verified one"
+  bias: "pessimistic for c (and partly b) (B.3 downstream row)"
+  sources: ["plan B.3 downstream row"]
+  provenance: {tag: "[R, I]"}
