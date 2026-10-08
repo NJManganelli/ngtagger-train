@@ -1,0 +1,83 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
+ "derived": "2026-10-08T23:36:46Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "item": "nano.join_uniqueness",
+ "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "known_bad": "one (trackIdx, otStubIdx) link row of L1TTrackStub duplicated in event 0",
+ "rule": "zero duplicates and zero out-of-range indices for every gated key; event identities unique; the reported (non-key) counts identical to the reference",
+ "stat": {
+  "event_id_duplicates": 0,
+  "events": 5,
+  "gated": {
+   "L1SC4NGJetCands(jetIdx,candIdx)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 277
+   },
+   "L1TExtTrackStub(trackIdx,otStubIdx)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 5843
+   },
+   "L1TSmartPixelsCluster(detId,localX,localY)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 354514
+   },
+   "L1TSmartPixelsExtTrack(l1TrackIdx)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 1137
+   },
+   "L1TSmartPixelsExtTrackCluster(trackIdx,clusterIdx)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 4035
+   },
+   "L1TSmartPixelsTrack(l1TrackIdx)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 856
+   },
+   "L1TSmartPixelsTrackCluster(trackIdx,clusterIdx)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 3413
+   },
+   "L1TTP(genPartIdx>=0)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 16
+   },
+   "L1TTrackStub(trackIdx,otStubIdx)": {
+    "duplicates": 0,
+    "out_of_range": 0,
+    "rows": 4625
+   }
+  },
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "reported": {
+   "L1ExtPuppiCand(l1TrackIdx>=0)": {
+    "duplicates": 1,
+    "rows": 231
+   },
+   "L1TOTStub(detId,x,y,z)": {
+    "duplicates": 671,
+    "rows": 73099
+   },
+   "L1TOTStub(detId,x,y,z,bend)": {
+    "duplicates": 1,
+    "rows": 73099
+   }
+  },
+  "truth_ranges": {
+   "L1TOTStub.tpIdx": 0,
+   "L1TOTStub.tpIdxInner": 0,
+   "L1TOTStub.tpIdxOuter": 0,
+   "L1TSmartPixelsCluster.tpIdx": 0,
+   "L1TTrack.tpIdx": 0
+  }
+ }
+}

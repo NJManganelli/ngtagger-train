@@ -1,0 +1,25 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
+ "derived": "2026-10-08T23:38:02Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "item": "census.builds_and_dr",
+ "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "known_bad": "the same census output with one AAAI track's hit moved onto IL4 (another build's surface), one DR group spanning both builds, and one n_own set beyond nhit",
+ "rule": "on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; identity of the counts with the reference",
+ "stat": {
+  "builds": [
+   "AAAI",
+   "IAAA"
+  ],
+  "dr_groups_spanning_builds": 0,
+  "events": 4,
+  "hits_off_build": 0,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "n_own_gt_nhit": 0,
+  "n_tracks": 34391,
+  "owner_sentinel_inconsistent": 0,
+  "perturbed": false,
+  "seed_or_follow_off_build": 0
+ }
+}

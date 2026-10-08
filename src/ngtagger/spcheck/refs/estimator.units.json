@@ -1,0 +1,32 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
+ "derived": "2026-10-08T23:36:45Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "item": "estimator.units",
+ "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "known_bad": "the census pull table's original core (drops |x| >= 1e3, absolute 1e-5 tolerance), applied to the same residuals in cm, in um and in 1e-4 cm",
+ "rule": "on the OT track z0 and d0 residuals to their TP (L1TTrack, tpIdx >= 0 as the validity mask) of the gate input: core(k x) / k equal for k = 1e-4, 1, 1e4 to 1e-9 relative; identity of the cm widths with the reference",
+ "stat": {
+  "d0": {
+   "rel_spread": 1.2246633210465877e-16,
+   "rms0_cm_by_scale": [
+    0.05665960419209178,
+    0.056659604192091775,
+    0.05665960419209178
+   ]
+  },
+  "estimator": "core",
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "n_valid": 836,
+  "z0": {
+   "rel_spread": 0.0,
+   "rms0_cm_by_scale": [
+    0.23547803604568793,
+    0.23547803604568793,
+    0.23547803604568793
+   ]
+  }
+ }
+}

@@ -1,0 +1,20 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
+ "derived": "2026-10-08T23:36:47Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "item": "puppi.dxy_lut",
+ "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "known_bad": "the float `dxy` branch (hwDxy / 64, sqrt(cm) units) read as |d0| in cm",
+ "rule": "every linked charged candidate's |d0| lies in the |d0| interval its code decodes to (fraction = 1 exactly); code 3 <-> d0 in [-39.0625, 78.125) um exactly; identity of counts",
+ "stat": {
+  "events": 5,
+  "frac_code3_consistent": 1.0,
+  "frac_contained": 1.0,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "n_code3": 141,
+  "n_linked": 231,
+  "n_negative_d0_39_to_78um_code7": 18,
+  "reader": "code table"
+ }
+}

@@ -1,0 +1,26 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
+ "derived": "2026-10-08T23:37:01Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "item": "census.majority_owner",
+ "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "known_bad": "an int32 sentinel injected: empty layer slots handed to the census as valid hits carrying np.iinfo(int32).min (the missing-mask/sentinel class of the 813be3e bug)",
+ "rule": "KF.majority_owner on the OT tracks of the gate input (stubs from L1TTrackStub -> L1TOTStub_tpIdx, SP-refit IT clusters from L1TSmartPixelsTrackCluster, empty slots invalid) equals a plain counting reference on the real hits for every track; n_own <= real hits; owner -1 or a TP on the track; input tpIdx int32, output int64; identity of the counts with the reference",
+ "stat": {
+  "count_dtype": "int64",
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "n_agree_with_reference": 856,
+  "n_own_gt_real_hits": 0,
+  "n_owner_not_on_track": 0,
+  "n_tracks": 856,
+  "n_with_owner": 840,
+  "owner_dtype": "int64",
+  "sentinel_injected": false,
+  "tpIdx_dtype_census_input": "int32",
+  "tpIdx_dtype_read": [
+   "int32"
+  ]
+ }
+}

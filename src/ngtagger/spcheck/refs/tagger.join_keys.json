@@ -1,0 +1,23 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
+ "derived": "2026-10-08T23:38:11Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "item": "tagger.join_keys",
+ "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "known_bad": "one event identity duplicated in file 3's identity array",
+ "rule": "(run, lumi, event) unique in every TTbar file of every mask; common.event_key unique over the study; the (event, label, truth pT) key of the jets common to all arms REPORTED with its duplicate count (not unique: two L1 jets matched to one gen object), identity with the reference",
+ "stat": {
+  "dup_event_injected": false,
+  "event_key_duplicates": 0,
+  "events": 5,
+  "files_with_duplicate_ids": 0,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "jet_key_duplicates": {
+   "AAAA": 315,
+   "AAAI": 326,
+   "IAAA": 324,
+   "IIII": 315
+  }
+ }
+}

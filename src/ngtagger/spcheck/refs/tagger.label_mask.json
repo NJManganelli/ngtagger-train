@@ -1,0 +1,46 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
+ "derived": "2026-10-08T23:38:07Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "item": "tagger.label_mask",
+ "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "known_bad": "the kept-jet mask without the label and gen-pT requirements (unmatched pile-up jets admitted)",
+ "rule": "on the first 5 events of the gate input: labels.label_jets through nano.load_jets equals the study's jet cache (kept jets, in order); every kept jet has label 0-7 and gen pT > 5 GeV; the b-vs-udsg / c-vs-udsg / tau classes of analyze.PAIRS are those of the definition sheet; every file of each mask's training manifest comes from one production era",
+ "stat": {
+  "cache_equal": true,
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "keep_unlabelled": false,
+  "kept_per_class": [
+   0,
+   8,
+   2,
+   10,
+   6,
+   2,
+   1,
+   1,
+   1
+  ],
+  "manifest_eras": {
+   "AAAA": [
+    "canon_v2"
+   ],
+   "AAAI": [
+    "canon_v2"
+   ],
+   "IAAA": [
+    "canon_v2"
+   ],
+   "IIII": [
+    "canon_v2"
+   ]
+  },
+  "n_jets": 74,
+  "n_kept": 31,
+  "n_kept_genpt_le5": 0,
+  "n_kept_unlabelled": 0,
+  "pairs_as_sheet": true
+ }
+}
