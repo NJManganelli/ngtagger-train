@@ -1,0 +1,74 @@
+P0.3 pre-registration (2026-10-09, written before the known-good demonstration, the known-bads and the gated run)
+
+Provenance line: canon_v3 TTbar AAAA files 1-10 (150X D121 PU200, 100 events each), read once by
+eval_refitq/p03_angles/extract.py into /Volumes/WDMac/smartpixels_scratch/p03_angles/cache; definition sheet v1;
+shared angle module ngtagger.spdefs.angles (new); emulated angles (class T = truth + 1.5 x a PixelAV residual).
+Bias line: class-T emulated angles, not a sensor; the 1.5x response factor and the PixelAV response on the Phase-2
+geometry are taken as given; the table is a model of the emulator, valid for consumers of these nanos.
+
+1. Table (decision 3; plan D.3 D10(b)).
+   Population: class T (tpEmuClass 1), usable direction (both local angles has-flag and |cot| <= 12, sigmas > 0),
+   TP pT >= 1 GeV (L1TTP pt through tpIdx). Representation: alpha = wrap(globalPhi - globalClusterPhi), beta =
+   atan(cot theta); pull = residual / published sigma (sigGlobalClusterPhi; sigGlobalClusterCotTheta / (1 + cot^2)
+   at the emitted cot); residuals wrapped (2 pi alpha, pi beta).
+   Bins: per surface IL1-IL4 x signed cot theta (edges +-{0, .3, .4, .5, .55, .6, .67, .8, 1.07, 1.5, 2.5, inf}); ID1-ID4 x
+   module facing (orientation sign from emitted columns) x signed 1/cot theta (+-{0, .1, .2, .3, .4, .5, .55, .6,
+   .67, .8, inf}); merged to >= 200 fit clusters with the neighbour farther from the plateau edges |key| 0.5 / 0.67.
+   Both keys: emitted (globalClusterCotTheta) and true (tpGlobalClusterCotTheta).
+   Entries: centre = clipped mean of the B.1 clip; width = B.1 core of the centred pulls; q = inverted-CDF quantiles
+   of |pull - centre| at 95 / 97.5 / 99 / 99.7 %. Fit on files 1-2.
+   pT check (reported; rule pre-declared): per row, angle, key, centre and width at pT 1-2 vs >= 2 GeV on the fit
+   sample, paired event bootstrap (250); a row beyond t(N) (N = all such z-scores, both keys) whose mirror row also
+   fails is refitted at pT >= 2 and flagged; a one-sign failure is reported.
+
+2. Test (judged once, on files 3-10, same binning):
+   (i) per bin and angle: clipped-mean centre and B.1 width of the pulls after the table within 0 +- 0.25 and
+       1 +- 0.1, widened by 2 bootstrap sigma; bins with < 200 test clusters not judged (counted).
+   (ii) per bin, angle, level: coverage z = (coverage - level) / bootstrap sigma; pass iff no |z| > t(N), N = every
+       z-score read (levels x bins x angles x both keys, after merges; expected ~4,000, t ~ 4.7), and per level x key
+       (8 tests) chi2 p > 0.01 / 8.
+   Errors: event-level bootstrap of the whole chain, 250 replicas, fit and test events resampled independently,
+   every fitted step (centre, width, quantiles, the pT >= 2 refits) re-fitted per replica.
+   Pass = (i) and (ii).
+
+3. Known-good demonstration (D.0 step 2), before anything else: the identical recipe and rule with fit = files 3-4
+   (200 events, the size of files 1-2) and test = files 5-10 (600 events). It must pass at all four levels, barrel
+   and discs (per facing), in both keys. If it fails, the gated run does not happen and the rule goes back for
+   redesign (D.0 step 4); that is not a table failure.
+
+4. Known-bads (D.0 step 4), on the same split, same rule; each must FAIL:
+   (a) folded |key| table (signs pooled); (b) disc rows binned in signed cot theta with the barrel edges (per
+   facing); (c) disc rows with the two facings pooled; (d) the table read in the wrong key (true-key table looked up
+   with the emitted key, and the reverse).
+
+5. Expected (not decisive): barrel passes (round-6 demonstration [V; R]: 168 barrel bins, worst 0.73 of the widened
+   band; coverage at all levels within t(672)), there with the median as centre and pT >= 2. Risks named before
+   running: the plateau and disc-beta responses are bimodal (seen on 5-20 events: a narrow offset peak plus a broad
+   shoulder; the B.1 clip latches onto either peak), so (i) may fail where the clip latches differently on fit and
+   test; the 99.7 % quantile in ~200-400-cluster bins is near the sample maximum, where the bootstrap underestimates
+   the spread, so (ii) may fail at 99.7 % in small bins. Known-bads expected to fail through (ii) chi2 (folded,
+   wrong key) and through (i) and (ii) on the discs (cot-binned, pooled facings).
+
+6. Reported, not gated: before (published sigma; today's census sigma on the barrel) and after pulls per bin; MAD
+   and the outside-3-widths fraction per bin; per level and bin the half-width in today's census sigma and today's
+   3-census-sigma class-T efficiency (census per-layer scales from the registry entry appa.census.angle-scales).
+
+7. Cluster-level ROC (a measurement, pre-declared definitions; no gate):
+   Signal: clusters of hard-scatter TPs (evt 0, bx 0) with pT >= floor (2.0 / 1.5 / 1.0 GeV) born inside 2.5 cm
+   (prompt; b/c daughters split); also all-interaction signal. Background categories: other interaction (pile-up
+   or out-of-time TP; above and below the floor shown separately), same interaction pT < 0.5, same interaction
+   0.5 GeV-floor, same interaction above the floor born beyond 2.5 cm, unlinked. Retention over all clusters (the
+   1-in-20 subsample of pile-up below 1 GeV and unlinked weighted by 20).
+   Cuts (single cluster; emitted-key table): S1 alpha vs the pT floor (|alpha - k c sigma| - asin(KPT r / 2 floor),
+   in consumer sigma); beta vs the luminous region |z0| <= 15 cm (distance of lambda - k c sigma from the window, in
+   consumer sigma); both. Each cut at the per-bin quantile of its own statistic on class-T calibration clusters
+   (TPs born inside 2.5 cm, pT >= floor, every interaction) of files 1-2, per surface x signed emitted-key bin
+   (x facing); levels 95 / 97.5 / 99 / 99.7 % and a level scan for the curve; at k in {1, 0.67, 0} in fixed and
+   scaled modes (quantile kept at k = 1 in fixed mode, re-measured at k in scaled mode). Measured on files 3-10.
+   Headline: cluster retention at 99 % signal efficiency (class-T-only signal and all signal) per surface; disc /
+   barrel retention ratio. Errors: event bootstrap (250), calibration re-measured per replica.
+
+8. Priors (B.4) recomputed where cluster-level: alpha core and curvature term, alpha displacement shift for b/c
+   daughters, angle weight (alpha core in mrad), beta response slope and IL1 means, plateau steps, beta pointing
+   (other-interaction fraction within 1 / 2 cm), disc beta pointing sigma(z0); each within x1.5 or explained.
+   d0(pT) and the PF/PUPPI dxy code are track-level and are not recomputed here.
