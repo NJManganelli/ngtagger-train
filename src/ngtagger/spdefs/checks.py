@@ -348,53 +348,27 @@ class KeyFromLocal(Item):
 ITEMS = [KnobIdentity(), KnobContinuityFloor(), KnobClassC(), KnobCentre(), FrameSign(), KeyFromLocal()]
 
 
-def class_tell_auc(ctx: Ctx, ks=(1.0, 0.67, 0.0)) -> dict:
-    """C.4 report for k < 1: AUC of |pull| (k-transformed, both modes) separating class T from
-    class C, per surface and angle (0.5 = no tell)."""
-    from scipy.stats import mannwhitneyu
-
-    D = clusters(ctx)
-    out = {}
-    for a in SA.ANGLES:
-        for k in ks:
-            for mode in SA.K_MODES:
-                r = SA.knob(a, D, D["T"], k, mode, ref=SA.truth(a, D))
-                p = np.abs(SA.residual(a, r["a"], SA.truth(a, D)) / r["sigma"])
-                for s in SA.SURFACES:
-                    mt, mc = D["T"] & (D["surface"] == s), D["C"] & (D["surface"] == s)
-                    if mt.sum() < 50 or mc.sum() < 50:
-                        continue
-                    u = mannwhitneyu(p[mc], p[mt]).statistic
-                    out[f"{a}/k{k:g}/{mode}/{SA.SURFACE_NAMES[s]}"] = float(u / (mt.sum() * mc.sum()))
-    return out
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="spdefs.checks")
-    ap.add_argument("what", choices=("run", "known-bad", "auc"))
+    ap.add_argument("what", choices=("run", "known-bad"))
     ap.add_argument("--input", default=KNOWN_GOOD_INPUT)
     ap.add_argument("--events", type=int, default=KNOWN_GOOD_EVENTS)
     ap.add_argument("--json")
     a = ap.parse_args(argv)
     ctx = Ctx(input_path=a.input, events=a.events)
     res = {"mode": a.what, "time": now_utc(), "input": a.input, "events": a.events, "items": {}}
-    if a.what == "auc":
-        res["auc"] = class_tell_auc(ctx)
-        print(json.dumps(res["auc"], indent=1))
-        ok = True
-    else:
-        ok = True
-        for it in ITEMS:
-            stat = it.compute(ctx) if a.what == "run" else it.known_bad(ctx)
-            good, why = it.judge(stat, None)
-            st = ("green" if good else "red") if a.what == "run" else ("red-as-required" if not good else "NOT-RED")
-            ok &= (good if a.what == "run" else not good)
-            res["items"][it.id] = {"status": st, "why": why, "rule": it.rule_desc, "known_bad": it.known_bad_desc,
-                                   "c4_row": it.c4_row, "stat": jsonable(stat)}
-            print(f"{st:16s} {it.id:24s} {why[:200]}", flush=True)
-        res["verdict"] = ("all green" if ok else "SOME RED") if a.what == "run" else \
-            ("every known-bad red" if ok else "SOME KNOWN-BAD NOT RED")
-        print(res["verdict"])
+    ok = True
+    for it in ITEMS:
+        stat = it.compute(ctx) if a.what == "run" else it.known_bad(ctx)
+        good, why = it.judge(stat, None)
+        st = ("green" if good else "red") if a.what == "run" else ("red-as-required" if not good else "NOT-RED")
+        ok &= (good if a.what == "run" else not good)
+        res["items"][it.id] = {"status": st, "why": why, "rule": it.rule_desc, "known_bad": it.known_bad_desc,
+                               "c4_row": it.c4_row, "stat": jsonable(stat)}
+        print(f"{st:16s} {it.id:24s} {why[:200]}", flush=True)
+    res["verdict"] = ("all green" if ok else "SOME RED") if a.what == "run" else \
+        ("every known-bad red" if ok else "SOME KNOWN-BAD NOT RED")
+    print(res["verdict"])
     if a.json:
         with open(a.json, "w") as f:
             json.dump(jsonable(res), f, indent=1, default=str)

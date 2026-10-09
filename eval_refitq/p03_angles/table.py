@@ -19,6 +19,8 @@ whole fit-and-test chain (fit and test events resampled, every fitted step re-fi
     python table.py known-bad  [--rep 250] [--proc 10]   the four known-bad tables on the same split
     python table.py gated      [--rep 250] [--proc 10]   fit 1-2, test 3-10; refuses unless the
                                                          known-good passed and every known-bad failed
+    python table.py fit-only   [--rep 250] [--proc 10]   the recipe on files 1-2 without the test (only
+                                                         when the gated test cannot run): UNTESTED table
 """
 from __future__ import annotations
 
@@ -43,7 +45,9 @@ LEVELS = SA.LEVELS
 BAND_W, BAND_C, WIDEN = 0.1, 0.25, 2.0
 REGISTRY_SCALES = Path.home() / "smartpixels" / "sp_registry" / "results" / "appa.census.angle-scales.json"
 SPLITS = {"known-good": ((3, 4), (5, 6, 7, 8, 9, 10)), "known-bad": ((3, 4), (5, 6, 7, 8, 9, 10)),
-          "gated": (SA.FIT_FILES, SA.TEST_FILES)}
+          "gated": (SA.FIT_FILES, SA.TEST_FILES), "fit-only": (SA.FIT_FILES, SA.FIT_FILES)}
+TABLE_FILE = "angle_table_v1_canon_v3.json"
+UNTESTED_FILE = "angle_table_v1_canon_v3_UNTESTED.json"
 KNOWN_BADS = {
     "folded": "the folded |key| table (signs pooled; the round-4 table's binning), read by |key|",
     "cotbinned_disc": "disc rows binned like the barrel in signed cot theta (barrel edges; 75-98% of disc clusters in "
@@ -523,24 +527,32 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path) -> dict:
            "rule": {"band_width": BAND_W, "band_centre": BAND_C, "widen_sigma": WIDEN, "levels": LEVELS,
                     "min_n": SA.MIN_FIT, "N_definition": "levels x test bins x angles x keys, after merges",
                     "chi2": "per level and key over bins and angles; p > 0.01 / (levels x keys)"}}
-    if mode in ("known-good", "gated"):
+    if mode in ("known-good", "gated", "fit-only"):
         ptc, flags = pt_check(fit, n_rep, n_proc)
         res["pt_check"] = ptc
         print(f"[{mode}] pT check: refit at pT >= 2 {ptc['flags']}", flush=True)
         P = prepare(fit, test, {k: {"kind": "canonical", "lookup_key": k} for k in SA.KEYS}, flags)
         stack = run_chain(P, n_rep, n_proc, mode)
-        res["judgement"] = judge(P, stack)
-        res["bins"] = before_after(P, stack, test, census_scales())
-        if mode == "gated":
+        if mode != "fit-only":
+            res["judgement"] = judge(P, stack)
+            res["bins"] = before_after(P, stack, test, census_scales())
+        if mode in ("gated", "fit-only"):
             prov = {"code": res["code"], "inputs": res["inputs"], "fit_files": list(fit_files),
                     "job_id": os.environ.get("SP_JOB_ID"), "n_rep_bootstrap": n_rep,
-                    "pt_check_refit_rows": ptc["flags"], "test": "files 3-10; see p03_table_gated.json"}
+                    "pt_check_refit_rows": ptc["flags"],
+                    "test": "files 3-10; see p03_table_gated.json" if mode == "gated" else
+                    "NOT TESTED: the gated test did not run (its known-good demonstration or a known-bad did not "
+                    "behave as required; see p03_table_known-good.json, p03_table_known-bad.json)"}
             doc = table_doc(P, stack, orient, flags, prov)
-            doc["test_result"] = {"pass": res["judgement"]["pass"], "pass_i": res["judgement"]["pass_i"],
-                                  "pass_ii": res["judgement"]["pass_ii"]}
+            if mode == "gated":
+                doc["test_result"] = {"pass": res["judgement"]["pass"], "pass_i": res["judgement"]["pass_i"],
+                                      "pass_ii": res["judgement"]["pass_ii"]}
+            else:
+                doc["test_result"] = {"pass": None, "status": "untested"}
             tab = SA.AngleTable(doc)
-            tab.save(str(out_dir / "angle_table_v1_canon_v3.json"))
-            res["table_file"] = str(out_dir / "angle_table_v1_canon_v3.json")
+            fn = TABLE_FILE if mode == "gated" else UNTESTED_FILE
+            tab.save(str(out_dir / fn))
+            res["table_file"] = str(out_dir / fn)
     else:
         res["known_bads"] = {}
         for name, desc in KNOWN_BADS.items():
@@ -563,7 +575,7 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=("known-good", "known-bad", "gated"))
+    ap.add_argument("mode", choices=("known-good", "known-bad", "gated", "fit-only"))
     ap.add_argument("--rep", type=int, default=250)
     ap.add_argument("--proc", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--out", default=str(CM.OUT_DIR))
@@ -587,6 +599,9 @@ def main(argv=None) -> int:
     if a.mode == "known-bad":
         print("every known-bad fails" if res["all_known_bads_fail"] else "SOME KNOWN-BAD PASSES")
         return 0 if res["all_known_bads_fail"] else 3
+    if a.mode == "fit-only":
+        print(f"wrote the UNTESTED table {res['table_file']}")
+        return 0
     j = res["judgement"]
     print(f"[{a.mode}] PASS={j['pass']}: (i) {j['i']['fail']} of {j['i']['bins']} bins outside the widened band "
           f"(worst {j['i']['worst_fraction_of_widened_band']}); (ii) N={j['ii']['N']} t(N)={j['ii']['t_N']:.2f} "
