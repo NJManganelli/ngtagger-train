@@ -81,10 +81,10 @@ def census_inputs(U, Q, trip, gidx, d0_prior_cm=KF.D0_PRIOR_CM):
     safe = np.where(np.abs(dr) > 0.5, dr, 1e9)
     kap0 = np.abs(M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb]) / (M.C_BEND * safe))[:, None]
     pt0 = np.broadcast_to(1.0 / np.maximum(kap0, 1e-3), T["R"].shape)
-    o0, o1 = KF.ot_variances(np.where(is_ot, lay - 10, 1), T["R"], pt0, z=T["Z"])
+    o0, o1 = KF.ot_variances(T["PS"], T["TILT"], T["R"], pt0, T["Z"])
     i0, i1 = KF.it_variances(T["R"], T["SX"], T["SY"], pt0)
     # the resolution part alone: the scattering term evaluated at infinite pT
-    o0r, _ = KF.ot_variances(np.where(is_ot, lay - 10, 1), T["R"], np.full_like(T["R"], 1e12), z=T["Z"])
+    o0r, _ = KF.ot_variances(T["PS"], T["TILT"], T["R"], np.full_like(T["R"], 1e12), T["Z"])
     i0r, _ = KF.it_variances(T["R"], T["SX"], T["SY"], np.full_like(T["R"], 1e12))
     ref = np.where(T["VALID"], T["PH"], 0.0)
     first = np.argmax(T["VALID"], axis=1)

@@ -19,15 +19,18 @@ WHAT KFParamsComb DOES, read off L1Trigger/TrackFindingTMTT:
     to helix parameter covariance (currently zero)". Scattering lives in the
     measurement variance instead.
 
-  * BARREL MEASUREMENT VARIANCE (KFParamsComb::matrixV), which with the shipped
-    higher-order flags (KalmanHOtilted False, KalmanHOfw True) reduces to
+  * BARREL MEASUREMENT VARIANCE (KFParamsComb::matrixV), which with the flags of
+    the tmtt::Settings the hybrid default-constructs (Settings.cc:21-23, 59-63:
+    useApproxB, KalmanHOtilted true, KalmanHOfw false) reduces to
 
         vphi = (sigmaPerp / r)^2 + (MULT_SCATT_TERM / pT)^2
-        vz   =  sigmaPar^2
+        vz   =  sigmaPar^2 * (approxB(z, r)^2 on a tilted barrel module, else 1)
 
-    with sigmaPerp = stripPitch/sqrt(12) and sigmaPar = stripLength/sqrt(12). No
-    cluster-width factor, no additive phi term, no tilt correction: the tilted
-    branch is off and kalmanHOfw pins vz to sigmaPar^2 regardless.
+    with sigmaPerp = stripPitch/sqrt(12) and sigmaPar = stripLength/sqrt(12),
+    pitch and length those of the stub's own module type (HybridFit.cc:73-98,
+    stripPitch(psmodule) / stripLength(psmodule)). No cluster-width factor, no
+    additive phi term. Both module properties are read from the input
+    (L1TOTStub_isPS / isTilted, ot_variances), never inferred.
 
     The SensorModule model this file used before -- clusterWidth * pitch / r plus
     an additive addPhiUncertainty -- belongs to the OTHER filter. It made the
@@ -68,10 +71,9 @@ CBC_PITCH, CBC_LENGTH = 0.009, 5.025        # 2S strip pitch / length, cm
 MPA_PITCH, MPA_LENGTH = 0.01, 0.1467        # PS pixel pitch / length, cm
 INV_ROOT12 = 1.0 / np.sqrt(12.0)
 MULT_SCATT_TERM = 0.00075                   # KalmanMultiScattTerm, rad*GeV
-PS_LAYERS = (1, 2, 3)                       # OT barrel 1-3 are PS, 4-6 are 2S
 
 
-# Tilt correction for the z variance of a TILTED PS module, from
+# Tilt correction for the z variance of a TILTED barrel module, from
 # KFParamsComb::matrixV (TrackFindingTMTT/src/KFParamsComb.cc:105-117):
 #     scaleTilted = approxB(z, r);  vz = b * scaleTilted^2
 # with approxB = bApprox_gradient*|z|/r + bApprox_intercept for a tilted barrel
@@ -82,18 +84,18 @@ B_APPROX_INTERCEPT = 0.504148
 
 
 def approx_b(z, r):
-    """The tilted-module bend/resolution factor, floored at the flat value.
+    """Stub::approxB of a stub on a TILTED barrel module (Stub.cc:352-358).
 
-    WHICH MODULES ARE TILTED IS A MODULE PROPERTY WE DO NOT CARRY. CMSSW gates
-    this on Stub::tiltedBarrel(); our ntuple has only (r, z). Taking
-    max(1, approxB) puts the crossover at |z|/r = 0.559, where the formula
-    itself passes through the flat-module value of 1 -- so the central barrel
-    keeps vz unscaled and the scaling turns on where the tilted region begins.
-    That is an approximation to a discrete geometric fact, not the fact itself.
+    Applied only where the input says the module is tilted (ot_variances):
+    until format 27 the census had no module flag and took max(1, approxB) on
+    every PS stub, which scaled the flat-ring stubs beyond |z|/r = 0.559 that
+    CMSSW leaves at 1 (measured on canon_v3: 16% of flat PS barrel stubs, vz
+    0.78-1.0 of the old value after the change; every tilted stub has
+    approxB >= 1.016, so tilted stubs are unchanged).
 
     MEASURED, sigma(z_stub - z_track) on genuine PS stubs of real tracks with
     pT > 3, ratio of the highest |z|/r bin to the central one against the
-    predicted max(1, approxB)^2 = 3.98:
+    predicted approxB^2 = 3.98:
         OT L1  1.66 measured   OT L2  2.07   OT L3  4.71
     so the form is right and L3 matches, while L1 and L2 are over-predicted by
     roughly 2x. The measurement is an upper bound -- it contains the track's own
@@ -101,21 +103,21 @@ def approx_b(z, r):
     discrepancy on its own. We follow CMSSW rather than the measurement here,
     because the point is to emulate the KF that exists, and record the gap.
     """
-    return np.maximum(1.0, B_APPROX_GRADIENT * np.abs(z) / np.maximum(r, 1e-3)
-                      + B_APPROX_INTERCEPT)
+    return B_APPROX_GRADIENT * np.abs(z) / np.maximum(r, 1e-3) + B_APPROX_INTERCEPT
 
 
-def ot_variances(layer, r, pt, z=None):
-    """(vphi, vz) for OT barrel stubs, following KFParamsComb::matrixV."""
-    ps = np.isin(layer, PS_LAYERS)
-    sigma_perp = np.where(ps, MPA_PITCH, CBC_PITCH) * INV_ROOT12
-    sigma_par = np.where(ps, MPA_LENGTH, CBC_LENGTH) * INV_ROOT12
+def ot_variances(is_ps, is_tilted, r, pt, z):
+    """(vphi, vz) for OT barrel stubs, following KFParamsComb::matrixV.
+
+    is_ps / is_tilted are the stub's module flags from the input (L1TOTStub_isPS,
+    L1TOTStub_isTilted; tp_findability's input contract): the PS or 2S pitch and
+    length, and the approxB^2 z scaling exactly on tilted modules, as the hybrid
+    hands them to tmtt::Stub (psModule, tiltedBarrel).
+    """
+    sigma_perp = np.where(is_ps, MPA_PITCH, CBC_PITCH) * INV_ROOT12
+    sigma_par = np.where(is_ps, MPA_LENGTH, CBC_LENGTH) * INV_ROOT12
     scat = MULT_SCATT_TERM / np.maximum(np.abs(pt), 1e-3)
-    vz = np.broadcast_to(sigma_par ** 2, np.shape(r)).copy()
-    if z is not None:
-        # PS ONLY. The 2S branch of matrixV has no tilt term at all, and the
-        # comment there says the non-radial strip effect is neglected for PS.
-        vz = np.where(ps, vz * approx_b(z, r) ** 2, vz)
+    vz = sigma_par ** 2 * np.where(is_tilted, approx_b(z, r) ** 2, 1.0)
     return ((sigma_perp / np.maximum(r, 1e-3)) ** 2 + scat ** 2, vz)
 
 
@@ -577,7 +579,7 @@ def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
         sg = np.maximum(U["sigY"][sel], 1e-6)
         pt_typ = 1.0 / max(float(np.median(np.abs(kap))), 1e-3)
         if L > 10:
-            w0, _w1 = ot_variances(np.full(len(sel), L - 10), rc, pt_typ, z=zc)
+            w0, _w1 = ot_variances(U["ot_ps"][sel], U["ot_tilted"][sel], rc, pt_typ, zc)
         else:
             w0, _w1 = it_variances(rc, U["sigX"][sel], U["sigY"][sel], pt_typ)
         sphi = np.sqrt(np.maximum(w0, 1e-12))
@@ -624,7 +626,8 @@ def gather_hits(U, Q, GIDX, layers):
     their pull-scaled, resolution-degraded, quantized sigmas, i.e. exactly what
     the seeding stages saw. ANG marks an IT cluster with a usable direction
     (dir_ok); ANG_A / ANG_B additionally drop a quantized word that overflowed,
-    which carries a bound, not a measurement.
+    which carries a bound, not a measurement. PS / TILT are an OT stub's module
+    flags (False on IT clusters and empty slots), read by ot_variances.
     """
     nt, nl = GIDX.shape
     z = lambda: np.zeros((nt, nl))
@@ -634,6 +637,8 @@ def gather_hits(U, Q, GIDX, layers):
     ANG = np.zeros((nt, nl), bool)
     ANG_A = np.zeros((nt, nl), bool)
     ANG_B = np.zeros((nt, nl), bool)
+    PS = np.zeros((nt, nl), bool)
+    TILT = np.zeros((nt, nl), bool)
     for j in range(nl):
         m = VALID[:, j]
         if not m.any():
@@ -649,13 +654,15 @@ def gather_hits(U, Q, GIDX, layers):
         ANG[rows, j] = has
         ANG_A[rows, j] = has & ~Q["ovf_a"][gg]
         ANG_B[rows, j] = has & ~Q["ovf_z"][gg]
+        PS[rows, j] = U["ot_ps"][gg]
+        TILT[rows, j] = U["ot_tilted"][gg]
         KA[m, j] = Q["kap_a"][gg]
         SKA[m, j] = Q["s_kap"][gg]
         CT[m, j] = Q["cot_b"][gg]
         SCT[m, j] = Q["s_cot"][gg]
     return dict(R=R, PH=PH, Z=Z, SX=SX, SY=SY, KA=KA, SKA=SKA, CT=CT, SCT=SCT,
-                VALID=VALID, ANG=ANG, ANG_A=ANG_A, ANG_B=ANG_B, GIDX=GIDX,
-                layers=np.array(layers))
+                VALID=VALID, ANG=ANG, ANG_A=ANG_A, ANG_B=ANG_B, PS=PS, TILT=TILT,
+                GIDX=GIDX, layers=np.array(layers))
 
 
 def hits_from_seed(U, out, layers=None):
@@ -709,7 +716,7 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
         kap0 = np.abs(M.wrap(U["globalPhi"][ga] - U["globalPhi"][gb])
                       / (M.C_BEND * safe))[:, None]
         pt0 = np.broadcast_to(1.0 / np.maximum(kap0, 1e-3), T["R"].shape)
-    o0, o1 = ot_variances(np.where(is_ot, lay - 10, 1), T["R"], pt0, z=T["Z"])
+    o0, o1 = ot_variances(T["PS"], T["TILT"], T["R"], pt0, T["Z"])
     i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
     v0 = np.where(is_ot, o0, i0)
     v1 = np.where(is_ot, o1, i1)

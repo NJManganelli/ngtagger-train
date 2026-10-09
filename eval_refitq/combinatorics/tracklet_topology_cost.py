@@ -300,12 +300,6 @@ OT_BEND_CUT_TE = {"L1L2": (2.2, 2.5), "L2L3": (2.0, 2.0),
                   "L3L4": (2.0, 2.6), "L5L6": (2.4, 2.4)}
 SENSOR_SPACING_2S = 0.18             # sensorSpacing_2S_, Settings.h:1035
 STRIP_PITCH_PS, STRIP_PITCH_2S = 0.01, 0.009      # Settings.h:1017-1018
-R_CRIT = 55.0                        # rcrit_, Settings.h:504
-
-
-def strip_pitch(r):
-    """Util.h bendstrip uses the r-thresholded NOMINAL pitch, not the module's."""
-    return np.where(np.asarray(r) < R_CRIT, STRIP_PITCH_PS, STRIP_PITCH_2S)
 
 
 # bend -> kappa slope per OT layer, filled once per run by calibrate_ot_bend

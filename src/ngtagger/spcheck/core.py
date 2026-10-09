@@ -14,6 +14,10 @@ import numpy as np
 
 KNOWN_GOOD_INPUT = "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root"
 KNOWN_GOOD_EVENTS = 5
+# The census items' known-good from the census input contract on (format 27, WP-D0a): the census
+# reads canon_v3 only (the OT module flags isPS / isTilted), and canon_v3 file 3 holds the same
+# clusters and stubs as canon_v2 file 3.
+CENSUS_KNOWN_GOOD_INPUT = "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root"
 REFS_DIR = Path(__file__).resolve().parent / "refs"
 CODE_ROOT = Path(__file__).resolve().parents[3]          # the repo, or the frozen copy's root
 REL_TOL = 1e-9
@@ -97,6 +101,7 @@ class Item:
     known_bad_desc = ""
     rule_desc = ""
     trees: tuple = ()           # repo trees it imports from besides src/ngtagger
+    known_good_input: str | None = None   # the item's own known-good (default: the gate's input)
 
     def compute(self, ctx: Ctx) -> dict:
         raise NotImplementedError

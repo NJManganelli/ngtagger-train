@@ -59,13 +59,28 @@ ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
 # tpGenuine/tpCombinatoric/tpUnknown are the per-stub CMS truth flags, needed
 # because tpIdx = -1 cannot distinguish a merged cluster from noise. bend is the
 # stub's own curvature estimate, which the seed and projection gates want and
-# could not use while it was not loaded at all.
+# could not use while it was not loaded at all. isPS / isTilted are the module
+# flags the KF variance reads (OT_MODULE_FLAGS).
 OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
-           "tpGenuine", "tpCombinatoric", "tpUnknown", "bend"]
+           "tpGenuine", "tpCombinatoric", "tpUnknown", "bend", "isPS", "isTilted"]
+
+# THE INPUT CONTRACT (format 27). Every census input carries the module flags
+# the L1 track finder attaches to a stub, L1TOTStub_isPS (PS vs 2S module) and
+# L1TOTStub_isTilted (tilted barrel ring), and the census reads them as they
+# are: never inferred from the detId, the layer or the stub's (r, z). canon_v2
+# predates them and is refused (require_census_inputs) -- here, in the census,
+# and not in the shared loader ngtagger.data.spix_nano, which still serves
+# canon_v2 to every other tool.
+OT_MODULE_FLAGS = ("isPS", "isTilted")
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 26   # 26: the position arbitration of a projection's candidates
+FORMAT_VERSION = 27   # 27: the OT module flags from the input (OT_MODULE_FLAGS):
+                      # the KF's PS/2S pitch and length and its tilted-module z
+                      # variance (approxB^2 exactly on isTilted stubs, where
+                      # format 26 took max(1, approxB) on every PS stub);
+                      # inputs without the flags (canon_v2) refused.
+                      # 26: the position arbitration of a projection's candidates
                       # (config "pos_arb", M.POS_ARB; default r-phi + z pulls).
                       # 25: the angle stages (M.ANGLE_STAGES, config "angles") and
                       # the resolution knob ("angle_res") are in the identity;
@@ -183,6 +198,21 @@ def cache_key(manifest, cfg):
                           "seed_menu": SA.menu_fingerprint()},
                          sort_keys=True).encode()
     return hashlib.sha256(payload).hexdigest()[:16]
+
+
+def require_census_inputs(paths):
+    """SystemExit naming the first input that breaks the input contract: an OT
+    stub table without the module flags (OT_MODULE_FLAGS), e.g. canon_v2."""
+    for p in paths:
+        keys = set(uproot.open(f"{p}:Events").keys())
+        miss = [f"{M.OT_TABLE}_{c}" for c in OT_MODULE_FLAGS
+                if not SPN.has_column(keys, M.OT_TABLE, c)]
+        if miss:
+            raise SystemExit(
+                f"{p} lacks {', '.join(miss)}: the census (format {FORMAT_VERSION}) "
+                f"reads the OT module flags from its input and never infers them "
+                f"(no detId, layer or (r, z) fallback). canon_v2 predates the "
+                f"flags; run the census on canon_v3.")
 
 
 # ==========================================================================
@@ -406,6 +436,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, res=None):
     """
     paths = M.expand_inputs(spec)
     M.require_tp_table(paths)
+    require_census_inputs(paths)
     srcs = [f"{p}:Events" for p in paths]
     # the reference angles of the resolution knob, when it moves anything
     improve = res is not None and (res.get("alpha_k", 1.0) < 1.0
@@ -528,6 +559,11 @@ def _unify(I, O, sigz_ot, bench=None, res=None, ref=None):
          # likewise bend: a pixel cluster has none, and the bend gate runs only
          # for OT doublet seeds, so the IT zeros are never compared
          "bend": np.r_[np.zeros(len(I["layer"])), O["bend"][bar]],
+         # the OT module flags (input contract), False on every IT cluster:
+         # only the OT variance (KF.ot_variances) reads them
+         "ot_ps": np.r_[np.zeros(len(I["layer"]), bool), O["isPS"][bar].astype(bool)],
+         "ot_tilted": np.r_[np.zeros(len(I["layer"]), bool),
+                            O["isTilted"][bar].astype(bool)],
          "event": np.r_[I["event"], O["event"][bar]]}
     # EVERY angle any stage reads comes from here: pull-scaled, degraded by the
     # resolution knob, quantized. An OT stub carries no alpha/beta: huge sigmas
@@ -901,6 +937,9 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     and never falls, so one runaway seed aborts the job permanently -- but every
     shard already written stays valid and the rerun resumes past it.
     """
+    # the input contract before anything is written: a refused input leaves no
+    # cache directory behind
+    require_census_inputs(M.expand_inputs(spec))
     man = input_manifest(spec, hash_content)
     # nev is deliberately NOT part of the identity. Shards are per-chunk and
     # event order is fixed, so a 100-event cache is the first seven chunks of the

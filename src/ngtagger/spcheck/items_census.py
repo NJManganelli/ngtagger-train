@@ -1,8 +1,9 @@
 """Fast-gate items on the census (plan App. C.4 rows: int32 owner sentinel; per-build
-follow and DR over all builds). They import the census from THIS code root's
-eval_refitq/combinatorics (the frozen copy under the launcher) and run a 4-event, two-build
-census (AAAI, IAAA: the builds with an inactive layer) of the gate input into a scratch
-cache: ~70 s, ~1.2 GB."""
+follow and DR over all builds; the census input contract). They import the census from THIS
+code root's eval_refitq/combinatorics (the frozen copy under the launcher) and run a 4-event,
+two-build census (AAAI, IAAA: the builds with an inactive layer) into a scratch cache: ~70 s,
+~1.2 GB. Their known-good is canon_v3 TTbar AAAA file 3 (core.CENSUS_KNOWN_GOOD_INPUT): the
+census refuses canon_v2 since format 27 (WP-D0a)."""
 from __future__ import annotations
 
 import glob
@@ -15,7 +16,7 @@ from collections import Counter
 
 import numpy as np
 
-from .core import Item, identity, same_input
+from .core import CENSUS_KNOWN_GOOD_INPUT, KNOWN_GOOD_INPUT, Item, identity, same_input
 
 CENSUS_DIR = "eval_refitq/combinatorics"
 CENSUS_EVENTS = 4
@@ -40,6 +41,7 @@ class MajorityOwner(Item):
                  "reference on the real hits for every track; n_own <= real hits; owner -1 or a TP on the track; "
                  "input tpIdx int32, output int64; identity of the counts with the reference")
     trees = (CENSUS_DIR,)
+    known_good_input = CENSUS_KNOWN_GOOD_INPUT
 
     def _tables(self, ctx):
         """(KF module, tp, valid, dtype of tpIdx as read) for the OT tracks of the gate input."""
@@ -144,6 +146,7 @@ class CensusBuilds(Item):
                  "its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; "
                  "identity of the counts with the reference")
     trees = (CENSUS_DIR,)
+    known_good_input = CENSUS_KNOWN_GOOD_INPUT
 
     def _run(self, ctx) -> str:
         key = ("census_cache", ctx.input)
@@ -224,4 +227,80 @@ class CensusBuilds(Item):
         return not why, f"{stat['n_tracks']} census tracks over {stat['builds']} clean" if not why else "; ".join(why)
 
 
-ITEMS = [MajorityOwner(), CensusBuilds()]
+# ---------------------------------------------------------------- input contract
+# CMSSW constants of the variance, written out here independently of kf_emulation: the tracklet
+# Settings' stripPitch / stripLength per module type (PS, 2S) and TMTT's approxB defaults
+# (Settings.cc:22-23), KalmanMultiScattTerm.
+PITCH = {True: 0.01, False: 0.009}
+LENGTH = {True: 0.1467, False: 5.025}
+B_APPROX = (0.886454, 0.504148)
+MULT_SCATT = 0.00075
+VAR_RTOL = 1e-12
+
+
+class CensusInputContract(Item):
+    id = "census.input_contract"
+    title = "the census reads the OT module flags (isPS, isTilted) from its input and refuses an input without them"
+    c4_row = "(new, WP-D0a) the census input contract: module flags read, never inferred (canon_v2 refused)"
+    known_bad_desc = "canon_v2 TTbar AAAA file 3, which has no L1TOTStub_isPS / isTilted: the census must refuse it"
+    rule_desc = ("tp_findability.require_census_inputs accepts the input; on every OT barrel stub of the first 5 events "
+                 "isPS == (layer <= 3) and isTilted only on PS modules (D121); KF.ot_variances with the stub's flags "
+                 "equals KFParamsComb::matrixV written out independently (pitch and length by isPS, z variance x "
+                 "approxB^2 exactly on tilted modules) to 1e-12 relative; identity of the stub counts with the reference")
+    trees = (CENSUS_DIR,)
+    known_good_input = CENSUS_KNOWN_GOOD_INPUT
+
+    def _stat(self, ctx):
+        import awkward as ak
+
+        TF = ctx.script_module(CENSUS_DIR, "tp_findability")
+        KF = ctx.script_module(CENSUS_DIR, "kf_emulation")
+        out = {"input": ctx.input, "events": ctx.events}
+        try:
+            TF.require_census_inputs([ctx.input])
+            out["accepted"] = True
+        except SystemExit as e:
+            out.update(accepted=False, refusal=str(e)[:300])
+            return out
+        A = ctx.arrays([f"L1TOTStub_{c}" for c in ("layer", "isBarrel", "isPS", "isTilted", "r", "z")])
+        f = {c: _np(ak.flatten(A[f"L1TOTStub_{c}"])) for c in ("layer", "isBarrel", "isPS", "isTilted", "r", "z")}
+        b = f["isBarrel"].astype(bool)
+        lay, ps, ti = f["layer"][b], f["isPS"][b].astype(bool), f["isTilted"][b].astype(bool)
+        r, z = f["r"][b].astype(np.float64), f["z"][b].astype(np.float64)
+        pt = np.full(len(r), 2.0)
+        vphi, vz = KF.ot_variances(ps, ti, r, pt, z)
+        sp = np.where(ps, PITCH[True], PITCH[False]) / np.sqrt(12.0)
+        sl = np.where(ps, LENGTH[True], LENGTH[False]) / np.sqrt(12.0)
+        ab = B_APPROX[0] * np.abs(z) / r + B_APPROX[1]
+        vz_ref = sl * sl * np.where(ti, ab * ab, 1.0)
+        vphi_ref = (sp / r) ** 2 + (MULT_SCATT / pt) ** 2
+        out.update(n_barrel_stubs=int(b.sum()), n_ps=int(ps.sum()), n_tilted=int(ti.sum()),
+                   n_ps_not_layer_1_3=int(np.sum(ps != (lay <= 3))), n_tilted_not_ps=int(np.sum(ti & ~ps)),
+                   n_variance_mismatch=int(np.sum((np.abs(vz - vz_ref) > VAR_RTOL * vz_ref)
+                                                  | (np.abs(vphi - vphi_ref) > VAR_RTOL * vphi_ref))),
+                   # context, not judged: stubs whose z variance the format-26 (r, z) rule got wrong
+                   n_flat_scaled_by_format26_rule=int(np.sum(ps & ~ti & (ab > 1.0))))
+        return out
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        from .core import Ctx
+
+        bad = Ctx(input_path=KNOWN_GOOD_INPUT, events=ctx.events, code_root=ctx.code_root, scratch=ctx.scratch)
+        return self._stat(bad)
+
+    def judge(self, stat, ref):
+        if not stat["accepted"]:
+            return False, f"input refused: {stat['refusal']}"
+        why = [f"{k} = {stat[k]}" for k in ("n_ps_not_layer_1_3", "n_tilted_not_ps", "n_variance_mismatch") if stat[k]]
+        if not stat["n_tilted"]:
+            why.append("no tilted stub read")
+        if same_input(stat, ref):
+            why += identity(stat, ref, ["n_barrel_stubs", "n_ps", "n_tilted"])[1]
+        return not why, (f"{stat['n_barrel_stubs']} barrel stubs ({stat['n_tilted']} tilted): flags consistent, "
+                         f"variances = matrixV") if not why else "; ".join(why)
+
+
+ITEMS = [MajorityOwner(), CensusBuilds(), CensusInputContract()]
