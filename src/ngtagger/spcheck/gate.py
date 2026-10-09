@@ -6,8 +6,7 @@
     python -m ngtagger.spcheck.gate derive-refs [--items ID ...] [--refs DIR]
 
 `run` judges the code it is run from (under the launcher: the frozen copy) on the known-good
-input (an item that names its own known-good, e.g. the census items on canon_v3, runs on that one
-unless --input overrides the default); exit 0 only when every applicable item is green. Items whose script tree is not in
+input; exit 0 only when every applicable item is green. Items whose script tree is not in
 this code root are reported "n/a" (they do not test code this job runs). `known-bad` runs
 each item's named known-bad and exits 0 only when every one is RED. `derive-refs` writes the
 reference statistics (refs/<item>.json) from the known-good with the code as it is; they
@@ -49,15 +48,6 @@ def _ctx(a) -> Ctx:
     return Ctx(input_path=a.input, events=a.events, scratch=scratch)
 
 
-def _item_ctx(it, ctx: Ctx, ctxs: dict) -> Ctx:
-    """The context an item runs in: its own known-good input when it names one and the gate runs
-    on the default input, else the gate's (one context, and so one read cache, per input)."""
-    inp = it.known_good_input if (it.known_good_input and ctx.input == KNOWN_GOOD_INPUT) else ctx.input
-    if inp not in ctxs:
-        ctxs[inp] = ctx if inp == ctx.input else Ctx(input_path=inp, events=ctx.events, scratch=ctx.scratch)
-    return ctxs[inp]
-
-
 def cmd_list(a) -> int:
     for it in ALL_ITEMS:
         print(f"{it.id:28s} {it.title}\n{'':28s} C.4: {it.c4_row}\n{'':28s} known-bad: {it.known_bad_desc}\n")
@@ -69,20 +59,17 @@ def _run_items(a, mode: str) -> dict:
     res = {"mode": mode, "time": now_utc(), "input": ctx.input, "events": ctx.events,
            "code_root": str(ctx.code_root), "frozen_root": os.environ.get("SP_FROZEN_ROOT"),
            "manifest_hash": a.record_manifest if hasattr(a, "record_manifest") else None, "items": {}}
-    ctxs: dict = {}
     for it in _select(a.items):
         t0 = time.time()
         ref = it.load_ref()
-        ictx = _item_ctx(it, ctx, ctxs)
-        rec = {"title": it.title, "c4_row": it.c4_row, "rule": it.rule_desc, "known_bad": it.known_bad_desc,
-               "input": ictx.input}
+        rec = {"title": it.title, "c4_row": it.c4_row, "rule": it.rule_desc, "known_bad": it.known_bad_desc}
         try:
             if mode == "run":
-                stat = it.compute(ictx)
+                stat = it.compute(ctx)
                 ok, why = it.judge(stat, ref)
                 rec["status"] = "green" if ok else "red"
             else:
-                stat = it.known_bad(ictx)
+                stat = it.known_bad(ctx)
                 red, why = it.known_bad_is_red(stat, ref)
                 rec["status"] = "red-as-required" if red else "NOT-RED (the check cannot fail)"
             rec["why"] = why
@@ -128,16 +115,14 @@ def cmd_derive_refs(a) -> int:
         return 2
     core.REFS_DIR.mkdir(parents=True, exist_ok=True)
     bad = 0
-    ctxs: dict = {}
     for it in _select(a.items):
-        ictx = _item_ctx(it, ctx, ctxs)
         try:
-            stat = jsonable(it.compute(ictx))
+            stat = jsonable(it.compute(ctx))
         except NotApplicable as e:
             print(f"n/a   {it.id}: {e}")
             continue
-        ref = {"item": it.id, "derived": now_utc(), "input": ictx.input, "events": ictx.events,
-               "code_root": str(ictx.code_root), "job_id": os.environ.get("SP_JOB_ID"),
+        ref = {"item": it.id, "derived": now_utc(), "input": ctx.input, "events": ctx.events,
+               "code_root": str(ctx.code_root), "job_id": os.environ.get("SP_JOB_ID"),
                "rule": it.rule_desc, "known_bad": it.known_bad_desc, "stat": stat}
         ok, why = it.judge(stat, ref)
         if not ok:

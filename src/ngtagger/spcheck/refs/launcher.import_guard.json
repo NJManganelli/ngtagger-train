@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
- "derived": "2026-10-08T23:36:44Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261009T152911Z-gate-v3-derive-21583/copy",
+ "derived": "2026-10-09T15:29:13Z",
  "events": 5,
- "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "launcher.import_guard",
- "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "job_id": "20261009T152911Z-gate-v3-derive-21583",
  "known_bad": "(a) PYTHONPATH unset (the job imports the shared src); (b) a lazily imported module removed from the copy while the shared tree is on sys.path (import outside any try); (c) a lazily imported ngtagger module (train/prediction_dump.py) removed from the copy",
  "rule": "the probe job (eager + lazy imports, as the census and the trainer do) run from a miniature copy of this code root: status ok and every module inside the copy; each known-bad ends with a non-zero status the launcher reports (98 guard-missing, 97 guard-violation, failed with ImportError)",
  "stat": {

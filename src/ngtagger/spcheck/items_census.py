@@ -2,8 +2,7 @@
 follow and DR over all builds; the census input contract). They import the census from THIS
 code root's eval_refitq/combinatorics (the frozen copy under the launcher) and run a 4-event,
 two-build census (AAAI, IAAA: the builds with an inactive layer) into a scratch cache: ~70 s,
-~1.2 GB. Their known-good is canon_v3 TTbar AAAA file 3 (core.CENSUS_KNOWN_GOOD_INPUT): the
-census refuses canon_v2 since format 27 (WP-D0a)."""
+~1.2 GB."""
 from __future__ import annotations
 
 import glob
@@ -16,7 +15,7 @@ from collections import Counter
 
 import numpy as np
 
-from .core import CENSUS_KNOWN_GOOD_INPUT, KNOWN_GOOD_INPUT, Item, identity, same_input
+from .core import Item, identity, same_input
 
 CENSUS_DIR = "eval_refitq/combinatorics"
 CENSUS_EVENTS = 4
@@ -41,7 +40,6 @@ class MajorityOwner(Item):
                  "reference on the real hits for every track; n_own <= real hits; owner -1 or a TP on the track; "
                  "input tpIdx int32, output int64; identity of the counts with the reference")
     trees = (CENSUS_DIR,)
-    known_good_input = CENSUS_KNOWN_GOOD_INPUT
 
     def _tables(self, ctx):
         """(KF module, tp, valid, dtype of tpIdx as read) for the OT tracks of the gate input."""
@@ -146,7 +144,6 @@ class CensusBuilds(Item):
                  "its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; "
                  "identity of the counts with the reference")
     trees = (CENSUS_DIR,)
-    known_good_input = CENSUS_KNOWN_GOOD_INPUT
 
     def _run(self, ctx) -> str:
         key = ("census_cache", ctx.input)
@@ -242,13 +239,13 @@ class CensusInputContract(Item):
     id = "census.input_contract"
     title = "the census reads the OT module flags (isPS, isTilted) from its input and refuses an input without them"
     c4_row = "(new, WP-D0a) the census input contract: module flags read, never inferred (canon_v2 refused)"
-    known_bad_desc = "canon_v2 TTbar AAAA file 3, which has no L1TOTStub_isPS / isTilted: the census must refuse it"
+    known_bad_desc = ("the gate input's OT stub table without L1TOTStub_isPS / isTilted (as canon_v2), written to "
+                      "scratch: the census must refuse it")
     rule_desc = ("tp_findability.require_census_inputs accepts the input; on every OT barrel stub of the first 5 events "
                  "isPS == (layer <= 3) and isTilted only on PS modules (D121); KF.ot_variances with the stub's flags "
                  "equals KFParamsComb::matrixV written out independently (pitch and length by isPS, z variance x "
                  "approxB^2 exactly on tilted modules) to 1e-12 relative; identity of the stub counts with the reference")
     trees = (CENSUS_DIR,)
-    known_good_input = CENSUS_KNOWN_GOOD_INPUT
 
     def _stat(self, ctx):
         import awkward as ak
@@ -286,9 +283,18 @@ class CensusInputContract(Item):
         return self._stat(ctx)
 
     def known_bad(self, ctx):
+        import awkward as ak
+        import uproot
+
         from .core import Ctx
 
-        bad = Ctx(input_path=KNOWN_GOOD_INPUT, events=ctx.events, code_root=ctx.code_root, scratch=ctx.scratch)
+        cols = [k for k in ctx.keys() if k.startswith("L1TOTStub_") and k not in
+                ("L1TOTStub_isPS", "L1TOTStub_isTilted")]
+        A = ctx.arrays(cols)
+        path = os.path.join(tempfile.mkdtemp(prefix="spcheck_noflags_", dir=ctx.scratch), "noflags.root")
+        with uproot.recreate(path) as f:
+            f["Events"] = {"L1TOTStub": ak.zip({c[len("L1TOTStub_"):]: A[c] for c in cols})}
+        bad = Ctx(input_path=path, events=ctx.events, code_root=ctx.code_root, scratch=ctx.scratch)
         return self._stat(bad)
 
     def judge(self, stat, ref):

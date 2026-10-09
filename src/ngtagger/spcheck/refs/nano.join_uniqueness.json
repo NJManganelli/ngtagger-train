@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
- "derived": "2026-10-08T23:36:46Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261009T152911Z-gate-v3-derive-21583/copy",
+ "derived": "2026-10-09T15:29:14Z",
  "events": 5,
- "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "nano.join_uniqueness",
- "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "job_id": "20261009T152911Z-gate-v3-derive-21583",
  "known_bad": "one (trackIdx, otStubIdx) link row of L1TTrackStub duplicated in event 0",
  "rule": "zero duplicates and zero out-of-range indices for every gated key; event identities unique; the reported (non-key) counts identical to the reference",
  "stat": {
@@ -57,7 +57,7 @@
     "rows": 4625
    }
   },
-  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
   "reported": {
    "L1ExtPuppiCand(l1TrackIdx>=0)": {
     "duplicates": 1,
