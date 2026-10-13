@@ -880,13 +880,17 @@ def attach_tp_truth(D, TP, names=None):
 # ---- whom a hit is credited to (definition sheet truth.stub; decision 12 = D13 a)
 # An IT cluster is credited to its dominant TP (tpIdx). An OT stub is credited to
 # EVERY TP behind either of its two clusters, as CMSSW's TTStubAssociator fills
-# its TP -> stubs map (TTStubAssociator.cc:72-87): its own tpIdx (set only on a
-# genuine stub) and the dominant TP of each cluster (tpIdxInner, tpIdxOuter). The
-# nano carries one TP per cluster, the largest contributor, where CMSSW credits
-# every contributor, so a minor contributor goes uncredited here
+# its TP -> stubs map (TTStubAssociator.cc:72-88; the CMSSW truth spec, WDMac
+# wpd0a/cmssw_truth_spec.md sec. 2): its own tpIdx, the principal TP, set only on
+# a genuine stub and present in BOTH clusters (occasionally neither cluster's
+# dominant TP), and the dominant TP of each cluster (tpIdxInner, tpIdxOuter: the
+# largest summed TP pT over the cluster's strip simlinks, set for combinatoric
+# clusters too). The nano carries one TP per cluster where CMSSW credits every
+# contributor, so a minor contributor goes uncredited here
 # (eval_refitq/wpd0a/owner_vs_cmssw.py measures what that costs). An unknown stub
-# (no TP in either cluster) is credited to nobody. TRUTH ONLY: none of this may
-# reach the seeding, the follow or the fit.
+# (no TP in either cluster) is credited to nobody. No bunch-crossing or event cut:
+# out-of-time and pile-up TPs are credited like any other. TRUTH ONLY: none of this
+# may reach the seeding, the follow or the fit.
 STUB_TP_COLS = ("tpIdx", "tpIdxInner", "tpIdxOuter")
 N_CREDIT = len(STUB_TP_COLS)
 
@@ -894,8 +898,9 @@ N_CREDIT = len(STUB_TP_COLS)
 def credited_tps(*cols):
     """(n, N_CREDIT) int32: the TPs each object is credited to, from its truth
     columns (an IT cluster's tpIdx; an OT stub's STUB_TP_COLS, in that order).
-    Each matched TP appears once per object; a repeat, an unmatched value
-    (-1 / -2) and an unused slot are -1."""
+    Each matched TP appears once per object; a repeat and an unused slot are -1.
+    Credited: a row of L1TTP (>= 0) and a real TP outside L1TTP (<= -3). Not
+    credited: -1 (no TP) and -2 (truth missing; none in canon_v3)."""
     T = np.full((len(cols[0]), N_CREDIT), -1, np.int32)
     for j, c in enumerate(cols):
         c = np.asarray(c, np.int32)

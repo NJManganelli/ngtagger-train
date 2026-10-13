@@ -1244,8 +1244,9 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     # A WRONG OT STUB IS NOT ONE THING. flg is 1 genuine / 2 combinatoric /
     # 3 unknown from the CMS per-stub flags (see tp_findability._unify), so the
     # three failure modes separate: a genuine stub owned by another particle is
-    # a mis-association, a combinatoric stub not credited to the owner merges
-    # two other particles' clusters, and an unknown stub is noise. A stub
+    # a mis-association, a combinatoric stub (no unique TP in both clusters)
+    # whose clusters' TPs are not the owner is contamination of another kind,
+    # and an unknown stub (no TP in either cluster) is noise. A stub
     # credited to the owner is right whatever its flag: a combinatoric stub with
     # one of the owner's clusters carries its position (format 28; before, every
     # combinatoric stub counted wrong). The four counters below partition n_ot
