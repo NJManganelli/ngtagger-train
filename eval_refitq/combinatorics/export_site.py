@@ -79,15 +79,17 @@ def denominator_coverage(paths, nev, ptmin, edges):
               |stub eta| <= M.ETA_MATCHED (tp_findability._unify)
       all     every SmartPixels layer in the cluster table (IL1-IL4, ID1-ID4) and
               every OT layer (barrel at any |eta|, disks D1-D5).
+    A hit counts for every TP it is credited to, as in the census (M.credited_tps).
     Read from the census's own input files, same events. Returns per-bin counts.
     """
     import awkward as ak
     import uproot
     from ngtagger.data import spix_nano as SPN
     M = TF.M
+    otc = ["layer", "isBarrel", "z", "r", *M.STUB_TP_COLS]
     keys = uproot.open(f"{paths[0]}:Events").keys()
     br = (SPN.cluster_branches(keys, ["surface", "tpIdx"])
-          + SPN.branch_names(keys, SPN.OT_TABLE, ["layer", "isBarrel", "tpIdx", "z", "r"])
+          + SPN.branch_names(keys, SPN.OT_TABLE, otc)
           + SPN.branch_names(keys, SPN.TP_TABLE, ["pt", "eta"]))
     nb = len(edges) - 1
     out = {"census": np.zeros(nb, np.int64), "all": np.zeros(nb, np.int64)}
@@ -98,7 +100,7 @@ def denominator_coverage(paths, nev, ptmin, edges):
                 break
             A = A[:nev - seen]
         J = SPN.cluster_columns(A, ["surface", "tpIdx"])
-        O = SPN.table_columns(A, SPN.OT_TABLE, ["layer", "isBarrel", "tpIdx", "z", "r"])
+        O = SPN.table_columns(A, SPN.OT_TABLE, otc)
         T = SPN.table_columns(A, SPN.TP_TABLE, ["pt", "eta"])
         ntp = ak.to_numpy(ak.num(T["pt"]))
         toff = np.r_[0, np.cumsum(ntp)[:-1]]
@@ -110,16 +112,19 @@ def denominator_coverage(paths, nev, ptmin, edges):
         tpc = ak.to_numpy(ak.flatten(J["tpIdx"])).astype(np.int64)
         lay, ev_o = flat(O["layer"])
         isb = ak.to_numpy(ak.flatten(O["isBarrel"])) > 0
-        tpo = ak.to_numpy(ak.flatten(O["tpIdx"])).astype(np.int64)
+        # one (stub, TP) pair per TP the stub is credited to
+        tpo3 = M.credited_tps(*(ak.to_numpy(ak.flatten(O[c])) for c in M.STUB_TP_COLS))
+        so, sk = np.nonzero(SPN.tp_matched(tpo3))
+        tpo = tpo3[so, sk].astype(np.int64)
         seta = np.abs(np.arcsinh(ak.to_numpy(ak.flatten(O["z"]))
                                  / np.maximum(ak.to_numpy(ak.flatten(O["r"])), 1e-6)))
         surf = surf.astype(np.int64)
         # layer bits: IL1-4 -> 0-3, ID1-4 -> 4-7, OL1-6 -> 8-13, OD1-5 -> 14-18
         code_c = np.where(surf <= 4, surf - 1, 4 + surf - 11)
-        code_o = np.where(isb, 8 + lay.astype(np.int64) - 1, 14 + lay.astype(np.int64) - 1)
-        row = np.r_[toff[ev_c] + tpc, toff[ev_o] + tpo]
+        code_o = np.where(isb, 8 + lay.astype(np.int64) - 1, 14 + lay.astype(np.int64) - 1)[so]
+        row = np.r_[toff[ev_c] + tpc, toff[ev_o[so]] + tpo]
         code = np.r_[code_c, code_o]
-        in_census = np.r_[surf <= 4, isb & (seta <= M.ETA_MATCHED)]
+        in_census = np.r_[surf <= 4, (isb & (seta <= M.ETA_MATCHED))[so]]
         m = np.r_[tpc >= 0, tpo >= 0]
         all_bits = np.zeros(int(ntp.sum()), np.uint32)
         cen_bits = np.zeros(int(ntp.sum()), np.uint32)
@@ -565,6 +570,7 @@ def main():
         c = sum(coverage["census"][i0:i1]) / max(coverage["n_events"], 1)
         t = sum(coverage["all"][i0:i1]) / max(coverage["n_events"], 1)
         print(f"    |eta| {edges[i0]:.1f}-{edges[i1]:.1f}: {c:7.1f} / {t:7.1f}")
+    er = [0.0, ETA_RANGE_LO, float(a.eta_x), ETA_RANGE_HI]
     meta = {
         "built": time.strftime("%Y-%m-%d %H:%M:%S"),
         "n_events": C["n_events"],
@@ -620,10 +626,14 @@ def main():
         "angle_res": C["angle_res"],
         # how a projection picked one hit among its candidates (M.POS_ARB)
         "pos_arb": C["pos_arb"],
-        "eta_ranges": {"edges": [0.0, ETA_RANGE_LO, float(a.eta_x), ETA_RANGE_HI],
-                       "x": float(a.eta_x)},
+        # each range's label (definition sheet census.ot_truncated): "OT truncated"
+        # where it reaches into M.OT_TRUNCATED_ETA
+        "eta_ranges": {"edges": er, "x": float(a.eta_x),
+                       "labels": [TF.M.eta_range_label(lo, hi) for lo, hi in zip(er[:-1], er[1:])]},
         "acceptance": {"eta_max": float(TF.M.ETA_MATCHED),
-                       "text": ACCEPTANCE_TEXT.format(eta=TF.M.ETA_MATCHED)},
+                       "text": ACCEPTANCE_TEXT.format(eta=TF.M.ETA_MATCHED),
+                       "ot_truncated": {"abs_eta": list(TF.M.OT_TRUNCATED_ETA),
+                                        "label": TF.M.OT_TRUNCATED_LABEL}},
         # SEEDS FORMED per entry and |eta| bin (the funnel's seed_objects),
         # summed over the census events; the seed's |eta| is asinh of its pair
         # cot. Formation is the seed's, so a seed's entries carry equal counts.

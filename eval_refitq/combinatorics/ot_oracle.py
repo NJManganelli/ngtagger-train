@@ -35,7 +35,7 @@ TRK = ["pt", "eta", "phi", "d0", "z0", "rInv", "tanL", "nStubs", "chi2XYRed",
        "tp_z0", "tp_charge", "tp_vx", "tp_vy", "tp_vz"]
 TST = ["layer", "isBarrel", "trackIdx", "detId", "x", "y", "z", "r", "phi", "bend"]
 OTS = ["layer", "isBarrel", "detId", "x", "y", "z", "bend", "tpIdx", "tpPt",
-       "tpGenuine", "tpCombinatoric", "tpUnknown"]
+       "tpGenuine", "tpCombinatoric", "tpUnknown", "tpIdxInner", "tpIdxOuter"]
 OT_LINK = "otStubIdx"      # track-stub table -> L1TOTStub row (current nanos)
 
 
@@ -99,6 +99,16 @@ def exact_stub_rows(S, O):
 def stub_truth(S, O):
     """(tpIdx, flag, matched) of every track stub, exact via otStubIdx. Aligned to S."""
     return _truth_of_rows(O, exact_stub_rows(S, O))
+
+
+def stub_credited(S, O):
+    """(n, M.N_CREDIT) TPs every track stub is credited to (M.credited_tps: its
+    tpIdx and its clusters' owners), exact via otStubIdx; -1 where the join
+    failed. Aligned to S."""
+    src = exact_stub_rows(S, O)
+    r = np.where(src >= 0, src, 0)
+    T = M.credited_tps(*(O[c][r] for c in M.STUB_TP_COLS))
+    return np.where((src >= 0)[:, None], T, -1)
 
 
 def main():

@@ -4,7 +4,8 @@ configurations (M.ANGLE_STAGES, the resolution knob) side by side.
 Each census is read with its tracks; per build (the census's "builds"):
 
   efficiency   over the site's denominator: TPs with >= 4 layers hit (any of
-               IL1-IL4, OL1-OL6) and the stated true pT / |eta| range, split
+               IL1-IL4, OL1-OL6) and the stated true pT / |eta| range (ETA_RANGES,
+               each with its OT-truncated label), split
                prompt / displaced at |true d0| = 200 um (the site's D0_SPLIT_CM),
                the displaced split again at 1 mm: "hf" 0.2-1 mm (heavy flavour),
                "ll" > 1 mm (long-lived).
@@ -44,7 +45,10 @@ D0_SPLIT_CM = 0.02
 # the displaced split further: heavy flavour (0.2-1 mm, M.TRIPLET_D0_MAX_CM) and
 # long-lived (> 1 mm)
 HF_D0_MAX_CM = M.TRIPLET_D0_MAX_CM
-ETA_RANGES = {"c": (0.0, 1.1), "f": (1.1, 1.8)}
+# |eta| ranges: the site's < 1.1 ("c") and 1.1-1.8 ("f"), and the headline < 0.9
+# ("h") clear of the OT-truncated region; each range's label (definition sheet
+# census.ot_truncated, M.eta_range_label) travels with the output
+ETA_RANGES = {"c": (0.0, 1.1), "f": (1.1, 1.8), "h": (0.0, 0.9)}
 
 
 def _rs(x):
@@ -181,7 +185,10 @@ def main():
         nev = C["n_events"]
         r = {"pos_arb": C["pos_arb"],
              "angles": C["angle_use"].key(), "angle_res": C["angle_res"],
-             "label": C["angle_use"].label(), "n_events": nev, "builds": {}}
+             "label": C["angle_use"].label(), "n_events": nev,
+             "eta_ranges": {k: {"abs_eta": list(v), "label": M.eta_range_label(*v)}
+                            for k, v in ETA_RANGES.items()},
+             "builds": {}}
         if C["angle_res_caveat"]:
             # a k < 1 census: its numbers travel with the caveat
             r["angle_res_caveat"] = C["angle_res_caveat"]

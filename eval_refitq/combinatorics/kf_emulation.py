@@ -853,11 +853,9 @@ def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
     # ownership, per hit, against the same majority owner the residuals use
     G = T["GIDX"]
     on = G >= 0
-    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
-    own, _ = majority_owner(tp_of, on)
-    owned = SPN.tp_matched(own)[:, None]
-    wrong = on & (tp_of != own[:, None]) | ~owned
-    n_wrong = (on & ~((tp_of == own[:, None]) & owned)).sum(axis=1)
+    own, _, owned, right = credited_owner(M.hit_tps(U, G), on)
+    wrong = (on & ~right) | ~owned[:, None]
+    n_wrong = (on & ~right).sum(axis=1)
     ti, li = np.nonzero(use)
     if not len(ti):
         return np.zeros((0, len(ANGLE_COLS)), np.float32)
@@ -920,8 +918,8 @@ def rank_score(fit, chi2s, w_angle=0.0):
 def truth_residuals(U, trip, fit, TP):
     """(dkappa, dd0, dcot, dz0, mask) against the TrackingParticle truth."""
     ga, gb, gc = trip
-    ta = U["tpIdx"][ga]
-    real = SPN.tp_matched(ta) & (ta == U["tpIdx"][gb]) & (ta == U["tpIdx"][gc]) & fit["ok"]
+    ta, real = M.seed_tp(U, ga, gb, gc)       # the TP every seed hit is credited to
+    real &= fit["ok"]
     p, has = tp_truth_rows(TP, U["event"][ga], ta)
     real &= has
     if not real.any():
@@ -975,25 +973,36 @@ def majority_owner(tp, valid):
     return np.where(best_n > 0, best_v, -1), best_n
 
 
+def credited_owner(tps, on):
+    """(own, n_own, owned, right) of tracks whose hits are credited to `tps`
+    (track x hit slot x M.N_CREDIT, as M.hit_tps; -1 = none) where `on`.
+
+    THE CENSUS OWNER UNDER THE STUB CREDIT (definition sheet truth.census_owner):
+    each hit votes once for every TP it is credited to, so an OT stub votes for
+    the TPs behind both of its clusters; majority_owner picks the winner (ties
+    to the larger index, unmatched never wins). n_own counts the hits crediting
+    the owner; `right` marks them (False everywhere on a track without owner).
+    """
+    n = tps.shape[-1]
+    own, n_own = majority_owner(tps.reshape(len(tps), -1), np.repeat(on, n, axis=1))
+    owned = SPN.tp_matched(own)
+    right = on & owned[:, None] & (tps == own[:, None, None]).any(axis=-1)
+    return own, n_own, owned, right
+
+
 def tp_truth_table(U):
     """Per-TrackingParticle truth helix, keyed and sorted for searchsorted.
 
-    One entry per TP with a hit in U and an L1TTP row (tpIdx >= 0; charged, |p| > 1 GeV),
-    read from the per-hit L1TTP join (M.attach_tp_truth) and so the same for IT
-    and OT hits. phi0, d0 [cm], z0 [cm] and cot = tanL are at the POCA to the
+    One entry per L1TTP row of the chunk (charged, |p| > 1 GeV; U["l1ttp"],
+    M.tp_table), so a TP credited only through an OT stub's cluster has its
+    truth too. phi0, d0 [cm], z0 [cm] and cot = tanL are at the POCA to the
     beamline, the perigee this fit's phi(r) = phi0 - d0/r - c*kappa*r uses.
     kappa is UNSIGNED 1/pT [1/GeV]: every consumer compares it with |fitted
     kappa|, so a fit with the wrong charge is scored on curvature magnitude only.
     """
-    m = (U["tpIdx"] >= 0) & np.isfinite(U["tp_pt"])
-    k = M.tp_key(U["event"][m], U["tpIdx"][m])
-    o = np.argsort(k, kind="stable")
-    k = k[o]
-    f = np.r_[True, k[1:] != k[:-1]] if len(k) else np.zeros(0, bool)
-    sel = np.flatnonzero(m)[o][f]
-    return {"key": k[f], "kappa": 1.0 / U["tp_pt"][sel],
-            "d0": U["tp_d0"][sel], "phi0": U["tp_phi0"][sel],
-            "cot": U["tp_tanL"][sel], "z0": U["tp_z0"][sel]}
+    L = U["l1ttp"]
+    return {"key": L["key"], "kappa": 1.0 / L["pt"], "d0": L["d0"],
+            "phi0": L["phi0"], "cot": L["tanL"], "z0": L["z0"]}
 
 
 def tp_truth_rows(TP, event, tpidx):
@@ -1230,18 +1239,18 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     ga = trip[0]
     G = T["GIDX"]
     on = G >= 0
-    tp_of = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -1)
-    own, n_own = majority_owner(tp_of, on)
-    owned = SPN.tp_matched(own)
-    right = on & (tp_of == own[:, None]) & owned[:, None]
+    own, n_own, owned, right = credited_owner(M.hit_tps(U, G), on)
     n_wrong = (on & ~right).sum(axis=1).astype(np.float64)
     # A WRONG OT STUB IS NOT ONE THING. flg is 1 genuine / 2 combinatoric /
     # 3 unknown from the CMS per-stub flags (see tp_findability._unify), so the
     # three failure modes separate: a genuine stub owned by another particle is
-    # a mis-association, a combinatoric stub is this particle's cluster merged
-    # with another's and still carries usable position, and an unknown stub is
-    # noise. The four counters below partition n_ot exactly, and their non-right
-    # members plus n_it_wrong reproduce n_wrong -- asserted below on real data.
+    # a mis-association, a combinatoric stub not credited to the owner merges
+    # two other particles' clusters, and an unknown stub is noise. A stub
+    # credited to the owner is right whatever its flag: a combinatoric stub with
+    # one of the owner's clusters carries its position (format 28; before, every
+    # combinatoric stub counted wrong). The four counters below partition n_ot
+    # exactly, and their non-right members plus n_it_wrong reproduce n_wrong --
+    # asserted below on real data.
     flg = np.where(on, U["ot_flag"][np.clip(G, 0, None)], 0)
     ot_gen = is_ot & (flg == 1)
     # an owner outside L1TTP (tpIdx <= -3: neutral or |p| <= 1 GeV) has no
@@ -1282,13 +1291,15 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
         # per-system counts explain 80%
         "n_it_right": (is_it & right).sum(axis=1).astype(np.float64),
         "n_it_wrong": (is_it & ~right).sum(axis=1).astype(np.float64),
-        "n_ot_right": (ot_gen & right).sum(axis=1).astype(np.float64),
+        "n_ot_right": (is_ot & right).sum(axis=1).astype(np.float64),
         "n_ot_wrong": (ot_gen & ~right).sum(axis=1).astype(np.float64),
-        "n_ot_combinatoric": (is_ot & (flg == 2)).sum(axis=1).astype(np.float64),
+        "n_ot_combinatoric": (is_ot & (flg == 2) & ~right).sum(axis=1).astype(np.float64),
         "n_ot_unknown": (is_ot & (flg == 3)).sum(axis=1).astype(np.float64),
-        # 0 when the seed cluster belongs to a TP other than the owner, which
-        # is what the seed-referenced convention used to hide
-        "own_is_seed": (own == U["tpIdx"][ga]).astype(np.float64),
+        # 0 when the seed's first hit is not credited to the owner, which is
+        # what the seed-referenced convention used to hide; on a track without
+        # owner, 1 when that hit is credited to nobody either
+        "own_is_seed": np.where(owned, (U["tps"][ga] == own[:, None]).any(axis=1),
+                                ~SPN.tp_matched(U["tps"][ga]).any(axis=1)).astype(np.float64),
         # THE EXACT OWNER IDENTITY, and the reason it is stored as a bare tpIdx
         # rather than read off tp_key: the packed key needs 32 bits, these rows
         # are float32, and keys a few hundred apart collapse onto one value.

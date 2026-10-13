@@ -63,6 +63,22 @@ THETA_MS_MRAD = 1.36             # per ~1% X0 layer at 1 GeV  [ASSUMED]
 ETA_MATCHED = 1.4
 PT_MINS = (2.0, 1.5, 1.0)
 
+# THE OT-TRUNCATED REGION (definition sheet census.ot_truncated; decision 12 =
+# D13 b). The census reads OT barrel stubs only, up to |stub eta| ETA_MATCHED,
+# and the OT barrel layers end between |eta| 0.94 (the outermost) and 1.31 (the
+# innermost): above 0.94 a particle leaves part of its OT hits on the disks the
+# census does not read. Every census figure whose |eta| range reaches into this
+# region carries the label, until the disc work.
+OT_TRUNCATED_ETA = (0.94, ETA_MATCHED)
+OT_TRUNCATED_LABEL = "OT truncated"
+
+
+def eta_range_label(lo, hi):
+    """OT_TRUNCATED_LABEL when the |eta| range [lo, hi) overlaps OT_TRUNCATED_ETA,
+    else ''."""
+    return OT_TRUNCATED_LABEL if lo < OT_TRUNCATED_ETA[1] and hi > OT_TRUNCATED_ETA[0] else ""
+
+
 # ---- prompt d0 allowance -----------------------------------------------------
 # The pair phi window must admit a track whose production point is NOT on the
 # beamline: a d0 displaces the azimuth by ~d0/r, worst at the innermost layer.
@@ -859,6 +875,62 @@ def attach_tp_truth(D, TP, names=None):
         D[nm] = (np.where(hit, TP[TP_TRUTH[nm]][p], nan) if len(TP["key"])
                  else np.full(len(D["tpIdx"]), nan))
     return D
+
+
+# ---- whom a hit is credited to (definition sheet truth.stub; decision 12 = D13 a)
+# An IT cluster is credited to its dominant TP (tpIdx). An OT stub is credited to
+# EVERY TP behind either of its two clusters, as CMSSW's TTStubAssociator fills
+# its TP -> stubs map (TTStubAssociator.cc:72-87): its own tpIdx (set only on a
+# genuine stub) and the dominant TP of each cluster (tpIdxInner, tpIdxOuter). The
+# nano carries one TP per cluster, the largest contributor, where CMSSW credits
+# every contributor, so a minor contributor goes uncredited here
+# (eval_refitq/wpd0a/owner_vs_cmssw.py measures what that costs). An unknown stub
+# (no TP in either cluster) is credited to nobody. TRUTH ONLY: none of this may
+# reach the seeding, the follow or the fit.
+STUB_TP_COLS = ("tpIdx", "tpIdxInner", "tpIdxOuter")
+N_CREDIT = len(STUB_TP_COLS)
+
+
+def credited_tps(*cols):
+    """(n, N_CREDIT) int32: the TPs each object is credited to, from its truth
+    columns (an IT cluster's tpIdx; an OT stub's STUB_TP_COLS, in that order).
+    Each matched TP appears once per object; a repeat, an unmatched value
+    (-1 / -2) and an unused slot are -1."""
+    T = np.full((len(cols[0]), N_CREDIT), -1, np.int32)
+    for j, c in enumerate(cols):
+        c = np.asarray(c, np.int32)
+        keep = SPN.tp_matched(c)
+        if j:
+            keep &= ~(T[:, :j] == c[:, None]).any(axis=1)
+        T[:, j] = np.where(keep, c, -1)
+    return T
+
+
+def hit_tps(U, G):
+    """G.shape + (N_CREDIT,): the TPs each hit index of G is credited to (U["tps"],
+    built by credited_tps); -1 throughout where G < 0 (no hit)."""
+    G = np.asarray(G)
+    return np.where((G >= 0)[..., None], U["tps"][np.clip(G, 0, None)], -1)
+
+
+def seed_credit(U, ga, gb, gc=None):
+    """(n, N_CREDIT) bool over U["tps"][ga]: that TP is credited by every hit of
+    the seed (A, B and C when given), the seed-truthful rule (truth.seed_truthful)."""
+    A = U["tps"][ga]
+    ok = SPN.tp_matched(A)
+    for g in (gb, gc):
+        if g is not None:
+            ok &= (A[:, :, None] == U["tps"][g][:, None, :]).any(axis=2)
+    return ok
+
+
+def seed_tp(U, ga, gb, gc=None):
+    """(tp, truthful) per seed: the TP every seed hit is credited to, -1 if none;
+    where several are, the largest index (the majority owner's tie rule)."""
+    ok = seed_credit(U, ga, gb, gc)
+    v = np.where(ok, U["tps"][ga].astype(np.int64), np.iinfo(np.int64).min).max(axis=1)
+    real = ok.any(axis=1)
+    return np.where(real, v, -1), real
 
 
 # THE COMBINED IT+OT HIT CODE SPACE of these studies: 1-4 = IL1-IL4 and

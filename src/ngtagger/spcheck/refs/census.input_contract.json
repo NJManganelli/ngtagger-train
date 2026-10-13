@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261009T152911Z-gate-v3-derive-21583/copy",
- "derived": "2026-10-09T15:30:13Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261013T111456Z-wpd0a-gate28-derive-79448/copy",
+ "derived": "2026-10-13T11:16:01Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "census.input_contract",
- "job_id": "20261009T152911Z-gate-v3-derive-21583",
+ "job_id": "20261013T111456Z-wpd0a-gate28-derive-79448",
  "known_bad": "the gate input's OT stub table without L1TOTStub_isPS / isTilted (as canon_v2), written to scratch: the census must refuse it",
  "rule": "tp_findability.require_census_inputs accepts the input; on every OT barrel stub of the first 5 events isPS == (layer <= 3) and isTilted only on PS modules (D121); KF.ot_variances with the stub's flags equals KFParamsComb::matrixV written out independently (pitch and length by isPS, z variance x approxB^2 exactly on tilted modules) to 1e-12 relative; identity of the stub counts with the reference",
  "stat": {

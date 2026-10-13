@@ -1,8 +1,9 @@
 """Per-TrackingParticle findability census, built in event chunks and cached.
 
-WHAT THIS PRODUCES. One entry for EVERY TrackingParticle that left at least one
-SmartPixels cluster or OT stub -- 9.52 million of them in the 1000-event PU200
-ttbar set, 9,515 per event -- carrying
+WHAT THIS PRODUCES. One entry for EVERY TrackingParticle credited with at least
+one SmartPixels cluster or OT stub (M.credited_tps: a cluster's dominant TP, every
+TP behind a stub's two clusters) -- 9.52 million of them in the 1000-event PU200
+ttbar set before the stub credit (format < 28), 9,515 per event -- carrying
 
     key            M.tp_key(event, tpIdx), globally unique across the input set
     pt eta phi     TP truth kinematics; phi [rad] is the azimuth at PRODUCTION
@@ -30,7 +31,7 @@ sigma) and the per-layer median radius (which picks each doublet's adjacent
 target layers). Both are measured ONCE on a calibration pass and written into
 the cache manifest, so every chunk and every later run sees the same numbers.
 
-TRUTH KINEMATICS COME FROM THE L1TTP TABLE, read from the hit's tpIdx row for IT
+TRUTH KINEMATICS COME FROM THE L1TTP TABLE, read from the TP's row for IT
 clusters and OT stubs alike. L1TTP holds charged TPs with |p| > 1 GeV only (older
 nanos pT >= 1 GeV), so a TP outside it (tpIdx <= -3, matched but not written) has
 pT (the hit's own tpPt) and hit pattern but NaN kinematics. So
@@ -60,9 +61,12 @@ ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
 # because tpIdx = -1 cannot distinguish a merged cluster from noise. bend is the
 # stub's own curvature estimate, which the seed and projection gates want and
 # could not use while it was not loaded at all. isPS / isTilted are the module
-# flags the KF variance reads (OT_MODULE_FLAGS).
+# flags the KF variance reads (OT_MODULE_FLAGS); tpIdxInner / tpIdxOuter the
+# owners of the stub's two clusters, which the stub is credited to as well
+# (M.STUB_TP_COLS).
 OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
-           "tpGenuine", "tpCombinatoric", "tpUnknown", "bend", "isPS", "isTilted"]
+           "tpGenuine", "tpCombinatoric", "tpUnknown", "bend", "isPS", "isTilted",
+           "tpIdxInner", "tpIdxOuter"]
 
 # THE INPUT CONTRACT (format 27). Every census input carries the module flags
 # the L1 track finder attaches to a stub, L1TOTStub_isPS (PS vs 2S module) and
@@ -70,12 +74,19 @@ OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
 # are: never inferred from the detId, the layer or the stub's (r, z). canon_v2
 # predates them and is refused (require_census_inputs) -- here, in the census,
 # and not in the shared loader ngtagger.data.spix_nano, which still serves
-# canon_v2 to every other tool.
+# canon_v2 to every other tool. Since format 28 the contract also names the
+# owners of the stub's clusters (the stub truth, M.STUB_TP_COLS).
 OT_MODULE_FLAGS = ("isPS", "isTilted")
+OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 27   # 27: the OT module flags from the input (OT_MODULE_FLAGS):
+FORMAT_VERSION = 28   # 28: an OT stub is credited to every TP behind its clusters
+                      # (M.credited_tps; definition sheet v2 truth.stub): census
+                      # entries and hit patterns, the seed-truthful bitmaps and
+                      # trip_true, the owners and every truth column; tracks,
+                      # counts and costs bit-identical to 27.
+                      # 27: the OT module flags from the input (OT_MODULE_FLAGS):
                       # the KF's PS/2S pitch and length and its tilted-module z
                       # variance (approxB^2 exactly on isTilted stubs, where
                       # format 26 took max(1, approxB) on every PS stub);
@@ -202,17 +213,18 @@ def cache_key(manifest, cfg):
 
 def require_census_inputs(paths):
     """SystemExit naming the first input that breaks the input contract: an OT
-    stub table without the module flags (OT_MODULE_FLAGS), e.g. canon_v2."""
+    stub table without the module flags or the cluster owners (OT_REQUIRED),
+    e.g. canon_v2."""
     for p in paths:
         keys = set(uproot.open(f"{p}:Events").keys())
-        miss = [f"{M.OT_TABLE}_{c}" for c in OT_MODULE_FLAGS
+        miss = [f"{M.OT_TABLE}_{c}" for c in OT_REQUIRED
                 if not SPN.has_column(keys, M.OT_TABLE, c)]
         if miss:
             raise SystemExit(
                 f"{p} lacks {', '.join(miss)}: the census (format {FORMAT_VERSION}) "
-                f"reads the OT module flags from its input and never infers them "
-                f"(no detId, layer or (r, z) fallback). canon_v2 predates the "
-                f"flags; run the census on canon_v3.")
+                f"reads the OT module flags and the owners of each stub's clusters "
+                f"from its input and never infers them (no detId, layer or (r, z) "
+                f"fallback). canon_v2 predates the flags; run the census on canon_v3.")
 
 
 # ==========================================================================
@@ -467,7 +479,10 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, res=None):
                                       for c in ref_cols})
                if improve else None)
         U, Q = _unify(I, O, sigz_ot, bench, res, ref)
-        M.attach_tp_truth(U, M.tp_table(A, ev))
+        # the chunk's L1TTP rows travel with U: a TP credited only through a
+        # stub's cluster (U["tps"]) has no hit carrying its truth columns
+        U["l1ttp"] = M.tp_table(A, ev)
+        M.attach_tp_truth(U, U["l1ttp"])
         yield (U, Q), ev
         del A, I, O, U, Q
 
@@ -552,6 +567,10 @@ def _unify(I, O, sigz_ot, bench=None, res=None, ref=None):
          # variance from pitch and scattering instead, so this is never read there
          "sigX": np.r_[I["sigX"], sig],
          "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][bar]],
+         # TRUTH: every TP each hit is credited to (M.credited_tps): an IT
+         # cluster's dominant TP; an OT stub's own tpIdx and its clusters' owners
+         "tps": np.r_[M.credited_tps(I["tpIdx"]),
+                      M.credited_tps(*(O[c][bar] for c in M.STUB_TP_COLS))],
          "tpPt": np.r_[I["tpPt"], O["tpPt"][bar]],
          # 0 on every IT cluster: the code is only defined for an OT stub, and
          # track_rows gates on is_ot before reading it
@@ -579,43 +598,59 @@ def _unify(I, O, sigz_ot, bench=None, res=None, ref=None):
 # per-chunk census
 # ==========================================================================
 def chunk_census(U):
-    """One entry per TP with >= 1 hit in this chunk, plus its hit pattern.
+    """One entry per TP credited with >= 1 hit in this chunk (U["tps"]: an IT
+    cluster's dominant TP, every TP behind an OT stub's clusters), plus its hit
+    pattern.
 
-    Kinematics are the L1TTP truth every hit of the TP carries identically
-    (M.attach_tp_truth); NaN for TPs not in L1TTP (tpIdx <= -3: neutral or
-    below the L1TTP momentum cut).
+    Kinematics are the TP's L1TTP truth (M.attach_tp_truth); NaN for TPs not in
+    L1TTP (tpIdx <= -3: neutral or below the L1TTP momentum cut). They are read
+    from a hit whose OWN tpIdx is the TP where there is one (pt is then that
+    hit's tpPt, defined outside L1TTP too); a TP credited only through a stub's
+    cluster takes its L1TTP row (pt NaN outside L1TTP).
     """
-    m = SPN.tp_matched(U["tpIdx"])
-    if not m.any():
+    T = U["tps"]
+    hi, sl = np.nonzero(SPN.tp_matched(T))
+    if not len(hi):
         z = np.zeros(0)
         return {"key": z.astype(np.int64), "event": z.astype(np.int32),
                 "pt": z.astype(np.float32), "eta": z.astype(np.float32),
                 "phi": z.astype(np.float32), "d0": z.astype(np.float32),
                 "z0": z.astype(np.float32), "vr": z.astype(np.float32),
                 "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8)}
-    gi = np.flatnonzero(m)
-    key = M.tp_key(U["event"][gi], U["tpIdx"][gi])
-    lay = U["layer"][gi]
-    order = np.argsort(key, kind="stable")
-    key_s, gi_s = key[order], gi[order]
+    key = M.tp_key(U["event"][hi], T[hi, sl])
+    # per TP: hits on which it is the hit's own tpIdx (slot 0) first, each group
+    # in hit order, so a TP some hit owns is represented by the first such hit
+    order = np.lexsort((hi, sl > 0, key))
+    key_s, hi_s, sl_s = key[order], hi[order], sl[order]
     first = np.r_[True, key_s[1:] != key_s[:-1]]
     uk = key_s[first]
-    rep = gi_s[first]
-    pos = np.cumsum(first) - 1                # entry index of every hit
+    rep = hi_s[first]
+    own = sl_s[first] == 0                  # the representative hit's own TP
+    pos = np.cumsum(first) - 1                # entry index of every credit
     hit_it = np.zeros(len(uk), np.uint8)
     hit_ot = np.zeros(len(uk), np.uint8)
-    ls = lay[order]
+    ls = U["layer"][hi_s]
     it = ls <= 4
     np.bitwise_or.at(hit_it, pos[it], (1 << (ls[it] - 1)).astype(np.uint8))
     np.bitwise_or.at(hit_ot, pos[~it], (1 << (ls[~it] - 11)).astype(np.uint8))
+    L = U["l1ttp"]
+    p, row = M.tp_rows(L, U["event"][rep], T[rep, sl_s[first]])
+    nan = np.float32(np.nan)
+
+    def kin(*pairs):
+        """(hit column, L1TTP column) pairs -> one float32 column per pair."""
+        out = []
+        for hc, lc in pairs:
+            lv = np.where(row, L[lc][p], nan) if len(L["key"]) else np.full(len(uk), nan)
+            out.append(np.where(own, U[hc][rep], lv).astype(np.float32))
+        return out
+    pt, eta, phi, d0, z0, vx, vy = kin(("tpPt", "pt"), ("tp_eta", "eta"),
+                                       ("tp_phi_prod", "phi"), ("tp_d0", "d0"),
+                                       ("tp_z0", "z0"), ("tp_vx", "vx"), ("tp_vy", "vy"))
     return {"key": uk.astype(np.int64),
             "event": M.tp_key_parts(uk)[0].astype(np.int32),
-            "pt": U["tpPt"][rep].astype(np.float32),
-            "eta": U["tp_eta"][rep].astype(np.float32),
-            "phi": U["tp_phi_prod"][rep].astype(np.float32),
-            "d0": U["tp_d0"][rep].astype(np.float32),
-            "z0": U["tp_z0"][rep].astype(np.float32),
-            "vr": np.hypot(U["tp_vx"][rep], U["tp_vy"][rep]).astype(np.float32),
+            "pt": pt, "eta": eta, "phi": phi, "d0": d0, "z0": z0,
+            "vr": np.hypot(vx, vy).astype(np.float32),
             "hit_it": hit_it, "hit_ot": hit_ot}
 
 
@@ -764,10 +799,8 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         gck = o_keep.get("_gC")
         tripk = (o_keep["_gA"], o_keep["_gB"],
                  gck if gck is not None else o_keep["_gB"])
-        ta = U["tpIdx"][o_keep["_gA"]]
-        real = SPN.tp_matched(ta) & (ta == U["tpIdx"][o_keep["_gB"]])
-        if gck is not None:
-            real &= ta == U["tpIdx"][gck]
+        # seed-truthful: one TP credited by every seed hit (M.seed_tp)
+        real = M.seed_tp(U, *tripk)[1]
         base.update({
             "fit": float(o_keep["tracks_to_fit"]),
             "found_standalone": float(len(rk0)),
@@ -777,7 +810,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
             "nlayer_sum": float((sd.arity + o_keep["_nconf"]).sum()),
             # NOT comparable across arity: a doublet is credited when its two
             # seed clusters share a TP, a triplet when all three do.
-            "trip": float(len(ta)), "trip_true": float(real.sum())})
+            "trip": float(len(real)), "trip_true": float(real.sum())})
         counters[s_i] = base
         rng = entry_rng(ci, sd)
         idx = np.flatnonzero(real)

@@ -26,7 +26,7 @@ import tracklet_topology_cost as M      # noqa: E402
 import kf_emulation as KF               # noqa: E402
 import tp_findability as TF             # noqa: E402
 import seed_arity as SA                 # noqa: E402
-from ot_oracle import load, stub_truth   # noqa: E402
+from ot_oracle import load, stub_truth, stub_credited   # noqa: E402
 
 # THE TP LINK. Both baselines carry, per track, its majority owner's row in the
 # site's own TP census (tp_row) and how many of its hits that owner holds
@@ -90,7 +90,7 @@ EXTRA_CMSSW = ("genuine", "combinatoric", "unknown", "trkMVA1")
 
 def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
     T, S, O = load(spec, nev)
-    tpidx, flag, hit = stub_truth(S, O)
+    _, flag, hit = stub_truth(S, O)
     bar = S["isBarrel"] > 0
     frac = float(hit[bar].mean()) if bar.any() else 0.0
     print(f"  stub truth join (otStubIdx): {100 * frac:.2f}% of barrel track stubs matched")
@@ -107,26 +107,29 @@ def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
     nst = np.zeros(ntrk, np.int32)
     np.add.at(nst, gid[ok], 1)
 
-    # majority owner over the track's genuine stubs -- the same rule
-    # KF.track_rows applies, so "wrong" means the same thing on both sides
-    gen = ok & (flag == 1) & M.SPN.tp_matched(tpidx)
-    owner = np.full(ntrk, -1, np.int64)
-    order = np.lexsort((tpidx[gen], gid[gen]))
-    g_s, t_s = gid[gen][order], tpidx[gen][order]
-    if len(g_s):
-        new = np.r_[True, (g_s[1:] != g_s[:-1]) | (t_s[1:] != t_s[:-1])]
-        st = np.flatnonzero(new)
-        cnt = np.diff(np.r_[st, len(g_s)])
-        best = np.zeros(ntrk, np.int32)
-        for g_, t_, c_ in zip(g_s[st], t_s[st], cnt):
-            if c_ > best[g_]:
-                best[g_], owner[g_] = c_, t_
-    right = gen & (tpidx == owner[gid])
+    # the census owner over the track's barrel stubs, each voting for every TP
+    # it is credited to (KF.credited_owner, M.credited_tps) -- the rule
+    # KF.track_rows applies, so "wrong" means the same thing on both sides.
+    # The stubs go into a track x stub-slot table, as the census's hit table.
+    so = np.flatnonzero(ok)[np.argsort(gid[ok], kind="stable")]
+    gs = gid[so]
+    slot = np.arange(len(gs)) - np.searchsorted(gs, gs, side="left")
+    width = int(slot.max()) + 1 if len(gs) else 1
+    tps = np.full((ntrk, width, M.N_CREDIT), -1, np.int32)
+    on = np.zeros((ntrk, width), bool)
+    tps[gs, slot] = stub_credited(S, O)[so]
+    on[gs, slot] = True
+    owner, _, _, right_ts = KF.credited_owner(tps, on)
+    right = np.zeros(len(gid), bool)
+    right[so] = right_ts[gs, slot]
+    gen = ok & (flag == 1)
 
     def per_track(mask):
         v = np.zeros(ntrk, np.float32); np.add.at(v, gid[mask], 1); return v
-    n_r, n_w = per_track(right), per_track(gen & ~right)
-    n_c, n_u = per_track(ok & (flag == 2)), per_track(ok & (flag == 3))
+    # the partition of KF.track_rows: right (any flag), wrong genuine, wrong
+    # combinatoric, unknown
+    n_r, n_w = per_track(ok & right), per_track(gen & ~right)
+    n_c, n_u = per_track(ok & (flag == 2) & ~right), per_track(ok & (flag == 3))
 
     sel = (T["pt"] >= ptmin) & (np.abs(T["eta"]) <= eta_max) & (nst >= 4)
     # tp_d0 carries +-999 cm sentinels for unmatched tracks
@@ -174,8 +177,8 @@ def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
                                  f"track with pT >= {ptmin} (any stubs, barrel or disk) "
                                  f"against the tracks this block keeps"}}
     if tp_keys is not None:
-        # owner = majority owner over the track's genuine stubs, as above; its
-        # stubs are the track's owned hits (no IT hits on a baseline)
+        # owner = the census owner over the track's stubs, as above; the stubs
+        # crediting it are the track's owned hits (no IT hits on a baseline)
         d["n_own"] = n_r
         d["tp_row"] = link_tp_rows(T["event"], owner, tp_keys).astype(np.float32)
         info["tp_link_agreement"] = check_tp_link(

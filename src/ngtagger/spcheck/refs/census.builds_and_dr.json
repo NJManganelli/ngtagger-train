@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261009T152911Z-gate-v3-derive-21583/copy",
- "derived": "2026-10-09T15:30:13Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261013T111456Z-wpd0a-gate28-derive-79448/copy",
+ "derived": "2026-10-13T11:16:01Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "census.builds_and_dr",
- "job_id": "20261009T152911Z-gate-v3-derive-21583",
+ "job_id": "20261013T111456Z-wpd0a-gate28-derive-79448",
  "known_bad": "the same census output with one AAAI track's hit moved onto IL4 (another build's surface), one DR group spanning both builds, and one n_own set beyond nhit",
  "rule": "on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; identity of the counts with the reference",
  "stat": {

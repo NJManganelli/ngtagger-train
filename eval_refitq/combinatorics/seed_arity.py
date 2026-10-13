@@ -51,7 +51,6 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
-from ngtagger.data import spix_nano as SPN   # noqa: E402
 
 IL = (1, 2, 3, 4)
 OT_BARREL = (11, 12, 13, 14, 15, 16)
@@ -434,19 +433,18 @@ def filter_tracks(out, keep):
 def recovered_keys(U, out):
     """TPs recovered by a seed, requiring the SEED's own layers to be truthful.
 
-    A track is credited when every seed layer belongs to the same
-    TrackingParticle. Confirmations on projected layers are what the 4-layer
+    A track is credited to a TrackingParticle when every seed hit is credited
+    to it (M.seed_credit; an OT stub to every TP behind its clusters), to each
+    such TP. Confirmations on projected layers are what the 4-layer
     rule already counted; demanding they be truthful too would measure a
     different thing -- purity of the whole track rather than of the seed.
     """
-    ga, gb = out["_gA"], out["_gB"]
-    ta = U["tpIdx"][ga]
-    real = SPN.tp_matched(ta) & (ta == U["tpIdx"][gb])
-    if out.get("_gC") is not None:
-        real &= ta == U["tpIdx"][out["_gC"]]
-    if not real.any():
+    ga = out["_gA"]
+    ok = M.seed_credit(U, ga, out["_gB"], out.get("_gC"))
+    if not ok.any():
         return np.empty(0, np.int64)
-    return np.unique(M.tp_key(U["event"][ga][real], ta[real]))
+    r, s = np.nonzero(ok)
+    return np.unique(M.tp_key(U["event"][ga][r], U["tps"][ga][r, s]))
 
 
 # ==========================================================================

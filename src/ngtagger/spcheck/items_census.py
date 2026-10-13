@@ -31,42 +31,55 @@ def _np(a):
 # ---------------------------------------------------------------- majority owner
 class MajorityOwner(Item):
     id = "census.majority_owner"
-    title = "the census majority owner on real track hit tables: n_own <= real hits, owner on the track, dtypes"
-    c4_row = "int32 owner sentinel"
+    title = ("the census majority owner on real track hit tables, every hit voting for every TP it is credited to: "
+             "n_own <= real hits, owner on the track, dtypes")
+    c4_row = "int32 owner sentinel (+ the format-28 stub credit, definition sheet v2 truth.stub)"
     known_bad_desc = ("an int32 sentinel injected: empty layer slots handed to the census as valid hits carrying "
                       "np.iinfo(int32).min (the missing-mask/sentinel class of the 813be3e bug)")
-    rule_desc = ("KF.majority_owner on the OT tracks of the gate input (stubs from L1TTrackStub -> L1TOTStub_tpIdx, "
-                 "SP-refit IT clusters from L1TSmartPixelsTrackCluster, empty slots invalid) equals a plain counting "
-                 "reference on the real hits for every track; n_own <= real hits; owner -1 or a TP on the track; "
-                 "input tpIdx int32, output int64; identity of the counts with the reference")
+    rule_desc = ("KF.credited_owner on the OT tracks of the gate input (stubs from L1TTrackStub -> L1TOTStub, each "
+                 "credited to its tpIdx, tpIdxInner and tpIdxOuter through M.credited_tps; SP-refit IT clusters from "
+                 "L1TSmartPixelsTrackCluster, credited to their tpIdx; empty slots invalid) equals a plain counting "
+                 "reference (each real hit counts once for every distinct matched TP among its raw truth columns) on "
+                 "every track; n_own <= real hits; owner -1 or a TP credited by a hit on the track; input tpIdx "
+                 "int32, output int64; identity of the counts with the reference, including the number of tracks "
+                 "whose owner the cluster credit changes (against the stub's own tpIdx alone)")
     trees = (CENSUS_DIR,)
 
     def _tables(self, ctx):
-        """(KF module, tp, valid, dtype of tpIdx as read) for the OT tracks of the gate input."""
+        """(KF, credited TPs [track x slot x credit], raw truth columns [same shape], valid, dtypes read) for the OT
+        tracks of the gate input. `credited` goes through the census's M.credited_tps; `raw` is the nano's columns
+        as read (IT clusters: tpIdx, -1, -1), for the independent reference."""
+        M = ctx.script_module(CENSUS_DIR, "tracklet_topology_cost")
         KF = ctx.script_module(CENSUS_DIR, "kf_emulation")
-        A = ctx.arrays(["L1TTrackStub_trackIdx", "L1TTrackStub_otStubIdx", "L1TOTStub_tpIdx", "L1TOTStub_layer",
+        scols = [f"L1TOTStub_{c}" for c in M.STUB_TP_COLS]
+        A = ctx.arrays(["L1TTrackStub_trackIdx", "L1TTrackStub_otStubIdx", *scols, "L1TOTStub_layer",
                         "L1TOTStub_isBarrel", "nL1TTrack", "L1TSmartPixelsTrack_l1TrackIdx",
                         "L1TSmartPixelsTrackCluster_trackIdx", "L1TSmartPixelsTrackCluster_clusterIdx",
                         "L1TSmartPixelsCluster_tpIdx", "L1TSmartPixelsCluster_surface"])
         slot = {L: i for i, L in enumerate(KF.LAYER_ORDER)}
-        tps, valids = [], []
+        K = M.N_CREDIT
+        creds, raws, valids = [], [], []
         import awkward as ak
 
         dtype_in = sorted({str(ak.to_numpy(ak.flatten(A[c])).dtype)
-                           for c in ("L1TOTStub_tpIdx", "L1TSmartPixelsCluster_tpIdx")})
+                           for c in scols + ["L1TSmartPixelsCluster_tpIdx"]})
         rng = np.random.default_rng(7)
         for ev in range(len(A)):
             nt = int(A["nL1TTrack"][ev])
-            tp = rng.integers(-5, 50, size=(nt, len(KF.LAYER_ORDER))).astype(np.int32)  # junk in empty slots
+            # junk in empty slots
+            raw = rng.integers(-5, 50, size=(nt, len(KF.LAYER_ORDER), K)).astype(np.int32)
+            cred = raw.copy()
             va = np.zeros((nt, len(KF.LAYER_ORDER)), bool)
             ti = _np(A["L1TTrackStub_trackIdx"][ev])
             si = _np(A["L1TTrackStub_otStubIdx"][ev])
             lay = _np(A["L1TOTStub_layer"][ev])[si]
             brl = _np(A["L1TOTStub_isBarrel"][ev])[si].astype(bool)
-            stp = _np(A["L1TOTStub_tpIdx"][ev])[si]
-            for t, L, b, v in zip(ti, lay, brl, stp):
+            st = np.stack([_np(A[c][ev])[si] for c in scols], axis=1)
+            sc = M.credited_tps(*st.T)
+            for t, L, b, v, c in zip(ti, lay, brl, st, sc):
                 if b and (10 + int(L)) in slot:
-                    tp[t, slot[10 + int(L)]] = v
+                    raw[t, slot[10 + int(L)]] = v
+                    cred[t, slot[10 + int(L)]] = c
                     va[t, slot[10 + int(L)]] = True
             l1 = _np(A["L1TSmartPixelsTrack_l1TrackIdx"][ev])
             cti = _np(A["L1TSmartPixelsTrackCluster_trackIdx"][ev])
@@ -76,18 +89,22 @@ class MajorityOwner(Item):
             for t, c in zip(cti, cci):
                 s = int(csf[c])
                 if s in (1, 2, 3, 4):
-                    tp[l1[t], slot[s]] = ctp[c]
+                    raw[l1[t], slot[s]] = (ctp[c], -1, -1)
+                    cred[l1[t], slot[s]] = M.credited_tps(ctp[c:c + 1])[0]
                     va[l1[t], slot[s]] = True
-            tps.append(tp)
+            creds.append(cred)
+            raws.append(raw)
             valids.append(va)
-        tp, va = np.vstack(tps), np.vstack(valids)
-        return KF, tp, va, dtype_in
+        return KF, np.vstack(creds), np.vstack(raws), np.vstack(valids), dtype_in
 
     @staticmethod
-    def reference(tp, va, matched):
-        own, n = np.full(len(tp), -1, np.int64), np.zeros(len(tp), np.int64)
-        for i in range(len(tp)):
-            c = Counter(int(x) for x, ok in zip(tp[i], va[i] & matched[i]) if ok)
+    def reference(raw, va, matched):
+        """Plain counting: every valid hit counts once for each distinct matched TP among its raw columns; the most
+        counts wins, ties to the largest index."""
+        own, n = np.full(len(raw), -1, np.int64), np.zeros(len(raw), np.int64)
+        for i in range(len(raw)):
+            c = Counter(int(x) for h in range(raw.shape[1]) if va[i, h]
+                        for x in {int(y) for y, m in zip(raw[i, h], matched[i, h]) if m})
             if c:
                 best = max(c.values())
                 own[i], n[i] = max(k for k, v in c.items() if v == best), best   # ties: largest index
@@ -96,18 +113,21 @@ class MajorityOwner(Item):
     def _stat(self, ctx, inject=False):
         from ngtagger.data import spix_nano as SPN
 
-        KF, tp, va, dtype_in = self._tables(ctx)
-        real = va & SPN.tp_matched(tp)
-        ref_own, ref_n = self.reference(tp, va, SPN.tp_matched(tp))
+        KF, cred, raw, va, dtype_in = self._tables(ctx)
+        real = va & SPN.tp_matched(raw).any(axis=2)
+        ref_own, ref_n = self.reference(raw, va, SPN.tp_matched(raw))
+        # context: the owner with each stub credited to its own tpIdx alone (format <= 27)
+        own27, _ = KF.majority_owner(raw[:, :, 0], va)
         if inject:
-            tp = np.where(va, tp, np.iinfo(np.int32).min).astype(np.int32)
+            cred = np.where(va[:, :, None], cred, np.iinfo(np.int32).min).astype(np.int32)
             va = np.ones_like(va)
-        own, n = KF.majority_owner(tp, va)
-        on_track = np.array([o == -1 or bool(np.any(real[i] & (tp[i] == o))) for i, o in enumerate(own)])
+        own, n, _, _ = KF.credited_owner(cred, va)
+        on_track = np.array([o == -1 or bool(np.any(real[i] & (raw[i] == o).any(axis=1))) for i, o in enumerate(own)])
         return {"input": ctx.input, "events": ctx.events, "sentinel_injected": inject, "n_tracks": int(len(own)),
                 "n_with_owner": int((ref_own != -1).sum()), "n_agree_with_reference": int(np.sum((own == ref_own) & (n == ref_n))),
+                "n_owner_changed_by_cluster_credit": int(np.sum(ref_own != own27)),
                 "n_own_gt_real_hits": int(np.sum(n > real.sum(1))), "n_owner_not_on_track": int(np.sum(~on_track)),
-                "tpIdx_dtype_read": dtype_in, "tpIdx_dtype_census_input": str(tp.dtype),
+                "tpIdx_dtype_read": dtype_in, "tpIdx_dtype_census_input": str(cred.dtype),
                 "owner_dtype": str(np.asarray(own).dtype), "count_dtype": str(np.asarray(n).dtype)}
 
     def compute(self, ctx):
@@ -128,8 +148,10 @@ class MajorityOwner(Item):
         if stat["tpIdx_dtype_read"] != ["int32"] or stat["owner_dtype"] != "int64":
             why.append(f"dtypes read/out {stat['tpIdx_dtype_read']}/{stat['owner_dtype']}")
         if same_input(stat, ref) and stat["sentinel_injected"] == ref["stat"]["sentinel_injected"]:
-            why += identity(stat, ref, ["n_tracks", "n_with_owner"])[1]
-        return not why, f"{stat['n_tracks']} tracks, owners identical to the reference" if not why else "; ".join(why)
+            why += identity(stat, ref, ["n_tracks", "n_with_owner", "n_owner_changed_by_cluster_credit"])[1]
+        return not why, (f"{stat['n_tracks']} tracks, owners identical to the reference "
+                         f"({stat['n_owner_changed_by_cluster_credit']} changed by the cluster credit)") \
+            if not why else "; ".join(why)
 
 
 # ---------------------------------------------------------------- census output
