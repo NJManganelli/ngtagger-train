@@ -879,28 +879,43 @@ def attach_tp_truth(D, TP, names=None):
 
 # ---- whom a hit is credited to (definition sheet truth.stub; decision 12 = D13 a)
 # An IT cluster is credited to its dominant TP (tpIdx). An OT stub is credited to
-# EVERY TP behind either of its two clusters, as CMSSW's TTStubAssociator fills
-# its TP -> stubs map (TTStubAssociator.cc:72-88; the CMSSW truth spec, WDMac
-# wpd0a/cmssw_truth_spec.md sec. 2): its own tpIdx, the principal TP, set only on
-# a genuine stub and present in BOTH clusters (occasionally neither cluster's
-# dominant TP), and the dominant TP of each cluster (tpIdxInner, tpIdxOuter: the
-# largest summed TP pT over the cluster's strip simlinks, set for combinatoric
-# clusters too). The nano carries one TP per cluster where CMSSW credits every
-# contributor, so a minor contributor goes uncredited here
-# (eval_refitq/wpd0a/owner_vs_cmssw.py measures what that costs). An unknown stub
-# (no TP in either cluster) is credited to nobody. No bunch-crossing or event cut:
-# out-of-time and pile-up TPs are credited like any other. TRUTH ONLY: none of this
-# may reach the seeding, the follow or the fit.
+# its principal TP and to the dominant TP of each of its two clusters, the nano's
+# emulation of CMSSW's TP -> stubs map, which credits every contributor of either
+# cluster (TTStubAssociator.cc:72-88; the CMSSW truth spec, WDMac
+# wpd0a/cmssw_truth_spec.md sec. 2):
+#   tpIdx       the principal TP: set only on a genuine stub, present in BOTH
+#               clusters (occasionally neither cluster's dominant TP); built by
+#               the input's CMSSW_20_0_0_pre1 associator (spec sec. 0, 2);
+#   tpIdxInner  the dominant TP of the inner-sensor cluster (clusterRef(0)): the
+#               largest SUMMED TP pT over its strip simlinks (not charge, so one
+#               strip of a high-pT TP can outrank the particle that made most of
+#               the cluster); set for combinatoric clusters too;
+#   tpIdxOuter  the same for the outer-sensor cluster (clusterRef(1)).
+# The nano carries one TP per cluster where CMSSW credits every contributor, so a
+# minor contributor goes uncredited here (eval_refitq/wpd0a/owner_vs_cmssw.py
+# measures what that costs). An unknown stub (no TP in either cluster) is credited
+# to nobody. No bunch-crossing or event cut: out-of-time and pile-up TPs are
+# credited like any other. TRUTH ONLY: none of this may reach the seeding, the
+# follow or the fit.
+# THE STUB'S POSITION IS ITS INNER CLUSTER'S (L1SmartPixelsAllStubTableProducer.cc:
+# 132-135, TTStub::innerClusterPosition). So the first POSITION_SLOTS credits (the
+# principal, which is in both clusters, and the inner owner) carry the TP's own
+# position; a credit in the last slot is OUTER-ONLY: the stub belongs to the TP by
+# CMSSW's rule but holds another particle's position (on PS layers its z is another
+# particle's macro-pixel z; measured median |dz| 1.29 cm against 0.08 cm genuine).
 STUB_TP_COLS = ("tpIdx", "tpIdxInner", "tpIdxOuter")
 N_CREDIT = len(STUB_TP_COLS)
+POSITION_SLOTS = 2
 
 
 def credited_tps(*cols):
     """(n, N_CREDIT) int32: the TPs each object is credited to, from its truth
     columns (an IT cluster's tpIdx; an OT stub's STUB_TP_COLS, in that order).
-    Each matched TP appears once per object; a repeat and an unused slot are -1.
-    Credited: a row of L1TTP (>= 0) and a real TP outside L1TTP (<= -3). Not
-    credited: -1 (no TP) and -2 (truth missing; none in canon_v3)."""
+    Each matched TP appears once per object, in its first slot; a repeat and an
+    unused slot are -1, so slot POSITION_SLOTS holds exactly the outer-only
+    credits. Credited: a row of L1TTP (>= 0) and a real TP outside L1TTP (<= -3).
+    Not credited: -1 (no TP) and -2 (truth missing; refused at the census input,
+    tp_findability.require_census_inputs)."""
     T = np.full((len(cols[0]), N_CREDIT), -1, np.int32)
     for j, c in enumerate(cols):
         c = np.asarray(c, np.int32)
@@ -918,24 +933,55 @@ def hit_tps(U, G):
     return np.where((G >= 0)[..., None], U["tps"][np.clip(G, 0, None)], -1)
 
 
-def seed_credit(U, ga, gb, gc=None):
-    """(n, N_CREDIT) bool over U["tps"][ga]: that TP is credited by every hit of
-    the seed (A, B and C when given), the seed-truthful rule (truth.seed_truthful)."""
-    A = U["tps"][ga]
+def credits_of(D, g, position=False):
+    """(len(g), N_CREDIT) credited TPs of the objects g of table D: D["tps"] when
+    the table carries it (the census's unified table), else credited_tps of the
+    truth columns it has (an IT cluster table: tpIdx; an OT stub table:
+    STUB_TP_COLS). position=True keeps only the credits that carry the TP's own
+    position (the first POSITION_SLOTS), dropping outer-only ones."""
+    T = D["tps"][g] if "tps" in D else credited_tps(*(D[c][g] for c in STUB_TP_COLS if c in D))
+    if position:
+        T = T.copy()
+        T[:, POSITION_SLOTS:] = -1
+    return T
+
+
+def seed_credit(D, ga, gb, gc=None, position=False):
+    """(ok, A): A = the credited TPs of each seed's first hit (credits_of), ok its
+    (n, N_CREDIT) mask of the TPs credited by every hit of the seed (A, B and C
+    when given), the seed-truthful rule (definition sheet truth.seed_truthful);
+    position=True counts position-carrying credits only."""
+    A = credits_of(D, ga, position)
     ok = SPN.tp_matched(A)
     for g in (gb, gc):
         if g is not None:
-            ok &= (A[:, :, None] == U["tps"][g][:, None, :]).any(axis=2)
-    return ok
+            ok &= (A[:, :, None] == credits_of(D, g, position)[:, None, :]).any(axis=2)
+    return ok, A
 
 
-def seed_tp(U, ga, gb, gc=None):
+def seed_tp(D, ga, gb, gc=None):
     """(tp, truthful) per seed: the TP every seed hit is credited to, -1 if none;
     where several are, the largest index (the majority owner's tie rule)."""
-    ok = seed_credit(U, ga, gb, gc)
-    v = np.where(ok, U["tps"][ga].astype(np.int64), np.iinfo(np.int64).min).max(axis=1)
+    ok, A = seed_credit(D, ga, gb, gc)
+    v = np.where(ok, A.astype(np.int64), np.iinfo(np.int64).min).max(axis=1)
     real = ok.any(axis=1)
     return np.where(real, v, -1), real
+
+
+def recovered_keys(D, ga, gb, gc=None, position=False):
+    """Sorted keys of the TPs a seed recovers: every TP credited by all of its
+    hits (seed_credit), each such TP once."""
+    ok, A = seed_credit(D, ga, gb, gc, position)
+    if not ok.any():
+        return np.empty(0, dtype=np.int64)
+    r, s_ = np.nonzero(ok)
+    return np.unique(tp_key(D["event"][ga][r], A[r, s_]))
+
+
+def cand_purity(D, ga, gb, gc):
+    """(n_candidates, n_seed_truthful) for one batch of candidate triples."""
+    real = seed_tp(D, ga, gb, gc)[1]
+    return len(real), int(real.sum())
 
 
 # THE COMBINED IT+OT HIT CODE SPACE of these studies: 1-4 = IL1-IL4 and
@@ -1071,7 +1117,11 @@ def it_chunks(path, nev, step=16):
 
 
 def load_ot(path, nev, tp=()):
-    """The OT stub table; `tp` as for load_flat."""
+    """The OT stub table; `tp` as for load_flat. It carries the stub's principal
+    tpIdx but not its clusters' owners, so truth computed on it through
+    credits_of credits the principal only (the stub credit of census formats
+    <= 27): the cost and omnibus studies built on it keep that, while the census
+    reads the owners itself (tp_findability.OT_COLS)."""
     paths = expand_inputs(path)
     t = uproot.open(f"{paths[0]}:Events")
     cols = ["layer", "isBarrel", "r", "phi", "z", "bend", "tpIdx", "tpPt",
@@ -2242,10 +2292,9 @@ def ot_seed_cost(D, ev_idx, name, ptmin, use_bend, cal, eta_max):
         na = nt_ = 0
         found_keys = []
         for ga_, gb_, gc_ in trips:
-            ta, tb, tc = D["tpIdx"][ga_], D["tpIdx"][gb_], D["tpIdx"][gc_]
-            real = SPN.tp_matched(ta) & (ta == tb) & (tb == tc)
-            na += len(ta); nt_ += int(real.sum())
-            found_keys.append(tp_key(D["event"][ga_][real], ta[real]))
+            n_, t_ = cand_purity(D, ga_, gb_, gc_)
+            na += n_; nt_ += t_
+            found_keys.append(recovered_keys(D, ga_, gb_, gc_))
         # UNIQUE ACROSS ALL PROJECTION LAYERS AT ONCE. Taking the unique count
         # per layer and summing double counts any TP the seed finds on more than
         # one projection layer, which made unique_true_found exceed n_findable.
@@ -2341,21 +2390,6 @@ def findable_keys(D, la, lb, lc, ptmin):
     for nxt in sets[1:]:
         out = np.intersect1d(out, nxt, assume_unique=True)
     return out
-
-
-def recovered_keys(D, ga, gb, gc):
-    """Sorted keys of TPs recovered by a truth-consistent candidate."""
-    ta, tb, tc = D["tpIdx"][ga], D["tpIdx"][gb], D["tpIdx"][gc]
-    real = SPN.tp_matched(ta) & (ta == tb) & (tb == tc)
-    if not real.any():
-        return np.empty(0, dtype=np.int64)
-    return np.unique(tp_key(D["event"][ga][real], ta[real]))
-
-
-def cand_purity(D, ga, gb, gc):
-    """(n_candidates, n_truth_matched) for one batch of candidate triples."""
-    ta, tb, tc = D["tpIdx"][ga], D["tpIdx"][gb], D["tpIdx"][gc]
-    return len(ta), int((SPN.tp_matched(ta) & (ta == tb) & (tb == tc)).sum())
 
 
 def eff_by_d0(rec, find, tpi, edges=(0.0, 100e-4, 500e-4, 1e9)):

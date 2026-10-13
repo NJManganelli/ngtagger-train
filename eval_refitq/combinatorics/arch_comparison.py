@@ -63,8 +63,9 @@ def scatter_rows(U, IT, OT, ia, ib, TP):
     for S, idx in ((IT, ia), (OT, ib)):
         G = S["gidx"][idx]
         on = G >= 0
-        tp = np.where(on, U["tpIdx"][np.clip(G, 0, None)], -2)
-        ok &= (on & (tp == ta[:, None])).sum(1) == on.sum(1)
+        # every hit credited to the TP (M.hit_tps: the census's stub credit)
+        cred = (M.hit_tps(U, G) == ta[:, None, None]).any(axis=-1)
+        ok &= (on & cred).sum(1) == on.sum(1)
     if not ok.any():
         return None
     a_, b_ = ia[ok], ib[ok]
@@ -293,7 +294,7 @@ def main():
             # cluster: requiring only gA let contaminated tracks in and read the
             # OT-alone resolution as 66 cm in z0, which is contamination and not
             # a measurement of anything.
-            m = SPN.tp_matched(S["tpIdx"]) & (S["tpIdx"] == U["tpIdx"][S["gB"]])
+            m = SPN.tp_matched(S["tpIdx"])     # pool_and_dr: both seed hits credited
             if m.sum() < 20:
                 continue
             p, hit = KF.tp_truth_rows(TP, S["event"][m], S["tpIdx"][m])

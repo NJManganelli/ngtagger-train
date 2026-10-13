@@ -430,21 +430,18 @@ def filter_tracks(out, keep):
     return o
 
 
-def recovered_keys(U, out):
+def recovered_keys(U, out, position=False):
     """TPs recovered by a seed, requiring the SEED's own layers to be truthful.
 
     A track is credited to a TrackingParticle when every seed hit is credited
-    to it (M.seed_credit; an OT stub to every TP behind its clusters), to each
-    such TP. Confirmations on projected layers are what the 4-layer
-    rule already counted; demanding they be truthful too would measure a
-    different thing -- purity of the whole track rather than of the seed.
+    to it (M.recovered_keys; an OT stub to its principal TP and its clusters'
+    owners), to each such TP; position=True counts only the credits that carry
+    the TP's own position (M.POSITION_SLOTS). Confirmations on projected layers
+    are what the 4-layer rule already counted; demanding they be truthful too
+    would measure a different thing -- purity of the whole track rather than of
+    the seed.
     """
-    ga = out["_gA"]
-    ok = M.seed_credit(U, ga, out["_gB"], out.get("_gC"))
-    if not ok.any():
-        return np.empty(0, np.int64)
-    r, s = np.nonzero(ok)
-    return np.unique(M.tp_key(U["event"][ga][r], U["tps"][ga][r, s]))
+    return M.recovered_keys(U, out["_gA"], out["_gB"], out.get("_gC"), position)
 
 
 # ==========================================================================

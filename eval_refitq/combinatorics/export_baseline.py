@@ -26,7 +26,7 @@ import tracklet_topology_cost as M      # noqa: E402
 import kf_emulation as KF               # noqa: E402
 import tp_findability as TF             # noqa: E402
 import seed_arity as SA                 # noqa: E402
-from ot_oracle import load, stub_truth, stub_credited   # noqa: E402
+from ot_oracle import load, track_composition   # noqa: E402
 
 # THE TP LINK. Both baselines carry, per track, its majority owner's row in the
 # site's own TP census (tp_row) and how many of its hits that owner holds
@@ -90,7 +90,8 @@ EXTRA_CMSSW = ("genuine", "combinatoric", "unknown", "trkMVA1")
 
 def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
     T, S, O = load(spec, nev)
-    _, flag, hit = stub_truth(S, O)
+    K = track_composition(T, S, O)
+    hit = K["matched"]
     bar = S["isBarrel"] > 0
     frac = float(hit[bar].mean()) if bar.any() else 0.0
     print(f"  stub truth join (otStubIdx): {100 * frac:.2f}% of barrel track stubs matched")
@@ -100,36 +101,13 @@ def from_cmssw(spec, nev, ptmin, eta_max, tp_keys=None, tp_pt=None):
             f"the per-stub counters would be built on a subset and would not be "
             f"comparable to the emulation's")
 
-    off = np.concatenate([[0], np.cumsum(T["_n"])])
-    gid = off[S["event"]] + S["trackIdx"]
-    ok = (S["trackIdx"] >= 0) & bar
-    ntrk = len(T["pt"])
-    nst = np.zeros(ntrk, np.int32)
-    np.add.at(nst, gid[ok], 1)
-
-    # the census owner over the track's barrel stubs, each voting for every TP
-    # it is credited to (KF.credited_owner, M.credited_tps) -- the rule
-    # KF.track_rows applies, so "wrong" means the same thing on both sides.
-    # The stubs go into a track x stub-slot table, as the census's hit table.
-    so = np.flatnonzero(ok)[np.argsort(gid[ok], kind="stable")]
-    gs = gid[so]
-    slot = np.arange(len(gs)) - np.searchsorted(gs, gs, side="left")
-    width = int(slot.max()) + 1 if len(gs) else 1
-    tps = np.full((ntrk, width, M.N_CREDIT), -1, np.int32)
-    on = np.zeros((ntrk, width), bool)
-    tps[gs, slot] = stub_credited(S, O)[so]
-    on[gs, slot] = True
-    owner, _, _, right_ts = KF.credited_owner(tps, on)
-    right = np.zeros(len(gid), bool)
-    right[so] = right_ts[gs, slot]
-    gen = ok & (flag == 1)
-
-    def per_track(mask):
-        v = np.zeros(ntrk, np.float32); np.add.at(v, gid[mask], 1); return v
-    # the partition of KF.track_rows: right (any flag), wrong genuine, wrong
-    # combinatoric, unknown
-    n_r, n_w = per_track(ok & right), per_track(gen & ~right)
-    n_c, n_u = per_track(ok & (flag == 2) & ~right), per_track(ok & (flag == 3))
+    # the census's truth over the track's barrel stubs (ot_oracle.track_composition:
+    # KF.credited_owner on M.credited_tps and the KF.track_rows partition), so
+    # "wrong" means the same thing on both sides
+    owner = K["owner"]
+    nst = K["n_stub"].astype(np.int32)
+    n_r, n_w = K["n_ot_right"], K["n_ot_wrong"]
+    n_c, n_u = K["n_ot_combinatoric"], K["n_ot_unknown"]
 
     sel = (T["pt"] >= ptmin) & (np.abs(T["eta"]) <= eta_max) & (nst >= 4)
     # tp_d0 carries +-999 cm sentinels for unmatched tracks

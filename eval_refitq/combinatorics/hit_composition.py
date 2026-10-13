@@ -44,23 +44,21 @@ EXTRA = ["dr", "n_noise", "own_frac", "pull_d0", "pull_z0", "pull_kappa"]
 COLS = list(KF.TRACK_COLS) + EXTRA
 
 
-majority_owner = KF.majority_owner   # canonical implementation
-
-
 def rows_for_tracks(U, Q, TP, gk, trip, fit, seed_idx, arity, sysclass, rank,
                     dr):
     T = KF.gather_hits(U, Q, gk, KF.LAYER_ORDER)
     base = KF.track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank)
     col = {n: i for i, n in enumerate(KF.TRACK_COLS)}
     G, valid = T["GIDX"], T["VALID"]
-    tp = np.where(valid, U["tpIdx"][np.clip(G, 0, None)], -1)
+    # noise = a hit credited to no TP (TF.M.credited_tps, the census's credit)
+    credited = KF.SPN.tp_matched(M.hit_tps(U, G)).any(axis=-1)
     nhit = np.maximum(valid.sum(axis=1), 1)
     sk = {k: np.maximum(base[:, col[f"sig_kf_{k}"]], 1e-30) if f"sig_kf_{k}" in col
           else np.sqrt(np.maximum(fit[f"var_{k}"], 1e-30))
           for k in ("d0", "z0", "kappa")}
     out = {
         "dr": dr.astype(np.float64),
-        "n_noise": (valid & ~KF.SPN.tp_matched(tp)).sum(axis=1).astype(np.float64),
+        "n_noise": (valid & ~credited).sum(axis=1).astype(np.float64),
         "own_frac": base[:, col["n_own"]] / nhit,
         "pull_d0": base[:, col["d_d0"]] / sk["d0"],
         "pull_z0": base[:, col["d_z0"]] / sk["z0"],

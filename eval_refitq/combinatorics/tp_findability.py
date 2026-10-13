@@ -81,7 +81,13 @@ OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 28   # 28: an OT stub is credited to every TP behind its clusters
+FORMAT_VERSION = 29   # 29: truth diagnostics, nothing else moves: track columns
+                      # n_ot_right_outer_only and n_tp_majority (KF.TRACK_COLS,
+                      # appended), the seed-truthful bitmap found_dr_pos counting
+                      # position-carrying credits only (M.POSITION_SLOTS), the
+                      # track column list in the manifest; inputs with truth -2
+                      # ("unavailable") in the stub or cluster tpIdx refused.
+                      # 28: an OT stub is credited to every TP behind its clusters
                       # (M.credited_tps; definition sheet v2 truth.stub): census
                       # entries and hit patterns, the seed-truthful bitmaps and
                       # trip_true, the owners and every truth column; tracks,
@@ -214,9 +220,11 @@ def cache_key(manifest, cfg):
 def require_census_inputs(paths):
     """SystemExit naming the first input that breaks the input contract: an OT
     stub table without the module flags or the cluster owners (OT_REQUIRED),
-    e.g. canon_v2."""
+    e.g. canon_v2, or truth marked unavailable (-2) in a stub's or an IT
+    cluster's tpIdx columns, which would silently credit nobody."""
     for p in paths:
-        keys = set(uproot.open(f"{p}:Events").keys())
+        t = uproot.open(f"{p}:Events")
+        keys = set(t.keys())
         miss = [f"{M.OT_TABLE}_{c}" for c in OT_REQUIRED
                 if not SPN.has_column(keys, M.OT_TABLE, c)]
         if miss:
@@ -225,6 +233,15 @@ def require_census_inputs(paths):
                 f"reads the OT module flags and the owners of each stub's clusters "
                 f"from its input and never infers them (no detId, layer or (r, z) "
                 f"fallback). canon_v2 predates the flags; run the census on canon_v3.")
+        truth = [b for c in M.STUB_TP_COLS for b in SPN.branch_names(keys, M.OT_TABLE, [c])]
+        if SPN.has_column(keys, M.IT_TABLE, "tpIdx"):
+            truth += SPN.branch_names(keys, M.IT_TABLE, ["tpIdx"])
+        bad = [b for b in truth if np.any(ak.to_numpy(ak.flatten(t[b].array())) == -2)]
+        if bad:
+            raise SystemExit(
+                f"{p}: truth unavailable (tpIdx -2) in {', '.join(bad)}; the census "
+                f"would credit those objects to nobody. Re-make the input with its "
+                f"TrackingParticle products.")
 
 
 # ==========================================================================
@@ -541,13 +558,14 @@ def _unify(I, O, sigz_ot, bench=None, res=None, ref=None):
         sig[ol == L] = sigz_ot.get(L, sigz_ot.get(str(L), 0.2))
     # PER-STUB TRUTH IS THREE-VALUED AND tpIdx ALONE CANNOT EXPRESS IT.
     # An OT stub carries a matched tpIdx (SPN.tp_matched) only when the producer
-    # called it GENUINE.
-    # A COMBINATORIC stub is a real merge of this particle's cluster with
-    # another particle's, and an UNKNOWN stub is not linked to any particle;
-    # both carry tpIdx = -1 and so were indistinguishable, which made every
-    # "wrong OT hit" look like noise when a quarter of them still carry this
-    # track's position. Required, not inferred: guessing the split from the
-    # sign of tpIdx would reproduce exactly the miscount being removed.
+    # called it GENUINE (a unique TP in both clusters). A COMBINATORIC stub has no
+    # unique TP in both clusters: two particles' clusters, one cluster without a
+    # TP, or two or more TPs shared by both (CMSSW truth spec sec. 2, 5). An
+    # UNKNOWN stub has no TP in either cluster. Combinatoric and unknown both
+    # carry tpIdx = -1 and so were indistinguishable by it. Required, not
+    # inferred: guessing the split from the sign of tpIdx would reproduce exactly
+    # the miscount being removed. (Which TPs a stub is credited to is the
+    # separate question of M.credited_tps, column "tps" below.)
     need = ("tpGenuine", "tpCombinatoric", "tpUnknown")
     miss = [c for c in need if c not in O]
     if miss:
@@ -606,7 +624,8 @@ def chunk_census(U):
     L1TTP (tpIdx <= -3: neutral or below the L1TTP momentum cut). They are read
     from a hit whose OWN tpIdx is the TP where there is one (pt is then that
     hit's tpPt, defined outside L1TTP too); a TP credited only through a stub's
-    cluster takes its L1TTP row (pt NaN outside L1TTP).
+    cluster takes its L1TTP row (pt NaN outside L1TTP). The two pT sources agree
+    to 5e-4 relative (run C: no TP crosses the 1 or 2 GeV cuts between them).
     """
     T = U["tps"]
     hi, sl = np.nonzero(SPN.tp_matched(T))
@@ -733,6 +752,10 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     # survivors, which is what a real system emits.
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
+    # found_dr counting only the credits that carry the TP's own position (the
+    # outer-only credits of M.POSITION_SLOTS left out): a diagnostic of how much
+    # seed-truthful efficiency rests on stubs holding another particle's position
+    found_dr_pos = np.zeros((ntp, nw), np.uint64)
     counters, qual, trk, hits, angr = {}, {}, {}, {}, {}
     # SEED MULTIPLICITY BY |eta|: every seed object a seed forms (the funnel's
     # seed_objects), binned on SA.SEED_ETA_EDGES. Counts, so chunks add.
@@ -914,11 +937,13 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         if not dr.any():
             continue
         o = SA.filter_tracks(h["o"], dr)
-        rkeys = SA.recovered_keys(U, o)
-        if len(rkeys):
-            p = np.searchsorted(cen["key"], rkeys)
-            found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
-    return cen, found, found_dr, counters, qual, trk, hits, angr, nonant, seed_eta
+        bit = np.uint64(1) << np.uint64(s_i & 63)
+        for B, pos in ((found_dr, False), (found_dr_pos, True)):
+            rkeys = SA.recovered_keys(U, o, position=pos)
+            if len(rkeys):
+                B[np.searchsorted(cen["key"], rkeys), s_i >> 6] |= bit
+    return (cen, found, found_dr, found_dr_pos, counters, qual, trk, hits, angr, nonant,
+            seed_eta)
 
 
 def truncation_table(C, group, cap=TRACKS_PER_REGION):
@@ -1057,6 +1082,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 "builds": builds,
                 "dr_groups": dr_groups(builds, len(seeds)),
                 "seed_eta_edges": list(SA.SEED_ETA_EDGES),
+                # the shards' track column names, for readers without this code
+                "track_cols": list(KF.TRACK_COLS),
                 "chunks_done": 0, "n_events": 0}
         if improve:
             # THE CAVEAT TRAVELS WITH EVERY k < 1 CENSUS, with the measured
@@ -1105,14 +1132,14 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, found_dr, counters, qual, trk, hits, angr, nonant, seed_eta = process_chunk(
+            cen, found, found_dr, found_dr_pos, counters, qual, trk, hits, angr, nonant, seed_eta = process_chunk(
                 U, Q, seeds, meta["dr_groups"], ptmin, ci, QUAL_PER_CHUNK, kf_opts,
                 export_tracks, min_layers=min_layers,
                 d0_window_cm=d0_window_cm, it_ptmin=it_ptmin,
                 min_it_layers=min_it_layers, min_ot_conf=min_ot_conf, ang=ang,
                 pos_arb=pos_arb)
             np.savez_compressed(
-                _shard_path(d, ci), found=found, found_dr=found_dr,
+                _shard_path(d, ci), found=found, found_dr=found_dr, found_dr_pos=found_dr_pos,
                 n_events=len(ev),
                 counters=json.dumps({str(k): v for k, v in counters.items()}),
                 **{f"cen_{k}": v for k, v in cen.items()},
@@ -1169,7 +1196,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
         raise SystemExit(f"{d} has no shards")
     cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "hit_it", "hit_ot"]
     parts = {c: [] for c in cols}
-    fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
+    fnd, fdr, fdp, cnt, qs, fts, hts, ags, nread = [], [], [], {}, {}, {}, {}, {}, 0
     non = []
     seta = None
     cl_tot = cl_off = 0
@@ -1181,6 +1208,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
             parts[c].append(z[f"cen_{c}"])
         fnd.append(z["found"])
         fdr.append(z["found_dr"])
+        fdp.append(z["found_dr_pos"])
         cl_off = cl_tot
         cl_tot += int(z["n_clusters"])
         nread += int(z["n_events"])
@@ -1204,6 +1232,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
     C["found_dr"] = np.concatenate(fdr, axis=0)
+    C["found_dr_pos"] = np.concatenate(fdp, axis=0)
     C["n_events"] = nread
     # per DR group (C["dr_groups"]): (group, event x region) occupancy
     C["nonant"] = np.concatenate(non, axis=1)
@@ -1270,14 +1299,15 @@ def load(d, nev=None, verbose=True, with_tracks=False):
 # ==========================================================================
 # query helpers -- what the interactive tool is built on
 # ==========================================================================
-def seed_mask(C, i, after_dr=False):
+def seed_mask(C, i, after_dr=False, position=False):
     """Boolean over TPs: did seed i recover this TrackingParticle?
 
     after_dr=False is the seed's STANDALONE reach and is what menu composition
     must use; after_dr=True is what it still owns once duplicate removal has
-    assigned each track to a single seed.
+    assigned each track to a single seed. position=True (after DR) counts only
+    credits that carry the TP's own position (found_dr_pos).
     """
-    b = C["found_dr"] if after_dr else C["found"]
+    b = C["found_dr_pos"] if position else (C["found_dr"] if after_dr else C["found"])
     return (b[:, i >> 6] >> np.uint64(i & 63)) & np.uint64(1) != 0
 
 

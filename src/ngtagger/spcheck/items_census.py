@@ -265,11 +265,13 @@ VAR_RTOL = 1e-12
 
 class CensusInputContract(Item):
     id = "census.input_contract"
-    title = "the census reads the OT module flags (isPS, isTilted) from its input and refuses an input without them"
+    title = ("the census reads the OT module flags (isPS, isTilted) and the stub's cluster owners from its input and "
+             "refuses an input without them, or with truth marked unavailable")
     c4_row = "(new, WP-D0a) the census input contract: module flags read, never inferred (canon_v2 refused)"
-    known_bad_desc = ("the gate input's OT stub table without L1TOTStub_isPS / isTilted (as canon_v2), written to "
-                      "scratch under NanoAOD names: the census must refuse it (the same copy with the flags is "
-                      "accepted, so the flags alone cause the refusal)")
+    known_bad_desc = ("three copies of the gate input's OT stub table written to scratch under NanoAOD names, each of "
+                      "which the census must refuse: (a) without L1TOTStub_isPS / isTilted (as canon_v2); (b) without "
+                      "L1TOTStub_tpIdxInner / tpIdxOuter; (c) with one stub's tpIdxInner set to -2 (truth unavailable). "
+                      "The same copy with every column and no -2 is accepted, so each change alone causes its refusal")
     rule_desc = ("tp_findability.require_census_inputs accepts the input; on every OT barrel stub of the first 5 events "
                  "isPS == (layer <= 3) and isTilted only on PS modules (D121); KF.ot_variances with the stub's flags "
                  "equals KFParamsComb::matrixV written out independently (pitch and length by isPS, z variance x "
@@ -286,7 +288,7 @@ class CensusInputContract(Item):
             TF.require_census_inputs([ctx.input])
             out["accepted"] = True
         except SystemExit as e:
-            out.update(accepted=False, refusal=str(e)[:300])
+            out.update(accepted=False, refusal=str(e).replace(ctx.input, "<input>")[:300])
             return out
         A = ctx.arrays([f"L1TOTStub_{c}" for c in ("layer", "isBarrel", "isPS", "isTilted", "r", "z")])
         f = {c: _np(ak.flatten(A[f"L1TOTStub_{c}"])) for c in ("layer", "isBarrel", "isPS", "isTilted", "r", "z")}
@@ -312,15 +314,22 @@ class CensusInputContract(Item):
         return self._stat(ctx)
 
     @staticmethod
-    def _stub_table_copy(ctx, drop, tag) -> str:
+    def _stub_table_copy(ctx, drop, tag, unavailable=None) -> str:
         """The gate input's OT stub table written to scratch under NanoAOD branch names
-        (nL1TOTStub, L1TOTStub_<column>), without the columns in `drop`."""
+        (nL1TOTStub, L1TOTStub_<column>), without the columns in `drop`, and with the first
+        stub's column `unavailable` set to -2 (truth unavailable) when given."""
         import awkward as ak
         import uproot
 
         cols = [k for k in ctx.keys() if k.startswith("L1TOTStub_") and k not in drop]
         A = ctx.arrays(cols)
-        data = {"L1TOTStub": ak.zip({c[len("L1TOTStub_"):]: A[c] for c in cols})}
+        fields = {c[len("L1TOTStub_"):]: A[c] for c in cols}
+        if unavailable:
+            x = A[f"L1TOTStub_{unavailable}"]
+            flat = _np(ak.flatten(x)).copy()
+            flat[0] = -2
+            fields[unavailable] = ak.unflatten(flat, ak.num(x))
+        data = {"L1TOTStub": ak.zip(fields)}
         path = os.path.join(tempfile.mkdtemp(prefix=f"spcheck_{tag}_", dir=ctx.scratch), f"{tag}.root")
         with uproot.recreate(path) as f:
             f.mktree("Events", {k: v.type for k, v in data.items()}, counter_name=lambda c: "n" + c,
@@ -332,13 +341,23 @@ class CensusInputContract(Item):
         from .core import Ctx
 
         TF = ctx.script_module(CENSUS_DIR, "tp_findability")
-        try:                                     # the copy with every column must pass: only the flags may fail
+        try:                                     # the copy with every column must pass: only the change may fail
             TF.require_census_inputs([self._stub_table_copy(ctx, (), "control")])
         except SystemExit as e:
             raise RuntimeError(f"the known-bad's writer is broken: the control copy is refused: {e}") from None
-        path = self._stub_table_copy(ctx, ("L1TOTStub_isPS", "L1TOTStub_isTilted"), "noflags")
-        bad = Ctx(input_path=path, events=ctx.events, code_root=ctx.code_root, scratch=ctx.scratch)
-        return self._stat(bad)
+        cases = {"noflags": dict(drop=("L1TOTStub_isPS", "L1TOTStub_isTilted")),
+                 "noowners": dict(drop=("L1TOTStub_tpIdxInner", "L1TOTStub_tpIdxOuter")),
+                 "unavailable": dict(drop=(), unavailable="tpIdxInner")}
+        refusals = []
+        for tag, kw in cases.items():
+            bad = Ctx(input_path=self._stub_table_copy(ctx, tag=tag, **kw), events=ctx.events,
+                      code_root=ctx.code_root, scratch=ctx.scratch)
+            st = self._stat(bad)
+            if st["accepted"]:                   # one accepted copy: the known-bad is not red
+                return {**st, "known_bad_case": tag}
+            refusals.append(f"{tag}: {st['refusal'][:120]}")
+        return {"input": "three known-bad copies", "events": ctx.events, "accepted": False,
+                "refusal": " | ".join(refusals)}
 
     def judge(self, stat, ref):
         if not stat["accepted"]:

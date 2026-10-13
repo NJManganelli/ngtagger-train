@@ -111,6 +111,45 @@ def stub_credited(S, O):
     return np.where((src >= 0)[:, None], T, -1)
 
 
+def track_composition(T, S, O):
+    """Per real track, the census's truth over its BARREL stubs: the owner each
+    stub votes for once per credited TP (KF.credited_owner on M.credited_tps, as
+    KF.track_rows does, so "wrong" means the same on both sides) and the OT
+    partition of KF.track_rows: right (any flag), wrong genuine, combinatoric not
+    crediting the owner, unknown. Returns a dict of per-track arrays (owner,
+    n_stub, n_ot_right, n_ot_wrong, n_ot_combinatoric, n_ot_unknown) and the
+    per-stub `flag`, `matched` (the otStubIdx join) and `gid` (global track row)."""
+    _, flag, hit = stub_truth(S, O)
+    bar = S["isBarrel"] > 0
+    off = np.concatenate([[0], np.cumsum(T["_n"])])
+    gid = off[S["event"]] + S["trackIdx"]
+    ok = (S["trackIdx"] >= 0) & bar
+    ntrk = len(T["pt"])
+    # the stubs in a track x stub-slot table, as the census's hit table
+    so = np.flatnonzero(ok)[np.argsort(gid[ok], kind="stable")]
+    gs = gid[so]
+    slot = np.arange(len(gs)) - np.searchsorted(gs, gs, side="left")
+    width = int(slot.max()) + 1 if len(gs) else 1
+    tps = np.full((ntrk, width, M.N_CREDIT), -1, np.int32)
+    on = np.zeros((ntrk, width), bool)
+    tps[gs, slot] = stub_credited(S, O)[so]
+    on[gs, slot] = True
+    owner, _, _, right_ts = KF.credited_owner(tps, on)
+    right = np.zeros(len(gid), bool)
+    right[so] = right_ts[gs, slot]
+
+    def per_track(mask):
+        v = np.zeros(ntrk, np.float32)
+        np.add.at(v, gid[mask], 1)
+        return v
+    gen = ok & (flag == 1)
+    return {"owner": owner, "n_stub": per_track(ok),
+            "n_ot_right": per_track(ok & right), "n_ot_wrong": per_track(gen & ~right),
+            "n_ot_combinatoric": per_track(ok & (flag == 2) & ~right),
+            "n_ot_unknown": per_track(ok & (flag == 3)),
+            "flag": flag, "matched": hit, "gid": gid}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-i", "--input", required=True)
@@ -125,7 +164,8 @@ def main():
     print(f"{nev} events: {len(T['pt']):,} L1TTrack, {len(S['layer']):,} "
           f"track stubs, {len(O['layer']):,} OT stubs")
 
-    tpidx, flag, hit = stub_truth(S, O)
+    K = track_composition(T, S, O)
+    flag, hit = K["flag"], K["matched"]
     bar = S["isBarrel"] > 0
     print("\n=== the join (exact, otStubIdx) ===")
     print(f"  track stubs matched to an OT stub: {100 * hit.mean():.2f}% overall, "
@@ -138,34 +178,9 @@ def main():
           f"{100 * (flag[bar & hit] == 2).mean():.1f}% combinatoric, "
           f"{100 * (flag[bar & hit] == 3).mean():.1f}% unknown")
 
-    # ---- per-track composition, owner-referenced ------------------------
-    off = np.concatenate([[0], np.cumsum(T["_n"])])
-    gid = off[S["event"]] + S["trackIdx"]          # global track row per stub
-    ok = (S["trackIdx"] >= 0) & bar
-    ntrk = len(T["pt"])
-    nst = np.zeros(ntrk, np.int32)
-    np.add.at(nst, gid[ok], 1)
-
-    # majority owner per track over its GENUINE stubs
-    gen = ok & (flag == 1) & SPN.tp_matched(tpidx)
-    owner = np.full(ntrk, -1, np.int64)
-    n_own = np.zeros(ntrk, np.int32)
-    order = np.lexsort((tpidx[gen], gid[gen]))
-    g_s, t_s = gid[gen][order], tpidx[gen][order]
-    if len(g_s):
-        new = np.r_[True, (g_s[1:] != g_s[:-1]) | (t_s[1:] != t_s[:-1])]
-        starts = np.flatnonzero(new)
-        cnt = np.diff(np.r_[starts, len(g_s)])
-        gg, tt = g_s[starts], t_s[starts]
-        best = np.zeros(ntrk, np.int32)
-        for g_, t_, c_ in zip(gg, tt, cnt):       # few candidates per track
-            if c_ > best[g_]:
-                best[g_], owner[g_], n_own[g_] = c_, t_, c_
-    right = gen & (tpidx == owner[gid])
-    cnt_r = np.zeros(ntrk, np.int32); np.add.at(cnt_r, gid[right], 1)
-    cnt_w = np.zeros(ntrk, np.int32); np.add.at(cnt_w, gid[gen & ~right], 1)
-    cnt_c = np.zeros(ntrk, np.int32); np.add.at(cnt_c, gid[ok & (flag == 2)], 1)
-    cnt_u = np.zeros(ntrk, np.int32); np.add.at(cnt_u, gid[ok & (flag == 3)], 1)
+    # ---- per-track composition, owner-referenced (the census's truth) ---
+    nst, cnt_r, cnt_w, cnt_c, cnt_u = (K[k].astype(np.int64) for k in (
+        "n_stub", "n_ot_right", "n_ot_wrong", "n_ot_combinatoric", "n_ot_unknown"))
 
     sel = (T["pt"] >= a.ptmin) & (np.abs(T["eta"]) <= a.eta_max) & (nst >= 4)
     print(f"\n=== {int(sel.sum()):,} real barrel tracks, pT >= {a.ptmin}, "

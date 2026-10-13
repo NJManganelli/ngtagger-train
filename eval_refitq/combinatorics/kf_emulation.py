@@ -74,7 +74,8 @@ MULT_SCATT_TERM = 0.00075                   # KalmanMultiScattTerm, rad*GeV
 
 
 # Tilt correction for the z variance of a TILTED barrel module, from
-# KFParamsComb::matrixV (TrackFindingTMTT/src/KFParamsComb.cc:105-117):
+# KFParamsComb::matrixV (TrackFindingTMTT/src/KFParamsComb.cc:101-126, the barrel
+# branch: tilted 104-119, the kalmanHOfw reset 122-125):
 #     scaleTilted = approxB(z, r);  vz = b * scaleTilted^2
 # with approxB = bApprox_gradient*|z|/r + bApprox_intercept for a tilted barrel
 # module and 1 for a flat one (TrackFindingTMTT/src/Stub.cc:352-358). The
@@ -91,7 +92,8 @@ def approx_b(z, r):
     every PS stub, which scaled the flat-ring stubs beyond |z|/r = 0.559 that
     CMSSW leaves at 1 (measured on canon_v3: 16% of flat PS barrel stubs, vz
     0.78-1.0 of the old value after the change; every tilted stub has
-    approxB >= 1.016, so tilted stubs are unchanged).
+    approxB > 1 (minimum 1.0145 on canon_v3 file 3), so tilted stubs are
+    unchanged).
 
     MEASURED, sigma(z_stub - z_track) on genuine PS stubs of real tracks with
     pT > 3, ratio of the highest |z|/r bin to the central one against the
@@ -990,6 +992,28 @@ def credited_owner(tps, on):
     return own, n_own, owned, right
 
 
+def n_tps_above_half(tps, on):
+    """Per track: how many distinct TPs are credited by more than half of its
+    hits (tps, on as for credited_owner). 2 or more is an ambiguous owner."""
+    n = tps.shape[-1]
+    none = np.iinfo(np.int64).min
+    flat = tps.reshape(len(tps), -1)
+    v = np.where(np.repeat(on, n, axis=1) & SPN.tp_matched(flat), flat.astype(np.int64), none)
+    S = np.sort(v, axis=1)
+    half = 0.5 * on.sum(axis=1)
+    out = np.zeros(len(tps), np.int64)
+    cur_v = np.full(len(tps), none)
+    cur_n = np.zeros(len(tps), np.int64)
+    for j in range(S.shape[1] + 1):
+        col = S[:, j] if j < S.shape[1] else np.full(len(tps), none)
+        same = (col == cur_v) & (col != none)
+        end = ~same & (cur_v != none)              # a run of cur_v ends here
+        out += end & (cur_n > half)
+        cur_n = np.where(same, cur_n + 1, (col != none).astype(np.int64))
+        cur_v = np.where(same, cur_v, col)
+    return out
+
+
 def tp_truth_table(U):
     """Per-TrackingParticle truth helix, keyed and sorted for searchsorted.
 
@@ -1139,6 +1163,12 @@ TRACK_COLS = (
     # residuals for all FIVE fitted parameters; phi0 had none until now, so a
     # per-parameter quality study could not include it
     "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0",
+    # --- truth diagnostics (format 29), APPENDED so that a shard written with
+    # fewer columns holds a prefix of this list: OT stubs crediting the owner
+    # only through their outer cluster (right by truth, another particle's
+    # position), and how many TPs are credited by more than half the hits (>= 2:
+    # an ambiguous owner, which CMSSW would call combinatoric)
+    "n_ot_right_outer_only", "n_tp_majority",
 )
 N_TRACK_COLS = len(TRACK_COLS)
 # columns the quality MVA trains on; the rest are identity, fitted kinematics or
@@ -1150,7 +1180,8 @@ MVA_FEATURES = tuple(c for c in TRACK_COLS if c not in (
     "own_is_seed", "own_tpidx", "is_clean", "tp_pt", "tp_eta",
     "tp_d0",
     "tp_z0", "tp_phi0",
-    "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0"))
+    "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0",
+    "n_ot_right_outer_only", "n_tp_majority"))
 SYS_IT, SYS_OT, SYS_MIX = 0, 1, 2
 # the MVA features that carry SmartPixels angle information: withheld when a
 # census runs without S8. rank_score EMBEDS the angle chi2 whenever the DR rank
@@ -1239,7 +1270,10 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     ga = trip[0]
     G = T["GIDX"]
     on = G >= 0
-    own, n_own, owned, right = credited_owner(M.hit_tps(U, G), on)
+    tps = M.hit_tps(U, G)
+    own, n_own, owned, right = credited_owner(tps, on)
+    # by credited_tps' layout, the last slot holds exactly the outer-only credits
+    right_outer = right & (tps[..., M.POSITION_SLOTS:] == own[:, None, None]).any(axis=-1)
     n_wrong = (on & ~right).sum(axis=1).astype(np.float64)
     # A WRONG OT STUB IS NOT ONE THING. flg is 1 genuine / 2 combinatoric /
     # 3 unknown from the CMS per-stub flags (see tp_findability._unify), so the
@@ -1247,9 +1281,12 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     # a mis-association, a combinatoric stub (no unique TP in both clusters)
     # whose clusters' TPs are not the owner is contamination of another kind,
     # and an unknown stub (no TP in either cluster) is noise. A stub
-    # credited to the owner is right whatever its flag: a combinatoric stub with
-    # one of the owner's clusters carries its position (format 28; before, every
-    # combinatoric stub counted wrong). The four counters below partition n_ot
+    # credited to the owner is right whatever its flag (format 28; before,
+    # every combinatoric stub counted wrong), as CMSSW's either-cluster rule
+    # has it. It carries the owner's POSITION only when the owner is its
+    # principal or inner-cluster TP: the stub position is the inner cluster's,
+    # so an OUTER-ONLY credit (n_ot_right_outer_only) is right by truth but
+    # holds another particle's position. The four counters below partition n_ot
     # exactly, and their non-right members plus n_it_wrong reproduce n_wrong --
     # asserted below on real data.
     flg = np.where(on, U["ot_flag"][np.clip(G, 0, None)], 0)
@@ -1327,6 +1364,8 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
         "d_d0": np.where(hit, fit["d0"] - TP["d0"][p], nan),
         "d_cot": np.where(hit, fit["cot"] - TP["cot"][p], nan),
         "d_z0": np.where(hit, fit["z0"] - TP["z0"][p], nan),
+        "n_ot_right_outer_only": (is_ot & right_outer).sum(axis=1).astype(np.float64),
+        "n_tp_majority": n_tps_above_half(tps, on).astype(np.float64),
     }
     # THE OT PARTITION MUST BE EXACT, and this is the cheapest place to know it.
     # Every valid OT hit has to land in exactly one of right / wrong /
