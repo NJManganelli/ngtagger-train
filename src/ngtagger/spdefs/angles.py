@@ -368,11 +368,12 @@ def core_w(x, w=None):
     return core(x)
 
 
-def bin_estimates(pulls, levels=LEVELS, w=None) -> dict | None:
+def bin_estimates(pulls, levels=LEVELS, w=None, rank: str = "n") -> dict | None:
     """The table entries of one bin from its class-T pulls (angle.error_table): centre = the
     clipped mean of the B.1 clip, width = the B.1 core of the centred pulls, q = quantiles of
-    |pull - centre|; plus the reported shape flags (MAD of the centred pulls / 0.6745, the
-    fraction outside 3 core widths, the full RMS). None below 200 values."""
+    |pull - centre| (the k-th smallest, k = quantile_order(n, level, rank): rank "n" is the sheet-v1
+    inverted CDF, rank "n+1" the recipe option (a)); plus the reported shape flags (MAD of the
+    centred pulls / 0.6745, the fraction outside 3 core widths, the full RMS). None below 200 values."""
     p = np.asarray(pulls, np.float64)
     if w is not None:
         p = np.repeat(p, np.asarray(w, np.int64))
@@ -382,7 +383,8 @@ def bin_estimates(pulls, levels=LEVELS, w=None) -> dict | None:
     c = c0["mean"]
     cc = core(p - c)
     d = np.abs(p - c)
-    q = np.quantile(d, levels, method="inverted_cdf")
+    k = quantile_order(len(d), np.asarray(levels, np.float64), rank).astype(np.int64)
+    q = np.partition(d, k - 1)[k - 1]
     return {"n": int(len(p)), "centre": float(c), "width": float(cc["rms0"]),
             "q": {f"{lv:g}": float(v) for lv, v in zip(levels, q)},
             "mad": float(np.median(d) / 0.6744897501960817), "out3": float(np.mean(d > 3.0 * cc["rms0"])),
@@ -521,11 +523,14 @@ def new_table_doc(keys_rows: dict, orientation: tuple, provenance: dict, era: st
 
 
 # ---------------------------------------------------------------- cutting consumers
-def consumer_quantile(stat, bin_id, levels=LEVELS, population=None, w=None, n_bins=None):
+def consumer_quantile(stat, bin_id, levels=LEVELS, population=None, w=None, n_bins=None, rank: str = "n"):
     """Per-bin quantiles of a cutting consumer's OWN statistic over `population` (class-T
     clusters of the consumer's calibration population). Returns an array [n_bins, n_levels]
     (NaN for an empty bin). angle.cut_level: the consumer cuts at the bin's quantile at its
-    level (decision 2: 99 %)."""
+    level (decision 2: 99 %). rank as in quantile_order (with weights: the smallest value whose
+    cumulative weight reaches level x total, or level x (total + 1) for rank "n+1", capped)."""
+    if rank not in RANKS:
+        raise ValueError(f"rank {rank!r} not in {RANKS}")
     stat = np.asarray(stat, np.float64)
     bin_id = np.asarray(bin_id, np.int64)
     m = np.isfinite(stat) & (bin_id >= 0)
@@ -552,7 +557,8 @@ def consumer_quantile(stat, bin_id, levels=LEVELS, population=None, w=None, n_bi
             continue
         base = cw[a0 - 1] if a0 > 0 else 0.0
         tot = cw[a1 - 1] - base
-        j = np.searchsorted(cw[a0:a1] - base, lv * tot * (1 - 1e-12), side="left")
+        target = np.minimum(lv * (tot + 1.0), tot) if rank == "n+1" else lv * tot
+        j = np.searchsorted(cw[a0:a1] - base, target * (1 - 1e-12), side="left")
         out[i] = s[a0:a1][np.clip(j, 0, a1 - a0 - 1)]
     return out
 
@@ -565,34 +571,45 @@ def consumer_quantile_at_k(stat_at_k, k, mode, bin_id, population, levels=LEVELS
 
 
 # ---------------------------------------------------------------- coverage of a fitted quantile (amendment 1)
-def quantile_order(n_fit, level):
-    """k of the inverted-CDF quantile at `level` of n_fit values: the k-th smallest (matches
-    numpy's method='inverted_cdf' for n_fit 200-20000 and the four table levels)."""
-    return np.ceil(level * np.asarray(n_fit, np.float64) - 1e-9)
+RANKS = ("n", "n+1")
 
 
-def expected_coverage(n_fit, level):
-    """E[coverage] on new exchangeable values of the inverted-CDF quantile fitted on n_fit values:
-    k / (n_fit + 1) (order statistics; distribution-free). Below the level by up to 1 / (n_fit + 1)."""
+def quantile_order(n_fit, level, rank: str = "n"):
+    """k of the quantile at `level` of n_fit values (the k-th smallest). rank "n" (sheet v1):
+    k = ceil(level n), the inverted CDF (matches numpy's method='inverted_cdf' for n_fit 200-20000 and
+    the four table levels); E[coverage] = k / (n + 1) <= level. rank "n+1" (recipe option (a), P0.3
+    amendment 1c, not adopted unless approved): k = min(ceil(level (n + 1)), n), the distribution-free
+    (conformal) quantile with E[coverage] >= level whenever ceil(level (n + 1)) <= n."""
     n = np.asarray(n_fit, np.float64)
-    return quantile_order(n, level) / (n + 1.0)
+    if rank == "n":
+        return np.ceil(level * n - 1e-9)
+    if rank == "n+1":
+        return np.minimum(np.ceil(level * (n + 1.0) - 1e-9), n)
+    raise ValueError(f"rank {rank!r} not in {RANKS}")
 
 
-def fit_coverage_variance(n_fit, level):
+def expected_coverage(n_fit, level, rank: str = "n"):
+    """E[coverage] on new exchangeable values of the quantile fitted on n_fit values: k / (n_fit + 1)
+    (order statistics; distribution-free). Rank "n": below the level by up to 1 / (n_fit + 1)."""
+    n = np.asarray(n_fit, np.float64)
+    return quantile_order(n, level, rank) / (n + 1.0)
+
+
+def fit_coverage_variance(n_fit, level, rank: str = "n"):
     """Variance of the true coverage F(q) of that quantile: Beta(k, n - k + 1), pi (1 - pi) / (n + 2)
     with pi = 1 - k / (n + 1)."""
     n = np.asarray(n_fit, np.float64)
-    pi = 1.0 - expected_coverage(n, level)
+    pi = 1.0 - expected_coverage(n, level, rank)
     return pi * (1.0 - pi) / (n + 2.0)
 
 
-def exchangeable_coverage_variance(n_fit, n_test, level):
+def exchangeable_coverage_variance(n_fit, n_test, level, rank: str = "n"):
     """Variance of the test coverage 1 - M / n_test of that quantile for exchangeable values: with
     C ~ Beta the true coverage, Var = E0 (1 - E0) / n_test + Var(C) (1 - 1 / n_test) (total variance;
     the beta-binomial(n_test, n_fit - k + 1, k) variance exactly)."""
-    e0 = expected_coverage(n_fit, level)
+    e0 = expected_coverage(n_fit, level, rank)
     n_t = np.asarray(n_test, np.float64)
-    return e0 * (1.0 - e0) / n_t + fit_coverage_variance(n_fit, level) * (1.0 - 1.0 / n_t)
+    return e0 * (1.0 - e0) / n_t + fit_coverage_variance(n_fit, level, rank) * (1.0 - 1.0 / n_t)
 
 
 def coverage_z(m, n_test, e0, var):

@@ -322,3 +322,92 @@ $P03_OUT/amendment1b_approval.txt.
 Expected (not decisive): the demonstration passes; of order 40-80 flagged row-angles; (iii) gated at
 95-99 % and reported at 99.7 % (power); every known-bad fails, (e) through (ii) and (iii), KB-f
 through (i).
+
+
+===================================================================================================
+Amendment 1c (2026-10-13). PROPOSED: pending the physicist's approval. Written after the independent
+statistics review 02 ($P03_OUT/stats-review-02.md, verdict APPROVE-WITH-CHANGES: the 1b structure is
+endorsed and the round-1 blocker resolved) and BEFORE the amendment-1c demonstration. Amendments 1 and
+1b stay as written; where 1c differs, 1c holds. Disclosed: before this text, code smoke tests were run
+on the v1 split (fit 3-4 / test 5-10) with a throwaway seed (1) and 24-40 replicas. With the C1 fix,
+(iii) had power 1.0 / 1.0 / 1.0 at 95 / 97.5 / 99 %, 0.33 at 99.7 % (rank n, margin 0.03 %) and 1.0 at
+99.7 % (rank n+1, margin 0.045 %); 112 of 878 row-angles were flagged (noisy at 40 replicas); KB-h1
+and KB-h2 flagged 8 of 8 perturbed rows each; every known-bad failed. No parameter below was set or
+changed after those runs, except the KB-h placement rule (C4), which was designed on toy
+distributions first (see C4).
+
+C1 (review N1, HIGH) Missing is not uncovered. In every bootstrap and re-split replica, a test cluster
+   looked up in a table row that has no estimate in that replica (its pseudo-fit fell below 200
+   clusters) is left out of that bin's count and coverage, and so out of the pooled coverage. A
+   cluster for which the table has no row at all (a binning defect of a known-bad table) still counts
+   as uncovered. E0 and the exchangeable variance exclude rows without an estimate. (iii)'s sd is the
+   exact pooled exchangeable sd, sqrt(sum_i n_i^2 V_exch,i) / sum_i n_i over the cell's test bins (the
+   reviewer validated it against re-splits: ratio 0.97-1.06 at 99 %). The bootstrap sd of the pooled
+   coverage is reported beside it (review N8). The margins stay 0.1 (1 - L) at 95 / 97.5 / 99 %.
+C2 (review N2, HIGH) (iii)'s gated levels are fixed here, not re-decided from the table under test:
+   95 / 97.5 / 99 %, and with recipe option (a) (C6) also 99.7 % with margin 0.045 %. The 99.7 %
+   margin is not decision arithmetic: it is the review's smallest margin at which 99.7 % is gateable
+   (0.15 (1 - L)), and 0.045 % of absolute efficiency at a scan level is below any decision effect.
+   Without option (a), 99.7 % is reported with margin 0.03 %. The pass probability of each gated level
+   on the re-splits is a diagnostic: below 0.8 it escalates the verdict to the physicist; it never
+   removes a level.
+C3 (review N3, MEDIUM) The gated run's false-veto criteria, replacing 1b's single 5.7 %: (a) the (i) +
+   (ii) false-veto rate over its 250 re-splits <= 5.7 %; (b) at each fixed (iii) level, the pass
+   probability over its re-splits >= 0.8. Each is judged separately; if either fails, the gated verdict
+   goes to the physicist.
+C4 (review N4, MEDIUM) KB-g becomes a report: it holds by construction. New known-bad KB-h tests the
+   flag itself, by perturbing the population (fit and test events alike) of the 8 largest validated
+   row-angles of the demonstration split, one per key x region x angle. Largest means by n_fit;
+   validated means unflagged on the unperturbed table, with >= 200 test clusters.
+   Toy finding, before any data: the review's suggestion as stated did not induce bistability on toy
+   distributions (Gaussian and Student-t5 cores, 10k-30k clusters, 120 fits each):
+     - shifting a fixed 34 % of clusters by +6 widths makes the B.1 clip latch deterministically
+       broad (relative sd 0.4-1.5 %);
+     - a 30 % component at 1.6x the width gives a single stable width.
+   On toys the clip is bistable only in a narrow, shape-dependent band (about 0.26 displaced at +6
+   widths, 0.30 at +8), and at decision scale only for a narrow component placed at about 3.2-3.5
+   widths (basins 18-30 % apart). The rows are therefore placed at their own knife edge by a
+   pre-declared bisection.
+   KB-h1: pull += 6 x the row's table width for clusters with u < f (u uniform per cluster, seeded),
+          with f found by bisection on [0.10, 0.45] (14 steps) at the flip of the B.1 core of the
+          row's pooled (fit + test) clusters. The predicate is core > the mean of the cores at the
+          interval ends.
+   KB-h2: for u < 0.045, pull = table centre + d x table width + 0.15 x table width x N(0, 1), with d
+          found by bisection on [2.5, 4.5] the same way; the basins are then about sqrt(1 - f + f d^2)
+          - 1 = 15-25 % apart.
+   Requirement for both: every perturbed row-angle is flagged, or fails (i) at the canonical run's
+   W_i. The chains are re-run per key (both schemes, 250 replicas).
+C5 (review N5, N6, N7, MEDIUM) Flag revisions. The re-split spread is scaled to a fresh fit's by
+   1 / sqrt(1 - n_ev_fit / n_ev_pool): 1.155 for 200 of 800 events, 1.118 for the gated 200 of 1000
+   (N7: the scaling is applied, not only stated). Then:
+     - width_imprecise uses max(bootstrap, scaled re-split) sd / width > 0.05;
+     - width_basin is two-sided: the scaled re-split / bootstrap sd ratio outside [1/1.5, 1.5];
+     - centre_imprecise uses max(bootstrap, scaled re-split) sd of the centre / width > 0.125;
+     - width_bimodal requires a basin separation > 0.10 of the median width (the band; was 0.05).
+   The run reports flag churn between the two splits (fit 3-4 and fit 7-8) and re-checks
+   true/beta/IL3/f+0/[-0.30,0) and the 17-19 rows whose bootstrap relative sd exceeded 0.05.
+C6 Recipe option (a) behind a switch (--rank n+1; default --rank n = sheet v1, unchanged). The quantile
+   is the k-th smallest with k = min(ceil(L (n_fit + 1)), n_fit), so E[coverage] >= L, and the same
+   switch applies to angle.cut_level (SA.consumer_quantile, one definition). Under it:
+     - (iii) gates 99.7 % with margin 0.045 % (C2);
+     - every row whose level is unreachable (ceil(L (n_fit + 1)) > n_fit; at 99.7 % that is
+       n_fit <= 332) is listed per level (quantile_unreachable_rows), and the table marks
+       q_meets_level_in_expectation = false at that level.
+   The demonstration and every known-bad are run under BOTH settings, on the same seed (20261014) and
+   split (fit 7-8, test 3-6 and 9-10). The old split (fit 3-4) is re-judged under rank n only, for the
+   flag-churn comparison. Adopting (a) is the physicist's decision (a sheet v1.1 change). The approval
+   file must name the rank (rank=n or rank=n+1); table.py refuses the gated run otherwise.
+C7 Option (b) stays not adopted. The two-component fits of the disc beta rows (amend1b/
+   recipe_options.json, option_b_rows[*].two_component_fits: narrow fraction 0.63-0.65 and stable
+   centres and widths in the five bistable rows) are recorded as the D10(c) (full-response) input.
+Kept from 1b: the by-name acceptance of the flagged list; rows the gated run flags beyond the accepted
+list go to the physicist. Review N9's alternative (accept by criteria, review the gated list) is
+offered to the physicist, not adopted here.
+Expected (not decisive): the demonstration passes under both settings; (iii) power about 1.0 at 99 %;
+under rank n+1, 99.7 % gateable; the flagged count changes in both directions (more from C5's
+precision and basin criteria, fewer from the 0.10 separation); every known-bad fails; KB-h flags or
+fails 8 of 8 in each variant.
+Outputs: $P03_OUT/p03_table_{diagnosis,known-good,known-bad}_a1c.json and
+p03_table_{known-good,known-bad}_a1c_rankA.json; the demonstration fits in $P03_OUT/amend1c/;
+registry p03.table.a1c.*. The gated run refuses without $P03_OUT/amendment1c_approval.txt naming the
+rank.

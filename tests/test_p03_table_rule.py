@@ -67,3 +67,40 @@ def test_exact_null_holds_with_a_fitted_centre(bimodal):
     for lv, z in zs.items():
         z = np.asarray(z)
         assert abs(z.mean()) < 0.08 and abs(z.std() - 1) < 0.08, (lv, z.mean(), z.std())
+
+
+def test_rank_n_plus_1_reaches_the_level_and_is_exact():
+    """Recipe option (a): k = min(ceil(L (n + 1)), n) gives E[coverage] >= L whenever reachable, and the
+    coverage null is the beta-binomial with that k."""
+    from scipy import stats
+    for n in (200, 300, 332, 333, 744, 5000):
+        for lv in SA.LEVELS:
+            k = SA.quantile_order(n, lv, "n+1")
+            reachable = np.ceil(lv * (n + 1) - 1e-9) <= n
+            assert (SA.expected_coverage(n, lv, "n+1") >= lv - 1e-12) == reachable
+            assert SA.expected_coverage(n, lv, "n+1") >= SA.expected_coverage(n, lv, "n")
+    assert not np.ceil(0.997 * 333 - 1e-9) <= 332 and np.ceil(0.997 * 334 - 1e-9) <= 333
+    nf, nt, lv = 744, 2232, 0.99
+    k = SA.quantile_order(nf, lv, "n+1")
+    d = stats.betabinom(nt, nf - k + 1, k)
+    e0 = SA.expected_coverage(nf, lv, "n+1")
+    v = SA.exchangeable_coverage_variance(nf, nt, lv, "n+1")
+    up = d.sf(20) + 0.5 * d.pmf(20)
+    assert SA.coverage_z(20, nt, e0, v) == pytest.approx(-stats.norm.isf(up) if up < 0.5 else stats.norm.isf(1 - up),
+                                                         rel=1e-9, abs=1e-9)
+
+
+def test_missing_row_is_not_uncovered():
+    """Amendment 1c (N1): test clusters looked up in a row without an estimate are left out of the
+    coverage; clusters with no row at all count as outside."""
+    T.G["rank"] = "n"
+    rng = np.random.default_rng(9)
+    p = rng.standard_normal(300)
+    K = {"trows": [{"surface": 1}], "rows": [{}, {}], "ts": np.array([0]), "te": np.array([300]),
+         "test_lrow": np.r_[np.zeros(100, int), np.ones(100, int), -np.ones(100, int)],
+         "test_p": {"alpha": p, "beta": p}}
+    par = np.full((3, 2, 2 + len(SA.LEVELS)), np.nan)
+    par[0, :, 0], par[0, :, 1], par[0, :, 2:] = 0.0, 1.0, 10.0          # row 0: covers everything
+    st = T._test_stats(K, par, None)                                     # row 1: no estimate; -1: no row
+    assert st[0, 0, 2] == 200                                            # 100 (row 0) + 100 (no row); row 1 missing
+    assert st[0, 0, 3] == pytest.approx(0.5)                             # the no-row clusters are outside

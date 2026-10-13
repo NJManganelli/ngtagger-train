@@ -129,7 +129,7 @@ def coverage_page(pdf, res, title):
         ax.plot(xx, len(z) * 0.25 * np.exp(-xx ** 2 / 2) / np.sqrt(2 * np.pi), color=C2, label="unit Gaussian")
         for s in (-t, t):
             ax.axvline(s, color=INK2, ls="--", lw=1)
-        ax.set_xlabel(f"coverage z at {lv:.1%} [exact-shape null, amendments 1 / 1b; σ units]")
+        ax.set_xlabel(f"coverage z at {lv:.1%} [exact-shape null, amendments 1-1c; σ units]")
         ax.set_ylabel("bins [count]")
         ax.set_title(f"level {lv:.1%}; dashed: ±t(N) = {t:.2f}", fontsize=8)
     h, lab = axs.flat[0].get_legend_handles_labels()
@@ -227,7 +227,7 @@ def response_page(pdf):
 
 def summary_lines(kg, kb, gt, roc, ex):
     L = []
-    for name, r in (("amendment-1b known-good demonstration (fit 7-8, test 3-6, 9-10)", kg),
+    for name, r in (("amendment-1c known-good demonstration (fit 7-8, test 3-6, 9-10)", kg),
                     ("gated test (fit 1-2, test 3-10)", gt)):
         if not r:
             L.append(f"{name}: not run")
@@ -241,6 +241,10 @@ def summary_lines(kg, kb, gt, roc, ex):
             L.append(f"    {k:16s} bins {v['bins']:4d}  max|z| {v['max_abs_z']:.2f}  worst band fraction {v['worst_band_fraction']:.2f}")
     if kb:
         for n, v in kb["known_bads"].items():
+            if "judgement" not in v:
+                L.append(f"known-bad {n:15s}: fails = {v['fails_as_required']}  [{sum(r['flagged'] for r in v['rows'])} of "
+                         f"{len(v['rows'])} perturbed rows flagged]")
+                continue
             j = v["judgement"]
             L.append(f"known-bad {n:15s}: fails = {v['fails_as_required']}  [(i) {j['i']['fail']} bins; (ii) beyond t "
                      f"{j['ii']['n_beyond_t']}, max |z| {j['ii']['max_abs_z']:.1f}]")
@@ -259,13 +263,15 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(CM.OUT_DIR / "p03_summary.pdf"))
     ap.add_argument("--png-dir", help="also write every page as PNG here (visual checks)")
+    ap.add_argument("--rank", choices=("n", "n+1"), default="n", help="which amendment-1c table results to show")
     a = ap.parse_args(argv)
     if a.png_dir:
         Path(a.png_dir).mkdir(parents=True, exist_ok=True)
         for f in Path(a.png_dir).glob("page_*.png"):
             f.unlink()
         PNG_DIR.append(a.png_dir)
-    kg, kb, gt = (load(f"p03_table_{m}_a1b.json") for m in ("known-good", "known-bad", "gated"))
+    sfx = "_rankA" if a.rank == "n+1" else ""
+    kg, kb, gt = (load(f"p03_table_{m}_a1c{sfx}.json") for m in ("known-good", "known-bad", "gated"))
     roc, ex = load("p03_roc.json"), load("p03_extras.json")
     with PdfPages(a.out) as pdf:
         text_page(pdf, "P0.3 angle definitions, uncertainty table and cluster-level ROC (canon_v3 AAAA)",
