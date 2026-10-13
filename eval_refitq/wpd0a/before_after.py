@@ -13,7 +13,10 @@ format), delivered (a DR survivor of the build's full menu, DR recomputed from t
 exported tracks as angle_stage_metrics does, owned by the TP: n_own >= 3 and more
 than half the hits) and clean delivered (the same track without a wrong IT hit), all
 also per seed class (IT, OT, mixed); per event: fitted tracks, DR survivors and fakes
-(>= 2 wrong hits; definition sheet truth.census_fake, raw) per seed class x arity.
+(>= 2 wrong hits; definition sheet truth.census_fake, raw) per seed class x arity. Also the
+bound of the dominant-TP limit (the nano carries one TP per OT cluster, CMSSW credits every
+contributor; cmssw_truth_spec.md section 6): "deliv_ub" and "fake_lb" count every wrong OT
+stub that has a TP as crediting the owner as well.
 
 compare: efficiencies over TPs with >= 4 layers at pT >= 2 GeV in |eta| < 1.1 (c),
 < 0.9 (h), 1.1-1.8 (f), and pT 1-2 GeV in |eta| < 1.1; |eta| ranges carry the
@@ -79,16 +82,22 @@ def extract(label, census, root, out):
         n_own, nh, own = S[:, col["n_own"]], S[:, col["nhit"]], S[:, col["own_tpidx"]]
         held = (own >= 0) & (n_own >= 3) & (n_own > 0.5 * nh)
         clean = held & (S[:, col["n_it_wrong"]] == 0)
+        # BOUND on the dominant-TP limit (the nano carries one TP per OT cluster, CMSSW credits every
+        # contributor): every wrong OT stub that has a TP (genuine of another TP, or combinatoric) also
+        # credited to the owner. Unknown stubs have no TP; IT clusters stay dominant-only.
+        hid = S[:, col["n_ot_wrong"]] + S[:, col["n_ot_combinatoric"]]
+        held_ub = (own >= 0) & (n_own + hid >= 3) & (n_own + hid > 0.5 * nh)
         okey = M.tp_key(S[:, col["event"]].astype(np.int64), np.maximum(own, 0).astype(np.int64))
         scl = S[:, col["sysclass"]].astype(int)
         dl = {}
-        for nm, sel in (("deliv", held), ("clean", clean)):
+        for nm, sel in (("deliv", held), ("clean", clean), ("deliv_ub", held_ub)):
             dl[nm] = np.isin(key, okey[sel])
             for k, v in SYS.items():
                 dl[f"{nm}_{v}"] = np.isin(key, okey[sel & (scl == k)])
         ev_t = T[:, col["event"]].astype(np.int64)
         ev_s = S[:, col["event"]].astype(np.int64)
         fake = S[:, col["n_wrong"]] >= 2
+        A[f"{b}/n_fake_lb"] = np.bincount(ev_s[S[:, col["n_wrong"]] - hid >= 2], minlength=nev)
         A[f"{b}/n_fit"] = np.bincount(ev_t, minlength=nev)
         A[f"{b}/n_dr"] = np.bincount(ev_s, minlength=nev)
         A[f"{b}/n_fake"] = np.bincount(ev_s[fake], minlength=nev)
@@ -131,7 +140,7 @@ def figures(meta, Z, W):
             sel = tp_sel(Z, pt, eta)
             den = np.bincount(Z["event"][sel], minlength=nev).astype(float)
             out[f"{b}/den_{pt}_{eta}"] = (float(den.sum()), W @ den)
-            for k in ["seed_all", "deliv", "clean"] + [f"{x}_{v}" for x in ("seed", "deliv")
+            for k in ["seed_all", "deliv", "clean", "deliv_ub"] + [f"{x}_{v}" for x in ("seed", "deliv")
                                                        for v in SYS.values()]:
                 num = np.bincount(Z["event"][sel & Z[f"{b}/{k}"]], minlength=nev).astype(float)
                 out[f"{b}/eff_{k}_{pt}_{eta}"] = ratio(num, den)
@@ -139,6 +148,7 @@ def figures(meta, Z, W):
             n = Z[f"{b}/{k}"].astype(float)
             out[f"{b}/{k}_per_ev"] = (float(n.sum() / nev), (W @ n) / nev)
         out[f"{b}/fake"] = ratio(Z[f"{b}/n_fake"].astype(float), Z[f"{b}/n_dr"].astype(float))
+        out[f"{b}/fake_lb"] = ratio(Z[f"{b}/n_fake_lb"].astype(float), Z[f"{b}/n_dr"].astype(float))
         for s, a in CATS:
             c = f"{SYS[s]}{a}"
             out[f"{b}/fake_{c}"] = ratio(Z[f"{b}/n_fake_{c}"].astype(float), Z[f"{b}/n_dr_{c}"].astype(float))
