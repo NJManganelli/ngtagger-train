@@ -1,12 +1,12 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261013T131221Z-wpd0a-gate29-derive-91179/copy",
- "derived": "2026-10-13T13:13:48Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261013T210721Z-wpd0a-gate30-derive-6822/copy",
+ "derived": "2026-10-13T21:08:46Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "census.builds_and_dr",
- "job_id": "20261013T131221Z-wpd0a-gate29-derive-91179",
+ "job_id": "20261013T210721Z-wpd0a-gate30-derive-6822",
  "known_bad": "the same census output with one AAAI track's hit moved onto IL4 (another build's surface), one DR group spanning both builds, and one n_own set beyond nhit",
- "rule": "on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; identity of the counts with the reference: tracks, and the truth the census wires in (TPs in the census table and hits crediting their track's owner, which move if the stub credit of M.credited_tps stops reaching the census)",
+ "rule": "on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; identity of the counts with the reference: tracks, and the truth the census wires in (TPs in the census table, findable TPs (TF.findable: charged, >= 4 credited hits, the efficiency denominator) and hits crediting their track's owner, which move if the stub credit of M.credited_tps stops reaching the census)",
  "stat": {
   "builds": [
    "AAAI",
@@ -17,6 +17,7 @@
   "hits_off_build": 0,
   "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
   "n_census_tps": 34395,
+  "n_findable_tps": 13171,
   "n_own_gt_nhit": 0,
   "n_owned_hits": 100494,
   "n_tracks": 34375,

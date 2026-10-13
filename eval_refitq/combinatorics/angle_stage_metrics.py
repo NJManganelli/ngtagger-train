@@ -3,9 +3,9 @@ configurations (M.ANGLE_STAGES, the resolution knob) side by side.
 
 Each census is read with its tracks; per build (the census's "builds"):
 
-  efficiency   over the site's denominator: TPs with >= 4 layers hit (any of
-               IL1-IL4, OL1-OL6) and the stated true pT / |eta| range (ETA_RANGES,
-               each with its OT-truncated label), split
+  efficiency   over the census's denominator, its findable TPs (TF.findable:
+               charged, >= 4 credited hits, IT clusters and OT stubs) in the stated
+               true pT / |eta| range (ETA_RANGES, each with its OT-truncated label), split
                prompt / displaced at |true d0| = 200 um (the site's D0_SPLIT_CM),
                the displaced split again at 1 mm: "hf" 0.2-1 mm (heavy flavour),
                "ll" > 1 mm (long-lived).
@@ -60,10 +60,8 @@ def _rs(x):
 
 
 def tp_rows(C):
-    nl = (np.unpackbits(C["hit_it"][:, None], axis=1).sum(1)
-          + np.unpackbits(C["hit_ot"][:, None], axis=1).sum(1))
     return {"key": np.asarray(C["key"], np.int64), "pt": C["pt"],
-            "aeta": np.abs(C["eta"]), "ad0": np.abs(C["d0"]), "nlay": nl}
+            "aeta": np.abs(C["eta"]), "ad0": np.abs(C["d0"]), "findable": TF.findable(C)}
 
 
 def menu(C, entries):
@@ -85,7 +83,7 @@ def delivered_keys(T, col):
 
 def eff_block(P, found, prefix, out, pt_lo, pt_hi):
     """Efficiency of `found` (bool over P) per |eta| range and prompt/displaced."""
-    base = (P["nlay"] >= 4) & (P["pt"] >= pt_lo) & (P["pt"] < pt_hi)
+    base = P["findable"] & (P["pt"] >= pt_lo) & (P["pt"] < pt_hi)
     for er, (lo, hi) in ETA_RANGES.items():
         m = base & (P["aeta"] >= lo) & (P["aeta"] < hi)
         for sp, ms in (("all", m), ("prompt", m & (P["ad0"] <= D0_SPLIT_CM)),
@@ -126,7 +124,7 @@ def build_metrics(C, build, P, col, nev):
         own_key = M.tp_key(S[:, col["event"]].astype(np.int64),
                            np.maximum(S[:, col["own_tpidx"]], 0).astype(np.int64))
         pos = np.clip(np.searchsorted(P["key"], own_key), 0, len(P["key"]) - 1)
-        inden = okm & (P["key"][pos] == own_key) & (P["nlay"][pos] >= 4) \
+        inden = okm & (P["key"][pos] == own_key) & P["findable"][pos] \
             & (P["pt"][pos] >= 2.0) & (P["aeta"][pos] < 1.1)
         itb = S[:, col["n_it"]] >= 2
         for nm, sel in (("all", inden), ("prompt", inden & (P["ad0"][pos] <= D0_SPLIT_CM)),

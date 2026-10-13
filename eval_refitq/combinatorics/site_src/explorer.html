@@ -122,7 +122,7 @@ tr.partacc td:first-child { background: repeating-linear-gradient(45deg, #e4e4e4
       <option value="prompt">prompt only</option>
       <option value="displaced">displaced only</option>
     </select>
-    <br>minimum layers <input type="number" id="minlay" value="4" min="1" max="16">
+    <br>minimum credited hits <input type="number" id="minlay" value="4" min="4" max="30">
     <br>a track delivers a particle when it holds
     <select id="owndef">
       <option value="majority">more than half its hits (min 3)</option>
@@ -1103,7 +1103,7 @@ async function drawInner() {
     ? `<p class="hint">${rows.length.toLocaleString()} tracks selected. No `
       + `efficiency: this collection carries no link to the particle census.</p>`
     : `<table class="kv"><tr><th align="left">denominator</th><td>`
-    + `${dt.toLocaleString()} TPs, &ge;${minLay} layers`
+    + `${dt.toLocaleString()} TPs, &ge;${minLay} credited hits`
     + `${split === 'all' ? '' : ', ' + split + ' only'}</td></tr>`
     + (bandR ? `<tr><th align="left">seed-truthful</th><td><b>`
         + `${dt > 0 ? (100 * nt / dt).toFixed(1) : '--'}%</b> `
@@ -1190,16 +1190,16 @@ async function drawInner() {
             + `does not carry. `
           : `${(m.acceptance || {}).text || ''} `)
        + 'In those ranges the efficiency denominator holds only particles that '
-       + 'still cross &ge; 4 barrel layers (coverage below), so an efficiency '
+       + 'still leave &ge; 4 credited hits in the barrel (coverage below), so an efficiency '
        + 'there is not forward performance.</span>' : '');
   const cov = m.coverage;
   if (cov) {
     const cC = C.rangeSums(cov.census, cov.edges, ER), cA = C.rangeSums(cov.all, cov.edges, ER);
     document.getElementById('etacov').innerHTML =
       `<b>Denominator coverage</b> (pT &ge; ${f1(cov.ptmin)} GeV, no other cut): `
-      + 'particles per event the efficiency denominator holds, of those with '
-      + '&ge; 4 layers hit counting every layer (IT discs and OT disks '
-      + 'included):<table class="kv">'
+      + 'charged particles per event the efficiency denominator holds (&ge; 4 '
+      + 'credited hits in the emulated barrel), of those with &ge; 4 credited hits '
+      + 'anywhere (IT discs and OT disks included):<table class="kv">'
       + ER.slice(0, -1).map((lo, k) =>
           `<tr${states[k] === 'out' ? ' class="outacc"' : states[k] === 'partial'
                 ? ' class="partacc"' : ''}><td>${k === 0 ? '&lt; ' + ER[1]

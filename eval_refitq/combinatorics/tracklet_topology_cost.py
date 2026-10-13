@@ -878,8 +878,13 @@ def attach_tp_truth(D, TP, names=None):
 
 
 # ---- whom a hit is credited to (definition sheet truth.stub; decision 12 = D13 a)
-# An IT cluster is credited to its dominant TP (tpIdx). An OT stub is credited to
-# its principal TP and to the dominant TP of each of its two clusters, the nano's
+# A credit means the hit was made by the TP or by one of its unstored Geant4
+# daughters: SIM gives a daughter not stored (born outside the tracker volume, or
+# with kinetic energy <= 0.2 GeV) its parent's track id
+# (TkAccumulatingSensitiveDetector.cc:147-156, 236-249; WDMac
+# wpd0a/oot_truth_investigation.md), so a credited hit need not lie on the TP's own
+# path. An IT cluster is credited to its dominant TP (tpIdx). An OT stub is credited
+# to its principal TP and to the dominant TP of each of its two clusters, the nano's
 # emulation of CMSSW's TP -> stubs map, which credits every contributor of either
 # cluster (TTStubAssociator.cc:72-88; the CMSSW truth spec, WDMac
 # wpd0a/cmssw_truth_spec.md sec. 2):
@@ -895,32 +900,21 @@ def attach_tp_truth(D, TP, names=None):
 # minor contributor goes uncredited here (eval_refitq/wpd0a/owner_vs_cmssw.py
 # measures what that costs). An unknown stub (no TP in either cluster) is credited
 # to nobody. No bunch-crossing or event cut: out-of-time and pile-up TPs are
-# credited like any other. TRUTH ONLY: none of this may reach the seeding, the
-# follow or the fit.
-# THE STUB'S POSITION IS ITS INNER CLUSTER'S (L1SmartPixelsAllStubTableProducer.cc:
-# 132-135, TTStub::innerClusterPosition). A credit in the last slot is OUTER-ONLY:
-# the stub belongs to the TP by CMSSW's rule but holds another particle's position
-# (on PS layers its z is another particle's macro-pixel z; measured median |dz|
-# 1.29 cm against 0.08 cm genuine). The first POSITION_SLOTS credits (the principal,
-# which is in both clusters, and the inner owner) carry the TP's position AS A RULE,
-# not always (WP-D0a review 02 R2-L1, canon_v3 file 3, prompt TPs above 2 GeV):
-# 97-99% of genuine principals and 58-86% of inner credits on combinatoric stubs
-# lie within 5 cm of the TP's helix, and every credit to an out-of-time TP lies
-# beyond it, a property of the input's truth maps (a CMSSW-side follow-up is open).
-# So "position-carrying" (POSITION_SLOTS, found_dr_pos) is an approximation from
-# above, and an outer-only share is a lower bound on the share off the TP's position.
+# credited like any other. EVERY CREDITED HIT COUNTS THE SAME in every census
+# figure, whatever cluster credits it (decision of 2026-10-13); a stub is ONE hit
+# for each TP it is credited to, however many of its clusters credit that TP.
+# TRUTH ONLY: none of this may reach the seeding, the follow or the fit.
 STUB_TP_COLS = ("tpIdx", "tpIdxInner", "tpIdxOuter")
 N_CREDIT = len(STUB_TP_COLS)
-POSITION_SLOTS = 2
 
 
 def credited_tps(*cols):
     """(n, N_CREDIT) int32: the TPs each object is credited to, from its truth
     columns (an IT cluster's tpIdx; an OT stub's STUB_TP_COLS, in that order).
-    Each matched TP appears once per object, in its first slot; a repeat and an
-    unused slot are -1, so slot POSITION_SLOTS holds exactly the outer-only
-    credits. Credited: a row of L1TTP (>= 0) and a real TP outside L1TTP (<= -3).
-    Not credited: -1 (no TP) and -2 (truth missing; refused at the census input,
+    Each matched TP appears ONCE per object, so a stub whose clusters both credit
+    a TP counts once for it; a repeat and an unused slot are -1. Credited: a row
+    of L1TTP (>= 0) and a real TP outside L1TTP (<= -3). Not credited: -1 (no TP)
+    and -2 (truth missing; refused at the census input,
     tp_findability.require_census_inputs)."""
     T = np.full((len(cols[0]), N_CREDIT), -1, np.int32)
     for j, c in enumerate(cols):
@@ -939,29 +933,23 @@ def hit_tps(U, G):
     return np.where((G >= 0)[..., None], U["tps"][np.clip(G, 0, None)], -1)
 
 
-def credits_of(D, g, position=False):
+def credits_of(D, g):
     """(len(g), N_CREDIT) credited TPs of the objects g of table D: D["tps"] when
     the table carries it (the census's unified table), else credited_tps of the
     truth columns it has (an IT cluster table: tpIdx; an OT stub table:
-    STUB_TP_COLS). position=True keeps only the credits that carry the TP's own
-    position (the first POSITION_SLOTS), dropping outer-only ones."""
-    T = D["tps"][g] if "tps" in D else credited_tps(*(D[c][g] for c in STUB_TP_COLS if c in D))
-    if position:
-        T = T.copy()
-        T[:, POSITION_SLOTS:] = -1
-    return T
+    STUB_TP_COLS)."""
+    return D["tps"][g] if "tps" in D else credited_tps(*(D[c][g] for c in STUB_TP_COLS if c in D))
 
 
-def seed_credit(D, ga, gb, gc=None, position=False):
+def seed_credit(D, ga, gb, gc=None):
     """(ok, A): A = the credited TPs of each seed's first hit (credits_of), ok its
     (n, N_CREDIT) mask of the TPs credited by every hit of the seed (A, B and C
-    when given), the seed-truthful rule (definition sheet truth.seed_truthful);
-    position=True counts position-carrying credits only."""
-    A = credits_of(D, ga, position)
+    when given), the seed-truthful rule (definition sheet truth.seed_truthful)."""
+    A = credits_of(D, ga)
     ok = SPN.tp_matched(A)
     for g in (gb, gc):
         if g is not None:
-            ok &= (A[:, :, None] == credits_of(D, g, position)[:, None, :]).any(axis=2)
+            ok &= (A[:, :, None] == credits_of(D, g)[:, None, :]).any(axis=2)
     return ok, A
 
 
@@ -974,10 +962,10 @@ def seed_tp(D, ga, gb, gc=None):
     return np.where(real, v, -1), real
 
 
-def recovered_keys(D, ga, gb, gc=None, position=False):
+def recovered_keys(D, ga, gb, gc=None):
     """Sorted keys of the TPs a seed recovers: every TP credited by all of its
     hits (seed_credit), each such TP once."""
-    ok, A = seed_credit(D, ga, gb, gc, position)
+    ok, A = seed_credit(D, ga, gb, gc)
     if not ok.any():
         return np.empty(0, dtype=np.int64)
     r, s_ = np.nonzero(ok)

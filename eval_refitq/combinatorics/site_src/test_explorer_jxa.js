@@ -91,7 +91,7 @@ var Plotly={ purge:function(el){ purges.push(el.id); delete el._fullLayout; },
   z:(tr[0]&&tr[0].z)||null, y:(tr[0]&&tr[0].y)||null}); } };
 // ---- a synthetic dataset with the same SHAPE as the real one -------------
 var NTP=8, NTRK=6, NW=1, NSC=2;
-var TPCOLS=['key','event','pt','eta','phi','d0','z0','vr','hit_it','hit_ot','n_layers'];
+var TPCOLS=['key','event','pt','eta','phi','d0','z0','vr','hit_it','hit_ot','n_layers','n_hits'];
 var TRKCOLS=['seed_idx','tp_key','tp_row','pt','phi','eta','d0','z0','n_layers','nhit',
              'n_own','n_it_right','n_it_wrong','n_ot_right','n_ot_wrong','sig_kf_d0',
              'n_wrong','d_d0','d_z0','d_kappa','d_phi0','d_cot'];
@@ -128,7 +128,7 @@ function f32(n){ var a=new Float32Array(n); for(var i=0;i<n;i++) a[i]=0; return 
 var TPB=f32(NTP*TPCOLS.length), TRB=f32(NTRK*TRKCOLS.length);
 for (var i=0;i<NTP;i++){ var b=i*TPCOLS.length;
   TPB[b+2]=3+i; TPB[b+3]=0.1*i-0.4; TPB[b+4]=0.2; TPB[b+5]=0.001*(i%4);
-  TPB[b+6]=1.0; TPB[b+10]=6; }
+  TPB[b+6]=1.0; TPB[b+10]=6; TPB[b+11]=7; }
 TPB[6*TPCOLS.length+3]=1.5; TPB[7*TPCOLS.length+3]=2.0;   // two forward TPs
 for (var i=0;i<NTRK;i++){ var b=i*TRKCOLS.length;
   TRB[b+0]=i%2; TRB[b+1]=i<5?i:-1; TRB[b+2]=i<5?i:-1; TRB[b+3]=4+i; TRB[b+4]=0.1;

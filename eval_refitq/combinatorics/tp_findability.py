@@ -8,7 +8,9 @@ ttbar set before the stub credit (format < 28), 9,515 per event -- carrying
     key            M.tp_key(event, tpIdx), globally unique across the input set
     pt eta phi     TP truth kinematics; phi [rad] is the azimuth at PRODUCTION
     d0 z0 vr       L1TTP d0 and z0 [cm] at the POCA to the beamline, production radius [cm]
+    charge         L1TTP charge (findable() requires a charged TP)
     hit_it hit_ot  bitmasks of which IL1-IL4 / OL1-OL6 the TP actually hit
+    n_hit_it/_ot   credited IT clusters / OT stubs (each one hit; findable() at >= 4)
     found          BITMAP over every candidate seed: did that seed recover this TP
 
 so that efficiency in any slice of (pT, eta, phi, d0, z0, build, seed menu) is a
@@ -81,10 +83,18 @@ OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 29   # 29: truth diagnostics, nothing else moves: track columns
+FORMAT_VERSION = 30   # 30: THE FINDABLE DENOMINATOR (definition sheet census.findable;
+                      # decision of 2026-10-13): census columns n_hit_it, n_hit_ot
+                      # (credited IT clusters and OT stubs, each ONE hit per TP)
+                      # and charge; findable() = charged with >= FINDABLE_MIN_HITS
+                      # credited hits. Every credited hit counts the same: the
+                      # position-based diagnostics of 29 are gone (found_dr_pos,
+                      # n_ot_right_outer_only); n_tp_majority stays. Tracks,
+                      # counts and every other column as in 29.
+                      # 29: truth diagnostics, nothing else moves: track columns
                       # n_ot_right_outer_only and n_tp_majority (KF.TRACK_COLS,
                       # appended), the seed-truthful bitmap found_dr_pos counting
-                      # position-carrying credits only (M.POSITION_SLOTS), the
+                      # position-carrying credits only (no outer-only credit), the
                       # track column list in the manifest; inputs with truth -2
                       # ("unavailable") in the stub or cluster tpIdx refused.
                       # 28: an OT stub is credited to every TP behind its clusters
@@ -635,7 +645,9 @@ def chunk_census(U):
                 "pt": z.astype(np.float32), "eta": z.astype(np.float32),
                 "phi": z.astype(np.float32), "d0": z.astype(np.float32),
                 "z0": z.astype(np.float32), "vr": z.astype(np.float32),
-                "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8)}
+                "charge": z.astype(np.float32),
+                "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8),
+                "n_hit_it": z.astype(np.int16), "n_hit_ot": z.astype(np.int16)}
     key = M.tp_key(U["event"][hi], T[hi, sl])
     # per TP: hits on which it is the hit's own tpIdx (slot 0) first, each group
     # in hit order, so a TP some hit owns is represented by the first such hit
@@ -652,6 +664,11 @@ def chunk_census(U):
     it = ls <= 4
     np.bitwise_or.at(hit_it, pos[it], (1 << (ls[it] - 1)).astype(np.uint8))
     np.bitwise_or.at(hit_ot, pos[~it], (1 << (ls[~it] - 11)).astype(np.uint8))
+    # CREDITED HITS per TP: one per (hit, TP) credit, and credited_tps lists a TP
+    # once per hit, so an OT stub is ONE hit for each TP it is credited to, however
+    # many of its clusters credit it (census.findable)
+    n_hit_it = np.bincount(pos[it], minlength=len(uk)).astype(np.int16)
+    n_hit_ot = np.bincount(pos[~it], minlength=len(uk)).astype(np.int16)
     L = U["l1ttp"]
     p, row = M.tp_rows(L, U["event"][rep], T[rep, sl_s[first]])
     nan = np.float32(np.nan)
@@ -663,14 +680,30 @@ def chunk_census(U):
             lv = np.where(row, L[lc][p], nan) if len(L["key"]) else np.full(len(uk), nan)
             out.append(np.where(own, U[hc][rep], lv).astype(np.float32))
         return out
-    pt, eta, phi, d0, z0, vx, vy = kin(("tpPt", "pt"), ("tp_eta", "eta"),
-                                       ("tp_phi_prod", "phi"), ("tp_d0", "d0"),
-                                       ("tp_z0", "z0"), ("tp_vx", "vx"), ("tp_vy", "vy"))
+    pt, eta, phi, d0, z0, vx, vy, charge = kin(
+        ("tpPt", "pt"), ("tp_eta", "eta"), ("tp_phi_prod", "phi"), ("tp_d0", "d0"),
+        ("tp_z0", "z0"), ("tp_vx", "vx"), ("tp_vy", "vy"), ("tp_charge", "charge"))
     return {"key": uk.astype(np.int64),
             "event": M.tp_key_parts(uk)[0].astype(np.int32),
             "pt": pt, "eta": eta, "phi": phi, "d0": d0, "z0": z0,
-            "vr": np.hypot(vx, vy).astype(np.float32),
-            "hit_it": hit_it, "hit_ot": hit_ot}
+            "vr": np.hypot(vx, vy).astype(np.float32), "charge": charge,
+            "hit_it": hit_it, "hit_ot": hit_ot, "n_hit_it": n_hit_it, "n_hit_ot": n_hit_ot}
+
+
+# THE CENSUS EFFICIENCY DENOMINATOR (definition sheet census.findable; decision of
+# 2026-10-13): a TP is FINDABLE when it is charged and carries at least
+# FINDABLE_MIN_HITS credited hits, IT clusters plus OT stubs in any mix, counting
+# HITS, not layers (two overlapping hits in one layer both count), each OT stub one
+# hit. Charged as in CMSSW's L1TrackNtupleMaker (charge == 0 skipped): a neutral TP
+# (photon, K0L, neutron) can be credited with its unstored daughters' hits. The pT
+# and |eta| selections are the consumer's.
+FINDABLE_MIN_HITS = 4
+
+
+def findable(C):
+    """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_HITS)."""
+    n = C["n_hit_it"].astype(np.int64) + C["n_hit_ot"]
+    return (n >= FINDABLE_MIN_HITS) & np.isfinite(C["charge"]) & (C["charge"] != 0)
 
 
 def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
@@ -752,11 +785,6 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     # survivors, which is what a real system emits.
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
-    # found_dr counting only the position-carrying credits (the outer-only credits of
-    # M.POSITION_SLOTS left out): a diagnostic of how much seed-truthful efficiency
-    # rests on stubs holding another particle's position (a lower bound: some
-    # principal and inner credits are off the TP's position too, see M.POSITION_SLOTS)
-    found_dr_pos = np.zeros((ntp, nw), np.uint64)
     counters, qual, trk, hits, angr = {}, {}, {}, {}, {}
     # SEED MULTIPLICITY BY |eta|: every seed object a seed forms (the funnel's
     # seed_objects), binned on SA.SEED_ETA_EDGES. Counts, so chunks add.
@@ -938,13 +966,11 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         if not dr.any():
             continue
         o = SA.filter_tracks(h["o"], dr)
-        bit = np.uint64(1) << np.uint64(s_i & 63)
-        for B, pos in ((found_dr, False), (found_dr_pos, True)):
-            rkeys = SA.recovered_keys(U, o, position=pos)
-            if len(rkeys):
-                B[np.searchsorted(cen["key"], rkeys), s_i >> 6] |= bit
-    return (cen, found, found_dr, found_dr_pos, counters, qual, trk, hits, angr, nonant,
-            seed_eta)
+        rkeys = SA.recovered_keys(U, o)
+        if len(rkeys):
+            p = np.searchsorted(cen["key"], rkeys)
+            found_dr[p, s_i >> 6] |= np.uint64(1) << np.uint64(s_i & 63)
+    return cen, found, found_dr, counters, qual, trk, hits, angr, nonant, seed_eta
 
 
 def truncation_table(C, group, cap=TRACKS_PER_REGION):
@@ -1133,14 +1159,14 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
-            cen, found, found_dr, found_dr_pos, counters, qual, trk, hits, angr, nonant, seed_eta = process_chunk(
+            cen, found, found_dr, counters, qual, trk, hits, angr, nonant, seed_eta = process_chunk(
                 U, Q, seeds, meta["dr_groups"], ptmin, ci, QUAL_PER_CHUNK, kf_opts,
                 export_tracks, min_layers=min_layers,
                 d0_window_cm=d0_window_cm, it_ptmin=it_ptmin,
                 min_it_layers=min_it_layers, min_ot_conf=min_ot_conf, ang=ang,
                 pos_arb=pos_arb)
             np.savez_compressed(
-                _shard_path(d, ci), found=found, found_dr=found_dr, found_dr_pos=found_dr_pos,
+                _shard_path(d, ci), found=found, found_dr=found_dr,
                 n_events=len(ev),
                 counters=json.dumps({str(k): v for k, v in counters.items()}),
                 **{f"cen_{k}": v for k, v in cen.items()},
@@ -1195,9 +1221,10 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     shards = sorted(Path(d).glob("chunk_*.npz"))
     if not shards:
         raise SystemExit(f"{d} has no shards")
-    cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "hit_it", "hit_ot"]
+    cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "charge", "hit_it", "hit_ot",
+            "n_hit_it", "n_hit_ot"]
     parts = {c: [] for c in cols}
-    fnd, fdr, fdp, cnt, qs, fts, hts, ags, nread = [], [], [], {}, {}, {}, {}, {}, 0
+    fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
     non = []
     seta = None
     cl_tot = cl_off = 0
@@ -1209,7 +1236,6 @@ def load(d, nev=None, verbose=True, with_tracks=False):
             parts[c].append(z[f"cen_{c}"])
         fnd.append(z["found"])
         fdr.append(z["found_dr"])
-        fdp.append(z["found_dr_pos"])
         cl_off = cl_tot
         cl_tot += int(z["n_clusters"])
         nread += int(z["n_events"])
@@ -1233,7 +1259,6 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
     C["found_dr"] = np.concatenate(fdr, axis=0)
-    C["found_dr_pos"] = np.concatenate(fdp, axis=0)
     C["n_events"] = nread
     # per DR group (C["dr_groups"]): (group, event x region) occupancy
     C["nonant"] = np.concatenate(non, axis=1)
@@ -1300,18 +1325,14 @@ def load(d, nev=None, verbose=True, with_tracks=False):
 # ==========================================================================
 # query helpers -- what the interactive tool is built on
 # ==========================================================================
-def seed_mask(C, i, after_dr=False, position=False):
+def seed_mask(C, i, after_dr=False):
     """Boolean over TPs: did seed i recover this TrackingParticle?
 
     after_dr=False is the seed's STANDALONE reach and is what menu composition
     must use; after_dr=True is what it still owns once duplicate removal has
-    assigned each track to a single seed. position=True counts only the
-    position-carrying credits (found_dr_pos, M.POSITION_SLOTS); it exists after DR
-    only, so it requires after_dr=True.
+    assigned each track to a single seed.
     """
-    if position and not after_dr:
-        raise ValueError("seed_mask: position=True exists after DR only (found_dr_pos); pass after_dr=True")
-    b = C["found_dr_pos"] if position else (C["found_dr"] if after_dr else C["found"])
+    b = C["found_dr"] if after_dr else C["found"]
     return (b[:, i >> 6] >> np.uint64(i & 63)) & np.uint64(1) != 0
 
 

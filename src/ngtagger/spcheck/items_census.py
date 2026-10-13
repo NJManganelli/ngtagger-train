@@ -165,8 +165,9 @@ class CensusBuilds(Item):
                  "hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in "
                  "its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; "
                  "identity of the counts with the reference: tracks, and the truth the census wires in (TPs in the "
-                 "census table and hits crediting their track's owner, which move if the stub credit of "
-                 "M.credited_tps stops reaching the census)")
+                 "census table, findable TPs (TF.findable: charged, >= 4 credited hits, the efficiency denominator) "
+                 "and hits crediting their track's owner, which move if the stub credit of M.credited_tps stops "
+                 "reaching the census)")
     trees = (CENSUS_DIR,)
 
     def _run(self, ctx) -> str:
@@ -190,6 +191,7 @@ class CensusBuilds(Item):
         from ngtagger.data import spix_nano as SPN
 
         KF = ctx.script_module(CENSUS_DIR, "kf_emulation")
+        TF = ctx.script_module(CENSUS_DIR, "tp_findability")
         d = self._run(ctx)
         man = json.load(open(os.path.join(d, "manifest.json")))
         builds = {b: [int(e) for e in es] for b, es in man["builds"].items()}
@@ -201,8 +203,12 @@ class CensusBuilds(Item):
         out = {"input": ctx.input, "events": CENSUS_EVENTS, "builds": sorted(builds), "perturbed": perturb,
                "n_tracks": 0, "hits_off_build": 0, "seed_or_follow_off_build": 0, "dr_groups_spanning_builds": 0,
                "n_own_gt_nhit": 0, "owner_sentinel_inconsistent": 0, "n_owned_hits": 0,
-               "n_census_tps": int(sum(len(np.load(c)["cen_key"])
-                                       for c in glob.glob(os.path.join(d, "chunk_*.npz"))))}
+               "n_census_tps": 0, "n_findable_tps": 0}
+        for c in glob.glob(os.path.join(d, "chunk_*.npz")):
+            z = np.load(c)
+            out["n_census_tps"] += len(z["cen_key"])
+            out["n_findable_tps"] += int(TF.findable({k: z[f"cen_{k}"] for k in
+                                                       ("n_hit_it", "n_hit_ot", "charge")}).sum())
         if perturb:
             dr = [dr[0] + dr[1][:1], dr[1][1:]] + dr[2:]
         for g in dr:
@@ -247,9 +253,10 @@ class CensusBuilds(Item):
         if stat["n_tracks"] == 0:
             why.append("no exported tracks")
         if same_input(stat, ref) and stat["perturbed"] == ref["stat"]["perturbed"]:
-            why += identity(stat, ref, ["n_tracks", "n_census_tps", "n_owned_hits"])[1]
+            why += identity(stat, ref, ["n_tracks", "n_census_tps", "n_findable_tps", "n_owned_hits"])[1]
         return not why, (f"{stat['n_tracks']} census tracks over {stat['builds']} clean "
-                         f"({stat['n_census_tps']} TPs, {stat['n_owned_hits']} owned hits)") if not why else "; ".join(why)
+                         f"({stat['n_census_tps']} TPs, {stat['n_findable_tps']} findable, "
+                         f"{stat['n_owned_hits']} owned hits)") if not why else "; ".join(why)
 
 
 # ---------------------------------------------------------------- input contract

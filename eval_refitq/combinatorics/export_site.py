@@ -45,7 +45,7 @@ import seed_arity as SA       # noqa: E402
 import dr_conflict_scale as DRS  # noqa: E402
 
 TP_COLS = ("key", "event", "pt", "eta", "phi", "d0", "z0", "vr",
-           "hit_it", "hit_ot", "n_layers")
+           "hit_it", "hit_ot", "n_layers", "n_hits")
 
 
 def _u32(b):
@@ -67,20 +67,17 @@ ACCEPTANCE_TEXT = ("IT seeding uses the barrel layers IL1-IL4 only; there are no
                    "stubs are kept only up to |eta| {eta:.1f}.")
 
 
-def _popcount(bits):
-    b = np.ascontiguousarray(np.asarray(bits, np.uint32))
-    return np.unpackbits(b.view(np.uint8).reshape(-1, 4), axis=1).sum(1)
-
-
 def denominator_coverage(paths, nev, ptmin, edges):
     """Particles per |eta| bin that the census denominator holds, against all of
-    them: L1TTP particles with pT >= ptmin and >= 4 layers hit, counted
-      census  as the census counts layers: IL1-IL4 clusters, OT barrel stubs with
+    them: charged L1TTP particles with pT >= ptmin and >= TF.FINDABLE_MIN_HITS
+    credited hits, counted
+      census  as the census counts them: IL1-IL4 clusters, OT barrel stubs with
               |stub eta| <= M.ETA_MATCHED (tp_findability._unify)
-      all     every SmartPixels layer in the cluster table (IL1-IL4, ID1-ID4) and
-              every OT layer (barrel at any |eta|, disks D1-D5).
-    A hit counts for every TP it is credited to, as in the census (M.credited_tps).
-    Read from the census's own input files, same events. Returns per-bin counts.
+      all     every SmartPixels cluster in the cluster table (IL1-IL4, ID1-ID4) and
+              every OT stub (barrel at any |eta|, disks D1-D5).
+    A hit counts once for every TP it is credited to, as in the census
+    (M.credited_tps; an OT stub is one hit). Read from the census's own input
+    files, same events. Returns per-bin counts.
     """
     import awkward as ak
     import uproot
@@ -90,7 +87,7 @@ def denominator_coverage(paths, nev, ptmin, edges):
     keys = uproot.open(f"{paths[0]}:Events").keys()
     br = (SPN.cluster_branches(keys, ["surface", "tpIdx"])
           + SPN.branch_names(keys, SPN.OT_TABLE, otc)
-          + SPN.branch_names(keys, SPN.TP_TABLE, ["pt", "eta"]))
+          + SPN.branch_names(keys, SPN.TP_TABLE, ["pt", "eta", "charge"]))
     nb = len(edges) - 1
     out = {"census": np.zeros(nb, np.int64), "all": np.zeros(nb, np.int64)}
     seen = 0
@@ -101,7 +98,7 @@ def denominator_coverage(paths, nev, ptmin, edges):
             A = A[:nev - seen]
         J = SPN.cluster_columns(A, ["surface", "tpIdx"])
         O = SPN.table_columns(A, SPN.OT_TABLE, otc)
-        T = SPN.table_columns(A, SPN.TP_TABLE, ["pt", "eta"])
+        T = SPN.table_columns(A, SPN.TP_TABLE, ["pt", "eta", "charge"])
         ntp = ak.to_numpy(ak.num(T["pt"]))
         toff = np.r_[0, np.cumsum(ntp)[:-1]]
 
@@ -110,7 +107,7 @@ def denominator_coverage(paths, nev, ptmin, edges):
             return ak.to_numpy(ak.flatten(arr)), np.repeat(np.arange(len(n)), n)
         surf, ev_c = flat(J["surface"])
         tpc = ak.to_numpy(ak.flatten(J["tpIdx"])).astype(np.int64)
-        lay, ev_o = flat(O["layer"])
+        _, ev_o = flat(O["layer"])
         isb = ak.to_numpy(ak.flatten(O["isBarrel"])) > 0
         # one (stub, TP) pair per TP the stub is credited to
         tpo3 = M.credited_tps(*(ak.to_numpy(ak.flatten(O[c])) for c in M.STUB_TP_COLS))
@@ -119,51 +116,43 @@ def denominator_coverage(paths, nev, ptmin, edges):
         seta = np.abs(np.arcsinh(ak.to_numpy(ak.flatten(O["z"]))
                                  / np.maximum(ak.to_numpy(ak.flatten(O["r"])), 1e-6)))
         surf = surf.astype(np.int64)
-        # layer bits: IL1-4 -> 0-3, ID1-4 -> 4-7, OL1-6 -> 8-13, OD1-5 -> 14-18
-        code_c = np.where(surf <= 4, surf - 1, 4 + surf - 11)
-        code_o = np.where(isb, 8 + lay.astype(np.int64) - 1, 14 + lay.astype(np.int64) - 1)[so]
         row = np.r_[toff[ev_c] + tpc, toff[ev_o[so]] + tpo]
-        code = np.r_[code_c, code_o]
         in_census = np.r_[surf <= 4, (isb & (seta <= M.ETA_MATCHED))[so]]
         m = np.r_[tpc >= 0, tpo >= 0]
-        all_bits = np.zeros(int(ntp.sum()), np.uint32)
-        cen_bits = np.zeros(int(ntp.sum()), np.uint32)
-        np.bitwise_or.at(all_bits, row[m], (1 << code[m]).astype(np.uint32))
-        mc = m & in_census
-        np.bitwise_or.at(cen_bits, row[mc], (1 << code[mc]).astype(np.uint32))
+        n_all = np.bincount(row[m], minlength=int(ntp.sum()))
+        n_cen = np.bincount(row[m & in_census], minlength=int(ntp.sum()))
         pt = ak.to_numpy(ak.flatten(T["pt"]))
         aeta = np.minimum(np.abs(ak.to_numpy(ak.flatten(T["eta"]))), edges[-1] - 1e-9)
-        sel = pt >= ptmin
-        for k, b in (("census", cen_bits), ("all", all_bits)):
-            s = sel & (_popcount(b) >= 4)
+        sel = (pt >= ptmin) & (ak.to_numpy(ak.flatten(T["charge"])) != 0)
+        for k, n in (("census", n_cen), ("all", n_all)):
+            s = sel & (n >= TF.FINDABLE_MIN_HITS)
             out[k] += np.histogram(aeta[s], bins=np.asarray(edges))[0]
         seen += len(ntp)
     return {"edges": list(edges), "n_events": seen, "ptmin": float(ptmin),
             "census": out["census"].tolist(), "all": out["all"].tolist(),
-            "what": "particles (L1TTP) with pT >= ptmin and >= 4 layers hit: 'census' "
-                    "counts IL1-IL4 clusters and OT barrel stubs up to the census's "
-                    "|eta| cut (its efficiency denominator); 'all' counts every "
-                    "SmartPixels layer IL1-IL4 + ID1-ID4 and every OT barrel layer and "
-                    "disk. Totals over n_events, no other cuts."}
+            "what": "charged particles (L1TTP) with pT >= ptmin and >= 4 credited hits "
+                    "(each OT stub one hit): 'census' counts IL1-IL4 clusters and OT "
+                    "barrel stubs up to the census's |eta| cut (its efficiency "
+                    "denominator, census.findable); 'all' counts every SmartPixels "
+                    "cluster IL1-IL4 + ID1-ID4 and every OT barrel and disk stub. "
+                    "Totals over n_events, no other cuts."}
 
 
 def build_tp_table(C):
-    """Per-TP rows plus the two seed bitmaps, restricted to a usable denominator.
-
-    The >= 4 LAYER CUT is not cosmetic: MinLayers = 4 means a TP with fewer
-    cannot be emitted by any seed, so including it would put an unreachable
-    population in the denominator and make every efficiency look worse by a
-    fixed, meaningless factor.
+    """Per-TP rows plus the two seed bitmaps, restricted to the census's
+    efficiency denominator, its FINDABLE TPs (TF.findable: charged, >= 4 credited
+    hits; definition sheet census.findable). n_hits (credited hits) is what the
+    page's minimum-hits cut reads; n_layers (layers hit) is context.
     """
-    nit = np.unpackbits(C["hit_it"][:, None], axis=1).sum(1)
-    not_ = np.unpackbits(C["hit_ot"][:, None], axis=1).sum(1)
-    nlay = nit + not_
-    keep = nlay >= 4
+    nlay = (np.unpackbits(C["hit_it"][:, None], axis=1).sum(1)
+            + np.unpackbits(C["hit_ot"][:, None], axis=1).sum(1))
+    keep = TF.findable(C)
     cols = {"key": C["key"], "event": C["event"], "pt": C["pt"], "eta": C["eta"],
             "phi": C["phi"], "d0": C["d0"], "z0": C["z0"], "vr": C["vr"],
             "hit_it": C["hit_it"].astype(np.float32),
             "hit_ot": C["hit_ot"].astype(np.float32),
-            "n_layers": nlay.astype(np.float32)}
+            "n_layers": nlay.astype(np.float32),
+            "n_hits": (C["n_hit_it"].astype(np.float32) + C["n_hit_ot"])}
     A = np.stack([np.asarray(cols[c], np.float32)[keep] for c in TP_COLS], axis=1)
     # the int64 keys of the SURVIVING rows, for the exact track -> TP row link.
     # The float32 "key" column cannot do this: M.tp_key(event, tpIdx) needs 32
@@ -555,7 +544,7 @@ def main():
     coverage = denominator_coverage(inputs, C["n_events"], float(C.get("ptmin", 2.0)), edges)
     # the 'census' count must reproduce the exported denominator exactly
     tpc = {c: i for i, c in enumerate(TP_COLS)}
-    m = (TPA[:, tpc["pt"]] >= coverage["ptmin"]) & (TPA[:, tpc["n_layers"]] >= 4)
+    m = TPA[:, tpc["pt"]] >= coverage["ptmin"]          # the table holds findable TPs only
     mine = np.histogram(np.minimum(np.abs(TPA[m, tpc["eta"]]), edges[-1] - 1e-9),
                         bins=np.asarray(edges))[0]
     if mine.tolist() != coverage["census"]:
