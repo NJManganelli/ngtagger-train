@@ -206,3 +206,8 @@ Definition sheet: no definition changes (the table recipe is unchanged; A1 follo
 consumer definition). New shared helpers in ngtagger.spdefs.angles: quantile_order,
 expected_coverage, fit_coverage_variance, coverage_z (reusable by cutting consumers, D.9).
 Outputs: $P03_OUT/p03_table_{diagnosis,known-good,known-bad}_a1.json; registry p03.table.a1.*.
+Erratum to amendment 1 (2026-10-13, written after the demonstration job was launched and before any
+of its results were seen; the rule is unaffected): D1 and A1 say "six" true-key disc beta rows flip;
+the latch scan (amend1/diag_latch.json) shows FIVE: ID1 f-1 [+0.40,+0.50), ID1 f+1 [-0.50,-0.40),
+ID2 f-1 [+0.40,+0.50), ID2 f+1 [-0.50,-0.40), ID3 f-1 [+0.40,+0.50) (x14-x27); the ID3 f+1 and ID4
+rows at |tan theta| 0.4-0.5 do not flip (x1.1 or less, or merged).
