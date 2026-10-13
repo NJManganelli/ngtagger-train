@@ -268,7 +268,8 @@ class CensusInputContract(Item):
     title = "the census reads the OT module flags (isPS, isTilted) from its input and refuses an input without them"
     c4_row = "(new, WP-D0a) the census input contract: module flags read, never inferred (canon_v2 refused)"
     known_bad_desc = ("the gate input's OT stub table without L1TOTStub_isPS / isTilted (as canon_v2), written to "
-                      "scratch: the census must refuse it")
+                      "scratch under NanoAOD names: the census must refuse it (the same copy with the flags is "
+                      "accepted, so the flags alone cause the refusal)")
     rule_desc = ("tp_findability.require_census_inputs accepts the input; on every OT barrel stub of the first 5 events "
                  "isPS == (layer <= 3) and isTilted only on PS modules (D121); KF.ot_variances with the stub's flags "
                  "equals KFParamsComb::matrixV written out independently (pitch and length by isPS, z variance x "
@@ -310,18 +311,32 @@ class CensusInputContract(Item):
     def compute(self, ctx):
         return self._stat(ctx)
 
-    def known_bad(self, ctx):
+    @staticmethod
+    def _stub_table_copy(ctx, drop, tag) -> str:
+        """The gate input's OT stub table written to scratch under NanoAOD branch names
+        (nL1TOTStub, L1TOTStub_<column>), without the columns in `drop`."""
         import awkward as ak
         import uproot
 
+        cols = [k for k in ctx.keys() if k.startswith("L1TOTStub_") and k not in drop]
+        A = ctx.arrays(cols)
+        data = {"L1TOTStub": ak.zip({c[len("L1TOTStub_"):]: A[c] for c in cols})}
+        path = os.path.join(tempfile.mkdtemp(prefix=f"spcheck_{tag}_", dir=ctx.scratch), f"{tag}.root")
+        with uproot.recreate(path) as f:
+            f.mktree("Events", {k: v.type for k, v in data.items()}, counter_name=lambda c: "n" + c,
+                     field_name=lambda outer, inner: f"{outer}_{inner}")
+            f["Events"].extend(data)
+        return path
+
+    def known_bad(self, ctx):
         from .core import Ctx
 
-        cols = [k for k in ctx.keys() if k.startswith("L1TOTStub_") and k not in
-                ("L1TOTStub_isPS", "L1TOTStub_isTilted")]
-        A = ctx.arrays(cols)
-        path = os.path.join(tempfile.mkdtemp(prefix="spcheck_noflags_", dir=ctx.scratch), "noflags.root")
-        with uproot.recreate(path) as f:
-            f["Events"] = {"L1TOTStub": ak.zip({c[len("L1TOTStub_"):]: A[c] for c in cols})}
+        TF = ctx.script_module(CENSUS_DIR, "tp_findability")
+        try:                                     # the copy with every column must pass: only the flags may fail
+            TF.require_census_inputs([self._stub_table_copy(ctx, (), "control")])
+        except SystemExit as e:
+            raise RuntimeError(f"the known-bad's writer is broken: the control copy is refused: {e}") from None
+        path = self._stub_table_copy(ctx, ("L1TOTStub_isPS", "L1TOTStub_isTilted"), "noflags")
         bad = Ctx(input_path=path, events=ctx.events, code_root=ctx.code_root, scratch=ctx.scratch)
         return self._stat(bad)
 
