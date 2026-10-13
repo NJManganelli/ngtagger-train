@@ -29,6 +29,16 @@ tracks and for the census's acceptance (every stub in the barrel, |track eta| <=
 Errors: Wilson 68% intervals and the event-bootstrap standard deviation (1000 replicas).
 Context: tracks CMSSW does NOT call loosely genuine that the census would deliver (its
 majority rule is looser than CMSSW's n - 1).
+
+THE GATE (review 01 M1; plan D.0), with --known-good KG: the statistic is the MISS RATE,
+the fraction of CMSSW's loosely genuine tracks (all tracks of the collection) that the census
+does not own-and-hold under the format-28 credit, per collection (N = 2 z-scores). Its
+tolerance comes from the known-good input KG, disjoint from the gated one (canon_v3 AAAA
+file 2 against file 1): the gated rate passes when |rate - rate_KG| <= t(2) x the combined
+event-bootstrap sd (t(N) the family-wise threshold at 1%, P7) in both collections and their
+chi2 (2 dof) has p > 0.01. The known-bad, which must fail by the same rule, is the format-27
+credit (the stub's own tpIdx only) on the gated input. The draft ">= 0.98" owner-held
+fraction is withdrawn: the format-27 credit passes it too.
 """
 from __future__ import annotations
 import argparse, json, sys
@@ -152,7 +162,8 @@ def one_collection(T, S, W):
         for pn, pm in pops.items():
             sel = lg & pm
             miss = sel & ~(held & (own == cmssw_tp))
-            r[pn] = {"owner": frac(sel, own == cmssw_tp, ev, W),
+            r[pn] = {"miss_rate": frac(sel, ~(held & (own == cmssw_tp)), ev, W),
+                     "owner": frac(sel, own == cmssw_tp, ev, W),
                      "owner_held": frac(sel, held & (own == cmssw_tp), ev, W),
                      "genuine_owner_held": frac(sel & (T["genuine"] > 0), held & (own == cmssw_tp), ev, W),
                      "missed": {"n": int(miss.sum()),
@@ -165,20 +176,62 @@ def one_collection(T, S, W):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("input")
-    ap.add_argument("-n", "--nev", type=int, default=None)
-    ap.add_argument("-o", "--out", required=True)
-    a = ap.parse_args()
-    out = {"input": a.input, "spec": "WDMac wpd0a/cmssw_truth_spec.md (2026-10-13)",
+def measure(path, nev_req):
+    out = {"input": path, "spec": "WDMac wpd0a/cmssw_truth_spec.md (2026-10-13)",
            "credits": {k: list(v) for k, v in RULES.items()}}
     for coll in COLLECTIONS:
-        T, S, nev = read(a.input, a.nev, coll)
+        T, S, nev = read(path, nev_req, coll)
         W = np.random.default_rng(20261009).multinomial(nev, np.full(nev, 1.0 / nev),
                                                         size=N_REP).astype(float)
         out["n_events"] = nev
         out[coll] = one_collection(T, S, W)
+    return out
+
+
+def gate(gated, known_good):
+    """The miss-rate gate (module docstring): judged on `gated` with the format-28 credit,
+    and its known-bad, the format-27 credit on the same input, which must fail."""
+    from scipy.stats import chi2
+    from ngtagger.spcheck.core import t_family
+    t = t_family(len(COLLECTIONS))
+
+    def rule(rule_name):
+        zs, rows = [], {}
+        for coll in COLLECTIONS:
+            g = gated[coll][rule_name]["all"]["miss_rate"]
+            k = known_good[coll]["f28"]["all"]["miss_rate"]
+            sd = float(np.hypot(g["boot_sd"], k["boot_sd"]))
+            d = g["frac"] - k["frac"]
+            z = d / sd if sd > 0 else (0.0 if d == 0 else float("inf"))
+            zs.append(z)
+            rows[coll] = {"gated": g["frac"], "gated_misses": g["k"], "gated_n": g["n"],
+                          "known_good": k["frac"], "known_good_misses": k["k"], "known_good_n": k["n"],
+                          "combined_sd": sd, "z": z}
+        c2 = float(np.sum(np.square(zs))) if np.all(np.isfinite(zs)) else float("inf")
+        p = float(chi2.sf(c2, len(zs)))
+        ok = all(abs(z) <= t for z in zs) and p > 0.01
+        return {"pass": bool(ok), "t": t, "chi2": c2, "chi2_p": p, "per_collection": rows}
+    return {"statistic": "miss rate: loosely genuine tracks not owned-and-held by the census",
+            "rule": "|rate - rate_known_good| <= t(2) combined sd per collection and chi2 p > 0.01",
+            "known_good_input": known_good["input"], "gated_input": gated["input"],
+            "gated_f28": rule("f28"), "known_bad_f27": rule("f27"),
+            "verdict": "green" if rule("f28")["pass"] else "red",
+            "known_bad_red": not rule("f27")["pass"]}
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("input")
+    ap.add_argument("-n", "--nev", type=int, default=None)
+    ap.add_argument("--known-good", default=None,
+                    help="the known-good input of the miss-rate gate (disjoint from INPUT)")
+    ap.add_argument("-o", "--out", required=True)
+    a = ap.parse_args()
+    out = measure(a.input, a.nev)
+    if a.known_good:
+        kg = measure(a.known_good, a.nev)
+        out["known_good"] = kg
+        out["gate"] = gate(out, kg)
     json.dump(out, open(a.out, "w"), indent=1)
     for coll in COLLECTIONS:
         o = out[coll]
@@ -192,8 +245,17 @@ def main():
                 print(f"{coll:11s} {rule} {pn:18s} loosely genuine {x['owner_held']['n']:6d}: owner "
                       f"{x['owner']['frac']:.4f}, owner-held {x['owner_held']['frac']:.4f} "
                       f"+- {x['owner_held']['boot_sd']:.4f}; missed {x['missed']}")
+    if "gate" in out:
+        g = out["gate"]
+        for nm in ("gated_f28", "known_bad_f27"):
+            print(f"gate {nm}: {'pass' if g[nm]['pass'] else 'FAIL'} (t {g[nm]['t']:.2f}, chi2 p "
+                  f"{g[nm]['chi2_p']:.3g}) " + "; ".join(
+                      f"{c} {v['gated_misses']}/{v['gated_n']} vs {v['known_good_misses']}/{v['known_good_n']} "
+                      f"z {v['z']:.1f}" for c, v in g[nm]["per_collection"].items()))
+        print(f"gate verdict {g['verdict']}, known-bad {'red' if g['known_bad_red'] else 'NOT RED'}")
     print(f"wrote {a.out}")
+    return 0 if ("gate" not in out or (out["gate"]["verdict"] == "green" and out["gate"]["known_bad_red"])) else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

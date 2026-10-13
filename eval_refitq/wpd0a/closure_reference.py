@@ -7,7 +7,8 @@ census-vs-CMSSW closure references the production's own tracks?
 The references (modecmp HYBRID_np5{,_noDR}_f01_100ev, made 2026-09-24 by another build,
 cfg_HYBRID_np5.py) are usable only if they hold the production's tracks:
   --dr    the reference WITH duplicate removal must equal the production's L1TTrack
-          collection event by event (every column both carry, bit for bit, as a multiset);
+          collection event by event (every L1TTrack_ column both files carry, bit for bit,
+          NaN equal to NaN, as a multiset of tracks);
   --nodr  the reference WITHOUT duplicate removal must CONTAIN every production track of
           the event (duplicate removal only removes tracks) and hold at least as many.
 Events are matched by (run, luminosityBlock, event). Known-bad: the 4-parameter reference
@@ -18,23 +19,24 @@ Exit status 0 only when both hold in every event.
 from __future__ import annotations
 import argparse, json, sys
 from collections import Counter
-import numpy as np
 import awkward as ak
 import uproot
 
-COLS = ("pt", "eta", "phi", "z0", "d0", "chi2XYRed", "chi2ZRed", "nStubs", "hitPattern")
 EVK = ("run", "luminosityBlock", "event")
 
 
 def read(path):
+    """(columns, {event id: Counter of track tuples}) over every per-track L1TTrack_ column;
+    NaN is replaced by a marker so that NaN compares equal to NaN."""
     t = uproot.open(f"{path}:Events")
-    have = [c for c in COLS if f"L1TTrack_{c}" in t.keys()]
+    have = sorted(k[len("L1TTrack_"):] for k in t.keys() if k.startswith("L1TTrack_"))
     A = t.arrays([f"L1TTrack_{c}" for c in have] + list(EVK))
     ids = list(zip(*(ak.to_numpy(A[k]).tolist() for k in EVK)))
     ev = {}
     for i, k in enumerate(ids):
-        cols = [ak.to_numpy(A[f"L1TTrack_{c}"][i]) for c in have]
-        ev[k] = Counter(zip(*(c.tolist() for c in cols))) if cols else Counter()
+        cols = [ak.to_numpy(A[f"L1TTrack_{c}"][i]).tolist() for c in have]
+        cols = [["nan" if x != x else x for x in c] for c in cols]
+        ev[k] = Counter(zip(*cols)) if cols else Counter()
     return have, ev
 
 
@@ -52,18 +54,23 @@ def main():
            "n_tracks_production": int(sum(sum(c.values()) for c in P.values()))}
     common_d = [c for c in cp if c in cd]
     common_n = [c for c in cp if c in cn]
-    jd, jn = [cp.index(c) for c in common_d], [cp.index(c) for c in common_n]
-    proj = lambda C, idx, cols_src, cols: Counter({tuple(k[cols_src.index(c)] for c in cols): v
-                                                   for k, v in C.items()})
+
+    def proj(C, cols_src, cols):
+        """the multiset of tracks restricted to `cols` (counts summed over tracks that agree there)"""
+        ix = [cols_src.index(c) for c in cols]
+        out_ = Counter()
+        for k, v in C.items():
+            out_[tuple(k[j] for j in ix)] += v
+        return out_
     eq = cont = n_in = 0
     miss_d = []
     for k, c in P.items():
         if k not in D or k not in N:
             miss_d.append(str(k))
             continue
-        if proj(c, jd, cp, common_d) == proj(D[k], None, cd, common_d):
+        if proj(c, cp, common_d) == proj(D[k], cd, common_d):
             eq += 1
-        pc, nc = proj(c, jn, cp, common_n), proj(N[k], None, cn, common_n)
+        pc, nc = proj(c, cp, common_n), proj(N[k], cn, common_n)
         if not (pc - nc) and sum(nc.values()) >= sum(pc.values()):
             cont += 1
         n_in += sum((pc & nc).values())
