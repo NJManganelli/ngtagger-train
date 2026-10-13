@@ -13,6 +13,9 @@ counters (pairs, candidates, fits, DR survivors, stage rejections), the per-regi
 occupancy and the seed multiplicity. The truth columns are reported (how many
 values changed), not judged.
 
+With --fit-shift, for censuses whose tracks differ by design (run A vs B: the KF variance),
+tracks are matched by hit list instead and the r-z chi2 shift reported per seed class.
+
 Reads the shards as stored (numpy only), so censuses of different formats compare
 without either code version; the column names are this tree's KF.TRACK_COLS and
 KF.ANGLE_COLS, whose widths are checked against the shards.
@@ -115,14 +118,58 @@ def compare(old, new, allow_prefix=False):
     return out
 
 
+def fit_shift(old, new):
+    """For censuses whose tracks DIFFER by design (e.g. run A vs run B, the KF variance): tracks
+    matched by (shard, entry, hit list); per seed class x arity, how many matched tracks changed
+    their r-z chi2 and by how much, and how many tracks exist on one side only."""
+    do, dn = census_dir(old), census_dir(new)
+    tc = {c: j for j, c in enumerate(KF.TRACK_COLS)}
+    agg = {}
+    for a, b in zip(sorted(glob.glob(os.path.join(do, "chunk_*.npz"))),
+                    sorted(glob.glob(os.path.join(dn, "chunk_*.npz")))):
+        za, zb = np.load(a), np.load(b)
+        for f in sorted(f for f in za.files if f.startswith("hit_") and f in zb.files):
+            e = f[4:]
+            ha, hb, ta, tb = za[f], zb[f], za[f"trk_{e}"], zb[f"trk_{e}"]
+            ia = {r.tobytes(): i for i, r in enumerate(ha)}
+            pairs = [(ia[r.tobytes()], j) for j, r in enumerate(hb) if r.tobytes() in ia]
+            cat = f"{['it', 'ot', 'mixed'][int(ta[0, tc['sysclass']]) if len(ta) else int(tb[0, tc['sysclass']])]}" \
+                  f"{int(ta[0, tc['arity']]) if len(ta) else int(tb[0, tc['arity']])}"
+            g = agg.setdefault(cat, {"matched": 0, "changed": 0, "rel": [], "only_old": 0, "only_new": 0})
+            g["matched"] += len(pairs)
+            g["only_old"] += len(ha) - len(pairs)
+            g["only_new"] += len(hb) - len(pairs)
+            if pairs:
+                i, j = np.array(pairs).T
+                x, y = ta[i, tc["chi2_rz_per_layer"]], tb[j, tc["chi2_rz_per_layer"]]
+                ch = x != y
+                g["changed"] += int(ch.sum())
+                g["rel"].append((y[ch] - x[ch]) / np.maximum(np.abs(x[ch]), 1e-12))
+    out = {}
+    for cat, g in sorted(agg.items()):
+        r = np.concatenate(g.pop("rel")) if g["rel"] else np.zeros(0)
+        out[cat] = {**g, "frac_changed": g["changed"] / max(g["matched"], 1),
+                    "median_rel_chi2_rz_change_of_changed": float(np.median(r)) if len(r) else None}
+    tot = {k: sum(v[k] for v in out.values()) for k in ("matched", "changed", "only_old", "only_new")}
+    return {"old": do, "new": dn, "by_seed_class_arity": out, "total": tot}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("old")
     ap.add_argument("new")
     ap.add_argument("--allow-prefix", action="store_true",
                     help="NEW may hold fewer shards than OLD (a short smoke census): compare those")
+    ap.add_argument("--fit-shift", action="store_true",
+                    help="tracks differ by design: match them by hit list and report the r-z chi2 shift")
     ap.add_argument("-o", "--out", required=True)
     a = ap.parse_args()
+    if a.fit_shift:
+        r = fit_shift(a.old, a.new)
+        json.dump(r, open(a.out, "w"), indent=1)
+        print(json.dumps(r["total"]), {k: (round(v["frac_changed"], 3), v["median_rel_chi2_rz_change_of_changed"])
+                                       for k, v in r["by_seed_class_arity"].items()})
+        return 0
     r = compare(a.old, a.new, a.allow_prefix)
     json.dump(r, open(a.out, "w"), indent=1)
     print(f"{r['n_tracks']:,} tracks ({r['n_track_hits']:,} hits) over {r['n_shards']} shards, formats "
