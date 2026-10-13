@@ -164,7 +164,9 @@ class CensusBuilds(Item):
     rule_desc = ("on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported "
                  "hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in "
                  "its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; "
-                 "identity of the counts with the reference")
+                 "identity of the counts with the reference: tracks, and the truth the census wires in (TPs in the "
+                 "census table and hits crediting their track's owner, which move if the stub credit of "
+                 "M.credited_tps stops reaching the census)")
     trees = (CENSUS_DIR,)
 
     def _run(self, ctx) -> str:
@@ -198,7 +200,9 @@ class CensusBuilds(Item):
         it_slots = [i for i, L in enumerate(KF.LAYER_ORDER) if L <= 4]
         out = {"input": ctx.input, "events": CENSUS_EVENTS, "builds": sorted(builds), "perturbed": perturb,
                "n_tracks": 0, "hits_off_build": 0, "seed_or_follow_off_build": 0, "dr_groups_spanning_builds": 0,
-               "n_own_gt_nhit": 0, "owner_sentinel_inconsistent": 0}
+               "n_own_gt_nhit": 0, "owner_sentinel_inconsistent": 0, "n_owned_hits": 0,
+               "n_census_tps": int(sum(len(np.load(c)["cen_key"])
+                                       for c in glob.glob(os.path.join(d, "chunk_*.npz"))))}
         if perturb:
             dr = [dr[0] + dr[1][:1], dr[1][1:]] + dr[2:]
         for g in dr:
@@ -227,6 +231,7 @@ class CensusBuilds(Item):
                             out["hits_off_build"] += int((h[:, i] >= 0).sum())
                     n_own, nhit, own = t[:, TC.index("n_own")], t[:, TC.index("nhit")], t[:, TC.index("own_tpidx")]
                     out["n_own_gt_nhit"] += int(np.sum(n_own > nhit))
+                    out["n_owned_hits"] += int(n_own.sum())
                     out["owner_sentinel_inconsistent"] += int(np.sum((own == -1) != (n_own == 0)))
         return out
 
@@ -242,8 +247,9 @@ class CensusBuilds(Item):
         if stat["n_tracks"] == 0:
             why.append("no exported tracks")
         if same_input(stat, ref) and stat["perturbed"] == ref["stat"]["perturbed"]:
-            why += identity(stat, ref, ["n_tracks"])[1]
-        return not why, f"{stat['n_tracks']} census tracks over {stat['builds']} clean" if not why else "; ".join(why)
+            why += identity(stat, ref, ["n_tracks", "n_census_tps", "n_owned_hits"])[1]
+        return not why, (f"{stat['n_tracks']} census tracks over {stat['builds']} clean "
+                         f"({stat['n_census_tps']} TPs, {stat['n_owned_hits']} owned hits)") if not why else "; ".join(why)
 
 
 # ---------------------------------------------------------------- input contract
