@@ -246,7 +246,8 @@ def summary_lines(kg, kb, gt, roc, ex):
                      f"{j['ii']['n_beyond_t']}, max |z| {j['ii']['max_abs_z']:.1f}]")
     if roc:
         L.append("")
-        L.append("ROC, floor 2 GeV, k = 1: retention at 99 % signal efficiency (all signal / class-T signal)")
+        L.append("ROC, floor 2 GeV, k = 1: retention at 99 % signal efficiency (all signal / class-T signal)"
+                 + ("" if gt and gt["judgement"]["pass"] else "  [cut centres from the UNTESTED table: provisional]"))
         for cut in ("S1", "beta", "both"):
             c = roc["combos"][f"F2/k1/fixed/{cut}"]["ret_at_99"]
             L.append(f"    {cut:5s} " + "  ".join(f"{g} {c[g]['sig_all']:.3f}/{c[g]['sig_T']:.3f}"
