@@ -313,6 +313,52 @@ def decomposition(U, D, parts):
     return out
 
 
+def outer_only(runs, U, D, W, nev, before="B", after="C", pos="C2"):
+    """Review 01 M5: how much of the after - before change rests on OUTER-ONLY credits. On
+    run B's fixed population (denominator c) per seed class: seed-truthful and delivered of
+    `before`, `after` and of `pos` (a format >= 29 rerun of `after`) without outer-only
+    credits; the raw fake fraction per seed class x arity likewise (DR survivors are the same
+    tracks in all three). share = (after - pos) / (after - before): the part of the change
+    the outer-only credits carry."""
+    Zb, Za, Zp = runs[before][1], runs[after][1], runs[pos][1]
+    res = {}
+    for b in runs[pos][0]["builds"]:
+        r = res.setdefault(b, {})
+        for pt, eta in (("hi", "c"), ("lo", "c")):
+            sel = D["c"] & kin_sel(U, pt, eta)
+            den = np.bincount(U["event"][sel], minlength=nev).astype(float)
+            for cls in ("all", *SYS.values()):
+                for fig, kb, kp in (("seed", f"seed_{cls}", f"seed_pos_{cls}"),
+                                    ("deliv", "deliv" if cls == "all" else f"deliv_{cls}",
+                                     "deliv_pos" if cls == "all" else None)):
+                    if kp is None:
+                        continue
+                    vals = {}
+                    for nm, Z, k in ((before, Zb, kb), (after, Za, kb), (pos, Zp, kp)):
+                        f = found_on(Z, b, k, U["key"][sel])
+                        vals[nm] = _ratio(np.bincount(U["event"][sel][f], minlength=nev).astype(float), den, W)
+                    r[f"{fig}_{cls}_{pt}_{eta}"] = _share(vals, before, after, pos)
+        for c in ["", *[f"_{SYS[s_]}{a}" for s_, a in CATS]]:
+            vals = {nm: _ratio(Z[f"{b}/n_{fk}{c}"].astype(float), Z[f"{b}/n_dr{c}"].astype(float), W)
+                    for nm, Z, fk in ((before, Zb, "fake"), (after, Za, "fake"), (pos, Zp, "fake_pos"))}
+            r[f"fake{c}"] = _share(vals, before, after, pos)
+        for k in ("n_outer_only_dr", "n_ambiguous_dr"):
+            n = Zp[f"{b}/{k}"].astype(float)
+            r[f"{k}_per_ev"] = {"value": float(n.sum() / nev), "sd": float(np.std((W @ n) / nev, ddof=1))}
+        n_dr = float(Zp[f"{b}/n_dr"].sum())
+        r["frac_dr_survivors_ambiguous_owner"] = float(Zp[f"{b}/n_ambiguous_dr"].sum()) / max(n_dr, 1.0)
+    return res
+
+
+def _share(vals, before, after, pos):
+    (vb, rb), (va, ra), (vp, rp) = vals[before], vals[after], vals[pos]
+    d, do = va - vb, va - vp
+    return {before: vb, after: va, f"{pos}_without_outer_only": vp,
+            "change": d, "change_sd": float(np.std(ra - rb, ddof=1)),
+            "outer_only_part": do, "outer_only_part_sd": float(np.std(ra - rp, ddof=1)),
+            "share_outer_only": do / d if d else None}
+
+
 def tp_changes(Zb, Zc):
     """What the stub credit did to the TP table: new TPs and OT layers gained."""
     kb, kc = Zb["key"], Zc["key"]
@@ -376,6 +422,8 @@ def compare(paths, pairs, out, routes_path=None, universe=None):
                                                  for k, (v, r) in g.items()} for lab, g in G.items()},
                                "decomposition_a_vs_c": decomposition(U, D, parts)}
         res["denominators"]["pairs"] = {}
+        if "C2" in runs and runs["C2"][0].get("has_pos") and "B" in runs and "C" in runs:
+            res["outer_only"] = outer_only(runs, U, D, W, nev)
     for pr in pairs:
         x, y = pr.split(":")
         res["pairs"][pr] = _pair(F, x, y)
