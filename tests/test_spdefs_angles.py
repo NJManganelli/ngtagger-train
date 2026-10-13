@@ -148,3 +148,52 @@ def test_local_conversion_signs():
         assert np.allclose(SA.key_from_local(np.array([12, 12]), np.zeros(2), cbd, np.array([s, s])), 1 / cot_t)
     assert SA.to_local("beta", 0.3, np.int8(-1), 1) == -0.3 and SA.to_local("beta", 0.3, np.int8(-1), 11) == 0.3
     assert np.isnan(SA.to_local("alpha", 0.3, np.int8(1), 11)) and SA.to_local("alpha", 0.3, np.int8(-1), 2) == 0.3
+
+
+# ---------------------------------------------------------------- coverage of a fitted quantile (amendment 1)
+def test_quantile_order_and_expected_coverage_match_numpy():
+    for n in (200, 201, 744, 5082):
+        for lv in SA.LEVELS:
+            k = SA.quantile_order(n, lv)
+            assert k == np.quantile(np.arange(1, n + 1), lv, method="inverted_cdf")
+            assert SA.expected_coverage(n, lv) == pytest.approx(k / (n + 1))
+    # the inverted-CDF shortfall: up to 1 / (n + 1) below the level (200 values, 99 %: 198 / 201)
+    assert SA.expected_coverage(200, 0.99) == pytest.approx(198 / 201)
+
+
+def test_coverage_z_is_the_exact_order_statistic_null():
+    """identity: with the exchangeable variance, coverage_z is the mid-p of beta-binomial(n_t, n_f - k + 1, k)."""
+    from scipy import stats
+
+    nf, nt, lv = 744, 2381, 0.997
+    e0 = SA.expected_coverage(nf, lv)
+    var = SA.exchangeable_coverage_variance(nf, nt, lv)
+    k = SA.quantile_order(nf, lv)
+    d = stats.betabinom(nt, nf - k + 1, k)
+    for m in (0, 3, 10, 25):
+        up = d.sf(m) + 0.5 * d.pmf(m)
+        ref = stats.norm.isf(1 - up) if up > 0.5 else -stats.norm.isf(up)
+        assert SA.coverage_z(m, nt, e0, var) == pytest.approx(ref, rel=1e-9, abs=1e-9)
+
+
+def test_coverage_z_sign_inflation_and_calibration():
+    nf, nt, lv = 1000, 3000, 0.99
+    e0 = SA.expected_coverage(nf, lv)
+    v0 = SA.exchangeable_coverage_variance(nf, nt, lv)
+    mean_m = nt * (1 - e0)
+    # sign: more exceedances than expected = under-coverage = negative z
+    assert SA.coverage_z(mean_m * 3, nt, e0, v0) < -3 < 3 < SA.coverage_z(0, nt, e0, v0)
+    # a larger (clustered) variance can only shrink |z|
+    assert abs(SA.coverage_z(mean_m * 3, nt, e0, 3 * v0)) < abs(SA.coverage_z(mean_m * 3, nt, e0, v0))
+    # discriminating toy: exchangeable values -> z ~ N(0, 1); the Gaussian z with the same sd is skewed
+    rng = np.random.default_rng(11)
+    z, zg = [], []
+    for _ in range(3000):
+        x, y = np.abs(rng.standard_normal(nf)), np.abs(rng.standard_normal(nt))
+        m = np.sum(y > np.quantile(x, lv, method="inverted_cdf"))
+        z.append(SA.coverage_z(m, nt, e0, v0))
+        zg.append(((1 - m / nt) - e0) / np.sqrt(v0))
+    z, zg = np.array(z), np.array(zg)
+    assert abs(z.mean()) < 0.06 and abs(z.std() - 1) < 0.05
+    from scipy.stats import skew
+    assert abs(skew(z)) < 0.15 < abs(skew(zg))

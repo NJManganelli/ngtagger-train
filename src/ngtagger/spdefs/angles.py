@@ -35,6 +35,11 @@ Table (angle.error_table): per surface x signed incidence bin (x facing on the d
 and beta, in both keys: the centre (the clipped mean of the B.1 clip), the core width (B.1 core of
 the centred pulls) and the quantiles of |pull - centre| at 95 / 97.5 / 99 / 99.7 %; bins with fewer
 than 200 fit clusters merge with their neighbour away from the plateau edges.
+
+Coverage of a fitted quantile (P0.3 pre-registration amendment 1, 2026-10-13, PROPOSED): the exact
+order-statistic null of the number of new values beyond an inverted-CDF quantile (expected_coverage,
+fit_coverage_variance, exchangeable_coverage_variance, coverage_z), used by the table's coverage test and reusable by every cutting
+consumer that fits a per-bin quantile (angle.cut_level).
 """
 from __future__ import annotations
 
@@ -557,6 +562,107 @@ def consumer_quantile_at_k(stat_at_k, k, mode, bin_id, population, levels=LEVELS
     k-transformed sample in `scaled` mode and at k = 1 in `fixed` mode. `stat_at_k(k)` returns
     the statistic per cluster with the knob at k (and the consumer's sigma mode)."""
     return consumer_quantile(stat_at_k(calibration_k(k, mode)), bin_id, levels, population, w, n_bins)
+
+
+# ---------------------------------------------------------------- coverage of a fitted quantile (amendment 1)
+def quantile_order(n_fit, level):
+    """k of the inverted-CDF quantile at `level` of n_fit values: the k-th smallest (matches
+    numpy's method='inverted_cdf' for n_fit 200-20000 and the four table levels)."""
+    return np.ceil(level * np.asarray(n_fit, np.float64) - 1e-9)
+
+
+def expected_coverage(n_fit, level):
+    """E[coverage] on new exchangeable values of the inverted-CDF quantile fitted on n_fit values:
+    k / (n_fit + 1) (order statistics; distribution-free). Below the level by up to 1 / (n_fit + 1)."""
+    n = np.asarray(n_fit, np.float64)
+    return quantile_order(n, level) / (n + 1.0)
+
+
+def fit_coverage_variance(n_fit, level):
+    """Variance of the true coverage F(q) of that quantile: Beta(k, n - k + 1), pi (1 - pi) / (n + 2)
+    with pi = 1 - k / (n + 1)."""
+    n = np.asarray(n_fit, np.float64)
+    pi = 1.0 - expected_coverage(n, level)
+    return pi * (1.0 - pi) / (n + 2.0)
+
+
+def exchangeable_coverage_variance(n_fit, n_test, level):
+    """Variance of the test coverage 1 - M / n_test of that quantile for exchangeable values: with
+    C ~ Beta the true coverage, Var = E0 (1 - E0) / n_test + Var(C) (1 - 1 / n_test) (total variance;
+    the beta-binomial(n_test, n_fit - k + 1, k) variance exactly)."""
+    e0 = expected_coverage(n_fit, level)
+    n_t = np.asarray(n_test, np.float64)
+    return e0 * (1.0 - e0) / n_t + fit_coverage_variance(n_fit, level) * (1.0 - 1.0 / n_t)
+
+
+def coverage_z(m, n_test, e0, var):
+    """Signed z of an observed exceedance count m (test values beyond the fitted quantile) among
+    n_test values, under the null "coverage has mean e0 and variance var": the count is
+    beta-binomial(n_test, a, b) with a / (a + b) = 1 - e0 and its variance matched to var (binomial
+    when var does not exceed the binomial variance). With var = exchangeable_coverage_variance this
+    is the exact order-statistic null (beta-binomial(n_test, n_fit - k + 1, k)); event clustering
+    enters through a larger var. Mid-p;
+    z = -Phi^-1(P_mid(M <= m)): negative for under-coverage. Vectorised; NaN where undefined."""
+    from scipy import stats
+
+    m, n, e0, var = np.broadcast_arrays(*(np.asarray(x, np.float64) for x in (m, n_test, e0, var)))
+    z = np.full(m.shape, np.nan)
+    pi = 1.0 - e0
+    ok = np.isfinite(m) & np.isfinite(n) & (n > 0) & np.isfinite(pi) & (pi > 0) & (pi < 1) & np.isfinite(var)
+    if not ok.any():
+        return z
+    m, n, pi, var = m[ok], n[ok], pi[ok], var[ok]
+    rho = var * n / (pi * (1.0 - pi))          # variance in units of the binomial variance
+    bb = rho > 1.0 + 1e-9
+    upper = np.empty(m.shape)                   # P(M > m) + P(M = m) / 2
+    lower = np.empty(m.shape)                   # P(M < m) + P(M = m) / 2
+    if (~bb).any():
+        d = stats.binom(n[~bb], pi[~bb])
+        pm = d.pmf(m[~bb])
+        upper[~bb] = d.sf(m[~bb]) + 0.5 * pm
+        lower[~bb] = d.cdf(m[~bb] - 1) + 0.5 * pm
+    if bb.any():
+        s = (n[bb] - rho[bb]) / (rho[bb] - 1.0)
+        s = np.maximum(s, 1e-6)                 # rho >= n: maximal over-dispersion
+        d = stats.betabinom(n[bb], pi[bb] * s, (1.0 - pi[bb]) * s)
+        pm = d.pmf(m[bb])
+        upper[bb] = d.sf(m[bb]) + 0.5 * pm
+        lower[bb] = d.cdf(m[bb] - 1) + 0.5 * pm
+    upper = np.clip(upper, 1e-300, 1.0)
+    lower = np.clip(lower, 1e-300, 1.0)
+    # z > 0: fewer exceedances than expected (over-coverage); computed on the smaller tail for precision
+    z[ok] = np.where(upper < 0.5, -stats.norm.isf(upper), stats.norm.isf(lower))
+    return z
+
+
+# ---------------------------------------------------------------- single-cluster consumer statistics
+Z_LUMI_CM = 15.0     # the census's luminous-region half-window (tracklet_topology_cost Z_LUMI) [cm]
+
+
+def alpha_band(r_cm, pt_floor):
+    """|alpha| of a prompt track of transverse momentum pt_floor at radius r: asin(KPT r / 2 pT)."""
+    return np.arcsin(np.clip(KPT_CMSSW * np.asarray(r_cm, np.float64) / (2.0 * pt_floor), 0.0, 1.0))
+
+
+def s1_statistic(a, sigma_cons, centre_abs, r_cm, pt_floor):
+    """S1-like single-cluster alpha test against the pT floor: (|alpha - c| - band(r, floor)) /
+    sigma (negative inside the band). `centre_abs` = the subtracted centre (centre_k x sigma_pub)."""
+    return (np.abs(wrap_2pi(np.asarray(a) - centre_abs)) - alpha_band(r_cm, pt_floor)) / sigma_cons
+
+
+def beta_window(r_cm, z_cm, z_lumi=Z_LUMI_CM):
+    """(mid, half-length) of the lambda interval pointing to |z0| <= z_lumi from (r, z)."""
+    r = np.asarray(r_cm, np.float64)
+    z = np.asarray(z_cm, np.float64)
+    lo, hi = np.arctan((z - z_lumi) / r), np.arctan((z + z_lumi) / r)
+    return 0.5 * (lo + hi), 0.5 * (hi - lo)
+
+
+def z0_window_statistic(lam, sigma_cons, centre_abs, r_cm, z_cm, z_lumi=Z_LUMI_CM):
+    """Single-cluster beta test against the luminous region: (distance of lambda - c from the
+    interval of directions pointing to |z0| <= z_lumi) / sigma (negative inside)."""
+    mid, h = beta_window(r_cm, z_cm, z_lumi)
+    return (np.abs(wrap_pi(np.asarray(lam) - centre_abs - mid)) - h) / sigma_cons
 
 
 # ---------------------------------------------------------------- single-cluster consumer statistics

@@ -72,3 +72,137 @@ geometry are taken as given; the table is a model of the emulator, valid for con
    daughters, angle weight (alpha core in mrad), beta response slope and IL1 means, plateau steps, beta pointing
    (other-interaction fraction within 1 / 2 cm), disc beta pointing sigma(z0); each within x1.5 or explained.
    d0(pT) and the PF/PUPPI dxy code are track-level and are not recomputed here.
+
+
+===================================================================================================
+Amendment 1 (2026-10-13). PROPOSED: pending the physicist's approval. Written after the diagnosis and
+before the new known-good demonstration (item A6). The original text above is unchanged. The gated
+run (item 2) does not happen until the amendment is approved: table.py refuses it unless
+$P03_OUT/amendment1_approval.txt exists.
+
+What happened (2026-10-09, job 20261009T101853Z-p03-angles-13342, p03_table_known-good.json): the
+item-3 known-good demonstration (fit files 3-4, test 5-10, 250 bootstrap replicas) FAILED, so per
+item 3 / D.0 step 4 the rule comes back for redesign; this is not a table failure.
+ (i)  1 of 878 bins outside the widened band: true/beta/ID3/f-1/[+0.40,+0.50), after-table centre
+      15.0 +- 7.6, width 26.5 +- 12.7 (1.0003 of the widened band); near misses (0.99) in
+      true/beta/ID2/f+1/[-0.50,-0.40) and true/beta/ID1/f-1/[+0.40,+0.50).
+ (ii) N = 3512, t(N) = 4.68; beyond t: emitted/alpha/ID1/f+1/[-inf,-0.80) at 99.7 % (coverage
+      0.99909, bootstrap sd 0.00038, z = 5.58) and emitted/beta/ID4/f-1/[+0.80,+inf) at 99.7 %
+      (0.99889, sd 0.00037, z = 5.14); both over-coverage; no chi2 failure.
+Diagnosis (cache only; scripts and outputs in $P03_OUT/amend1/, logs/):
+ D1 (i) is the B.1 clip on a bimodal distribution (the risk named in item 5). In the true-key disc
+    beta bins at |tan theta| 0.4-0.5 about 64 % of the pulls form a narrow peak (|pull| < 0.5 in
+    published sigma, residual -18 to +5 deg; median published sigma 27-50 deg) and about 35 % a
+    displaced population at pull +5 to +8 (residual +30 to +44 deg: directions sensed past normal
+    incidence on the disc, wrapped in pi). The narrow peak holds just under the 68.27 % that seeds
+    the clip, so the clip converges to either solution: over 250 event-bootstrap replicas of the fit
+    sample the core is 0.12-0.14 in 74 % (ID3; ID2 58 %, ID1 52 %) and 3.2-3.4 in the rest; on the
+    test sample 50 % (ID3; 20 %, 13 %). Over five disjoint 200-event groups (files 1-2 ... 9-10) six
+    true-key disc beta rows flip by x14-x27 (ID3 f-1: 3.27 / 0.13 / 3.39 / 0.13 / 0.13). The same
+    bins' quantiles agree between fit and test (1-99 % percentiles within ~0.1 published sigma) and
+    their coverage passes (|z| <= 1.7). Sheet v1 (angle.error_table) and plan D.3 already say disc
+    beta has no Gaussian core and its weighting consumers use the full width or the full response,
+    i.e. no consumer uses the core that (i) tested there. The full RMS is no substitute (trial,
+    amend1/trial_full_estimator_disc_beta_40rep.json): it is driven by clusters with small published
+    sigma; after-table full widths 0.87-1.36 (5-95 %), worst 8.1 +- 3.9; 38 of 40 re-splits would
+    fail (i).
+ D2 (ii) is the error model. With N_fit = 5082 / 4566 and 15 / 13 fit clusters beyond the 99.7 %
+    quantile (in 15 / 12 different events), the test has 14 / 15 beyond (14 / 15 events) where 48.5
+    / 41.4 are expected. The exact null of that count for exchangeable clusters is beta-binomial
+    (order statistics: the coverage of the k-th smallest of n_fit values is Beta(k, n_fit - k + 1),
+    k = ceil(level n_fit), mean k / (n_fit + 1)), sd 0.00091 / 0.00094 in coverage, 2.4-2.5 x the
+    bootstrap sd. Its mid-p tail probability gives z = +3.24 / +2.53 (2000 event permutations agree:
+    0 / 2000 and 12 / 2000 as extreme one-sided). The bootstrap sd is a plug-in at the observed test
+    density: var ~ (f_test / f_fit)^2 p(1-p) / n_fit + F_test(1-F_test) / n_test, so it shrinks where
+    the test tail is thinner (over-coverage) and grows where it is fatter: median bootstrap / null sd
+    0.93 in over-covering and 1.14 in under-covering bins at 99.7 %. The null is also strongly
+    skewed: a Gaussian z with the correct sd exceeds 4.68 with probability 2.0e-3 (99.7 %, n_fit 744)
+    to 4e-5 (99 %, n_fit 5000) instead of 2.9e-6, i.e. ~1 false alarm per run at 99.7 % alone.
+    The exact-shape rule (iid limit, no clustering allowance: the strictest version) on the failed
+    split: max |z| 3.60, 0 beyond t(3512), chi2 p 0.22-0.99. Not a sample difference: no event
+    contributes more than 2 tail clusters; files 3-4 (produced 2026-10-03) vs 1-2 and 5-10
+    (2026-10-09) have per-group tail exceedance ratios 0.96-1.06 at the pooled quantiles over all
+    bins (Poisson-consistent); the two bins' excess sits in file 4 (10 and 9 clusters beyond vs 1-4
+    in each other file), a local fluctuation among 3512 z-scores. Decision cost of the observed
+    over-coverage: the fitted 99.7 % window is 23 % / 5 % wider than the test's own (99 %: 7 % / 2 %),
+    i.e. that much more flat background in two bins at a non-decision level.
+ D3 Re-splits expose a second (i) problem the one demonstration hid. Judging 40 event re-splits of
+    files 3-10 (200 / 600, each a known-good split) by the v1 (i) recipe in the scope of A1 fails 17;
+    14 of them in one bin, emitted/alpha/ID4/f-1/[+0.55,+0.60) (n_fit 817, n_test 2539), whose B.1
+    core is bistable too (fit core 0.27-0.31 in ~65 % of re-splits, 0.48-0.50 in ~35 %, so the
+    after-table width is ~0.65, ~1.0 or ~1.8), while the observed split's bootstrap stays in its
+    basin (sd 0.28 vs 0.49 over re-splits): the bootstrap is not consistent for a mode-seeded clip.
+    The remaining failures are the per-bin 2 sigma widening over ~600 bins (P7's multiplicity point).
+
+Changes (each: reason; alternatives; what is given up):
+ A1 (i) scope. (i) judges the rows whose clipped-mean centre and B.1 core width weighting consumers
+    use: barrel alpha and beta, disc alpha. Disc beta rows are reported (after-table centre, width,
+    band fraction), not judged; their quantiles stay judged by (ii). Reason: D1; the sheet already
+    excludes the disc beta core from weighting use. Alternatives: (a) change the disc beta estimator
+    to the mean and full RMS (rejected: D1, outlier-driven); (b) median and a quantile width (a
+    definition change; deferred to the full response model of decision 3); (c) keep judging the
+    core (it fails or passes on a coin flip). Given up: no validated weighting width for disc beta
+    until the full response model exists; the table's disc beta centre stays bistable in six
+    true-key rows, which moves the cut window (up to ~20 % in width at fixed coverage) but not its
+    coverage.
+ A2 (i) error and threshold. A bin fails when its after-table centre or width lies outside 0 +- 0.25
+    / 1 +- 0.1 by more than W_i sigma, sigma = the larger of the event bootstrap spread (as before)
+    and the re-split spread of the same statistic (the permutation of A3), W_i = t(N_i) (P7
+    family-wise 1 %, N_i = 2 x the judged bin-angles; ~4.5 at ~600 bins). Reason: D3; P7 already
+    requires family-wise thresholds for multi-bin decisions; re-splitting (subsampling) is the
+    standard remedy where the bootstrap is inconsistent. Alternatives: bootstrap sd with W = 2 (v1:
+    17 / 40 false vetoes), the larger sd with W = 2 (6 / 40), bootstrap sd with W_i (2 / 40).
+    Given up: stringency where the data are precise: the band half-width a bin must exceed grows
+    from 0.1 + 2 sd to 0.1 + 4.5 sd; at sd_w = 0.02 (large bins) that is 1.19 instead of 1.14, i.e.
+    a tolerated efficiency loss in a 3 sigma window of 0.9 % instead of 0.6 % (0.4 % at the band);
+    in sparse bins (sd_w ~ 0.2) (i) cannot fail at all (it barely could before: 1 +- 0.5). The
+    tolerances are reported per run (tolerance_pct_10_50_90). The re-split spread could mask a
+    real fit / test difference in (i); (ii) is the agreement test that catches it (A6 (e)).
+ A3 (ii) null. Per bin, angle and level, m = test clusters beyond the fitted quantile among n_test;
+    under "the table is right" m is beta-binomial(n_test, a, b) with a / (a + b) = 1 - E0,
+    E0 = the cluster-weighted mean over the looked-up rows of k / (n_fit,row + 1) (the level for a
+    cluster without a usable row), and variance = max(the event-permutation variance of the
+    coverage, the exchangeable-cluster variance sum_rows share^2 pi(1-pi)/(n_fit,row + 2) +
+    E0(1-E0)/n_test); binomial when that does not exceed the binomial variance. z = -Phi^-1 of the
+    mid-p lower tail (negative = under-coverage). The permutation re-splits the pooled fit + test
+    events at the fit and test event counts, 250 replicas, every fitted step (centre, width,
+    quantiles, pT >= 2 refits as flagged) re-fitted; its nominal assignment must reproduce the
+    observed split exactly (checked). The family-wise rule (no |z| > t(N)) and the chi2 per level x
+    key (p > 0.01 / 8) are unchanged. Reason: D2: exact for exchangeable clusters at any n_fit
+    (including the sample-maximum regime of item 5), symmetric in over- and under-coverage, with
+    event clustering through the permutation variance (a Rao-Scott design effect, floored at 1).
+    Alternatives: the bootstrap sd (v1; plug-in, direction-dependent); the null sd in a Gaussian z
+    (skewed: D2); the empirical permutation p-value alone (250 replicas cannot reach the 3e-6 tail);
+    dropping the 99.7 % level (it is a D19 scan level; not needed). Given up: E0 instead of the
+    level as the reference accepts the inverted-CDF quantile's known shortfall of up to
+    1 / (n_fit + 1) (0.5 % at 99 % in a 200-cluster row); z against the level is reported beside it.
+ A4 False-veto rate. The full rule is applied to every permutation replica as if observed ((ii) with
+    the leave-one-out permutation variance; (i) with the observed split's errors and W_i) and the
+    failing fraction is reported with its 95 % interval, for the demonstration and the gated run.
+    Reason: P2 / P7 ask for the stated false-veto rate; each re-split is a known-good split.
+ A5 Known-bads: the four of item 4 unchanged, plus (e) an input perturbation: every test-sample
+    pull x 1.05 (a 5 % resolution difference between fit and test events; half the (i) tolerance,
+    a 0.4 % efficiency shift of a 99 % cut for a Gaussian). Each must FAIL. Expected: (a)-(d) through
+    (i) and (ii); (e) through (ii) only ((i) passes it by design).
+ A6 New known-good demonstration: fit files 9-10 (200 events), test 3-8 (600 events), seed 20261013,
+    250 bootstrap and 250 permutation replicas, both keys, barrel and discs; must pass. Independence:
+    its fit sample shares no event with the v1 demonstration's (3-4), whose fit-sample fluctuations
+    caused the D2 failures; like the gated run it fits on the 2026-10-09 batch and tests on a set
+    containing the 2026-10-03 files 3-4. It is not independent of the diagnosis: D3 and the 40-
+    replica trials used re-splits of all of files 3-10, and D1's latch scan and the D2 batch check
+    read per-bin core widths and tail counts of files 1-10 (including the gated fit files 1-2; no
+    table test was run on them and no rule parameter was taken from them). No rule parameter is
+    fitted to data: the band (0.1, 0.25) and the levels are unchanged, W_i is the P7 constant, A1 is
+    fixed by the sheet's consumer definition. The v1 split is re-judged by the amended rule as a
+    diagnosis (p03_table_diagnosis_a1.json), not as the demonstration.
+ Unchanged: the population, binning, merge rule, estimators, levels, keys and fit / test files of
+ the table (item 1); the pT check; item 6 (reported quantities); items 7-8.
+Expected (not decisive): the demonstration passes with a false-veto rate of at most a few % (40-
+replica trial on the v1 split: 0 / 40); every known-bad fails. Risks: other bistable bins (latch
+scan: emitted alpha ID3 f+1 [-0.60,-0.55), IL3 |cot| > 2.5, x1.5-1.7) fail (i) only beyond W_i
+sigma of the larger spread; the permutation variance of a sparse bin is estimated from 250
+replicas (+-9 %), floored at the exchangeable value.
+Definition sheet: no definition changes (the table recipe is unchanged; A1 follows the sheet's
+consumer definition). New shared helpers in ngtagger.spdefs.angles: quantile_order,
+expected_coverage, fit_coverage_variance, coverage_z (reusable by cutting consumers, D.9).
+Outputs: $P03_OUT/p03_table_{diagnosis,known-good,known-bad}_a1.json; registry p03.table.a1.*.
