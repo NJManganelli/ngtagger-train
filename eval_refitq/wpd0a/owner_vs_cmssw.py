@@ -30,13 +30,15 @@ Errors: Wilson 68% intervals and the event-bootstrap standard deviation (1000 re
 Context: tracks CMSSW does NOT call loosely genuine that the census would deliver (its
 majority rule is looser than CMSSW's n - 1).
 
-THE GATE (review 01 M1; plan D.0), with --known-good KG: the statistic is the MISS RATE,
-the fraction of CMSSW's loosely genuine tracks (all tracks of the collection) that the census
-does not own-and-hold under the format-28 credit, per collection (N = 2 z-scores). Its
-tolerance comes from the known-good input KG, disjoint from the gated one (canon_v3 AAAA
-file 2 against file 1): the gated rate passes when |rate - rate_KG| <= t(2) x the combined
-event-bootstrap sd (t(N) the family-wise threshold at 1%, P7) in both collections and their
-chi2 (2 dof) has p > 0.01. The known-bad, which must fail by the same rule, is the format-27
+THE GATE (review 01 M1, review 02 R2-M1; plan D.0), with --gate-ref REF: the statistic is
+the MISS RATE, the fraction of CMSSW's loosely genuine tracks (all tracks of the collection)
+that the census does not own-and-hold under the format-28 credit, per collection (N = 2
+z-scores). The known-good is FROZEN in REF (refs/owner_miss_rate_known_good.json: canon_v3
+AAAA file 2, disjoint from the gated file 1, measured once and never recomputed by the code
+under test; REF records the plan D.0 step-2 exception and its anchor). The gated rate passes
+when |rate - rate_REF| <= t(2) x the combined event-bootstrap sd (t(N) the family-wise
+threshold at 1%, P7) in both collections and their chi2 (2 dof) has p > 0.01. The named
+known-bad, which must fail by the same rule against the same frozen values, is the format-27
 credit (the stub's own tpIdx only) on the gated input. The draft ">= 0.98" owner-held
 fraction is withdrawn: the format-27 credit passes it too.
 """
@@ -188,9 +190,10 @@ def measure(path, nev_req):
     return out
 
 
-def gate(gated, known_good):
-    """The miss-rate gate (module docstring): judged on `gated` with the format-28 credit,
-    and its known-bad, the format-27 credit on the same input, which must fail."""
+def gate(gated, ref):
+    """The miss-rate gate (module docstring): judged on `gated` with the format-28 credit
+    against the FROZEN known-good `ref` (never recomputed here), and its known-bad, the
+    format-27 credit on the same input against the same frozen values, which must fail."""
     from scipy.stats import chi2
     from ngtagger.spcheck.core import t_family
     t = t_family(len(COLLECTIONS))
@@ -199,21 +202,23 @@ def gate(gated, known_good):
         zs, rows = [], {}
         for coll in COLLECTIONS:
             g = gated[coll][rule_name]["all"]["miss_rate"]
-            k = known_good[coll]["f28"]["all"]["miss_rate"]
+            k = ref["collections"][coll]
             sd = float(np.hypot(g["boot_sd"], k["boot_sd"]))
-            d = g["frac"] - k["frac"]
+            d = g["frac"] - k["rate"]
             z = d / sd if sd > 0 else (0.0 if d == 0 else float("inf"))
             zs.append(z)
             rows[coll] = {"gated": g["frac"], "gated_misses": g["k"], "gated_n": g["n"],
-                          "known_good": k["frac"], "known_good_misses": k["k"], "known_good_n": k["n"],
-                          "combined_sd": sd, "z": z}
+                          "known_good": k["rate"], "known_good_misses": k["misses"],
+                          "known_good_n": k["n_loosely_genuine"], "combined_sd": sd, "z": z}
         c2 = float(np.sum(np.square(zs))) if np.all(np.isfinite(zs)) else float("inf")
         p = float(chi2.sf(c2, len(zs)))
         ok = all(abs(z) <= t for z in zs) and p > 0.01
         return {"pass": bool(ok), "t": t, "chi2": c2, "chi2_p": p, "per_collection": rows}
     return {"statistic": "miss rate: loosely genuine tracks not owned-and-held by the census",
             "rule": "|rate - rate_known_good| <= t(2) combined sd per collection and chi2 p > 0.01",
-            "known_good_input": known_good["input"], "gated_input": gated["input"],
+            "known_good": {k: ref[k] for k in ("input", "input_sha256", "measured_by",
+                                               "plan_D0_step2_exception")},
+            "gated_input": gated["input"],
             "gated_f28": rule("f28"), "known_bad_f27": rule("f27"),
             "verdict": "green" if rule("f28")["pass"] else "red",
             "known_bad_red": not rule("f27")["pass"]}
@@ -223,15 +228,16 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("input")
     ap.add_argument("-n", "--nev", type=int, default=None)
-    ap.add_argument("--known-good", default=None,
-                    help="the known-good input of the miss-rate gate (disjoint from INPUT)")
+    ap.add_argument("--gate-ref", default=None,
+                    help="the FROZEN known-good of the miss-rate gate (refs/owner_miss_rate_known_good.json)")
     ap.add_argument("-o", "--out", required=True)
     a = ap.parse_args()
     out = measure(a.input, a.nev)
-    if a.known_good:
-        kg = measure(a.known_good, a.nev)
-        out["known_good"] = kg
-        out["gate"] = gate(out, kg)
+    if a.gate_ref:
+        ref = json.load(open(a.gate_ref))
+        if ref["input"] == a.input:
+            raise SystemExit("the gate's known-good input must be disjoint from the gated one")
+        out["gate"] = gate(out, ref)
     json.dump(out, open(a.out, "w"), indent=1)
     for coll in COLLECTIONS:
         o = out[coll]

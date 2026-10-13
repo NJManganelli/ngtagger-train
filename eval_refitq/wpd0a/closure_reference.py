@@ -9,12 +9,15 @@ cfg_HYBRID_np5.py) are usable only if they hold the production's tracks:
   --dr    the reference WITH duplicate removal must equal the production's L1TTrack
           collection event by event (every L1TTrack_ column both files carry, bit for bit,
           NaN equal to NaN, as a multiset of tracks);
-  --nodr  the reference WITHOUT duplicate removal must CONTAIN every production track of
-          the event (duplicate removal only removes tracks) and hold at least as many.
+  --nodr  INFORMATIONAL ONLY, not judged: the share of production tracks found bit-identical
+          in the reference WITHOUT duplicate removal, and the events whose production tracks it
+          all contains. Containment is NOT a valid criterion (WP-D0a review 02 R2-L2):
+          RemovalType = "" is a different chain, a fit per tracklet, a pass-through
+          PurgeDuplicate and no 108-per-sector DR-input truncation, so the tracks the merge-style
+          duplicate removal merges and refits cannot appear in it.
 Events are matched by (run, luminosityBlock, event). Known-bad: the 4-parameter reference
-(HYBRID_np4) in place of --nodr must fail (other fitted parameters on every track). Also
-reported: the share of production tracks found bit-identical in the no-DR reference.
-Exit status 0 only when both hold in every event.
+(HYBRID_np4) in place of --dr must fail (other fitted parameters on every track).
+Exit status 0 only when the DR reference equals the production in every event.
 """
 from __future__ import annotations
 import argparse, json, sys
@@ -81,13 +84,14 @@ def main():
                # context: production tracks found bit-identical in the no-DR reference (merge-style
                # duplicate removal refits the tracks it merges, so only unmerged ones can match)
                nodr_track_overlap=n_in / max(out["n_tracks_production"], 1))
-    ok = eq == len(P) and cont == len(P) and not miss_d
+    ok = eq == len(P) and not miss_d
     out["closure_reference_ok"] = bool(ok)
+    out["nodr_containment"] = "not applicable (informational; see the module docstring)"
     json.dump(out, open(a.out, "w"), indent=1)
-    print(f"{len(P)} events: DR reference identical in {eq}, no-DR reference contains the production "
-          f"tracks in {cont}; tracks production/DR/noDR {out['n_tracks_production']}/{out['n_tracks_dr']}/"
-          f"{out['n_tracks_nodr']}; production tracks found in the no-DR reference "
-          f"{100 * out['nodr_track_overlap']:.1f}% -> {'OK' if ok else 'FAIL'}")
+    print(f"{len(P)} events: DR reference identical in {eq} -> {'OK' if ok else 'FAIL'}; informational: "
+          f"production tracks found in the no-DR reference {100 * out['nodr_track_overlap']:.1f}% (all of an "
+          f"event's in {cont}); tracks production/DR/noDR {out['n_tracks_production']}/{out['n_tracks_dr']}/"
+          f"{out['n_tracks_nodr']}")
     return 0 if ok else 1
 
 

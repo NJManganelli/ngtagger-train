@@ -1,0 +1,15 @@
+{
+ "what": "FROZEN known-good of the census-truth miss-rate gate (owner_vs_cmssw.py --gate-ref): the fraction of CMSSW's loosely genuine tracks that the census does not own-and-hold under the format-28 stub credit, all tracks of each collection",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f02_100ev.root",
+ "input_sha256": "2999402755f7802a1386f944f3459a28f4282db6753951742eec624168860415",
+ "n_events": 100,
+ "measured_by": {"job": "20261013T134859Z-wpd0a-checks29-94692", "commit": "e7b55603066e8b8b6088893c7de02336f73909ee",
+                 "script": "eval_refitq/wpd0a/owner_vs_cmssw.py at 05738a5", "output": "WDMac wpd0a/checks29/owner_vs_cmssw_f01_gate.json, key known_good"},
+ "plan_D0_step2_exception": "This value is the output of the code the gate tests (plan D.0 step 2 asks for an independent prediction instead). No independent prediction exists without each OT cluster's full contributor list, which the nano lacks. It is frozen here so that later code is judged against it and never recomputes it (WP-D0a review 02, R2-M1). Its anchor: CMSSW's own TTTrackAssociator label implies 0 misses by construction; every one of the 5 misses is classified 'dominance' (the TP is a non-dominant contributor of some cluster, which the nano cannot carry); CMSSW's loosely-genuine rule re-run on the nano agrees with CMSSW's label on 99.99% (L1TTrack) and 99.96% (L1TExtTrack) of tracks with 0 false positives.",
+ "collections": {
+  "L1TTrack": {"misses": 1, "n_loosely_genuine": 17895, "rate": 5.588153115395362e-05, "boot_sd": 5.4957490015217295e-05,
+               "misses_dominance": 1, "emulation_cmssw_yes_emu_no": 2, "emulation_emu_yes_cmssw_no": 0},
+  "L1TExtTrack": {"misses": 4, "n_loosely_genuine": 19577, "rate": 0.0002043213975583593, "boot_sd": 0.00012080869947554145,
+                  "misses_dominance": 4, "emulation_cmssw_yes_emu_no": 10, "emulation_emu_yes_cmssw_no": 0}
+ }
+}

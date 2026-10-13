@@ -26,7 +26,9 @@ truth.census_fake, raw) per seed class x arity. Two further columns:
            the owner only through their outer cluster and so holding another particle's
            position (truth.stub): seed-truthful from found_dr_pos, delivered with
            n_own - n_ot_right_outer_only, fake with n_wrong + n_ot_right_outer_only (same
-           owner).
+           owner). Some principal and inner credits are also far from the TP (review 02
+           R2-L1), so the outer-only share of a change is a LOWER bound on the share resting
+           on stubs not at the TP's position.
 
 routes reads the input's OT barrel stubs as the census does (|stub eta| <= M.ETA_MATCHED) and
 keeps, per TP, the layers credited by route: through the principal tpIdx, through a
@@ -38,13 +40,18 @@ IT and OT together, under that run's credit) and, for review 01 H1, on four deno
 built once from the routes and the universe run's table (the format >= 28 one), the same
 TP set for every run (a TP missing from a run's table is not found by it):
   a  current      IT layers + OT layers by any credit (format 28's own denominator)
-  b  position     IT layers + OT layers whose stub carries the TP's position
-                  (principal or inner-cluster credit)
+  b  position     IT layers + OT layers by a principal or inner-cluster credit, the credits
+                  that carry the TP's position as a rule; NOT all of them do (review 02
+                  R2-L1: some genuine principals, many inner credits on combinatoric stubs
+                  and every out-of-time-TP credit lie > 5 cm from the TP's helix), so b
+                  only approximates a truly position-carrying denominator from above
   c  fixed        IT layers + OT layers by the principal only: run B's population
   d  OT-only      >= 4 OT layers by any credit: the analogue of L1TrackNtupleMaker's
                   denominator (>= 4 OT stubs in >= 4 layers or disks; TP_minPt 1.9 there, the
                   bins below here; barrel only)
-  dhs             d and hard interaction in time (L1TTP evt 0, bx 0), as its plot macro
+  dhs             d and hard interaction: L1TTP evt 0, as its plot macro cuts
+                  (L1TrackNtuplePlot.C:1315, tp_eventid only), and bx 0, ours (all but 2
+                  census denominator members are bx 0)
 at pT >= 2 GeV in |eta| < 1.1 (c), < 0.9 (h), 1.1-1.8 (f) and pT 1-2 GeV in |eta| < 1.1,
 each |eta| range with its OT-truncated label (M.eta_range_label). Errors are the standard
 deviation over event-bootstrap replicas (1000; the 100 events resampled with replacement,
@@ -64,10 +71,10 @@ ETA = {"c": (0.0, 1.1), "h": (0.0, 0.9), "f": (1.1, 1.8)}
 EFFS = [("hi", "c"), ("hi", "h"), ("hi", "f"), ("lo", "c")]
 PT = {"hi": (2.0, np.inf), "lo": (1.0, 2.0)}
 DENS = {"a": "current: IT + OT layers by any credit",
-        "b": "position-carrying: IT + OT layers by principal or inner-cluster credit",
+        "b": "position-carrying (approximately): IT + OT layers by principal or inner-cluster credit",
         "c": "fixed: IT + OT layers by the principal only (run B's population)",
         "d": "OT-only: >= 4 OT layers by any credit",
-        "dhs": "OT-only and hard interaction in time (L1TTP evt 0, bx 0)"}
+        "dhs": "OT-only and hard interaction: L1TTP evt 0 (the plot macro's cut) and bx 0 (ours)"}
 HERE = Path(__file__).resolve().parents[1] / "combinatorics"
 
 

@@ -11,8 +11,10 @@ shard: the per-entry hit lists (which hits each track holds), every non-truth tr
 both censuses carry (fitted parameters, chi2s, angle pulls, rank score, the fit's claimed
 sigma), the angle rows' measured columns, the non-truth counters (pairs, candidates, fits,
 DR survivors, stage rejections), the per-region occupancy and the seed multiplicity. The
-truth columns both carry are reported (how many values changed), not judged; columns only
-one side has are listed.
+truth both carry is reported, not judged: the track and angle truth columns (how many values
+changed), the census TP table (cen_*), the seed bitmaps (found, found_dr, found_dr_pos), the
+quality samples (qual_*) and the truth counters (how many shards or entries changed), with
+`truth_identical` true when none did; columns and arrays only one side has are listed.
 
 Track column names: the manifest's "track_cols" (census format >= 29); for an older
 census, the prefix of this tree's KF.TRACK_COLS of the shard's width (columns are only ever
@@ -84,12 +86,19 @@ def compare(old, new, allow_prefix=False):
     nt_ang = [j for c, j in ac.items() if c not in TRUTH_ANGLE_COLS]
     bad, n_tracks, n_hits = [], 0, 0
     truth_changed, cnt_changed, cols_info = {}, {c: 0 for c in TRUTH_COUNTERS}, None
+    arrays_changed, arrays_one_side, ang_truth_changed = {}, set(), 0
+    truth_array = lambda f: f.startswith(("cen_", "qual_")) or f in ("found", "found_dr", "found_dr_pos")
     for a, b in zip(so, sn):
         za, zb = np.load(a), np.load(b)
         tag = os.path.basename(a)
         for k in ("n_events", "n_clusters", "nonant", "seed_eta"):
             if not _eq(za[k], zb[k]):
                 bad.append(f"{tag}: {k}")
+        for f in sorted({f for f in za.files if truth_array(f)} | {f for f in zb.files if truth_array(f)}):
+            if f not in za.files or f not in zb.files:
+                arrays_one_side.add(f)
+            elif not _eq(za[f], zb[f]):
+                arrays_changed[f] = arrays_changed.get(f, 0) + 1
         fa = {f for f in za.files if f[:4] in ("trk_", "hit_", "ang_")}
         fb = {f for f in zb.files if f[:4] in ("trk_", "hit_", "ang_")}
         if fa != fb:
@@ -120,6 +129,8 @@ def compare(old, new, allow_prefix=False):
             else:
                 if x.shape != y.shape or not _eq(x[:, nt_ang], y[:, nt_ang]):
                     bad.append(f"{tag}: {f} non-truth angle columns")
+                elif not _eq(x, y):
+                    ang_truth_changed += 1
         ca_, cb_ = json.loads(str(za["counters"])), json.loads(str(zb["counters"]))
         if set(ca_) != set(cb_):
             bad.append(f"{tag}: counter entries differ")
@@ -136,7 +147,11 @@ def compare(old, new, allow_prefix=False):
             bad.append(k)
     out.update(n_tracks=n_tracks, n_track_hits=n_hits, identical=not bad, differences=bad[:50],
                n_differences=len(bad), columns=cols_info, truth_track_values_changed=truth_changed,
-               truth_counters_changed_entries=cnt_changed)
+               truth_counters_changed_entries=cnt_changed,
+               truth_arrays_changed_shards=arrays_changed, arrays_on_one_side=sorted(arrays_one_side),
+               angle_entries_with_truth_changed=ang_truth_changed,
+               truth_identical=not bad and not any(truth_changed.values()) and not any(cnt_changed.values())
+               and not arrays_changed and not ang_truth_changed)
     return out
 
 
@@ -232,6 +247,9 @@ def main():
         print("  ", d)
     print("columns on one side only:", r["columns"])
     print("truth values changed:", {k: v for k, v in r["truth_track_values_changed"].items() if v})
+    print("truth arrays changed (shards):", r["truth_arrays_changed_shards"], "on one side only:",
+          r["arrays_on_one_side"], "angle entries with truth changed:", r["angle_entries_with_truth_changed"],
+          "-> truth identical:", r["truth_identical"])
     return 0 if r["identical"] else 1
 
 
