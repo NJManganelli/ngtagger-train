@@ -752,9 +752,10 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     # survivors, which is what a real system emits.
     found = np.zeros((ntp, nw), np.uint64)
     found_dr = np.zeros((ntp, nw), np.uint64)
-    # found_dr counting only the credits that carry the TP's own position (the
-    # outer-only credits of M.POSITION_SLOTS left out): a diagnostic of how much
-    # seed-truthful efficiency rests on stubs holding another particle's position
+    # found_dr counting only the position-carrying credits (the outer-only credits of
+    # M.POSITION_SLOTS left out): a diagnostic of how much seed-truthful efficiency
+    # rests on stubs holding another particle's position (a lower bound: some
+    # principal and inner credits are off the TP's position too, see M.POSITION_SLOTS)
     found_dr_pos = np.zeros((ntp, nw), np.uint64)
     counters, qual, trk, hits, angr = {}, {}, {}, {}, {}
     # SEED MULTIPLICITY BY |eta|: every seed object a seed forms (the funnel's
@@ -1304,9 +1305,12 @@ def seed_mask(C, i, after_dr=False, position=False):
 
     after_dr=False is the seed's STANDALONE reach and is what menu composition
     must use; after_dr=True is what it still owns once duplicate removal has
-    assigned each track to a single seed. position=True (after DR) counts only
-    credits that carry the TP's own position (found_dr_pos).
+    assigned each track to a single seed. position=True counts only the
+    position-carrying credits (found_dr_pos, M.POSITION_SLOTS); it exists after DR
+    only, so it requires after_dr=True.
     """
+    if position and not after_dr:
+        raise ValueError("seed_mask: position=True exists after DR only (found_dr_pos); pass after_dr=True")
     b = C["found_dr_pos"] if position else (C["found_dr"] if after_dr else C["found"])
     return (b[:, i >> 6] >> np.uint64(i & 63)) & np.uint64(1) != 0
 

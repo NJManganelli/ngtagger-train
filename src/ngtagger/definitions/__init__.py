@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 
-SHEET_VERSION = "v2.1"
+SHEET_VERSION = "v2.2"
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIRED = ("id", "title", "definition", "status")
 

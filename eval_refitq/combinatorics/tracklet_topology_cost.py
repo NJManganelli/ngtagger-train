@@ -898,11 +898,17 @@ def attach_tp_truth(D, TP, names=None):
 # credited like any other. TRUTH ONLY: none of this may reach the seeding, the
 # follow or the fit.
 # THE STUB'S POSITION IS ITS INNER CLUSTER'S (L1SmartPixelsAllStubTableProducer.cc:
-# 132-135, TTStub::innerClusterPosition). So the first POSITION_SLOTS credits (the
-# principal, which is in both clusters, and the inner owner) carry the TP's own
-# position; a credit in the last slot is OUTER-ONLY: the stub belongs to the TP by
-# CMSSW's rule but holds another particle's position (on PS layers its z is another
-# particle's macro-pixel z; measured median |dz| 1.29 cm against 0.08 cm genuine).
+# 132-135, TTStub::innerClusterPosition). A credit in the last slot is OUTER-ONLY:
+# the stub belongs to the TP by CMSSW's rule but holds another particle's position
+# (on PS layers its z is another particle's macro-pixel z; measured median |dz|
+# 1.29 cm against 0.08 cm genuine). The first POSITION_SLOTS credits (the principal,
+# which is in both clusters, and the inner owner) carry the TP's position AS A RULE,
+# not always (WP-D0a review 02 R2-L1, canon_v3 file 3, prompt TPs above 2 GeV):
+# 97-99% of genuine principals and 58-86% of inner credits on combinatoric stubs
+# lie within 5 cm of the TP's helix, and every credit to an out-of-time TP lies
+# beyond it, a property of the input's truth maps (a CMSSW-side follow-up is open).
+# So "position-carrying" (POSITION_SLOTS, found_dr_pos) is an approximation from
+# above, and an outer-only share is a lower bound on the share off the TP's position.
 STUB_TP_COLS = ("tpIdx", "tpIdxInner", "tpIdxOuter")
 N_CREDIT = len(STUB_TP_COLS)
 POSITION_SLOTS = 2

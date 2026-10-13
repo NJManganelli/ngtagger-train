@@ -1283,10 +1283,11 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     # and an unknown stub (no TP in either cluster) is noise. A stub
     # credited to the owner is right whatever its flag (format 28; before,
     # every combinatoric stub counted wrong), as CMSSW's either-cluster rule
-    # has it. It carries the owner's POSITION only when the owner is its
-    # principal or inner-cluster TP: the stub position is the inner cluster's,
-    # so an OUTER-ONLY credit (n_ot_right_outer_only) is right by truth but
-    # holds another particle's position. The four counters below partition n_ot
+    # has it. It can carry the owner's POSITION only when the owner is its
+    # principal or inner-cluster TP (and then as a rule, not always; see
+    # M.POSITION_SLOTS): the stub position is the inner cluster's, so an
+    # OUTER-ONLY credit (n_ot_right_outer_only) is right by truth but holds
+    # another particle's position. The four counters below partition n_ot
     # exactly, and their non-right members plus n_it_wrong reproduce n_wrong --
     # asserted below on real data.
     flg = np.where(on, U["ot_flag"][np.clip(G, 0, None)], 0)
