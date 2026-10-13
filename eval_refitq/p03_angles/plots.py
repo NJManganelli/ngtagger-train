@@ -129,7 +129,7 @@ def coverage_page(pdf, res, title):
         ax.plot(xx, len(z) * 0.25 * np.exp(-xx ** 2 / 2) / np.sqrt(2 * np.pi), color=C2, label="unit Gaussian")
         for s in (-t, t):
             ax.axvline(s, color=INK2, ls="--", lw=1)
-        ax.set_xlabel(f"coverage z at {lv:.1%} [exact-shape null, amendment 1; σ units]")
+        ax.set_xlabel(f"coverage z at {lv:.1%} [exact-shape null, amendments 1 / 1b; σ units]")
         ax.set_ylabel("bins [count]")
         ax.set_title(f"level {lv:.1%}; dashed: ±t(N) = {t:.2f}", fontsize=8)
     h, lab = axs.flat[0].get_legend_handles_labels()
@@ -227,7 +227,7 @@ def response_page(pdf):
 
 def summary_lines(kg, kb, gt, roc, ex):
     L = []
-    for name, r in (("amendment-1 known-good demonstration (fit 9-10, test 3-8)", kg),
+    for name, r in (("amendment-1b known-good demonstration (fit 7-8, test 3-6, 9-10)", kg),
                     ("gated test (fit 1-2, test 3-10)", gt)):
         if not r:
             L.append(f"{name}: not run")
@@ -265,7 +265,7 @@ def main(argv=None) -> int:
         for f in Path(a.png_dir).glob("page_*.png"):
             f.unlink()
         PNG_DIR.append(a.png_dir)
-    kg, kb, gt = (load(f"p03_table_{m}_a1.json") for m in ("known-good", "known-bad", "gated"))
+    kg, kb, gt = (load(f"p03_table_{m}_a1b.json") for m in ("known-good", "known-bad", "gated"))
     roc, ex = load("p03_roc.json"), load("p03_extras.json")
     with PdfPages(a.out) as pdf:
         text_page(pdf, "P0.3 angle definitions, uncertainty table and cluster-level ROC (canon_v3 AAAA)",

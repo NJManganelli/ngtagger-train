@@ -211,3 +211,114 @@ of its results were seen; the rule is unaffected): D1 and A1 say "six" true-key 
 the latch scan (amend1/diag_latch.json) shows FIVE: ID1 f-1 [+0.40,+0.50), ID1 f+1 [-0.50,-0.40),
 ID2 f-1 [+0.40,+0.50), ID2 f+1 [-0.50,-0.40), ID3 f-1 [+0.40,+0.50) (x14-x27); the ID3 f+1 and ID4
 rows at |tan theta| 0.4-0.5 do not flip (x1.1 or less, or merged).
+
+
+===================================================================================================
+Amendment 1b (2026-10-13). PROPOSED: pending the physicist's approval. Written after the independent
+statistics review 01 ($P03_OUT/stats-review-01.md, verdict APPROVE-WITH-CHANGES) and BEFORE the
+amendment-1b demonstration. Amendments 1 and its erratum stay as written; where 1b differs, 1b holds.
+Kept unchanged, as the review endorsed it: A3 (the (ii) null). Before this text was written, a code
+smoke test was run on the v1 split (fit 3-4 / test 5-10) with 12-30 re-splits and a throwaway seed (1):
+pipeline only; no parameter below was set or changed after it. It showed (iii) pass probabilities of
+1.0 / 1.0 / 0.9 / 0.0 at 95 / 97.5 / 99 / 99.7 % and about 70 flagged row-angles of 878.
+
+B1 (review F1, blocker) Stability flag, replacing A1's regional exclusion of disc beta. Every row and
+   angle of every table tested gets, from the replicas the rule already runs (250 bootstrap, 250
+   re-splits = pseudo-fit samples of the fit size drawn from the pooled fit + test events), the flag
+   when any of:
+     width_imprecise   re-split sd of the fitted width / fitted width > 0.05 (half the width band);
+     width_basin       re-split sd / bootstrap sd of the fitted width > 1.5 (the bootstrap stays in
+                       the basin of a bistable clip, D3);
+     width_bimodal     the re-split widths are bimodal: an unbinned two-Gaussian ML fit (EM, started
+                       from the best 2-means split) with minor weight >= 5 %, Ashman's D > 2, separation
+                       of the two means > 5 % of the median width, and BIC gain > 10 over one Gaussian;
+     centre_imprecise  re-split sd of the fitted centre / fitted width > 0.125 (half the centre band);
+     unstable_missing  more than 10 % of re-splits without an estimate (< 200 pseudo-fit clusters).
+   A test bin is flagged when more than half of its test clusters are looked up in flagged rows (the
+   row flag itself for a canonical table). Flagged bins are reported (after-table centre and width,
+   band excess), not judged by (i); the table carries width_validated = false with the reasons; the
+   gate lists the flagged rows by name with n_fit, n_test and the statistics above, and the flagged
+   share of test clusters per key x surface x angle. The physicist accepts the list by name (D.0
+   step 4). In the gated run, the verdict is final only if every row it flags is on the accepted list
+   (rows newly flagged go to the physicist); accepted rows that the gated run does not flag are judged.
+   Reason: F1 (the amended (i) passed an after-table width of 1.80 +- 0.50 in a judged disc-alpha row;
+   the instability is not confined to disc beta). Alternatives: A1's regional exclusion (inconsistent:
+   the same pathology elsewhere was absorbed by an error bar); failing a region whose flagged share
+   exceeds a fixed fraction (not adopted: the list goes to the physicist by name instead). Given up:
+   flagged rows have no validated width for weighting consumers; stable disc-beta rows are judged
+   again (as under v1), although the sheet tells disc-beta weighting consumers to use the full response.
+B2 (review C, F7) (i) threshold: the one-sided Sidak family-wise threshold t1(N_i) at 1 % (about 4.3
+   at N_i ~ 1600; the band excess is one-sided at the band edge, so the two-sided t(N_i) of A2 was
+   about 2x conservative in size), with the A2 error max(bootstrap, re-split sd). W is fixed by P7,
+   not chosen by any false-veto count (the review's point that the A2 variants were nested and
+   "fewest false vetoes" always picks the loosest is accepted; that selection argument is withdrawn).
+   This departs from plan D.0 step 3 (adequacy gates: 2 combined sigma), a plan-level change that E1
+   (same structure, several hundred bins) inherits; the coordinator carries it into the plan.
+B3 (review F8) False-veto rate: in each re-split, (i) uses max(bootstrap sd of the observed split,
+   re-split sd computed WITHOUT that re-split); (ii) leave-one-out as before; (iii) as below. The flag
+   scope is the observed split's.
+B4 (review F5, F6) (iii) pooled coverage against the NOMINAL level, added to the rule: per key x
+   region (barrel, discs) x angle x level (32 cells), C = the cluster-weighted coverage of all test
+   bins of the cell; it passes when the one-sided 95 % upper bound of the shortfall, (L - C) + 1.645
+   sd_boot(C), is <= m(L) = 0.1 (1 - L) = 0.5 / 0.25 / 0.1 / 0.03 % at 95 / 97.5 / 99 / 99.7 %.
+   Decision arithmetic: a cut's designed inefficiency 1 - L delivered within 10 % of itself region-
+   wide; at the decision level (99 %, decision 2), over the seven compounding census angle cuts, at
+   most 0.7 pt of total efficiency. Per D.0 (equivalence gates), the pass probability at zero true
+   change is measured on the re-splits; a level is gated only if it is >= 80 %, otherwise (iii) is
+   reported at that level. Disclosure: the review quoted the worst such bounds on the earlier splits
+   (0.101 / 0.101 / 0.080 / 0.036 %) before this margin was set; the margin follows the arithmetic and
+   was not adjusted to them (at 99.7 % the quoted bound exceeds it). The (ii) reference stays E0
+   (A3); (iii) is the test against the level.
+B5 (review F5) The table carries n_fit (the clusters the row was fitted on) and E0 = k / (n_fit + 1)
+   per row and level; the gate lists the rows with L - E0 > 0.1 %.
+B6 (review F2, E) Width known-bads, applied exactly after the fact to the canonical chains of the
+   demonstration split (the width scales the after-table clipped mean and B.1 core exactly, as both
+   are scale-equivariant; tested):
+   KB-f: the fitted width divided by 1.2 in every row whose |key| range overlaps [0.50, 0.67) (both
+         angles, keys and signs, all surfaces); centres and quantiles untouched. Must fail through
+         (i); the fraction of perturbed judged bin-angles that fail is reported (per-row power at an
+         after-table width of 1.2, about 1 % loss in a 3 sigma window).
+   KB-g: every row-angle flagged on the unperturbed table gets the mean of its other re-split basin
+         as width (when bimodal), else 1.5 x its width. The gate must fail or flag every perturbed
+         row. This holds by construction, because the perturbed rows are exactly the flagged rows and
+         the width criteria are scale-invariant. Its content is the contrast reported beside it: what
+         amendment 1's (i) would have done with the same rows.
+   Correction (F2): A2's sentence that (ii) catches what the re-split sd absorbs in (i) is wrong for
+   widths: (ii)'s quantiles are of |pull - centre| and do not depend on the width; only (i) sees a
+   width error.
+B7 (review F3) Independence. New seed 20261014. Replica streams are keyed by (seed, scheme, the
+   nominal fit files, replica), so no re-split of the amendment-1 runs (seed 20261013) or of the smoke
+   test (seed 1) recurs. New nominal split: fit files 7-8, test 3-6 and 9-10, never before judged as a
+   nominal split. Files 1-2 are not read. The pool is the same 800 events of files 3-10 that every
+   amendment-1 run and the diagnosis used: the demonstration is NOT independent of the rule's
+   selection. Fresh events are not available (the physicist has ruled out new production until the
+   angle estimates and track variants are reliable). The AAAI / IAAA / IIII files on disk are
+   probably the same generated events and are not used as independent. Corrections: amendment 1 and
+   the packet said the confirmation used "a different pool" (wrong: same pool, and the same 250
+   re-splits, since the seed was the same) and that the "ranking held" (tautological for nested
+   variants). Pre-declared for the gated run: its own false-veto rate on its pool (files 1-10, 200 /
+   800 events) must not exceed the upper end of the 95 % Clopper-Pearson interval of this
+   demonstration's rate; if it does, the gated verdict is not final and goes to the physicist.
+B8 (review F4) Correction of A5's description of known-bad (e). "0.4 % efficiency shift of a 99 % cut"
+   is the Gaussian figure. The review's measurement (fit 9-10 / test 3-8, emitted key, cluster-
+   weighted 99 % coverage drop) is 0.23 % (barrel alpha), 0.19 % (barrel beta), 0.98 % (disc alpha) and
+   0.70 % (disc beta). The large z-scores come from disc rows. At 99 % in the barrel, (ii) detects (e)
+   at max |z| 5.6 (emitted) and 4.7 (true) against t = 4.68: a thin margin. (iii) is expected to fail
+   (e) clearly. The 1b run reports (e) per cell against the canonical table.
+B9 Recipe options, measured and NOT adopted, for the physicist (recipe changes):
+   (a) quantile rank k = ceil(L (n_fit + 1)), so that E[coverage] >= L (with the sample maximum when
+       k > n_fit, i.e. n_fit < 332 at 99.7 %): its effect on window widths per region and level;
+   (b) disc beta: signed lower / upper quantiles of the pull and the median instead of |pull - centre|
+       about the bistable clipped mean (and an unbinned two-component fit as a later full-response
+       input): its effect on disc-beta cut windows, their stability over 200-event fits, and the
+       cluster retention of the disc beta cut.
+Not adopted from the review: the pooled design effect in (ii) (F9; A3 kept as endorsed). Noted
+without change: the merge step is not re-fitted per replica (F10); in the false-veto replicas E0
+uses the nominal n_fit (F10); the mid-p z is conservative at small n_fit, 0.43-0.54 x nominal at
+n_fit <= 744 (F9); over-coverage cannot fail (ii) in rows below about 2000 clusters (F9).
+Outputs: $P03_OUT/p03_table_{diagnosis,known-good,known-bad}_a1b.json; the demonstration's fitted
+tables in $P03_OUT/amend1b/; registry p03.table.a1b.*. The gated run refuses without
+$P03_OUT/amendment1b_approval.txt.
+Expected (not decisive): the demonstration passes; of order 40-80 flagged row-angles; (iii) gated at
+95-99 % and reported at 99.7 % (power); every known-bad fails, (e) through (ii) and (iii), KB-f
+through (i).

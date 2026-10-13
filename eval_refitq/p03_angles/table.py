@@ -1,43 +1,44 @@
 #!/usr/bin/env python
 """P0.3 step 2: the angle-uncertainty table (plan D.3 D10(b), D.0; decisions 2, 3, 11), under the
-rule of pre-registration amendment 1 (preregistration.txt; PROPOSED 2026-10-13, pending approval).
+rule of pre-registration amendments 1 and 1b (preregistration.txt; PROPOSED, pending approval).
 
-Recipe (angle.error_table): class-T clusters with a usable direction and TP pT >= 1 GeV; per
-surface (IL1-IL4, ID1-ID4) x signed incidence bin (signed cot theta barrel; signed 1/cot theta
+Recipe (angle.error_table, unchanged): class-T clusters with a usable direction and TP pT >= 1 GeV;
+per surface (IL1-IL4, ID1-ID4) x signed incidence bin (signed cot theta barrel; signed 1/cot theta
 discs, per module facing), merged to >= 200 fit clusters away from the plateau edges; per bin and
 angle (alpha, beta) the centre (clipped mean of the B.1 clip), the core width (B.1 core of the
 centred pulls) and the quantiles of |pull - centre| at 95 / 97.5 / 99 / 99.7 %, in both keys
 (emitted, true). pT check on the fit sample (1-2 vs >= 2 GeV, D.0 agreement rule): a bin failing
 in both signs is refitted at pT >= 2 GeV and flagged.
 
-Test (amendment 1), on the test sample, per bin of the same binning:
- (i)  adequacy, for the rows whose centre and core width weighting consumers use (barrel alpha
-      and beta, disc alpha): the after-table clipped mean and B.1 core width within 0 +- 0.25 and
-      1 +- 0.1, widened by W_i sigma, W_i = t(N_i) the family-wise threshold for the N_i = 2 x
-      (judged bin-angles) statistics, sigma = the larger of the event-level BOOTSTRAP spread of the
-      whole fit-and-test chain (fit and test events resampled independently, every fitted step
-      re-fitted per replica) and its RE-SPLIT (permutation) spread (the bootstrap stays in the basin
-      of a bistable mode-seeded clip). Disc beta rows (no Gaussian core; weighting consumers use the
-      full response, decision 3) are reported, not judged by (i);
- (ii) coverage: per bin, angle and level, the number of test clusters beyond the fitted quantile
-      is judged against its null distribution "the table is right": beta-binomial with mean
-      1 - E0, E0 = k / (n_fit + 1) (the order-statistic expectation of the inverted-CDF quantile),
-      and variance max(event-PERMUTATION variance, exchangeable-cluster variance); the permutation
-      re-splits the pooled fit + test events at the fit and test sizes and re-fits every step. The
-      mid-p tail probability gives a signed z; pass iff no |z| > t(N) (N = every z-score read) and
-      per level and key chi2 p > 0.01 / (levels x keys).
- False-veto rate: the same rule applied to every permutation replica (each a known-good split).
+Errors: the event-level BOOTSTRAP of the whole fit-and-test chain (fit and test events resampled
+independently) and its RE-SPLIT (permutation: the pooled fit + test events re-split at the fit and
+test sizes); every fitted step re-fitted per replica; 250 each.
 
-    python table.py diagnosis  [--rep 250] [--proc 10]   amendment-1 rule on the split where the v1 rule
-                                                         failed (fit 3-4, test 5-10): diagnosis only
-    python table.py known-good [--rep 250] [--proc 10]   amendment-1 demonstration: fit 9-10, test 3-8
-    python table.py known-bad  [--rep 250] [--proc 10]   the four known-bad tables on the same split
-    python table.py gated      [--rep 250] [--proc 10]   fit 1-2, test 3-10; refuses unless the
-                                                         amendment-1 known-good passed, every known-bad
-                                                         failed and $P03_OUT/amendment1_approval.txt exists
-    python table.py fit-only   [--rep 250] [--proc 10]   the recipe on files 1-2 without the test (only
-                                                         when the gated test cannot run): UNTESTED table
-Outputs: $P03_OUT/p03_table_<mode>_a1.json (the v1-rule results of 2026-10-09 stay as they are).
+Stability flag (1b; stability_flags): a row-angle whose fitted width is imprecise (re-split sd > 5 %),
+basin-trapped (re-split sd > 1.5 x bootstrap sd) or bimodal over re-splits, or whose centre is
+imprecise (re-split sd > 0.125 widths), gets width_validated = False and is reported, not judged
+by (i). The physicist accepts the flagged list by name.
+Test, on the test sample, per bin of the same binning:
+ (i)   adequacy on unflagged bins: after-table clipped mean and B.1 core within 0 +- 0.25 and 1 +- 0.1,
+       widened by W_i x max(bootstrap, re-split sd), W_i the one-sided Sidak threshold t1(N_i);
+ (ii)  coverage: per bin, angle and level, the test clusters beyond the fitted quantile against the
+       exact order-statistic null (beta-binomial, mean 1 - E0, E0 = k / (n_fit + 1), variance max(re-
+       split, exchangeable)); mid-p z; no |z| > t(N) and per level x key chi2 p > 0.01 / 8 (amendment 1);
+ (iii) pooled coverage per key x region x angle x level against the NOMINAL level: the one-sided 95 %
+       upper bound of the shortfall within 0.1 (1 - L), at the levels whose pass probability over the
+       re-splits is >= 80 %.
+ False-veto rate: the rule on every re-split, with leave-one-out errors.
+
+    python table.py diagnosis  [--rep 250] [--proc 10]   the rule on fit 3-4 / test 5-10 (the v1 failure split)
+    python table.py known-good [--rep 250] [--proc 10]   demonstration: fit 7-8, test 3-6 and 9-10
+    python table.py known-bad  [--rep 250] [--proc 10]   known-bads (a)-(e) on the same split, the canonical
+                                                         reference, and the width known-bads KB-f, KB-g
+    python table.py gated      [--rep 250] [--proc 10]   fit 1-2, test 3-10; refuses unless the amendment-1b
+                                                         known-good passed, every known-bad failed and
+                                                         $P03_OUT/amendment1b_approval.txt exists
+    python table.py fit-only   [--rep 250] [--proc 10]   the recipe on files 1-2 without the test: UNTESTED table
+Outputs: $P03_OUT/p03_table_<mode>_a1b.json; the demonstration's fitted table in $P03_OUT/amend1b/.
+Earlier results (v1 rule, amendment 1) stay as they are.
 """
 from __future__ import annotations
 
@@ -57,18 +58,17 @@ import common as CM  # noqa: E402
 from ngtagger.spcheck.core import t_family  # noqa: E402
 from ngtagger.spdefs import angles as SA  # noqa: E402
 
-RULE = "P0.3 pre-registration amendment 1 (2026-10-13)"
-SEED = 20261013
+RULE = "P0.3 pre-registration amendment 1b (2026-10-13)"
+SEED = 20261014          # amendment 1b; replica streams are keyed by (seed, scheme, fit files, replica)
 LEVELS = SA.LEVELS
 BAND_W, BAND_C = 0.1, 0.25
-WIDEN_V1 = 2.0          # the v1 rule's per-bin widening of (i): reported for comparison only
 REGISTRY_SCALES = Path.home() / "smartpixels" / "sp_registry" / "results" / "appa.census.angle-scales.json"
-DEMO_SPLIT = ((9, 10), (3, 4, 5, 6, 7, 8))
+DEMO_SPLIT = ((7, 8), (3, 4, 5, 6, 9, 10))   # amendment 1b (amendment 1: fit 9-10, test 3-8)
 SPLITS = {"diagnosis": ((3, 4), (5, 6, 7, 8, 9, 10)), "known-good": DEMO_SPLIT, "known-bad": DEMO_SPLIT,
           "gated": (SA.FIT_FILES, SA.TEST_FILES), "fit-only": (SA.FIT_FILES, SA.FIT_FILES)}
-TABLE_FILE = "angle_table_v1a1_canon_v3.json"
-UNTESTED_FILE = "angle_table_v1a1_canon_v3_UNTESTED.json"
-APPROVAL_FILE = "amendment1_approval.txt"
+TABLE_FILE = "angle_table_v1a1b_canon_v3.json"
+UNTESTED_FILE = "angle_table_v1a1b_canon_v3_UNTESTED.json"
+APPROVAL_FILE = "amendment1b_approval.txt"
 KNOWN_BADS = {
     "folded": "the folded |key| table (signs pooled; the round-4 table's binning), read by |key|",
     "cotbinned_disc": "disc rows binned like the barrel in signed cot theta (barrel edges; 75-98% of disc clusters in "
@@ -80,10 +80,19 @@ KNOWN_BADS = {
                        "would bias every cut's efficiency): the rule must detect it",
 }
 TEST_SCALE = {"test_scale_1p05": 1.05}
+WIDTH_KNOWN_BADS = {
+    "kbf_plateau_width_div1p2": "width-only error at decision scale (amendment 1b, KB-f): the fitted width divided by 1.2 "
+                                "in every row whose |key| range overlaps the plateau edges [0.50, 0.67), both angles, both "
+                                "keys, all surfaces (after-table width ~1.2: ~1 % loss in a 3 sigma window); centres and "
+                                "quantiles untouched, so only (i) can see it: must fail through (i)",
+    "kbg_flagged_other_basin": "basin flip in the unstable rows (amendment 1b, KB-g): every row-angle the stability flag "
+                               "marks on the unperturbed table gets the mean of its other re-split basin as width when "
+                               "its re-split widths are bimodal, else 1.5 x its width: the gate must fail or flag every "
+                               "perturbed row"}
 
 
 def result_name(mode: str) -> str:
-    return f"p03_table_{mode}_a1.json"
+    return f"p03_table_{mode}_a1b.json"
 
 
 # ---------------------------------------------------------------- binnings
@@ -324,13 +333,13 @@ def _weights(b: int):
     if scheme == "bootstrap":
         if b == 0:
             return None, None
-        rng = np.random.default_rng([SEED, b])
+        rng = np.random.default_rng([G["seed"], 1, *G["fit_files"], b])
         return (rng.multinomial(P["n_ev_fit"], np.full(P["n_ev_fit"], 1.0 / P["n_ev_fit"])),
                 rng.multinomial(P["n_ev_test"], np.full(P["n_ev_test"], 1.0 / P["n_ev_test"])))
     if b == 0:
         fm = P["nominal_fit_events"]
     else:
-        rng = np.random.default_rng([SEED, 2, b])
+        rng = np.random.default_rng([G["seed"], 2, *G["fit_files"], b])
         fm = np.zeros(P["n_ev"], bool)
         fm[rng.choice(P["n_ev"], P["n_ev_fit"], replace=False)] = True
     return fm.astype(np.int64), (~fm).astype(np.int64)
@@ -388,16 +397,123 @@ def _coverage_z(K, st, var_perm):
     return SA.coverage_z(m, n_t[:, :, None], K["E0"][:, None, :], var)
 
 
-def judged_by_i(surface, angle) -> bool:
-    """(i) judges the rows whose clipped-mean centre and B.1 core width weighting consumers use:
-    barrel alpha and beta, disc alpha. Disc beta has no Gaussian core (plan D.3; sheet v1
-    angle.error_table: its weighting consumers use the full response), so it is reported only."""
-    return not (angle == "beta" and int(surface) in SA.DISCS)
+# ---------------------------------------------------------------- amendment 1b: per-row stability flag
+FLAG_REL_SD = 0.05        # re-split sd of the fitted width / fitted width: half the width band (0.1)
+FLAG_RATIO = 1.5          # re-split sd / bootstrap sd of the fitted width (the bootstrap stays in one basin)
+FLAG_CENTRE = 0.125       # re-split sd of the fitted centre / fitted width: half the centre band (0.25)
+FLAG_MISSING = 0.10       # fraction of re-splits without an estimate (< 200 pseudo-fit clusters)
+BIMODAL = {"min_weight": 0.05, "ashman_d": 2.0, "rel_sep": 0.05, "dbic": 10.0}
+POOLED_REL_MARGIN = 0.1   # (iii): margin m(L) = 0.1 (1 - L) in coverage (efficiency) units
+POOLED_Z = 1.6448536269514722   # one-sided 95 %
+POWER_MIN = 0.8           # (iii) at a level is gated only if its pass probability on re-splits is >= 80 % (D.0)
+REGIONS = (("barrel", SA.BARREL), ("discs", SA.DISCS))
 
 
-def i_scope(K) -> np.ndarray:
-    """[test bin, angle] mask of the bins (i) judges."""
-    return np.array([[judged_by_i(tr["surface"], a) for a in SA.ANGLES] for tr in K["trows"]], bool).reshape(-1, len(SA.ANGLES))
+def t_one_sided(n: int, alpha: float = 0.01) -> float:
+    """One-sided Sidak family-wise threshold: n correct one-sided statistics exceed it with total probability alpha."""
+    from scipy.stats import norm
+
+    n = max(int(n), 1)
+    return float(norm.isf(1.0 - (1.0 - alpha) ** (1.0 / n)))
+
+
+def em_two_gaussians(x: np.ndarray, n_iter: int = 300) -> dict:
+    """Unbinned two-Gaussian maximum-likelihood fit (EM) of a 1-D sample, started from the best
+    2-means split; with the one-Gaussian fit for the BIC difference and Ashman's D."""
+    x = np.sort(np.asarray(x, np.float64))
+    n = len(x)
+    s_all = x.std()
+    out = {"n": n, "bimodal": False}
+    if n < 20 or not s_all > 0:
+        return out
+    cs, cs2 = np.cumsum(x), np.cumsum(x * x)
+    k = np.arange(1, n)
+    m1, m2 = cs[:-1] / k, (cs[-1] - cs[:-1]) / (n - k)
+    ss = (cs2[:-1] - k * m1 ** 2) + ((cs2[-1] - cs2[:-1]) - (n - k) * m2 ** 2)
+    j = int(np.argmin(ss)) + 1
+    floor = 0.01 * s_all
+    mu = np.array([x[:j].mean(), x[j:].mean()])
+    sd = np.maximum(np.array([x[:j].std(), x[j:].std()]), floor)
+    pi = np.array([j / n, 1 - j / n])
+    for _ in range(n_iter):
+        lp = np.log(np.maximum(pi, 1e-300))[None] - 0.5 * ((x[:, None] - mu[None]) / sd[None]) ** 2 - np.log(sd)[None]
+        r = np.exp(lp - lp.max(1, keepdims=True))
+        r /= r.sum(1, keepdims=True)
+        nk = np.maximum(r.sum(0), 1e-12)
+        pi = nk / n
+        mu = (r * x[:, None]).sum(0) / nk
+        sd = np.maximum(np.sqrt((r * (x[:, None] - mu[None]) ** 2).sum(0) / nk), floor)
+    lp = np.log(np.maximum(pi, 1e-300))[None] - 0.5 * ((x[:, None] - mu[None]) / sd[None]) ** 2 - np.log(sd)[None]
+    ll2 = float(np.sum(np.log(np.exp(lp).sum(1)))) - 0.5 * n * np.log(2 * np.pi)
+    ll1 = float(-0.5 * n * (np.log(2 * np.pi * s_all ** 2) + 1))
+    d = float(np.sqrt(2.0) * abs(mu[0] - mu[1]) / np.sqrt(sd[0] ** 2 + sd[1] ** 2))
+    dbic = 2.0 * (ll2 - ll1) - 3.0 * np.log(n)
+    med = float(np.median(x))
+    rel_sep = float(abs(mu[0] - mu[1]) / abs(med)) if med else float("inf")
+    out.update({"weights": pi.tolist(), "means": mu.tolist(), "sds": sd.tolist(), "ashman_d": d, "dbic": float(dbic),
+                "rel_sep": rel_sep,
+                "bimodal": bool(min(pi) >= BIMODAL["min_weight"] and d > BIMODAL["ashman_d"]
+                                and rel_sep > BIMODAL["rel_sep"] and dbic > BIMODAL["dbic"])})
+    return out
+
+
+def stability_flags(K: dict, boot_par: np.ndarray, perm_par: np.ndarray) -> dict:
+    """Per table row and angle, the amendment-1b flag of the fitted centre and width, from the
+    replicas the rule already runs (re-split = permutation, i.e. pseudo-fit samples drawn from the
+    pooled events at the fit size): flagged when any of
+      width_imprecise   re-split sd(width) / width            > FLAG_REL_SD (0.05)
+      width_basin       re-split sd(width) / bootstrap sd(width) > FLAG_RATIO (1.5)
+      width_bimodal     the re-split widths are bimodal (em_two_gaussians: minor weight >= 5 %,
+                        Ashman D > 2, separation > 5 % of the median, BIC gain > 10)
+      centre_imprecise  re-split sd(centre) / width           > FLAG_CENTRE (0.125)
+      unstable_missing  > 10 % of re-splits without an estimate.
+    Flagged rows: width_validated = False, reported, not judged by (i)."""
+    nr = len(K["rows"])
+    flag = np.zeros((nr, len(SA.ANGLES)), bool)
+    info = [[None] * len(SA.ANGLES) for _ in range(nr)]
+    for i in range(nr):
+        for j in range(len(SA.ANGLES)):
+            w0, c0 = boot_par[0, i, j, 1], boot_par[0, i, j, 0]
+            if not np.isfinite(w0):
+                continue
+            wr, cr, wb = perm_par[1:, i, j, 1], perm_par[1:, i, j, 0], boot_par[1:, i, j, 1]
+            fin = np.isfinite(wr)
+            miss = float(1.0 - fin.mean())
+            sd_r = float(np.std(wr[fin], ddof=1)) if fin.sum() > 2 else float("nan")
+            sd_b = float(np.nanstd(wb, ddof=1))
+            sd_c = float(np.std(cr[fin], ddof=1)) if fin.sum() > 2 else float("nan")
+            bm = em_two_gaussians(wr[fin]) if fin.sum() >= 20 else {"bimodal": False}
+            st = {"width": float(w0), "centre": float(c0), "rel_sd": sd_r / w0, "ratio": sd_r / sd_b if sd_b > 0 else np.inf,
+                  "centre_sd_over_width": sd_c / w0, "missing": miss, "bimodal": bm}
+            reasons = []
+            if not st["rel_sd"] <= FLAG_REL_SD:
+                reasons.append("width_imprecise")
+            if not st["ratio"] <= FLAG_RATIO:
+                reasons.append("width_basin")
+            if bm.get("bimodal"):
+                reasons.append("width_bimodal")
+            if not st["centre_sd_over_width"] <= FLAG_CENTRE:
+                reasons.append("centre_imprecise")
+            if miss > FLAG_MISSING:
+                reasons.append("unstable_missing")
+            st["reasons"] = reasons
+            flag[i, j] = bool(reasons)
+            info[i][j] = st
+    return {"flag": flag, "info": info}
+
+
+def test_bin_flag(K: dict, rowflag: np.ndarray) -> np.ndarray:
+    """[test bin, angle]: the bin is flagged when more than half of its test clusters are looked up
+    in flagged table rows (identical to the row flag for a canonical table)."""
+    nt = len(K["trows"])
+    out = np.zeros((nt, len(SA.ANGLES)), bool)
+    rf = np.vstack([rowflag, np.zeros((1, len(SA.ANGLES)), bool)])
+    lr = np.where(K["test_lrow"] >= 0, K["test_lrow"], len(rowflag))
+    for i in range(nt):
+        a0, a1 = K["ts"][i], K["te"][i]
+        if a1 > a0:
+            out[i] = rf[lr[a0:a1]].mean(0) > 0.5
+    return out
 
 
 def _band_excess(nom, sd):
@@ -415,8 +531,29 @@ def _band_fraction(nom, sd, w):
                        np.abs(nom[..., 1] - 1.0) / (BAND_W + w * sd[..., 1]))
 
 
+def _region_index(K: dict) -> np.ndarray:
+    return np.array([0 if tr["surface"] in SA.BARREL else 1 for tr in K["trows"]], np.int64)
+
+
+def pooled_coverage(K: dict, st: np.ndarray):
+    """Cluster-weighted pooled coverage per (replica, region, angle, level) from chain statistics
+    st [..., nt, angle, 3 + levels] (all test bins with clusters). Returns (C, n)."""
+    reg = _region_index(K)
+    n = np.nan_to_num(st[..., 2])
+    cov = np.nan_to_num(st[..., 3:])
+    out_c = np.zeros(st.shape[:-3] + (2, len(SA.ANGLES), len(LEVELS)))
+    out_n = np.zeros(st.shape[:-3] + (2, len(SA.ANGLES)))
+    for r in (0, 1):
+        m = reg == r
+        nn = n[..., m, :].sum(-2)
+        out_n[..., r, :] = nn
+        with np.errstate(invalid="ignore", divide="ignore"):
+            out_c[..., r, :, :] = (n[..., m, :, None] * cov[..., m, :, :]).sum(-3) / nn[..., None]
+    return out_c, out_n
+
+
 def _decide(zk: dict, judged: dict, uk: dict, w_i: float):
-    """The rule on one set of statistics: zk[key] [nt, angle, level] coverage z, judged[key] [nt]
+    """(i) and (ii) on one set of statistics: zk[key] [nt, angle, level] coverage z, judged[key] [nt]
     (bins with >= 200 test clusters), uk[key] [nt, angle] band excess u (NaN outside the (i) scope),
     w_i the (i) threshold. Returns (pass_i, pass_ii, N, t, max|z|, n beyond t, chi2 results,
     failing chi2, (i) failures)."""
@@ -445,50 +582,154 @@ def _decide(zk: dict, judged: dict, uk: dict, w_i: float):
             float(np.max(np.abs(zall))) if N else None, n_beyond, chi_res, chi_fail, n_i_fail)
 
 
+def _iii_fail_cells(C: dict, sd: dict, gated_levels) -> list:
+    """(iii) failing cells: one-sided 95 % upper bound of the shortfall L - C beyond m(L) = 0.1 (1 - L)."""
+    out = []
+    for key in C:
+        for r, (rn, _) in enumerate(REGIONS):
+            for j, a in enumerate(SA.ANGLES):
+                for li, lv in enumerate(LEVELS):
+                    if lv not in gated_levels:
+                        continue
+                    ub = (lv - C[key][r, j, li]) + POOLED_Z * sd[key][r, j, li]
+                    if not ub <= POOLED_REL_MARGIN * (1 - lv):
+                        out.append(f"{key}/{rn}/{a}/{lv:g}")
+    return out
+
+
+def _tag(key, a, tr):
+    return f"{key}/{a}/{SA.SURFACE_NAMES[tr['surface']]}/f{tr['facing']:+d}/[{tr['lo']:+.2f},{tr['hi']:+.2f})"
+
+
 def judge(P: dict, boot: dict, perm: dict, min_n: int = SA.MIN_FIT, false_veto: bool = True) -> dict:
-    """(i) adequacy band with bootstrap errors; (ii) coverage against the exact-shape null with the
-    permutation variance; over every key and angle. Also: the same rule on every permutation replica
-    (false-veto rate), and, reported, the coverage z against the nominal level instead of E0."""
+    """Amendment 1b. (i) adequacy band on the bins whose table rows are not flagged (stability_flags),
+    error max(bootstrap, re-split sd), one-sided family-wise threshold t1(N_i); (ii) coverage against
+    the exact-shape null with the permutation variance (amendment 1, unchanged); (iii) pooled signed
+    coverage per key x region x angle x level against the NOMINAL level, one-sided 95 % upper bound of
+    the shortfall within m(L) = 0.1 (1 - L), at the levels whose pass probability on the re-splits is
+    >= 80 %. Also: the false-veto rate (the rule on every re-split, leave-one-out errors), the flagged
+    list and shares, the rows short of the level by > 0.1 %, per-cell summaries."""
     from scipy.stats import beta as beta_d
 
-    zk, judged, uk, sdi, sdb, zlev, varp, scope, viid = {}, {}, {}, {}, {}, {}, {}, {}, {}
+    zk, judged, uk, sdi, sdb, sdp, zlev, varp, scope, viid, flags, tflag = ({} for _ in range(12))
     for key, K in P["keys"].items():
         sb, sp = boot[key]["st"], perm[key]["st"]
         nom = sb[0]
         if not np.allclose(nom, sp[0], equal_nan=True, rtol=0, atol=1e-12):
             raise RuntimeError(f"{key}: the permutation chain's nominal split differs from the bootstrap's")
         sdb[key] = np.nanstd(sb[1:], axis=0, ddof=1)
-        # (i) error: the larger of the bootstrap and the re-split (permutation) spread of the statistic
-        sdi[key] = np.fmax(sdb[key][..., :2], np.nanstd(sp[1:, :, :, :2], axis=0, ddof=1))
+        sdp[key] = np.nanstd(sp[1:, :, :, :2], axis=0, ddof=1)
+        sdi[key] = np.fmax(sdb[key][..., :2], sdp[key])
         varp[key] = np.nanvar(sp[1:, :, :, 3:], axis=0, ddof=1)
         viid[key] = _v_iid(K, nom[:, :, 2])
         zk[key] = _coverage_z(K, nom, varp[key])
         judged[key] = K["test_n"] >= min_n
-        scope[key] = i_scope(K)
+        flags[key] = stability_flags(K, boot[key]["par"], perm[key]["par"])
+        tflag[key] = test_bin_flag(K, flags[key]["flag"])
+        scope[key] = ~tflag[key]
         uk[key] = np.where(scope[key], _band_excess(nom, sdi[key]), np.nan)
-        # reported alternative: the nominal level as the reference (no order-statistic offset)
         Kl = {**K, "E0": np.broadcast_to(np.asarray(LEVELS), K["E0"].shape)}
         zlev[key] = _coverage_z(Kl, nom, varp[key])
-    n_i = int(sum(np.isfinite(uk[k][judged[k]]).sum() for k in uk)) * 2      # centre and width per bin-angle
-    w_i = t_family(n_i)
-    details_i, reported_db = [], []
+    n_i = int(sum(np.isfinite(uk[k][judged[k]]).sum() for k in uk)) * 2      # centre and width per judged bin-angle
+    w_i = t_one_sided(n_i)
+    pass_i, pass_ii, N, t, maxz, nb, chi_res, chi_fail, n_i_fail = _decide(zk, judged, uk, w_i)
+
+    # (iii) pooled coverage against the nominal level
+    Cn, Csd, Cn_n, Cperm, E0p = {}, {}, {}, {}, {}
+    for key, K in P["keys"].items():
+        cb, nb_ = pooled_coverage(K, boot[key]["st"])
+        cp, _ = pooled_coverage(K, perm[key]["st"])
+        Cn[key], Cn_n[key] = cb[0], nb_[0]
+        Csd[key] = np.nanstd(cb[1:], axis=0, ddof=1)
+        Cperm[key] = cp[1:]
+        reg = _region_index(K)
+        n0 = np.nan_to_num(boot[key]["st"][0][..., 2])
+        e0 = np.nan_to_num(K["E0"])
+        E0p[key] = np.stack([(n0[reg == r][:, :, None] * e0[reg == r][:, None, :]).sum(0) / n0[reg == r].sum(0)[:, None]
+                             for r in (0, 1)])
+    R = perm[next(iter(P["keys"]))]["st"].shape[0] - 1
+    power = {}
+    for li, lv in enumerate(LEVELS):
+        ok = np.ones(R, bool)
+        for key in Cn:
+            ub = (lv - Cperm[key][:, :, :, li]) + POOLED_Z * Csd[key][None, :, :, li]
+            ok &= np.all(ub <= POOLED_REL_MARGIN * (1 - lv), axis=(1, 2))
+        power[f"{lv:g}"] = float(ok.mean())
+    gated_levels = [lv for lv in LEVELS if power[f"{lv:g}"] >= POWER_MIN]
+    iii_fail = _iii_fail_cells(Cn, Csd, gated_levels)
+    cells = []
+    for key, K in P["keys"].items():
+        reg = _region_index(K)
+        for r, (rn, _) in enumerate(REGIONS):
+            for j, a in enumerate(SA.ANGLES):
+                for li, lv in enumerate(LEVELS):
+                    zz = zk[key][(reg == r) & judged[key], j, li]
+                    zz = zz[np.isfinite(zz)]
+                    c, sd = float(Cn[key][r, j, li]), float(Csd[key][r, j, li])
+                    cells.append({"cell": f"{key}/{rn}/{a}/{lv:g}", "coverage": c, "E0_pooled": float(E0p[key][r, j, li]),
+                                  "sd": sd, "n_test": float(Cn_n[key][r, j]), "z_vs_level": (c - lv) / sd if sd > 0 else None,
+                                  "shortfall_upper_95": (lv - c) + POOLED_Z * sd,
+                                  "overcoverage_upper_95": (c - lv) + POOLED_Z * sd,
+                                  "margin": POOLED_REL_MARGIN * (1 - lv), "gated": lv in gated_levels,
+                                  "pass": bool((lv - c) + POOLED_Z * sd <= POOLED_REL_MARGIN * (1 - lv)),
+                                  "max_abs_z_bins": float(np.max(np.abs(zz))) if len(zz) else None})
+    pass_iii = not iii_fail
+
+    # reports: (i) details, flagged list and shares, E0 shortfall rows, z list
+    details_i, flagged_bins = [], []
     for key, K in P["keys"].items():
         nom, sd = boot[key]["st"][0], sdi[key]
         raw = _band_fraction(nom, sd, w_i)
+        u_all = _band_excess(nom, sd)
         for i, tr in enumerate(K["trows"]):
             if not judged[key][i]:
                 continue
             for j, a in enumerate(SA.ANGLES):
-                tag = f"{key}/{a}/{SA.SURFACE_NAMES[tr['surface']]}/f{tr['facing']:+d}/[{tr['lo']:+.2f},{tr['hi']:+.2f})"
-                item = (float(raw[i, j]), tag, float(nom[i, j, 0]), float(sd[i, j, 0]), float(nom[i, j, 1]), float(sd[i, j, 1]),
-                        float(sdb[key][i, j, 0]), float(sdb[key][i, j, 1]))
-                (details_i if scope[key][i, j] else reported_db).append(item)
-    pass_i, pass_ii, N, t, maxz, nb, chi_res, chi_fail, n_i_fail = _decide(zk, judged, uk, w_i)
-    # reported: the v1 recipe of (i) within the same scope (bootstrap sd only, widening 2)
-    v1_fail = int(sum(np.sum(np.where(scope[k], _band_excess(boot[k]["st"][0], sdb[k]), np.nan)[judged[k]] > WIDEN_V1)
-                      for k in uk))
+                item = {"bin": _tag(key, a, tr), "fraction_of_band": float(raw[i, j]), "u": float(u_all[i, j]),
+                        "centre": float(nom[i, j, 0]), "sd_c": float(sd[i, j, 0]), "width": float(nom[i, j, 1]),
+                        "sd_w": float(sd[i, j, 1]), "sd_c_boot": float(sdb[key][i, j, 0]), "sd_w_boot": float(sdb[key][i, j, 1])}
+                if scope[key][i, j]:
+                    details_i.append(item)
+                else:
+                    item["passes_amendment1_threshold"] = bool(u_all[i, j] <= t_family(n_i))
+                    flagged_bins.append(item)
+    worst_i = sorted(details_i, key=lambda x: -x["fraction_of_band"])
+    flagged_rows, shares = [], {}
+    for key, K in P["keys"].items():
+        fl = flags[key]
+        canonical = K["kind"] == "canonical" and K["lookup_key"] == key
+        for i, r in enumerate(K["rows"]):
+            for j, a in enumerate(SA.ANGLES):
+                st = fl["info"][i][j]
+                if st is None or not fl["flag"][i, j]:
+                    continue
+                e = {"row": _tag(key, a, r), "reasons": st["reasons"], "n_fit": int(K["nf_row"][i]),
+                     "n_test": int(K["test_n"][i]) if canonical else None, "width": st["width"], "centre": st["centre"],
+                     "rel_sd": st["rel_sd"], "ratio": st["ratio"], "centre_sd_over_width": st["centre_sd_over_width"],
+                     "missing": st["missing"]}
+                if st["bimodal"].get("bimodal"):
+                    e["bimodal"] = {k: st["bimodal"][k] for k in ("weights", "means", "sds", "ashman_d", "dbic")}
+                flagged_rows.append(e)
+        n_t = np.asarray(K["test_n"], float)
+        for s_ in SA.SURFACES:
+            m = np.array([tr["surface"] == s_ for tr in K["trows"]])
+            if not m.any():
+                continue
+            for j, a in enumerate(SA.ANGLES):
+                tot = n_t[m].sum()
+                shares[f"{key}/{SA.SURFACE_NAMES[s_]}/{a}"] = {
+                    "flagged_rows": int(tflag[key][m, j].sum()), "rows": int(m.sum()),
+                    "test_cluster_share": float(n_t[m][tflag[key][m, j]].sum() / tot) if tot else None}
+    e0_short = []
+    for key, K in P["keys"].items():
+        for i, tr in enumerate(K["trows"]):
+            for li, lv in enumerate(LEVELS):
+                if np.isfinite(K["E0"][i, li]) and lv - K["E0"][i, li] > 0.001 and K["test_n"][i] > 0:
+                    e0_short.append({"row": _tag(key, "both", tr), "level": lv, "n_fit": int(tr["n_fit"]),
+                                     "E0": float(K["E0"][i, li]), "shortfall": float(lv - K["E0"][i, li])})
     zlist = []
     for key, K in P["keys"].items():
+        st0 = boot[key]["st"][0]
         for i, tr in enumerate(K["trows"]):
             if not judged[key][i]:
                 continue
@@ -496,38 +737,35 @@ def judge(P: dict, boot: dict, perm: dict, min_n: int = SA.MIN_FIT, false_veto: 
                 for li, lv in enumerate(LEVELS):
                     z = zk[key][i, j, li]
                     if np.isfinite(z):
-                        tag = f"{key}/{a}/{SA.SURFACE_NAMES[tr['surface']]}/f{tr['facing']:+d}/[{tr['lo']:+.2f},{tr['hi']:+.2f})"
-                        st0 = boot[key]["st"][0]
-                        zlist.append({"bin": tag, "level": lv, "coverage": float(st0[i, j, 3 + li]),
+                        zlist.append({"bin": _tag(key, a, tr), "level": lv, "coverage": float(st0[i, j, 3 + li]),
                                       "E0": float(K["E0"][i, li]), "n_test": int(K["test_n"][i]),
                                       "null_sd": float(np.sqrt(np.fmax(varp[key][i, j, li], viid[key][i, j, li]))),
                                       "perm_over_iid_var": float(varp[key][i, j, li] / viid[key][i, j, li]),
                                       "z": float(z), "z_vs_level": float(zlev[key][i, j, li])})
     zarr = np.array([x["z"] for x in zlist])
-    worst_i = sorted(details_i, reverse=True)
     zl = np.concatenate([zlev[k][judged[k]].ravel() for k in zlev])
     zl = zl[np.isfinite(zl)]
     res = {
         "rule": RULE,
         "i": {"bins": len(details_i), "N_i": n_i, "W_i": w_i, "fail": n_i_fail,
-              "worst_fraction_of_widened_band": worst_i[0][0] if worst_i else None,
-              "worst": [{"bin": x[1], "fraction_of_band": x[0], "centre": x[2], "sd_c": x[3], "width": x[4],
-                         "sd_w": x[5], "sd_c_boot": x[6], "sd_w_boot": x[7]} for x in worst_i[:8]],
-              "failures": [{"bin": x[1], "centre": x[2], "sd_c": x[3], "width": x[4], "sd_w": x[5]}
-                           for x in worst_i if x[0] > 1.0][:50],
-              "reported_v1_recipe_in_scope_fail": v1_fail,
+              "worst_fraction_of_widened_band": worst_i[0]["fraction_of_band"] if worst_i else None,
+              "worst": worst_i[:8], "failures": [x for x in worst_i if x["fraction_of_band"] > 1.0][:60],
               "tolerance_pct_10_50_90": {
-                  "width": np.percentile([BAND_W + w_i * x[5] for x in details_i], [10, 50, 90]).round(3).tolist(),
-                  "centre": np.percentile([BAND_C + w_i * x[3] for x in details_i], [10, 50, 90]).round(3).tolist(),
-                  "width_v1": np.percentile([BAND_W + WIDEN_V1 * x[7] for x in details_i], [10, 50, 90]).round(3).tolist(),
-                  "centre_v1": np.percentile([BAND_C + WIDEN_V1 * x[6] for x in details_i], [10, 50, 90]).round(3).tolist(),
-                  "definition": "half-width of the band a bin's after-table width / centre must leave to fail (i), over "
-                                "the judged bin-angles; _v1: the v1 recipe (2 x bootstrap sd)"},
-              "reported_disc_beta": {"bins": len(reported_db), "outside_band": int(sum(x[0] > 1.0 for x in reported_db)),
-                                     "worst": [{"bin": x[1], "fraction_of_band": x[0], "centre": x[2], "sd_c": x[3],
-                                                "width": x[4], "sd_w": x[5]}
-                                               for x in sorted(reported_db, reverse=True)[:8]]},
+                  "width": np.percentile([BAND_W + w_i * x["sd_w"] for x in details_i], [10, 50, 90]).round(3).tolist(),
+                  "centre": np.percentile([BAND_C + w_i * x["sd_c"] for x in details_i], [10, 50, 90]).round(3).tolist(),
+                  "width_80pct_power": np.percentile([BAND_W + (w_i + 0.8416) * x["sd_w"] for x in details_i],
+                                                     [10, 50, 90]).round(3).tolist(),
+                  "definition": "half-width a judged bin's after-table width / centre must leave to fail (i) (50 % power), "
+                                "and the width deviation failed with 80 % power (+0.84 sd), over the judged bin-angles"},
+              "flagged_bins_reported": sorted(flagged_bins, key=lambda x: -abs(x["width"] - 1))[:80],
+              "flagged_bins_n": len(flagged_bins),
+              "flagged_bins_silent_pass_under_amendment1": int(sum(x["passes_amendment1_threshold"] for x in flagged_bins)),
               "n_a": int(sum((~judged[k]).sum() * len(SA.ANGLES) for k in judged))},
+        "flags": {"criteria": {"rel_sd": FLAG_REL_SD, "ratio": FLAG_RATIO, "centre": FLAG_CENTRE, "missing": FLAG_MISSING,
+                               "bimodal": BIMODAL},
+                  "rows": flagged_rows, "n_rows_flagged": len(flagged_rows),
+                  "n_row_angles": int(sum(np.isfinite(boot[k]["par"][0, :-1, :, 1]).sum() for k in P["keys"])),
+                  "shares": shares},
         "ii": {"N": N, "t_N": t, "max_abs_z": maxz, "n_beyond_t": nb, "n_beyond_3p5": int(np.sum(np.abs(zarr) > 3.5)),
                "beyond": sorted([x for x in zlist if abs(x["z"]) > t], key=lambda x: -abs(x["z"]))[:30],
                "largest": sorted(zlist, key=lambda x: -abs(x["z"]))[:12],
@@ -535,9 +773,11 @@ def judge(P: dict, boot: dict, perm: dict, min_n: int = SA.MIN_FIT, false_veto: 
                "per_level_max_abs_z": {f"{lv:g}": float(np.max(np.abs([x["z"] for x in zlist if x["level"] == lv])))
                                        for lv in LEVELS if any(x["level"] == lv for x in zlist)},
                "z_mean": float(zarr.mean()) if N else None, "z_sd": float(zarr.std()) if N else None,
-               "null_sd_over_iid_median": None,
                "reported_vs_level": {"max_abs_z": float(np.max(np.abs(zl))) if len(zl) else None,
                                      "n_beyond_t": int(np.sum(np.abs(zl) > t)), "mean_z": float(zl.mean()) if len(zl) else None}},
+        "iii": {"margin_rel": POOLED_REL_MARGIN, "power_by_level": power, "gated_levels": gated_levels,
+                "fail_cells": iii_fail, "cells": cells},
+        "e0_short_rows": e0_short,
         "lookup_missing": {k: P["keys"][k]["n_lookup_missing"] for k in P["keys"]},
     }
     ratio = []
@@ -545,84 +785,84 @@ def judge(P: dict, boot: dict, perm: dict, min_n: int = SA.MIN_FIT, false_veto: 
         with np.errstate(invalid="ignore", divide="ignore"):
             ratio.append((varp[key] / viid[key])[judged[key]])
     rr = np.concatenate([x.reshape(-1, len(LEVELS)) for x in ratio])
-    res["ii"]["null_sd_over_iid_median"] = {f"{lv:g}": float(np.nanmedian(np.sqrt(rr[:, li]))) for li, lv in enumerate(LEVELS)}
     res["ii"]["perm_var_over_iid_pct"] = {f"{lv:g}": np.nanpercentile(rr[:, li], [5, 50, 95, 99]).round(3).tolist()
                                           for li, lv in enumerate(LEVELS)}
-    res["pass_i"], res["pass_ii"] = pass_i, pass_ii
-    res["pass"] = pass_i and pass_ii
+    res["pass_i"], res["pass_ii"], res["pass_iii"] = pass_i, pass_ii, pass_iii
+    res["pass"] = pass_i and pass_ii and pass_iii
     res["per_region"] = region_summary(P, zk, {k: np.where(scope[k], _band_fraction(boot[k]["st"][0], sdi[k], w_i), np.nan)
                                                for k in uk}, judged)
     res["_z"] = {k: v.tolist() for k, v in zk.items()}
+    res["_rowflags"] = {k: flags[k]["flag"].tolist() for k in flags}
+    res["_rowinfo"] = {k: flags[k]["info"] for k in flags}
     if false_veto:
-        res["false_veto"] = false_veto_rate(P, perm, judged, sdb, sdi, w_i, scope)
-        lo, hi = beta_d.ppf(0.025, res["false_veto"]["fail_any"], res["false_veto"]["n_replicas"] -
-                            res["false_veto"]["fail_any"] + 1), \
-            beta_d.ppf(0.975, res["false_veto"]["fail_any"] + 1, res["false_veto"]["n_replicas"] - res["false_veto"]["fail_any"])
-        res["false_veto"]["rate_95cl"] = [float(np.nan_to_num(lo)), float(hi)]
+        fv = false_veto_rate(P, perm, judged, sdb, w_i, scope, Csd, gated_levels)
+        lo = beta_d.ppf(0.025, fv["fail_any"], R - fv["fail_any"] + 1)
+        hi = beta_d.ppf(0.975, fv["fail_any"] + 1, R - fv["fail_any"])
+        fv["rate_95cl"] = [float(np.nan_to_num(lo)), float(hi)]
+        res["false_veto"] = fv
     return res
 
 
-def false_veto_rate(P, perm, judged, sdb, sdi, w_i, scope) -> dict:
-    """The rule applied to every permutation replica as if it were the observed split (each is a
-    known-good split of the pooled events): (ii) with the leave-one-out permutation variance and the
-    nominal E0, (i) with the observed split's errors and threshold. Returns counts, the max|z| and
-    max-excess spreads, and for comparison the (i) false-veto rate under the v1 recipe (bootstrap sd,
-    widening 2) and the two half-way variants."""
+def false_veto_rate(P, perm, judged, sdb, w_i, scope, Csd, gated_levels) -> dict:
+    """The rule applied to every re-split as if it were the observed split (each is a known-good
+    split of the pooled events), with leave-one-out errors: (i) the replica's after-table centre /
+    width against the band widened by w_i x max(bootstrap sd of the observed split, re-split sd
+    WITHOUT this replica), on the observed split's flag scope; (ii) leave-one-out permutation
+    variance, nominal E0; (iii) the replica's pooled coverage against the level with the observed
+    split's bootstrap sd, at the gated levels."""
     keys = list(P["keys"])
     R = perm[keys[0]]["st"].shape[0] - 1
-    fail_i = fail_ii = fail_any = 0
+    fail = {"i": 0, "ii": 0, "iii": 0, "any": 0}
     maxz, minp, max_u = [], [], []
-    alt = {"boot_sd_W2": [], "max_sd_W2": [], "boot_sd_Wi": []}
     tally = {}
-    zrep = {}
+    zrep, sdloo, Crep = {}, {}, {}
     for key in keys:
         K = P["keys"][key]
         st = perm[key]["st"][1:]
         cov = st[:, :, :, 3:]
-        s1 = np.nansum(cov, axis=0)
-        s2 = np.nansum(cov ** 2, axis=0)
+        s1, s2 = np.nansum(cov, axis=0), np.nansum(cov ** 2, axis=0)
         loo_mean = (s1[None] - cov) / (R - 1)
         loo_var = (s2[None] - cov ** 2 - (R - 1) * loo_mean ** 2) / (R - 2)
         zrep[key] = np.stack([_coverage_z(K, st[b], loo_var[b]) for b in range(R)])
+        x = st[:, :, :, :2]
+        t1, t2 = np.nansum(x, axis=0), np.nansum(x ** 2, axis=0)
+        lm = (t1[None] - x) / (R - 1)
+        lv = np.clip((t2[None] - x ** 2 - (R - 1) * lm ** 2) / (R - 2), 0, None)
+        sdloo[key] = np.fmax(sdb[key][None, ..., :2], np.sqrt(lv))
+        Crep[key], _ = pooled_coverage(K, perm[key]["st"][1:])
     for b in range(R):
         zb = {k: zrep[k][b] for k in keys}
-        ub = {k: np.where(scope[k], _band_excess(perm[k]["st"][1 + b], sdi[k]), np.nan) for k in keys}
+        ub = {k: np.where(scope[k], _band_excess(perm[k]["st"][1 + b], sdloo[k][b]), np.nan) for k in keys}
         pi, pii, N, t, mz, nb, chi_res, chi_fail, _ = _decide(zb, judged, ub, w_i)
-        u_b, ubb = [], []
+        piii = not _iii_fail_cells({k: Crep[k][b] for k in keys}, Csd, gated_levels)
+        u_b = []
         for k in keys:
             u = np.where(judged[k][:, None], ub[k], np.nan)
             u_b.append(np.nanmax(u))
-            ubb.append(np.nanmax(np.where(scope[k] & judged[k][:, None], _band_excess(perm[k]["st"][1 + b], sdb[k]), np.nan)))
             for i, j in zip(*np.nonzero(u > w_i)):
-                tr = P["keys"][k]["trows"][i]
-                tag = f"{k}/{SA.ANGLES[j]}/{SA.SURFACE_NAMES[tr['surface']]}/f{tr['facing']:+d}/[{tr['lo']:+.2f},{tr['hi']:+.2f})"
+                tag = _tag(k, SA.ANGLES[j], P["keys"][k]["trows"][i])
                 tally[tag] = tally.get(tag, 0) + 1
         max_u.append(max(u_b))
-        alt["boot_sd_W2"].append(max(ubb) > WIDEN_V1)
-        alt["max_sd_W2"].append(max(u_b) > WIDEN_V1)
-        alt["boot_sd_Wi"].append(max(ubb) > w_i)
-        fail_i += not pi
-        fail_ii += not pii
-        fail_any += not (pi and pii)
+        fail["i"] += not pi
+        fail["ii"] += not pii
+        fail["iii"] += not piii
+        fail["any"] += not (pi and pii and piii)
         maxz.append(mz)
         minp.append(min(v["p"] for v in chi_res.values()))
-    return {"n_replicas": R, "fail_i": fail_i, "fail_ii": fail_ii, "fail_any": fail_any,
-            "rate": fail_any / R, "max_abs_z_pct_5_50_95_99": np.percentile(maxz, [5, 50, 95, 99]).round(2).tolist(),
+    return {"n_replicas": R, "fail_i": fail["i"], "fail_ii": fail["ii"], "fail_iii": fail["iii"], "fail_any": fail["any"],
+            "rate": fail["any"] / R, "max_abs_z_pct_5_50_95_99": np.percentile(maxz, [5, 50, 95, 99]).round(2).tolist(),
             "min_chi2_p_pct_1_5_50": np.percentile(minp, [1, 5, 50]).tolist(),
             "i_max_excess_sigma_pct_5_50_95_99": np.percentile(max_u, [5, 50, 95, 99]).round(2).tolist(),
-            "i_false_veto_alternatives": {k: int(np.sum(v)) for k, v in alt.items()},
             "i_fail_tally": dict(sorted(tally.items(), key=lambda x: -x[1])[:20]),
-            "definition": "each permutation replica judged by the amendment-1 rule as if observed: (ii) leave-one-out "
-                          "permutation variance, nominal E0, same N and t(N) rule, chi2 per level x key; (i) the replica's "
-                          "after-table centre / width outside the band by more than W_i x max(bootstrap, re-split) sd "
-                          "of the observed split"}
+            "definition": "each re-split judged by the amendment-1b rule as if observed, leave-one-out errors (see "
+                          "false_veto_rate)"}
 
 
 def region_summary(P, zk, frac, judged):
     """Worst |z| and worst band fraction per (key, barrel / disc), as the demonstration must show both."""
     out = {}
     for key, K in P["keys"].items():
-        for region, surfs in (("barrel", SA.BARREL), ("discs", SA.DISCS)):
+        for region, surfs in REGIONS:
             idx = [i for i, tr in enumerate(K["trows"]) if tr["surface"] in surfs and judged[key][i]]
             if not idx:
                 continue
@@ -631,12 +871,30 @@ def region_summary(P, zk, frac, judged):
     return out
 
 
+def scaled_width(P: dict, boot: dict, perm: dict, scale: dict):
+    """A width-only perturbation of a canonical table applied exactly after the fact: the table width
+    of row i, angle j is multiplied by scale[key][i, j] in every replica, so the fitted widths scale
+    and the after-table centre and width (B.1 clipped mean and core: scale-equivariant) divide by it;
+    centres, quantiles and coverage are unchanged. Returns (boot', perm')."""
+    nb, npm = {}, {}
+    for key, K in P["keys"].items():
+        assert K["kind"] == "canonical" and K["lookup_key"] == key, "width perturbations need a canonical table"
+        s = np.vstack([scale[key], np.ones((1, len(SA.ANGLES)))])
+        for src, dst in ((boot, nb), (perm, npm)):
+            par = src[key]["par"].copy()
+            st = src[key]["st"].copy()
+            par[:, :, :, 1] *= s[None]
+            st[:, :, :, 0:2] /= s[None, :-1, :, None]
+            dst[key] = {"par": par, "st": st}
+    return nb, npm
+
+
 # ---------------------------------------------------------------- pT check (fit sample)
 def _pt_replica(b: int):
     PT = G["PT"]
     cf = None
     if b:
-        rng = np.random.default_rng([SEED, 7, b])
+        rng = np.random.default_rng([G["seed"], 7, *G["fit_files"], b])
         cf = rng.multinomial(PT["n_ev"], np.full(PT["n_ev"], 1.0 / PT["n_ev"]))
     out = {}
     for key, K in PT["keys"].items():
@@ -737,7 +995,7 @@ def before_after(P: dict, boot: dict, judgement: dict, test: dict, scales: dict)
             for j, a in enumerate(SA.ANGLES):
                 p = test["pull"][a][m]
                 b = SA.core_w(p) if m.sum() >= SA.MIN_FIT else None
-                d = {"judged_by_i": judged_by_i(tr["surface"], a),
+                d = {"width_validated": not bool(judgement["_rowflags"][key][i][j]) if K["kind"] == "canonical" else None,
                      "before": None if b is None else {"centre": b["mean"], "width": b["rms0"], "out3": b["out3"]},
                      "after": {"centre": nom[i, j, 0], "sd_centre": sd[i, j, 0], "width": nom[i, j, 1],
                                "sd_width": sd[i, j, 1]},
@@ -761,14 +1019,20 @@ def before_after(P: dict, boot: dict, judgement: dict, test: dict, scales: dict)
     return out
 
 
-def table_doc(P: dict, stack: dict, orient, flags, prov: dict) -> dict:
+def table_doc(P: dict, stack: dict, orient, flags, prov: dict, judgement: dict | None = None) -> dict:
+    """The table document. Per row and angle also: n_fit (the clusters the row was fitted on), E0 per
+    level (k / (n_fit + 1), the expected coverage of its quantiles), and width_validated (amendment 1b:
+    False for a flagged row, with the flag reasons; None when no stability analysis ran)."""
     keys_rows = {}
     for key, K in P["keys"].items():
         par = stack[key]["par"][0]
         psd = np.nanstd(stack[key]["par"][1:], axis=0, ddof=1)
+        rf = None if judgement is None else np.asarray(judgement["_rowflags"][key], bool)
+        info = None if judgement is None else judgement["_rowinfo"][key]
         rows = []
         for i, r in enumerate(K["rows"]):
             ent = {k: r[k] for k in ("surface", "facing", "lo", "hi", "fine", "n_fit")}
+            ent["n_fit_used"] = int(K["nf_row"][i])
             ent["flags"] = ["refit_pt2"] if i in flags.get(key, set()) else []
             for j, a in enumerate(SA.ANGLES):
                 full = SA.bin_estimates(K["fit_p"][a][K["fs"][i]:K["fe"][i]], LEVELS)
@@ -777,24 +1041,43 @@ def table_doc(P: dict, stack: dict, orient, flags, prov: dict) -> dict:
                     continue
                 ent[a] = {"centre": par[i, j, 0], "width": par[i, j, 1],
                           "q": {f"{lv:g}": par[i, j, 2 + li] for li, lv in enumerate(LEVELS)},
+                          "E0": {f"{lv:g}": float(SA.expected_coverage(K["nf_row"][i], lv)) for lv in LEVELS},
                           "sd_centre": psd[i, j, 0], "sd_width": psd[i, j, 1],
                           "sd_q": {f"{lv:g}": psd[i, j, 2 + li] for li, lv in enumerate(LEVELS)},
-                          "mad": full["mad"], "out3": full["out3"], "full_rms0": full["full_rms0"], "n": full["n"]}
-                if not judged_by_i(r["surface"], a):
-                    ent[a]["note"] = ("disc beta: no Gaussian core; the core width is not a weighting width (weighting "
-                                      "consumers use the full response, decision 3); cutting consumers use the quantiles")
+                          "mad": full["mad"], "out3": full["out3"], "full_rms0": full["full_rms0"], "n": full["n"],
+                          "width_validated": None if rf is None else bool(not rf[i, j])}
+                if rf is not None and rf[i, j]:
+                    ent[a]["flag_reasons"] = info[i][j]["reasons"]
+                    ent[a]["note"] = "width not validated for weighting (amendment 1b stability flag)"
             rows.append(ent)
         keys_rows[key] = rows
     doc = SA.new_table_doc(keys_rows, orient, prov, era="canon_v3 (150X D121 PU200 TTbar, AAAA)",
-                           fit_sample=f"canon_v3 AAAA files {list(SA.FIT_FILES)}, class T, pT >= {SA.PT_MIN:g} GeV "
-                                      "(the class-C angles of these files are cluster-CNN training data; class T is "
-                                      "truth + 1.5 x a PixelAV residual and is not)")
+                           fit_sample=prov.get("fit_sample_text") or (
+                               f"canon_v3 AAAA files {list(SA.FIT_FILES)}, class T, pT >= {SA.PT_MIN:g} GeV (the class-C "
+                               "angles of these files are cluster-CNN training data; class T is truth + 1.5 x a PixelAV "
+                               "residual and is not)"))
     doc["recipe"] = "angle.error_table (sheet v1); tested under " + RULE
     return doc
 
 
+def plateau_edge_rows(K: dict) -> np.ndarray:
+    """Rows whose |key| range overlaps the plateau edges [0.50, 0.67) (KB-f)."""
+    out = []
+    for r in K["rows"]:
+        lo, hi = r["lo"], r["hi"]
+        a, b = (min(abs(lo), abs(hi)), max(abs(lo), abs(hi))) if lo * hi >= 0 else (0.0, max(abs(lo), abs(hi)))
+        out.append(b > 0.50 and a < 0.67)
+    return np.array(out, bool)
+
+
+def _strip(j: dict) -> dict:
+    for k in ("_z", "_rowflags", "_rowinfo"):
+        j.pop(k, None)
+    return j
+
+
 # ---------------------------------------------------------------- driver
-def run(mode: str, n_rep: int, n_proc: int, out_dir: Path) -> dict:
+def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> dict:
     fit_files, test_files = SPLITS[mode]
     t0 = time.time()
     orient = CM.orientation_map(fit_files)
@@ -802,15 +1085,22 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path) -> dict:
     test = CM.derive(load_split(test_files), orient)
     print(f"[{mode}] fit files {fit_files}: {len(fit['ev'])} clusters; test files {test_files}: "
           f"{len(test['ev'])} clusters; orientation of {len(orient[0])} modules ({time.time() - t0:.0f} s)", flush=True)
+    G["seed"], G["fit_files"] = seed, tuple(int(x) for x in fit_files)
     res = {"mode": mode, "rule": RULE, "fit_files": list(fit_files), "test_files": list(test_files), "n_rep": n_rep,
-           "seed": SEED, "n_fit": int(len(fit["ev"])), "n_test": int(len(test["ev"])), "code": CM.git_state(),
+           "seed": seed, "n_fit": int(len(fit["ev"])), "n_test": int(len(test["ev"])), "code": CM.git_state(),
            "inputs": CM.inputs_provenance(sorted(set(fit_files) | set(test_files))),
-           "rule_parameters": {"band_width": BAND_W, "band_centre": BAND_C, "i_widening": "W_i = t(N_i) (family-wise 1 %, N_i = 2 x judged bin-angles) x max(bootstrap, re-split sd)", "levels": LEVELS,
-                               "min_n": SA.MIN_FIT, "i_scope": "barrel alpha and beta, disc alpha (disc beta reported)",
-                               "N_definition": "levels x test bins x angles x keys, after merges",
-                               "coverage_null": "beta-binomial, mean 1 - E0 (E0 = k / (n_fit + 1)), variance max(event "
-                                                "permutation, exchangeable clusters); mid-p; z = -Phi^-1(P_mid(M <= m))",
-                               "chi2": "per level and key over bins and angles; p > 0.01 / (levels x keys)"}}
+           "rule_parameters": {
+               "band_width": BAND_W, "band_centre": BAND_C, "levels": LEVELS, "min_n": SA.MIN_FIT,
+               "i": "bins whose rows are not flagged; fail when outside the band by > W_i x max(bootstrap, re-split sd), "
+                    "W_i = one-sided Sidak t1(N_i) at 1 %, N_i = 2 x judged bin-angles",
+               "flag": {"rel_sd": FLAG_REL_SD, "ratio": FLAG_RATIO, "centre": FLAG_CENTRE, "missing": FLAG_MISSING,
+                        "bimodal": BIMODAL},
+               "ii": "beta-binomial null, mean 1 - E0 (E0 = k / (n_fit + 1)), variance max(event permutation, "
+                     "exchangeable clusters); mid-p; z = -Phi^-1(P_mid(M <= m)); no |z| > t(N); chi2 per level x key",
+               "iii": "pooled coverage per key x region x angle x level against the nominal level; one-sided 95 % "
+                      "upper bound of the shortfall <= 0.1 (1 - L); gated at levels with >= 80 % pass probability on "
+                      "the re-splits",
+               "seed": "replica streams [seed, scheme, fit files..., replica]"}}
     if mode in ("diagnosis", "known-good", "gated", "fit-only"):
         ptc, flags = pt_check(fit, n_rep, n_proc)
         res["pt_check"] = ptc
@@ -822,23 +1112,31 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path) -> dict:
             perm = run_chain(prepare(fit, test, spec, flags, pooled=True), n_rep, n_proc, mode, "permutation")
             res["judgement"] = judge(P, boot, perm)
             res["bins"] = before_after(P, boot, res["judgement"], test, census_scales())
+        prov = {"code": res["code"], "inputs": res["inputs"], "fit_files": list(fit_files), "rule": RULE,
+                "job_id": os.environ.get("SP_JOB_ID"), "n_rep_bootstrap": n_rep, "pt_check_refit_rows": ptc["flags"]}
         if mode in ("gated", "fit-only"):
-            prov = {"code": res["code"], "inputs": res["inputs"], "fit_files": list(fit_files), "rule": RULE,
-                    "job_id": os.environ.get("SP_JOB_ID"), "n_rep_bootstrap": n_rep,
-                    "pt_check_refit_rows": ptc["flags"],
-                    "test": f"files 3-10; see {result_name('gated')}" if mode == "gated" else
-                    "NOT TESTED: the gated test did not run (amendment 1 not approved, its known-good demonstration "
-                    f"failed or a known-bad passed; see {result_name('known-good')}, {result_name('known-bad')})"}
-            doc = table_doc(P, boot, orient, flags, prov)
+            prov["test"] = (f"files 3-10; see {result_name('gated')}" if mode == "gated" else
+                            "NOT TESTED: the gated test did not run (amendment 1b not approved, its known-good "
+                            f"demonstration failed or a known-bad passed; see {result_name('known-good')}, "
+                            f"{result_name('known-bad')})")
+            doc = table_doc(P, boot, orient, flags, prov, res.get("judgement"))
             if mode == "gated":
-                doc["test_result"] = {"pass": res["judgement"]["pass"], "pass_i": res["judgement"]["pass_i"],
-                                      "pass_ii": res["judgement"]["pass_ii"]}
+                doc["test_result"] = {k: res["judgement"][k] for k in ("pass", "pass_i", "pass_ii", "pass_iii")}
             else:
                 doc["test_result"] = {"pass": None, "status": "untested"}
             tab = SA.AngleTable(doc)
             fn = TABLE_FILE if mode == "gated" else UNTESTED_FILE
             tab.save(str(out_dir / fn))
             res["table_file"] = str(out_dir / fn)
+        else:      # the demonstration's own fit, for the flagged list and the recipe-option measurements
+            prov["fit_sample_text"] = (f"DEMONSTRATION FIT ONLY (not for use): canon_v3 AAAA files {list(fit_files)}, "
+                                       f"class T, pT >= {SA.PT_MIN:g} GeV")
+            prov["test"] = f"files {list(test_files)}; see {result_name(mode)}"
+            doc = table_doc(P, boot, orient, flags, prov, res["judgement"])
+            (out_dir / "amend1b").mkdir(exist_ok=True)
+            fn = out_dir / "amend1b" / f"angle_table_{mode}_fit_a1b.json"
+            SA.AngleTable(doc).save(str(fn))
+            res["demo_table_file"] = str(fn)
     else:
         res["known_bads"] = {}
         for name, desc in KNOWN_BADS.items():
@@ -854,15 +1152,96 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path) -> dict:
             P = prepare(fit, tst, spec)
             boot = run_chain(P, n_rep, n_proc, f"known-bad {name}", "bootstrap")
             perm = run_chain(prepare(fit, tst, spec, pooled=True), n_rep, n_proc, f"known-bad {name}", "permutation")
-            j = judge(P, boot, perm, false_veto=False)
-            j.pop("_z", None)
+            j = _strip(judge(P, boot, perm, false_veto=False))
             res["known_bads"][name] = {"description": desc, "judgement": j, "fails_as_required": not j["pass"]}
             print(f"[known-bad {name}] pass={j['pass']} (i fail {j['i']['fail']}/{j['i']['bins']}, ii beyond t "
-                  f"{j['ii']['n_beyond_t']}, max|z| {j['ii']['max_abs_z']:.1f}, chi2 fail {j['ii']['chi2_fail']})",
-                  flush=True)
+                  f"{j['ii']['n_beyond_t']}, max|z| {j['ii']['max_abs_z']:.1f}, chi2 fail {len(j['ii']['chi2_fail'])}, "
+                  f"iii fail {len(j['iii']['fail_cells'])})", flush=True)
+        # the canonical table on the same split: the reference for (e) and the base of the width known-bads
+        spec = {k: {"kind": "canonical", "lookup_key": k} for k in SA.KEYS}
+        P = prepare(fit, test, spec)
+        boot = run_chain(P, n_rep, n_proc, "canonical reference", "bootstrap")
+        perm = run_chain(prepare(fit, test, spec, pooled=True), n_rep, n_proc, "canonical reference", "permutation")
+        jc = judge(P, boot, perm, false_veto=False)
+        ref = {c["cell"]: c for c in jc["iii"]["cells"]}
+        je = res["known_bads"]["test_scale_1p05"]["judgement"]
+        res["known_bads"]["test_scale_1p05"]["per_cell_vs_canonical"] = [
+            {"cell": c["cell"], "coverage_shift": c["coverage"] - ref[c["cell"]]["coverage"],
+             "max_abs_z_bins": c["max_abs_z_bins"], "max_abs_z_bins_canonical": ref[c["cell"]]["max_abs_z_bins"],
+             "shortfall_upper_95": c["shortfall_upper_95"], "margin": c["margin"], "pass": c["pass"]}
+            for c in je["iii"]["cells"]]
+        # KB-f
+        scale = {k: np.where(plateau_edge_rows(P["keys"][k])[:, None], 1.0 / 1.2, 1.0)
+                 * np.ones((1, len(SA.ANGLES))) for k in P["keys"]}
+        bf, pf = scaled_width(P, boot, perm, scale)
+        jf = judge(P, bf, pf, false_veto=False)
+        pert, failed = 0, 0
+        for k, K in P["keys"].items():
+            fl = ~np.asarray(jf["_rowflags"][k], bool)
+            m = (scale[k] != 1.0) & fl & (K["test_n"] >= SA.MIN_FIT)[:, None]
+            uu = _band_excess(bf[k]["st"][0], np.fmax(np.nanstd(bf[k]["st"][1:], axis=0, ddof=1)[..., :2],
+                                                    np.nanstd(pf[k]["st"][1:, :, :, :2], axis=0, ddof=1)))
+            pert += int(m.sum())
+            failed += int(np.sum(uu[m] > jf["i"]["W_i"]))
+        jf = _strip(jf)
+        res["known_bads"]["kbf_plateau_width_div1p2"] = {
+            "description": WIDTH_KNOWN_BADS["kbf_plateau_width_div1p2"], "judgement": jf,
+            "perturbed_judged_bin_angles": pert, "perturbed_failing_i": failed,
+            "per_row_power_at_width_1p2": failed / pert if pert else None,
+            "fails_through_i": not jf["pass_i"], "fails_as_required": not jf["pass_i"]}
+        print(f"[known-bad kbf] pass={jf['pass']} pass_i={jf['pass_i']} ({failed}/{pert} perturbed judged bin-angles "
+              f"fail (i))", flush=True)
+        # KB-g
+        rowflag = {k: np.asarray(jc["_rowflags"][k], bool) for k in P["keys"]}
+        scale = {}
+        for k, K in P["keys"].items():
+            sc = np.ones((len(K["rows"]), len(SA.ANGLES)))
+            for i in range(len(K["rows"])):
+                for j in range(len(SA.ANGLES)):
+                    if not rowflag[k][i, j]:
+                        continue
+                    st = jc["_rowinfo"][k][i][j]
+                    bm = st["bimodal"]
+                    if bm.get("bimodal"):
+                        mu = np.asarray(bm["means"])
+                        sc[i, j] = float(mu[np.argmax(np.abs(mu - st["width"]))] / st["width"])
+                    else:
+                        sc[i, j] = 1.5
+            scale[k] = sc
+        bg, pg = scaled_width(P, boot, perm, scale)
+        jg = judge(P, bg, pg, false_veto=False)
+        n_pert = int(sum((scale[k] != 1.0).sum() for k in P["keys"]))
+        n_flag = int(sum(((scale[k] != 1.0) & np.asarray(jg["_rowflags"][k], bool)).sum() for k in P["keys"]))
+        # what amendment 1 would have said about the perturbed rows: disc beta not judged at all; the rest
+        # judged with max(bootstrap, re-split) sd and the two-sided t(N_i)
+        silent_a1, unjudged_a1, failed_a1 = 0, 0, 0
+        for k, K in P["keys"].items():
+            sd_ = np.fmax(np.nanstd(bg[k]["st"][1:], axis=0, ddof=1)[..., :2], np.nanstd(pg[k]["st"][1:, :, :, :2], axis=0, ddof=1))
+            uu = _band_excess(bg[k]["st"][0], sd_)
+            for i, tr in enumerate(K["trows"]):
+                for j, a in enumerate(SA.ANGLES):
+                    if scale[k][i, j] == 1.0 or K["test_n"][i] < SA.MIN_FIT:
+                        continue
+                    if a == "beta" and tr["surface"] in SA.DISCS:
+                        unjudged_a1 += 1
+                    elif uu[i, j] <= t_family(jg["i"]["N_i"]):
+                        silent_a1 += 1
+                    else:
+                        failed_a1 += 1
+        jg = _strip(jg)
+        res["known_bads"]["kbg_flagged_other_basin"] = {
+            "description": WIDTH_KNOWN_BADS["kbg_flagged_other_basin"], "judgement": jg,
+            "perturbed_row_angles": n_pert, "perturbed_flagged": n_flag,
+            "scale_factors": {k: sorted(set(np.round(v[v != 1.0], 3).tolist())) for k, v in scale.items()},
+            "gate_fails": not jg["pass"], "every_perturbed_flagged": n_flag == n_pert,
+            "under_amendment1": {"silent_pass": silent_a1, "not_judged_disc_beta": unjudged_a1, "fail": failed_a1},
+            "fails_as_required": (not jg["pass"]) or n_flag == n_pert}
+        print(f"[known-bad kbg] gate pass={jg['pass']}; {n_flag}/{n_pert} perturbed row-angles flagged; under amendment 1: "
+              f"{silent_a1} silent passes, {unjudged_a1} not judged (disc beta), {failed_a1} fail (i)", flush=True)
+        res["canonical_reference"] = {"pass": jc["pass"], "flags": jc["flags"], "iii": jc["iii"]}
         res["all_known_bads_fail"] = all(v["fails_as_required"] for v in res["known_bads"].values())
     if "judgement" in res:
-        res["judgement"].pop("_z", None)
+        _strip(res["judgement"])
     res["wall_s"] = round(time.time() - t0, 1)
     return res
 
@@ -873,15 +1252,15 @@ def gated_refusal(out_dir: Path) -> str | None:
         kg = json.load(open(out_dir / result_name("known-good")))
         kb = json.load(open(out_dir / result_name("known-bad")))
     except FileNotFoundError as e:
-        return f"the gated test needs the amendment-1 known-good and known-bad results first ({e})"
+        return f"the gated test needs the amendment-1b known-good and known-bad results first ({e})"
     if kg.get("rule") != RULE or kb.get("rule") != RULE:
-        return "the known-good / known-bad results are not from the amendment-1 rule"
+        return "the known-good / known-bad results are not from the amendment-1b rule"
     if not kg["judgement"]["pass"] or not kb["all_known_bads_fail"] or kg["n_rep"] < 250 or kb["n_rep"] < 250:
-        return ("the amendment-1 known-good demonstration did not pass, or a known-bad did not fail, or < 250 replicas: "
-                "the rule goes back for redesign (D.0 step 4)")
+        return ("the amendment-1b known-good demonstration did not pass, or a known-bad did not fail, or < 250 "
+                "replicas: the rule goes back for redesign (D.0 step 4)")
     if not (out_dir / APPROVAL_FILE).exists():
-        return (f"amendment 1 is not approved: {out_dir / APPROVAL_FILE} does not exist (written when the physicist "
-                "approves the rule change)")
+        return (f"amendment 1b is not approved: {out_dir / APPROVAL_FILE} does not exist (written when the physicist "
+                "approves the rule change and accepts the flagged-row list by name)")
     return None
 
 
@@ -891,6 +1270,7 @@ def main(argv=None) -> int:
     ap.add_argument("--rep", type=int, default=250)
     ap.add_argument("--proc", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--out", default=str(CM.OUT_DIR))
+    ap.add_argument("--seed", type=int, default=SEED, help="replica seed (smoke tests: never the demonstration's)")
     a = ap.parse_args(argv)
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -899,7 +1279,7 @@ def main(argv=None) -> int:
         if why:
             print(f"refused: {why}")
             return 66
-    res = run(a.mode, a.rep, a.proc, out_dir)
+    res = run(a.mode, a.rep, a.proc, out_dir, a.seed)
     CM.jdump(res, out_dir / result_name(a.mode))
     if a.mode == "known-bad":
         print("every known-bad fails" if res["all_known_bads_fail"] else "SOME KNOWN-BAD PASSES")
@@ -912,7 +1292,9 @@ def main(argv=None) -> int:
     print(f"[{a.mode}] PASS={j['pass']}: (i) {j['i']['fail']} of {j['i']['bins']} bins outside the widened band "
           f"(worst {j['i']['worst_fraction_of_widened_band']}); (ii) N={j['ii']['N']} t(N)={j['ii']['t_N']:.2f} "
           f"max|z|={j['ii']['max_abs_z']:.2f}, beyond t: {j['ii']['n_beyond_t']}, chi2 fail: {j['ii']['chi2_fail']}; "
-          f"false-veto {fv.get('fail_any')}/{fv.get('n_replicas')} permutation replicas")
+          f"(iii) fail cells {j['iii']['fail_cells']} (gated levels {j['iii']['gated_levels']}); flagged row-angles "
+          f"{j['flags']['n_rows_flagged']}/{j['flags']['n_row_angles']}; false-veto {fv.get('fail_any')}/"
+          f"{fv.get('n_replicas')} re-splits ((i) {fv.get('fail_i')}, (ii) {fv.get('fail_ii')}, (iii) {fv.get('fail_iii')})")
     return 0 if j["pass"] else 4
 
 

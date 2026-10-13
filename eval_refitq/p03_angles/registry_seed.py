@@ -4,8 +4,9 @@ launcher's launch-time record when run inside a launched job: $SP_JOB_DIR) and s
 
     python registry_seed.py [--dry-run] [--overwrite] [--only ID_PREFIX]
 
-The table results are those of the amendment-1 rule (p03_table_<mode>_a1.json, ids p03.table.a1.*;
-the v1-rule entries p03.table.known-good / known-bads of 2026-10-09 stay registered as they are).
+The table results are those of the amendment-1b rule (p03_table_<mode>_a1b.json, ids p03.table.a1b.*; the
+v1-rule entries p03.table.known-good / known-bads (2026-10-09) and the amendment-1 entries p03.table.a1.*
+(2026-10-13) stay registered as they are).
 """
 from __future__ import annotations
 
@@ -54,53 +55,63 @@ def entries() -> list:
                   "values": [v(f"{k} known-good", x["status"], note=x["why"][:200]) for k, x in chk["items"].items()]
                   + [v(f"{k} known-bad", x["status"], note=x["why"][:200]) for k, x in chkb["items"].items()],
                   "provenance": {**common_prov, "files": ["spdefs_checks_run.json", "spdefs_checks_known_bad.json"]}})
-    dg, kg, kb, gt, fo = (load(f"p03_table_{m}_a1.json") for m in ("diagnosis", "known-good", "known-bad", "gated",
-                                                                   "fit-only"))
-    for tag, r, title in (("diagnosis", dg, "amendment-1 rule on the split where the v1 rule failed (fit 3-4, test "
-                                           "5-10): diagnosis, not a demonstration"),
-                          ("known-good", kg, "amendment-1 rule demonstration on a new files-3-10 split (fit 9-10, "
-                                             "test 3-8)"),
+    dg, kg, kb, gt, fo = (load(f"p03_table_{m}_a1b.json") for m in ("diagnosis", "known-good", "known-bad", "gated",
+                                                                    "fit-only"))
+    for tag, r, title in (("diagnosis", dg, "amendment-1b rule on fit 3-4 / test 5-10 (the v1 failure split): "
+                                           "diagnosis, not a demonstration"),
+                          ("known-good", kg, "amendment-1b rule demonstration (fit 7-8, test 3-6 and 9-10; new seed)"),
                           ("gated", gt, "test of the table fitted on files 1-2, on files 3-10 (judged once)")):
         if not r:
             continue
         j = r["judgement"]
         fv = j.get("false_veto", {})
-        vals = [v("pass", j["pass"]), v("(i) pass", j["pass_i"]), v("(ii) pass", j["pass_ii"]),
+        vals = [v("pass", j["pass"]), v("(i) pass", j["pass_i"]), v("(ii) pass", j["pass_ii"]), v("(iii) pass", j["pass_iii"]),
+                v("flagged row-angles (width not validated)", j["flags"]["n_rows_flagged"],
+                  note=f"of {j['flags']['n_row_angles']}; list in {r['mode']} JSON, judgement.flags.rows"),
                 v("(i) bins outside the widened band", j["i"]["fail"], note=f"of {j['i']['bins']} judged bin-angles"),
-                v("(i) family-wise widening W_i", round(j["i"]["W_i"], 3), unit="sigma",
+                v("(i) one-sided family-wise widening W_i", round(j["i"]["W_i"], 3), unit="sigma",
                   note=f"N_i = {j['i']['N_i']}; sigma = max(bootstrap, re-split)"),
                 v("(i) worst fraction of the widened band", j["i"]["worst_fraction_of_widened_band"]),
-                v("(i) tolerance on the width, 10/50/90 %", json.dumps(j["i"]["tolerance_pct_10_50_90"]["width"])),
-                v("(i) disc beta (reported, not judged): outside the band", j["i"]["reported_disc_beta"]["outside_band"],
-                  note=f"of {j['i']['reported_disc_beta']['bins']}"),
-                v("(i) v1 recipe in the same scope: bins failing", j["i"]["reported_v1_recipe_in_scope_fail"]),
+                v("(i) width deviation failed with 50 % / 80 % power, 10/50/90 % of bins",
+                  json.dumps([j["i"]["tolerance_pct_10_50_90"]["width"], j["i"]["tolerance_pct_10_50_90"]["width_80pct_power"]])),
                 v("(ii) N z-scores", j["ii"]["N"]), v("(ii) t(N)", j["ii"]["t_N"], unit="sigma"),
                 v("(ii) max |z|", j["ii"]["max_abs_z"], unit="sigma"), v("(ii) z beyond t(N)", j["ii"]["n_beyond_t"]),
                 v("(ii) chi2 tests failing", ", ".join(j["ii"]["chi2_fail"]) or "none"),
-                v("(ii) reported: max |z| against the nominal level", j["ii"]["reported_vs_level"]["max_abs_z"],
-                  unit="sigma")]
+                v("(iii) power by level", json.dumps(j["iii"]["power_by_level"])),
+                v("(iii) gated levels", json.dumps(j["iii"]["gated_levels"])),
+                v("(iii) failing cells", ", ".join(j["iii"]["fail_cells"]) or "none"),
+                v("rows short of the level by > 0.1 % (row x level)", len(j["e0_short_rows"]))]
         if fv:
-            vals += [v("false-veto: permutation replicas failing the rule", fv["fail_any"],
-                       note=f"of {fv['n_replicas']}; (i) {fv['fail_i']}, (ii) {fv['fail_ii']}; 95% CL "
-                            f"{fv['rate_95cl'][0]:.3f}-{fv['rate_95cl'][1]:.3f}"),
-                     v("false-veto of (i) variants (v1 recipe / max sd, W=2 / boot sd, W_i)",
-                       json.dumps(fv["i_false_veto_alternatives"]))]
+            vals += [v("false-veto: re-splits failing the rule", fv["fail_any"],
+                       note=f"of {fv['n_replicas']}; (i) {fv['fail_i']}, (ii) {fv['fail_ii']}, (iii) {fv['fail_iii']}; "
+                            f"95% CL {fv['rate_95cl'][0]:.3f}-{fv['rate_95cl'][1]:.3f}")]
         vals += [v(f"(ii) max |z| at {lv}", z, unit="sigma") for lv, z in j["ii"]["per_level_max_abs_z"].items()]
         vals += [v(f"{k} max |z| / worst band fraction", f"{x['max_abs_z']:.2f} / {x['worst_band_fraction']:.2f}")
                  for k, x in j["per_region"].items()]
         vals += [v(f"(ii) chi2 p {k}", x["p"]) for k, x in j["ii"]["chi2"].items()]
-        E.append({"id": f"p03.table.a1.{tag}", "title": f"Angle-uncertainty table: {title}", "status": "valid", "bias": BIAS,
-                  "values": vals, "provenance": {**common_prov, "file": f"p03_table_{tag}_a1.json", "n_rep": r["n_rep"],
-                                                 "inputs": r["inputs"], "code": r["code"]},
+        E.append({"id": f"p03.table.a1b.{tag}", "title": f"Angle-uncertainty table: {title}", "status": "valid",
+                  "bias": BIAS, "values": vals,
+                  "provenance": {**common_prov, "file": f"p03_table_{tag}_a1b.json", "n_rep": r["n_rep"],
+                                 "seed": r.get("seed"), "inputs": r["inputs"], "code": r["code"]},
                   "status_note": None})
     if kb:
-        E.append({"id": "p03.table.a1.known-bads", "title": "Angle-uncertainty table: the known-bad tables and the input "
-                  "perturbation under the amendment-1 rule (fit 9-10, test 3-8)", "status": "valid", "bias": BIAS,
-                  "values": [v(f"{n} fails", x["fails_as_required"],
-                               note=f"(i) {x['judgement']['i']['fail']} bins; (ii) beyond t {x['judgement']['ii']['n_beyond_t']}, "
-                                    f"max |z| {x['judgement']['ii']['max_abs_z']:.1f}; chi2 failing "
-                                    f"{len(x['judgement']['ii']['chi2_fail'])} of 8") for n, x in kb["known_bads"].items()],
-                  "provenance": {**common_prov, "file": "p03_table_known-bad_a1.json", "n_rep": kb["n_rep"]}})
+        def kb_note(n, x):
+            j = x["judgement"]
+            extra = ""
+            if n.startswith("kbf"):
+                extra = f"; {x['perturbed_failing_i']} / {x['perturbed_judged_bin_angles']} perturbed judged bin-angles fail (i)"
+            if n.startswith("kbg"):
+                extra = (f"; {x['perturbed_flagged']} / {x['perturbed_row_angles']} perturbed row-angles flagged; under "
+                         f"amendment 1: {json.dumps(x['under_amendment1'])}")
+            return (f"(i) {j['i']['fail']} bins; (ii) beyond t {j['ii']['n_beyond_t']}, max |z| {j['ii']['max_abs_z']:.1f}; "
+                    f"chi2 failing {len(j['ii']['chi2_fail'])} of 8; (iii) failing cells {len(j['iii']['fail_cells'])}"
+                    + extra)
+        E.append({"id": "p03.table.a1b.known-bads", "title": "Angle-uncertainty table: known-bads (a)-(e) and the width "
+                  "known-bads KB-f, KB-g under the amendment-1b rule (fit 7-8, test 3-6 and 9-10)", "status": "valid",
+                  "bias": BIAS, "values": [v(f"{n} fails as required", x["fails_as_required"], note=kb_note(n, x))
+                                           for n, x in kb["known_bads"].items()],
+                  "provenance": {**common_prov, "file": "p03_table_known-bad_a1b.json", "n_rep": kb["n_rep"],
+                                 "seed": kb.get("seed")}})
     tab_res = gt or fo
     if tab_res:
         tested = gt is not None
@@ -127,15 +138,15 @@ def entries() -> list:
         vals.append(v("table file sha256", CM.file_digest(Path(tf)), note=tf))
         st = "valid" if passed else "exploratory"
         note = None if passed else ("the table failed its pre-declared test; see p03.table.gated" if tested else
-                                    "UNTESTED: the gated test did not run (amendment 1 not approved, or its known-good "
-                                    "demonstration or a known-bad did not behave as required); see p03.table.a1.*")
-        E.append({"id": "p03.table.v1a1", "title": "Angle-uncertainty table v1 tested under amendment 1 (canon_v3, fit "
+                                    "UNTESTED: the gated test did not run (amendment 1b not approved, or its known-good "
+                                    "demonstration or a known-bad did not behave as required); see p03.table.a1b.*")
+        E.append({"id": "p03.table.v1a1b", "title": "Angle-uncertainty table v1 tested under amendment 1b (canon_v3, fit "
                   "files 1-2, pT >= 1 GeV)",
                   "status": st, "status_note": note, "bias": BIAS, "values": vals,
                   "provenance": {**common_prov, "table_file": tf, "fit_files": list(SA.FIT_FILES),
                                  "pt_check_refit_rows": tab_res["pt_check"]["flags"]}})
         pc = tab_res["pt_check"]["detail"]
-        E.append({"id": "p03.table.a1.pt-check", "title": "Angle table pT check (1-2 vs >= 2 GeV, fit sample)",
+        E.append({"id": "p03.table.a1b.pt-check", "title": "Angle table pT check (1-2 vs >= 2 GeV, fit sample)",
                   "status": "valid", "bias": BIAS,
                   "values": [v(f"{k} {f}", json.dumps(pc[k]["summary"][f])) for k in SA.KEYS
                              for f in ("t_N", "max_abs_z", "failing_rows", "failing_both_signs_refit_pt2",
