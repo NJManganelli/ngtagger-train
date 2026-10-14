@@ -2,6 +2,11 @@
 known-bads, the MATERIAL / MINOR classification; writes WPC_OUT/entry/entry_summary.json.
 
 Run after the gate-data jobs (files 3 and 4, the known-bads) and the tail jobs.
+
+--blind-e7-f03: K = 2 + skip failed its file-4 known-good E7 (MATERIAL, 2026-10-14); its file-3 numbers are left
+unopened so that a revised K can still be gated on file 3. File 3's K runs (INN-K2, the E7 known-bad
+INN-K2-tailprob) are not read, so no E7 file-3 statistic is computed, printed or written; E7 is judged on its
+file-4 known-good only, and the E7 known-bad is recorded as blinded.
 """
 from __future__ import annotations
 
@@ -15,6 +20,11 @@ import common as CM
 import cuts as CU
 import gates as G
 from ngtagger.spdefs import angles as SA
+
+
+BLIND_RUNS = ("INN-K2", "INN-K2-tailprob")
+BLIND_REASON = ("K = 2 + skip failed its file-4 known-good E7 (MATERIAL); its file-3 numbers are left unopened so "
+                "that a revised K can still be gated on file 3")
 
 
 def clean(o):
@@ -51,16 +61,19 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--entry", default=str(CM.OUT / "entry"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
+    ap.add_argument("--blind-e7-f03", action="store_true",
+                    help="do not read file 3's K runs: E7 on its file-4 known-good only (see the module docstring)")
     a = ap.parse_args(argv)
+    blind = BLIND_RUNS if a.blind_e7_f03 else ()
     cuts = CU.Cuts.load(str(CM.OUT / "cuts" / "wpc_cuts_v1.json"))
     table = SA.AngleTable.load(os.environ.get("WPC_ANGLE_TABLE",
                                               "/Volumes/WDMac/smartpixels_scratch/p03_angles/angle_table_v1a1e_canon_v3.json"))
     S = {"p02_closure": {}, "E1a": {}, "E1b": {}, "E23": {}, "E4": {}, "E5": {}, "E7": {}, "known_bad": {},
-         "material": [], "minor": []}
+         "material": [], "minor": [], "blinded": {"file3_runs": list(blind), "reason": BLIND_REASON} if blind else {}}
     for scen in a.scen:
         for f in (CM.GATED_FILE, CM.PRED_FILE):
             S["p02_closure"][f"{scen}_f{f:02d}"] = G.p02_closure(scen, f)
-        d3, d4 = G.load(scen, 3, a.entry), G.load(scen, 4, a.entry)
+        d3, d4 = G.load(scen, 3, a.entry, skip=blind), G.load(scen, 4, a.entry)
         with open(os.path.join(a.entry, f"{scen}_f03.json")) as fh:
             meta3 = json.load(fh)
         # E1(a)
@@ -128,15 +141,19 @@ def main(argv=None):
         if not e["pm_b"]["pass"]:
             S["material"].append(f"E5 {scen}: PM-B not identical to PM on barrel-only tracks")
         # E7
-        r3_, r4_ = G.e7(d3), G.e7(d4)
-        c = G.e7_compare(r3_, r4_)
-        S["E7"][scen] = {"file3": r3_, "file4": r4_, "compare": c}
-        if not c["file4_ok"]:
-            S["material"].append(f"E7 {scen}: the known-good skip-loss {c['file4_pooled']:.4f} > 1.5 % (design)")
-        if not c["file3_ok"]:
-            S["material"].append(f"E7 {scen}: the gated skip-loss lower bound {c['file3_lower95']:.4f} > 1.5 %")
-        if c["bin_fails"]:
-            S["minor"].append(f"E7 {scen}: bins differing from file 4: {c['bin_fails']}")
+        r4_ = G.e7(d4)
+        if r4_["pooled"]["loss"] > G.E7_LIMIT:
+            S["material"].append(f"E7 {scen}: the known-good skip-loss {r4_['pooled']['loss']:.4f} > 1.5 % (design)")
+        if blind:
+            S["E7"][scen] = {"file4": r4_, "file3": "blinded"}
+        else:
+            r3_ = G.e7(d3)
+            c = G.e7_compare(r3_, r4_)
+            S["E7"][scen] = {"file3": r3_, "file4": r4_, "compare": c}
+            if not c["file3_ok"]:
+                S["material"].append(f"E7 {scen}: the gated skip-loss lower bound {c['file3_lower95']:.4f} > 1.5 %")
+            if c["bin_fails"]:
+                S["minor"].append(f"E7 {scen}: bins differing from file 4: {c['bin_fails']}")
         # known-bads (AAAA)
         if scen == "AAAA":
             kb = {}
@@ -151,8 +168,9 @@ def main(argv=None):
                                            for st in ("p50", "p99", "beyond_p999"))}
             for nm in ("PM-nocap", "PM-notrunc", "PM-norecharge", "PM-ellipse"):
                 kb[f"E5/{nm}"] = G.e5_mirror_kb(d3, d4, nm)
-            kb["E7/tailprob"] = G.e7_kb(d3, d3["INN-K2-tailprob"])
-            kb["E7/tailprob"]["fails"] = kb["E7/tailprob"]["loss"] > 0.015
+            if not blind:
+                kb["E7/tailprob"] = G.e7_kb(d3, d3["INN-K2-tailprob"])
+                kb["E7/tailprob"]["fails"] = kb["E7/tailprob"]["loss"] > G.E7_LIMIT
             S["known_bad"] = kb
             for k, v in kb.items():
                 vals = v.values() if k == "E1b" else [v]

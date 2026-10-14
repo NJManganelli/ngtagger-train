@@ -48,12 +48,14 @@ def replicas(nev=NEV, n=N_REP, seed=SEED):
     return np.random.default_rng(seed).multinomial(nev, np.full(nev, 1.0 / nev), size=n)
 
 
-def load(scen, f, out=None):
+def load(scen, f, out=None, skip=()):
+    """{run: {field: array}} of gatedata's output; the runs in skip are never read (a blinded run)."""
     z = np.load(os.path.join(out or str(CM.OUT / "entry"), f"{scen}_f{f:02d}.npz"))
     d = {}
     for k in z.files:
         run, field = k.split("__", 1)
-        d.setdefault(run, {})[field] = z[k]
+        if run not in skip:
+            d.setdefault(run, {})[field] = z[k]
     return d
 
 
@@ -481,6 +483,9 @@ def e7(d, pt_bins=(2.0, 3.0, 5.0, 10.0, np.inf)):
     return res
 
 
+E7_LIMIT = 0.015      # PD2: the pooled skip-loss limit
+
+
 def e7_compare(r3, r4):
     """PD2: file 4's pooled loss <= 1.5 % (else the design failed); per bin |file 3 - file 4| <= t(N)
     combined sigma; file 3's pooled one-sided 95 % lower bound <= 1.5 %."""
@@ -488,9 +493,9 @@ def e7_compare(r3, r4):
     t = t_two(3 * len(common)) if common else 0.0
     fails = [k for k in common if abs(r3["bins"][k]["loss"] - r4["bins"][k]["loss"])
              > t * np.hypot(r3["bins"][k]["sd"], r4["bins"][k]["sd"])]
-    return {"file4_pooled": r4["pooled"]["loss"], "file4_ok": r4["pooled"]["loss"] <= 0.015,
+    return {"file4_pooled": r4["pooled"]["loss"], "file4_ok": r4["pooled"]["loss"] <= E7_LIMIT,
             "file3_pooled": r3["pooled"]["loss"], "file3_lower95": r3["pooled"]["lower95"],
-            "file3_ok": r3["pooled"]["lower95"] <= 0.015, "bin_fails": fails, "t": t}
+            "file3_ok": r3["pooled"]["lower95"] <= E7_LIMIT, "bin_fails": fails, "t": t}
 
 
 def e7_kb(d, kb):
