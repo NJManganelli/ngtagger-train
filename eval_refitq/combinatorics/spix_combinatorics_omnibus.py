@@ -49,6 +49,11 @@ table, R4 the refit-covariance calibration check, R5 the track MVAs (optional).
 Every run writes spix_monitor_summary.json (key numbers + provenance) into
 <outdir>; compare two runs with monitor_diff.py.
 
+ANGLE RESPONSE (section G). The emitted local angle against the true one per
+surface, angle, emulator class (T, C) and detector |eta|: 16 pages into
+spix_angle_response.pdf, the per-bin slope and sd into the monitor. It reads its
+own input list (--response-inputs; canon_v3 AAAA files 3-10).
+
 FIGURES are vector PDF (legends off the data, statistics on table pages).
 """
 from __future__ import annotations
@@ -6054,6 +6059,259 @@ def study_track_mva(X, K, P, ax_row, out):
     ax.set_title("(R5) d0 width-head coverage vs |eta|", fontsize=9)
 
 
+# --------------------------------------------------------------------------
+# G. Angle response: emitted vs true local angle per emulator class
+# --------------------------------------------------------------------------
+# The design the physicist settled on (2026-10-14), from the prototype
+# doc-archive/sketches/angle_byclass_deteta.py: one page per surface x angle, twelve
+# panels of DETECTOR |eta| (the cluster POSITION from the origin, asinh(z / r); never the
+# particle's eta), x = |true local angle|, y = sign(true) x emitted local angle, per class.
+AR_ETA_EDGES = np.array([0, .2, .4, .6, .8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.5])
+AR_ETA_LABELS = [f"{AR_ETA_EDGES[i]:.1f}-{AR_ETA_EDGES[i + 1]:.1f}" for i in range(len(AR_ETA_EDGES) - 1)]
+AR_PT_MIN = 1.0           # GeV: linked clusters of TPs at or above it (angle.error_table's population; see the study)
+AR_NBINS = 16             # equal-population bins of |true| per panel, shared among its clumps
+AR_GAP = (3.0, 0.08)      # a gap: an empty |true| stretch wider than max(3 deg, 8 % of the 1-99 % range)
+AR_MIN_PANEL = 50         # clusters a panel needs to be drawn
+AR_MIN_BIN = 20           # clusters of a class a bin needs to be drawn
+AR_CLASSES = (("T", 1, "#2563eb", "class T (emulated from truth)"), ("C", 0, "#ea580c", "class C (CNN)"))
+AR_ANGLES = (("alpha", "localCotAlpha", "tpLocalCotAlpha", "hasAlpha"),
+             ("beta", "localCotBeta", "tpLocalCotBeta", "hasBeta"))
+AR_COLS = ["surface", "tpIdx", "tpEmuClass", "tpPt", "globalR", "globalZ"] + [c for a in AR_ANGLES for c in a[1:]]
+AR_CONTEXT = [
+    "Class C alpha is flat at about 0 deg for inclined clusters, while their TP-true alpha rises with cluster length as "
+    "geometry predicts. The likely cause: the CNN was trained on class T, where long clusters have small true alpha, "
+    "and it uses prompt-direction inputs.",
+    "The CNN image crop is 24 x 16 pixels; it truncates only 0.5 % of clusters.",
+    "Module-frame angles: atan(localCot*) emitted, atan(tpLocalCot*) true (the TP's helix at the hit); the disc "
+    "sense-rule fix does not affect them. Module orientations are combined (they agree within fluctuations)."]
+
+
+def _ar_bins(tr):
+    """(bins, w) of one panel: AR_NBINS equal-population bins of |true| over its 1-99 % range, shared among
+    the clumps of |true| that gaps wider than w = max(3 deg, 8 % of that range) separate; no bin spans a gap."""
+    lo1, hi99 = np.percentile(tr, [1, 99])
+    w = max(AR_GAP[0], AR_GAP[1] * (hi99 - lo1))
+    t = np.sort(tr[(tr >= lo1) & (tr <= hi99)])
+    bins = []
+    for c in np.split(t, np.where(np.diff(t) > w)[0] + 1):
+        k = max(1, int(round(AR_NBINS * len(c) / len(t))))
+        e = np.unique(np.quantile(c, np.linspace(0, 1, k + 1)))
+        e[-1] = np.nextafter(e[-1], np.inf)
+        bins += list(zip(e[:-1], e[1:]))
+    return bins, w
+
+
+def _ar_curve(tr, em, bins):
+    """[bin, (mean |true|, mean emitted, sd emitted, n)] over the bins holding >= AR_MIN_BIN clusters."""
+    rows = []
+    for a, b in bins:
+        mb = (tr >= a) & (tr < b)
+        if mb.sum() >= AR_MIN_BIN:
+            rows.append((tr[mb].mean(), em[mb].mean(), em[mb].std(), mb.sum()))
+    return np.array(rows, float).reshape(-1, 4)
+
+
+def _ar_summary(cv):
+    """mean_slope = the count-weighted least-squares slope of the bin means of the emitted angle against the
+    bin means of |true| (1 = unbiased response, 0 = flat); median_sd_deg = the median over the bins of the
+    emitted angle's sd."""
+    if not len(cv):
+        return {"n": 0, "n_bins": 0, "mean_slope": None, "median_sd_deg": None}
+    x, y, sd, n = cv.T
+    slope = None
+    if len(cv) >= 2 and np.ptp(x) > 0:
+        xm, ym = np.average(x, weights=n), np.average(y, weights=n)
+        slope = float(np.sum(n * (x - xm) * (y - ym)) / np.sum(n * (x - xm) ** 2))
+    return {"n": int(n.sum()), "n_bins": int(len(cv)), "mean_slope": slope, "median_sd_deg": float(np.median(sd))}
+
+
+def _ar_load(files):
+    """The study's own read, file by file (only its columns): per surface and angle, the folded angles
+    [deg], the class and the detector |eta| of the linked clusters (tpIdx >= 0) of TPs with pT >= AR_PT_MIN
+    whose emitted angle is present (the stored has-flag: the omnibus's |cot| <= 12 cap is not applied, so
+    the response is shown up to +-90 deg) and whose true angle is not the -999 fill; and the count of ALL
+    clusters per surface x |eta| bin (a panel without any has no sensors)."""
+    deg = {}
+    n_all = {S: np.zeros(len(AR_ETA_EDGES) - 1, np.int64) for S in SURFACES}
+    left = MAX_EVENTS
+    n_ev = 0
+    for f in files:
+        if left is not None and left <= 0:
+            break
+        with uproot.open(f"{f}:Events") as t:
+            stop = None if left is None else min(t.num_entries, left)
+            A = t.arrays(filter_name=SPN.cluster_branches(t.keys(), AR_COLS, cap_angles=False), entry_stop=stop)
+        D, ncl = SPN.flat_clusters(A, AR_COLS, cap_angles=False)
+        del A
+        n_ev += len(ncl)
+        if left is not None:
+            left -= len(ncl)
+        aeta = np.abs(np.arcsinh(D["globalZ"].astype(np.float64) / D["globalR"].astype(np.float64)))
+        ebin = np.digitize(aeta, AR_ETA_EDGES) - 1
+        okb = (ebin >= 0) & (ebin < len(AR_ETA_EDGES) - 1)
+        for S in SURFACES:
+            n_all[S] += np.bincount(ebin[okb & (D["surface"] == S)], minlength=len(n_all[S]))
+        base = (D["tpIdx"] >= 0) & (D["tpPt"] >= AR_PT_MIN)
+        for ang, em_c, tr_c, has_c in AR_ANGLES:
+            m = base & (D[has_c] > 0) & (D[tr_c] > SPN.ABSENT_BELOW)
+            tr = np.degrees(np.arctan(D[tr_c][m].astype(np.float64)))
+            em = np.degrees(np.arctan(D[em_c][m].astype(np.float64)))
+            part = {"surface": D["surface"][m].astype(np.int16), "cls": D["tpEmuClass"][m].astype(np.int8),
+                    "aeta": aeta[m].astype(np.float32), "tr": np.abs(tr).astype(np.float32),
+                    "em": (np.sign(tr) * em).astype(np.float32)}
+            for k, v in part.items():
+                deg.setdefault(ang, {}).setdefault(k, []).append(v)
+        print(f"   (G) {os.path.basename(f)}: {len(ncl)} events, {int(base.sum())} linked clusters with TP pT >= "
+              f"{AR_PT_MIN:g} GeV")
+    return {ang: {k: np.concatenate(v) for k, v in d.items()} for ang, d in deg.items()}, n_all, n_ev
+
+
+def _ar_page(pdf, S, ang, d, n_all, files):
+    """One page: the twelve |eta| panels of surface S, angle `ang`, both classes (the prototype's drawing);
+    returns the per-class summary per |eta| bin."""
+    s = d["surface"] == S
+    fig, axs = plt.subplots(3, 4, figsize=(17, 11.5))
+    summ = {cl: {} for cl, *_ in AR_CLASSES}
+    for i, ax in enumerate(axs.flat):
+        lo, hi = AR_ETA_EDGES[i], AR_ETA_EDGES[i + 1]
+        m = s & (d["aeta"] >= lo) & (d["aeta"] < hi)
+        ax.set_title(f"|η| {lo:.1f}–{hi:.1f}   N = {m.sum():,}", fontsize=10)
+        if m.sum() < AR_MIN_PANEL:
+            ax.text(0.5, 0.5, "no sensors in this |η| range" if n_all[S][i] == 0 else f"too few clusters ({m.sum()})",
+                    ha="center", transform=ax.transAxes, color="0.5")
+            ax.set_xticks([]); ax.set_yticks([])
+            continue
+        tr, em, cls = d["tr"][m].astype(np.float64), d["em"][m].astype(np.float64), d["cls"][m]
+        bins, w = _ar_bins(tr)
+        xs = np.array([bins[0][0], bins[-1][1]])
+        ax.plot(xs, xs, ls="--", color="0.5", lw=0.9, zorder=0)                  # emitted = true
+        for cl, code, colr, lab in AR_CLASSES:
+            mc = cls == code
+            cv = _ar_curve(tr[mc], em[mc], bins)
+            summ[cl][AR_ETA_LABELS[i]] = _ar_summary(cv)
+            if not len(cv):
+                continue
+            pos, mu, sd = cv[:, 0], cv[:, 1], cv[:, 2]
+            for seg in np.split(np.arange(len(pos)), np.where(np.diff(pos) > w)[0] + 1):   # never across a gap
+                if len(seg) > 1:
+                    ax.fill_between(pos[seg], (mu - 2 * sd)[seg], (mu + 2 * sd)[seg], color=colr, alpha=0.12, lw=0)
+                    ax.fill_between(pos[seg], (mu - sd)[seg], (mu + sd)[seg], color=colr, alpha=0.32, lw=0)
+                else:                                                               # a lone bin: bars
+                    ax.errorbar(pos[seg], mu[seg], yerr=2 * sd[seg], fmt="none", ecolor=colr, alpha=0.12, elinewidth=6)
+                    ax.errorbar(pos[seg], mu[seg], yerr=sd[seg], fmt="none", ecolor=colr, alpha=0.32, elinewidth=6)
+                ax.plot(pos[seg], mu[seg], color=colr, lw=1.6, marker="o", ms=2.5)
+        ax.set_ylim(max(ax.get_ylim()[0], -90), min(ax.get_ylim()[1], 90))       # the physical range
+        ax.set_xlabel(f"|true local {ang}| [deg]", fontsize=9)
+        if i % 4 == 0:
+            ax.set_ylabel(f"sign(true) × emitted {ang} [deg]", fontsize=9)
+        ax.tick_params(labelsize=8)
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    handles = [Line2D([0], [0], color=c, lw=1.6, marker="o", ms=3) for _, _, c, _ in AR_CLASSES]
+    handles += [Patch(color="0.4", alpha=0.45), Patch(color="0.4", alpha=0.15), Line2D([0], [0], ls="--", color="0.5")]
+    fig.legend(handles, [lab + ": mean" for *_, lab in AR_CLASSES] + ["±1 sd", "±2 sd", "emitted = true"],
+               loc="lower center", ncol=5, frameon=False, fontsize=9)
+    fig.suptitle(f"{SNAME[S]}: emitted vs |true| local {ang}, signs folded, per detector |η| bin (cluster position)   "
+                 f"({len(files)} inputs; linked clusters, TP pT ≥ {AR_PT_MIN:g} GeV)\nline = mean, dark band = ±1 sd, "
+                 f"light band = ±2 sd per class; both module orientations combined; dashed = emitted = true; "
+                 f"equal-population bins of |true|, none across an empty stretch (lone bins as bars)", fontsize=11)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.95))
+    pdf.savefig(fig)
+    plt.close(fig)
+    return summ
+
+
+def study_angle_response(X, K, P, ax_row, out):
+    """(G) Angle response: the emitted local angle against the true one, per surface (IL1-IL4, ID1-ID4),
+    angle, emulator class and DETECTOR |eta| (of the cluster position: asinh(globalZ / globalR)); the
+    physicist's design of 2026-10-14 (prototype doc-archive/sketches/angle_byclass_deteta.py).
+
+    PAGES (spix_angle_response.pdf): one per surface x angle, 16 in all, each with 12 panels of |eta|
+    (edges AR_ETA_EDGES; a panel without clusters says whether the surface has no sensors there). x =
+    |true local angle| [deg], y = sign(true) x emitted local angle [deg] (signs folded), module-frame angles
+    atan(localCot*) and atan(tpLocalCot*). Class T (blue: emulated from truth) and class C (orange: the
+    CNN, linked clusters only), each a mean line with +-1 sd (darker) and +-2 sd (lighter) bands; module
+    orientations combined; dashed: emitted = true; y within +-90 deg. Bins: AR_NBINS equal-population bins
+    of |true| per panel (both classes), shared among the clumps of |true| separated by empty stretches wider
+    than max(3 deg, 8 % of the 1-99 % range), so no bin spans an empty stretch; a class needs AR_MIN_BIN
+    clusters in a bin; a lone bin is drawn as bars.
+
+    POPULATION. Clusters linked to a TP (tpIdx >= 0) with TP pT >= AR_PT_MIN = 1 GeV (the angle table's
+    population, angle.error_table pt_min_gev), emitted angle present (the stored has-flag), true angle not
+    the -999 fill. The prototype read the P0.3 cache, which holds those clusters, the hard-scatter TPs'
+    clusters below 1 GeV and an UNWEIGHTED 1-in-20 sample of all other clusters: a third of its linked
+    clusters were below 1 GeV, while the nano's full linked population is ~89 % below 1 GeV (pile-up
+    loopers); the 1 GeV cut keeps the prototype's bulk without its sampling artefact. Its orientation
+    filter (modules of known orientation) removed no cluster on files 3-10 and is not repeated.
+
+    INPUTS. The study reads its own list, file by file and only its columns (--response-inputs; default
+    -i): equal-population bins need every value of a panel, so it keeps those few compact columns of the
+    selected clusters, not per-file summaries. Run it on canon_v3 AAAA files 3-10 (files 1-2 hold the
+    CNN's training events).
+
+    MONITOR (spix_monitor_summary.json, "G_angle_response"): per surface x angle x class x |eta| bin, the
+    mean slope of emitted vs true (_ar_summary) and the median sd, so emulator versions can be compared."""
+    from matplotlib.backends.backend_pdf import PdfPages
+    files = out.get("_response_inputs") or out["_inputs"]
+    d, n_all, n_ev = _ar_load(files)
+    summ = {}
+    pdf_path = os.path.join(out["_outdir"], "spix_angle_response.pdf")
+    rows = []
+    with PdfPages(pdf_path) as pdf:
+        fig = plt.figure(figsize=(17, 11.5))
+        fig.text(0.04, 0.95, "(G) Angle response: emitted vs true local angle, per surface, class and detector |η|",
+                 fontsize=15, fontweight="bold", va="top")
+        body = ([textwrap.fill(p, 150) for p in AR_CONTEXT]
+                + [textwrap.fill(f"Population: clusters linked to a TP with pT >= {AR_PT_MIN:g} GeV (the angle table's), "
+                                 "emitted angle present (stored flag; the |cot| <= 12 cap is not applied), true angle "
+                                 "present. Class T = tpEmuClass 1 (emulated from truth), class C = tpEmuClass 0 (CNN).",
+                                 150),
+                   textwrap.fill("Detector |η| = |asinh(globalZ / globalR)| of the cluster POSITION (not the particle's "
+                                 "eta). Bins: equal-population in |true|, never across an empty stretch "
+                                 "(> max(3°, 8 % of the 1-99 % range)); lone bins drawn as bars. Monitor: the count-"
+                                 "weighted least-squares slope of the bin means (1 = unbiased, 0 = flat) and the median "
+                                 "per-bin sd, per surface x angle x class x |η| bin.", 150),
+                   f"Inputs ({len(files)} files, {n_ev} events):"] + [f"   {f}" for f in files])
+        fig.text(0.04, 0.90, "\n\n".join(body[:5]) + "\n\n" + "\n".join(body[5:]), fontsize=10, va="top")
+        pdf.savefig(fig)
+        plt.close(fig)
+        for S in SURFACES:
+            for ang, *_ in AR_ANGLES:
+                sm = _ar_page(pdf, S, ang, d[ang], n_all, files)
+                summ.setdefault(SNAME[S], {})[ang] = sm
+                for cl, e in sm.items():
+                    for el, v in e.items():
+                        rows.append([SNAME[S], ang, cl, el, f"{v['n']:,}", v["n_bins"], OSU.fmt(v["mean_slope"], "{:.3f}"),
+                                     OSU.fmt(v["median_sd_deg"], "{:.2f}")])
+        OSU.table_pages(pdf, "(G) angle response per surface x angle x class x detector |η| bin",
+                        ["surface", "angle", "class", "|η| bin", "n", "bins", "mean slope", "median sd [deg]"], rows,
+                        notes=["mean slope = count-weighted least-squares slope of the bin means of sign(true) x emitted "
+                               "against |true| (1 = unbiased, 0 = flat); median sd = median over bins of the emitted sd.",
+                               f"Linked clusters, TP pT >= {AR_PT_MIN:g} GeV; {len(files)} inputs, {n_ev} events."])
+    res = {"pdf": pdf_path, "inputs": files, "n_events": n_ev, "population": f"linked, TP pT >= {AR_PT_MIN:g} GeV",
+           "eta_edges": AR_ETA_EDGES.tolist(), "summary": summ}
+    out["angle_response"] = res
+    out["_monitor"]["G_angle_response"] = {k: res[k] for k in ("inputs", "n_events", "population", "eta_edges", "summary")}
+
+    def weighted_slope(S, ang, cl):
+        e = [v for v in summ.get(SNAME[S], {}).get(ang, {}).get(cl, {}).values() if v["mean_slope"] is not None]
+        n = np.array([v["n"] for v in e], float)
+        return float(np.sum(n * [v["mean_slope"] for v in e]) / n.sum()) if len(e) else np.nan
+    xp = np.arange(len(SURFACES))
+    for ax, (ang, *_) in zip(ax_row[:2], AR_ANGLES):
+        for cl, _, colr, lab in AR_CLASSES:
+            ax.plot(xp, [weighted_slope(S, ang, cl) for S in SURFACES], "o-", color=colr, label=lab)
+        ax.axhline(1.0, color="0.5", ls="--", lw=0.9)
+        ax.axhline(0.0, color="0.5", ls=":", lw=0.9)
+        surface_axis(ax); ax.set_ylabel("mean slope of emitted vs |true| (over |η| bins)"); ax.grid(alpha=.3)
+        ax.set_title(f"(G) {ang} response per surface (1 = unbiased, 0 = flat)", fontsize=9); ax.legend(fontsize=6)
+    ax = ax_row[2]
+    ax.axis("off")
+    ax.text(0.0, 1.0, "\n\n".join(textwrap.fill(p, 72) for p in AR_CONTEXT) + f"\n\npages: {pdf_path}",
+            fontsize=6.5, va="top", transform=ax.transAxes)
+    print(f"   (G) wrote {pdf_path}")
+
+
 VARIANT, SHARED = "variant", "shared"
 
 SECTIONS = [
@@ -6107,6 +6365,14 @@ SECTIONS = [
       ("R3 angle-estimate monitor", study_angle_monitor, 3, SHARED),
       ("R4 refit covariance check", study_covariance_check, 3, SHARED),
       ("R5 track MVA performance", study_track_mva, 2, SHARED)]),
+
+    ("G. Angle response: emitted vs true local angle, per class and detector |eta|",
+     "The SmartPixels emulator's angle response per surface, angle and class (T: emulated from truth; C: the"
+     " CNN), in panels of the cluster position's |eta|. Class C alpha is flat at about 0 deg for inclined"
+     " clusters while their TP-true alpha rises with cluster length: the CNN was trained on class T, where"
+     " long clusters have small true alpha, and uses prompt-direction inputs. Its 24 x 16 crop truncates"
+     " only 0.5 % of clusters.",
+     [("angle response by class", study_angle_response, 3, SHARED)]),
 ]
 
 # Flat view, kept because the figure is still one grid and several studies index
@@ -6308,6 +6574,10 @@ def main():
     ap.add_argument("--train-only", nargs="*", default=["_f01_", "_f02_"],
                     help="R5: files (substring of the basename) whose events only train, never "
                          "evaluate (f01/f02 are in-sample for the cluster CNN)")
+    ap.add_argument("--response-inputs", default=None,
+                    help="comma-separated files/globs for the angle-response study (G), which reads "
+                         "its own list file by file (only its columns); defaults to -i. Use canon_v3 "
+                         "AAAA files 3-10 (files 1-2 hold the cluster CNN's training events)")
     ap.add_argument("--proj-chunk", type=int, default=10,
                     help="events per chunk for study 19 (~0.35 GB RSS at 10)")
     ap.add_argument("--angle-cap-reference", default=ANGLE_CAP_REFERENCE,
@@ -6359,7 +6629,9 @@ def main():
             "_train_only": args.train_only,
             "_monitor": monitor, "_status": status, "_status_root": args.outdir,
             "_proj_inputs": ([f for g in args.proj_inputs.split(",") for f in
-                              (sorted(_glob.glob(g)) or [g])] if args.proj_inputs else None)}
+                              (sorted(_glob.glob(g)) or [g])] if args.proj_inputs else None),
+            "_response_inputs": ([f for g in args.response_inputs.split(",") for f in
+                                  (sorted(_glob.glob(g)) or [g])] if args.response_inputs else None)}
 
     gp = write_glossary(args.outdir)
     print(f"  glossary: {gp}  (defines crossing, cone, qX vs pXX, containment, max)")
