@@ -1075,16 +1075,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     if cut_stages and cuts is None and not cuts_open:
         raise SystemExit(f"angle cutting stages {cut_stages} need --angle-cuts (or --calibrate)")
     if cuts is not None:
-        s5 = (ang.subset("kf") if ang("kf") else "off")
-        cuts.check(model, {
-            "bench": list(bench) if bench else None,
-            "d0_prior_cm": float((kf_opts or {}).get("d0_prior_cm", KF.D0_PRIOR_CM)),
-            "level": CA.LEVEL,
-            "floors": sorted({float(ptmin)} | ({float(it_ptmin)} if it_ptmin else set())),
-            "s6": ((s5, ang.keys["kf"] if s5 != "off" else "emitted", ang.subset("accept"))
-                   if ang("accept") else None),
-            "win_subsets": sorted({ang.subset(s) for s in ("attach", "proj_window") if ang(s)}),
-            "builds": [entry_build_key(m) for m in (masks or ["AAAA"])]})
+        cuts.check(model, cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks))
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
            "chunk": chunk, "calib_events": calib_events, "masks": masks,
            "kf_opts": dict(sorted((kf_opts or {}).items())),
@@ -1242,6 +1233,19 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
 def entry_build_key(masks):
     """The S6 build bin of a census entry: the builds whose menus hold it."""
     return "+".join(sorted(masks))
+
+
+def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks):
+    """The run's identity an angle cut file is checked against (census_angles.CutSet.check)."""
+    s5 = ang.subset("kf") if ang("kf") else "off"
+    return {"bench": list(bench) if bench else None,
+            "d0_prior_cm": float((kf_opts or {}).get("d0_prior_cm", KF.D0_PRIOR_CM)),
+            "level": CA.LEVEL,
+            "floors": sorted({float(ptmin)} | ({float(it_ptmin)} if it_ptmin else set())),
+            "s6": ((s5, ang.keys["kf"] if s5 != "off" else "emitted", ang.subset("accept"))
+                   if ang("accept") else None),
+            "win_subsets": sorted({ang.subset(s) for s in ("attach", "proj_window") if ang(s)}),
+            "builds": [entry_build_key([m]) for m in (masks or ["AAAA"])]}
 
 
 def census_dir(path):

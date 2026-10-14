@@ -120,6 +120,19 @@ def test_cut_file_refuses_a_configuration_it_was_not_made_for():
     assert C.s6_thr("AAAA", "ab", "emitted", "ab", np.array([0, 4])).tolist() == [np.inf, 20.0]
 
 
+def test_census_identity_is_accepted_by_its_cut_file():
+    """The census's own run identity (tp_findability.cut_identity), not a hand-made one: the S6 build
+    keys are the fit's (one mask -> its name; was 'A+A+A+A', which refused every cut file)."""
+    import tp_findability as TF
+    ang = M.AngleUse.parse()
+    run = TF.cut_identity(ang, None, None, 2.0, None, ["AAAA", "AAAI", "IAAA"])
+    assert run["builds"] == ["AAAA", "AAAI", "IAAA"]
+    assert run["s6"] == ("ab", "emitted", "ab")
+    C = CA.CutSet(_doc())
+    C.check(_Model(), run)
+    with pytest.raises(SystemExit):
+        C.check(_Model(), TF.cut_identity(M.AngleUse.parse(off="kf"), None, None, 2.0, None, ["AAAA"]))
+
 def test_s6_per_n_keeps_99_percent_per_populated_n():
     n = np.repeat([2, 4, 6, 8], 4000)
     c2 = RNG.chisquare(n) * 1.2

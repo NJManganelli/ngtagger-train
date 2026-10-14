@@ -124,9 +124,9 @@ class AngleImport(Item):
                "s1": {"bins": [], "thr": []}, "s2a": {"bins": [], "thr": []},
                "s2z": {"bins": [], "thr": []}, "win": {"bins": [], "thr": {}},
                "s6": {"bins": [["AAAA", "ab", "emitted", "ab", 4]], "thr": [20.0]}}
-        run = {"bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL, "floors": [2.0],
-               "s6": ("off" if variant == "cutfile" else "ab", "emitted", "ab"),
-               "win_subsets": [], "builds": ["AAAA"]}
+        TF = ctx.script_module(CENSUS_DIR, "tp_findability")
+        ang = M.AngleUse.parse(off="kf" if variant == "cutfile" else "")
+        run = TF.cut_identity(ang, None, None, 2.0, None, ["AAAA", "AAAI", "IAAA"])   # the census's own identity
         try:
             CA.CutSet(doc).check(model, run)
             refused = None
