@@ -147,8 +147,8 @@ def main(argv=None):
                                         refit_975(str(CM.OUT / "cuts" / "cutfit_own_rows.npz")))
             for nm in ("swap", "halfmat"):
                 kb[f"E23/{nm}"] = {"fails": not bool(np.all(d3[f"ident-kb-{nm}"]["identical"]))}
-            kb["E4/shift"] = {"fails": any(r["p99"].get("known_bad_fails") or r["beyond_p999"].get("known_bad_fails")
-                                           for r in S["E4"][scen]["params"].values())}
+            kb["E4/shift"] = {"fails": any(r[st].get("known_bad_fails") for r in S["E4"][scen]["params"].values()
+                                           for st in ("p50", "p99", "beyond_p999"))}
             for nm in ("PM-nocap", "PM-notrunc", "PM-norecharge", "PM-ellipse"):
                 kb[f"E5/{nm}"] = G.e5_mirror_kb(d3, d4, nm)
             kb["E7/tailprob"] = G.e7_kb(d3, d3["INN-K2-tailprob"])
