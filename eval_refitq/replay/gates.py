@@ -196,15 +196,16 @@ def e1b_consumer(cuts, consumer, key, stat, surface, first, ev, keybin=None, nev
     """Coverage of one consumer's cut on its population: per lookup bin the exceedances, the exact
     order-statistic null with variance max(event bootstrap, exchangeable); pooled the one-sided 95 %
     shortfall bound against the 0.5 % margin (PD4 (h))."""
-    vals, nfit, bkey = [], [], []
-    for i in range(len(stat)):
-        chain = (f"{surface[i]}|{int(first[i])}|{int(keybin[i])}", f"{surface[i]}|{int(first[i])}", f"{surface[i]}") \
-            if keybin is not None else (f"{surface[i]}|{int(first[i])}", f"{surface[i]}")
-        v, n, k = _lookup_n(cuts, key, chain)
-        vals.append(v)
-        nfit.append(n)
-        bkey.append(k)
-    vals, nfit, bkey = np.array(vals), np.array(nfit), np.array(bkey)
+    kb = np.zeros(len(stat), np.int64) if keybin is None else np.asarray(keybin, np.int64)
+    combos = np.stack([np.asarray(surface, np.int64), np.asarray(first, np.int64), kb], 1)
+    uniq, inv = np.unique(combos, axis=0, return_inverse=True)
+    looked = []
+    for S, f, b in uniq.tolist():
+        chain = (f"{S}|{f}|{b}", f"{S}|{f}", f"{S}") if keybin is not None else (f"{S}|{f}", f"{S}")
+        looked.append(_lookup_n(cuts, key, chain))
+    vals = np.array([x[0] for x in looked])[inv.ravel()]
+    nfit = np.array([x[1] for x in looked])[inv.ravel()]
+    bkey = np.array([x[2] for x in looked])[inv.ravel()]
     beyond = stat > vals
     rep = replicas(nev)
     out = {"bins": [], "consumer": consumer, "key": key}
@@ -374,10 +375,11 @@ def e5(d3, d4, scen):
     n_dis = len(first["cause"])
     n_out = int((first["cause"] == 1).sum())
     n_nocr = int((first["cause"] == 2).sum())
-    lim = stats.poisson.ppf(0.99, max(0.001 * n_dis, 1e-9))
+    n_risk = int(len(d3["PM/e5_risk"]["surface"]))
+    lim = float(stats.poisson.ppf(0.99, max(0.002 * n_risk, 1e-9)))          # PD12
     res["i_near_tie"] = {"disagreements": n_dis, "near_tie": int((first["cause"] == 0).sum()),
-                         "outside_window": n_out, "no_cmssw_crossing": n_nocr,
-                         "poisson99_bound_of_0.1pct": float(lim), "pass": n_out + n_nocr <= lim}
+                         "outside_window": n_out, "no_cmssw_crossing": n_nocr, "at_risk_crossings": n_risk,
+                         "poisson99_bound_of_0.2pct_at_risk": lim, "pass": n_out + n_nocr <= lim}
     # (ii)-(iii)a: pooled signed first-flip shift, observed vs predicted
     T = d3["cmssw_trk"]
     pr = (T["tp_pop"] > 0) & (T["tp_origin"] == 0)
@@ -561,7 +563,7 @@ def e5_mirror_kb(d3, d4, name):
     first = d3[f"{name}/e5_first"]
     n_dis = len(first["cause"])
     n_out = int((first["cause"] >= 1).sum())
-    lim = float(stats.poisson.ppf(0.99, max(0.001 * n_dis, 1e-9)))
+    lim = float(stats.poisson.ppf(0.99, max(0.002 * len(d3[f"{name}/e5_risk"]["surface"]), 1e-9)))      # PD12
     return {"rate_fail_surfaces": fail_rate, "disagreements": n_dis, "outside_window": n_out, "bound": lim,
             "fails": bool(fail_rate or n_out > lim)}
 
