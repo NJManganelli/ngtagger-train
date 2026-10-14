@@ -80,9 +80,12 @@ IT_MODULE_COL = "detId"
 # predates them and is refused (require_census_inputs) -- here, in the census,
 # and not in the shared loader ngtagger.data.spix_nano, which still serves
 # canon_v2 to every other tool. Since format 28 the contract also names the
-# owners of the stub's clusters (the stub truth, M.STUB_TP_COLS).
+# owners of the stub's clusters (the stub truth, M.STUB_TP_COLS), and since
+# format 31 the module of every IT cluster and OT stub (detId), which the
+# findable count counts (one hit per module).
 OT_MODULE_FLAGS = ("isPS", "isTilted")
-OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:]
+OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:] + ("detId",)
+IT_REQUIRED = (IT_MODULE_COL,)
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
@@ -237,20 +240,24 @@ def cache_key(manifest, cfg):
 
 def require_census_inputs(paths):
     """SystemExit naming the first input that breaks the input contract: an OT
-    stub table without the module flags or the cluster owners (OT_REQUIRED),
-    e.g. canon_v2, or truth marked unavailable (-2) in a stub's or an IT
-    cluster's tpIdx columns, which would silently credit nobody."""
+    stub table without the module flags, the cluster owners or the module id
+    (OT_REQUIRED; canon_v2 lacks the flags), an IT cluster table without the
+    module id (IT_REQUIRED), or truth marked unavailable (-2) in a stub's or an
+    IT cluster's tpIdx columns, which would silently credit nobody."""
     for p in paths:
         t = uproot.open(f"{p}:Events")
         keys = set(t.keys())
         miss = [f"{M.OT_TABLE}_{c}" for c in OT_REQUIRED
                 if not SPN.has_column(keys, M.OT_TABLE, c)]
+        miss += [f"{M.IT_TABLE}_{c}" for c in IT_REQUIRED
+                 if not SPN.has_column(keys, M.IT_TABLE, c)]
         if miss:
             raise SystemExit(
                 f"{p} lacks {', '.join(miss)}: the census (format {FORMAT_VERSION}) "
-                f"reads the OT module flags and the owners of each stub's clusters "
-                f"from its input and never infers them (no detId, layer or (r, z) "
-                f"fallback). canon_v2 predates the flags; run the census on canon_v3.")
+                f"reads the OT module flags, the owners of each stub's clusters and "
+                f"the module (detId) of every cluster and stub from its input and "
+                f"never infers them (no layer or (r, z) fallback). canon_v2 predates "
+                f"the flags; run the census on canon_v3.")
         truth = [b for c in M.STUB_TP_COLS for b in SPN.branch_names(keys, M.OT_TABLE, [c])]
         if SPN.has_column(keys, M.IT_TABLE, "tpIdx"):
             truth += SPN.branch_names(keys, M.IT_TABLE, ["tpIdx"])
