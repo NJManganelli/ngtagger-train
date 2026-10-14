@@ -45,7 +45,7 @@ import seed_arity as SA       # noqa: E402
 import dr_conflict_scale as DRS  # noqa: E402
 
 TP_COLS = ("key", "event", "pt", "eta", "phi", "d0", "z0", "vr",
-           "hit_it", "hit_ot", "n_layers", "n_hits")
+           "hit_it", "hit_ot", "n_layers", "n_modules")
 
 
 def _u32(b):
@@ -59,8 +59,9 @@ ETA_RANGE_LO, ETA_RANGE_HI = 1.1, 2.4
 
 # WHAT THE EMULATION SEES. Its IT seeding is barrel-only (IL1-IL4), it has no OT
 # disk seeds or targets, and it keeps OT barrel stubs only up to |stub eta|
-# M.ETA_MATCHED. Beyond that the census denominator (particles crossing >= 4 of
-# those barrel layers) holds a sliver of the particles there, so the page marks
+# M.ETA_MATCHED. Beyond that the census denominator (charged particles with
+# credited hits on >= 4 of those IT and OT barrel modules; census.findable) holds a
+# sliver of the particles there, so the page marks
 # those |eta| bins as a distinct state instead of printing a bare efficiency.
 ACCEPTANCE_TEXT = ("IT seeding uses the barrel layers IL1-IL4 only; there are no IT "
                    "disc (ID1-ID4) seeds, no OT disk seeds or targets, and OT barrel "
@@ -69,23 +70,24 @@ ACCEPTANCE_TEXT = ("IT seeding uses the barrel layers IL1-IL4 only; there are no
 
 def denominator_coverage(paths, nev, ptmin, edges):
     """Particles per |eta| bin that the census denominator holds, against all of
-    them: charged L1TTP particles with pT >= ptmin and >= TF.FINDABLE_MIN_HITS
-    credited hits, counted
+    them: charged L1TTP particles with pT >= ptmin and credited hits on
+    >= TF.FINDABLE_MIN_HITS distinct modules (census.findable), counted
       census  as the census counts them: IL1-IL4 clusters, OT barrel stubs with
               |stub eta| <= M.ETA_MATCHED (tp_findability._unify)
       all     every SmartPixels cluster in the cluster table (IL1-IL4, ID1-ID4) and
               every OT stub (barrel at any |eta|, disks D1-D5).
-    A hit counts once for every TP it is credited to, as in the census
-    (M.credited_tps; an OT stub is one hit). Read from the census's own input
-    files, same events. Returns per-bin counts.
+    A hit counts for every TP it is credited to, as in the census
+    (M.credited_tps; an OT stub is one hit), and a TP's hits on one module (IT
+    cluster detId, OT stub detId, the systems kept apart) once. Read from the
+    census's own input files, same events. Returns per-bin counts.
     """
     import awkward as ak
     import uproot
     from ngtagger.data import spix_nano as SPN
     M = TF.M
-    otc = ["layer", "isBarrel", "z", "r", *M.STUB_TP_COLS]
+    otc = ["layer", "isBarrel", "z", "r", "detId", *M.STUB_TP_COLS]
     keys = uproot.open(f"{paths[0]}:Events").keys()
-    br = (SPN.cluster_branches(keys, ["surface", "tpIdx"])
+    br = (SPN.cluster_branches(keys, ["surface", "tpIdx", TF.IT_MODULE_COL])
           + SPN.branch_names(keys, SPN.OT_TABLE, otc)
           + SPN.branch_names(keys, SPN.TP_TABLE, ["pt", "eta", "charge"]))
     nb = len(edges) - 1
@@ -96,7 +98,7 @@ def denominator_coverage(paths, nev, ptmin, edges):
             if seen >= nev:
                 break
             A = A[:nev - seen]
-        J = SPN.cluster_columns(A, ["surface", "tpIdx"])
+        J = SPN.cluster_columns(A, ["surface", "tpIdx", TF.IT_MODULE_COL])
         O = SPN.table_columns(A, SPN.OT_TABLE, otc)
         T = SPN.table_columns(A, SPN.TP_TABLE, ["pt", "eta", "charge"])
         ntp = ak.to_numpy(ak.num(T["pt"]))
@@ -117,10 +119,16 @@ def denominator_coverage(paths, nev, ptmin, edges):
                                  / np.maximum(ak.to_numpy(ak.flatten(O["r"])), 1e-6)))
         surf = surf.astype(np.int64)
         row = np.r_[toff[ev_c] + tpc, toff[ev_o[so]] + tpo]
+        mod = np.r_[TF.module_key(0, ak.to_numpy(ak.flatten(J[TF.IT_MODULE_COL]))),
+                    TF.module_key(1, ak.to_numpy(ak.flatten(O["detId"]))[so])]
         in_census = np.r_[surf <= 4, (isb & (seta <= M.ETA_MATCHED))[so]]
         m = np.r_[tpc >= 0, tpo >= 0]
-        n_all = np.bincount(row[m], minlength=int(ntp.sum()))
-        n_cen = np.bincount(row[m & in_census], minlength=int(ntp.sum()))
+
+        def n_modules(sel):
+            """credited modules per L1TTP row: one per distinct (row, module)"""
+            rm = np.unique(np.stack([row[sel], mod[sel]], axis=1), axis=0)
+            return np.bincount(rm[:, 0], minlength=int(ntp.sum()))
+        n_all, n_cen = n_modules(m), n_modules(m & in_census)
         pt = ak.to_numpy(ak.flatten(T["pt"]))
         aeta = np.minimum(np.abs(ak.to_numpy(ak.flatten(T["eta"]))), edges[-1] - 1e-9)
         sel = (pt >= ptmin) & (ak.to_numpy(ak.flatten(T["charge"])) != 0)
@@ -130,19 +138,21 @@ def denominator_coverage(paths, nev, ptmin, edges):
         seen += len(ntp)
     return {"edges": list(edges), "n_events": seen, "ptmin": float(ptmin),
             "census": out["census"].tolist(), "all": out["all"].tolist(),
-            "what": "charged particles (L1TTP) with pT >= ptmin and >= 4 credited hits "
-                    "(each OT stub one hit): 'census' counts IL1-IL4 clusters and OT "
-                    "barrel stubs up to the census's |eta| cut (its efficiency "
-                    "denominator, census.findable); 'all' counts every SmartPixels "
-                    "cluster IL1-IL4 + ID1-ID4 and every OT barrel and disk stub. "
-                    "Totals over n_events, no other cuts."}
+            "what": "charged particles (L1TTP) with credited hits on >= 4 distinct "
+                    "modules and pT >= ptmin (each OT stub one hit, a TP's hits on one "
+                    "module once): 'census' counts IL1-IL4 clusters and OT barrel stubs "
+                    "up to the census's |eta| cut (its efficiency denominator, "
+                    "census.findable); 'all' counts every SmartPixels cluster IL1-IL4 + "
+                    "ID1-ID4 and every OT barrel and disk stub. Totals over n_events, no "
+                    "other cuts."}
 
 
 def build_tp_table(C):
     """Per-TP rows plus the two seed bitmaps, restricted to the census's
-    efficiency denominator, its FINDABLE TPs (TF.findable: charged, >= 4 credited
-    hits; definition sheet census.findable). n_hits (credited hits) is what the
-    page's minimum-hits cut reads; n_layers (layers hit) is context.
+    efficiency denominator, its FINDABLE TPs (TF.findable: charged, credited hits
+    on >= 4 distinct modules; definition sheet census.findable). n_modules
+    (credited modules) is what the page's minimum cut reads; n_layers (layers hit)
+    is context.
     """
     nlay = (np.unpackbits(C["hit_it"][:, None], axis=1).sum(1)
             + np.unpackbits(C["hit_ot"][:, None], axis=1).sum(1))
@@ -152,7 +162,7 @@ def build_tp_table(C):
             "hit_it": C["hit_it"].astype(np.float32),
             "hit_ot": C["hit_ot"].astype(np.float32),
             "n_layers": nlay.astype(np.float32),
-            "n_hits": (C["n_hit_it"].astype(np.float32) + C["n_hit_ot"])}
+            "n_modules": (C["n_mod_it"].astype(np.float32) + C["n_mod_ot"])}
     A = np.stack([np.asarray(cols[c], np.float32)[keep] for c in TP_COLS], axis=1)
     # the int64 keys of the SURVIVING rows, for the exact track -> TP row link.
     # The float32 "key" column cannot do this: M.tp_key(event, tpIdx) needs 32
@@ -554,7 +564,7 @@ def main():
                    ETA_RANGE_HI, edges[-1]})
     at = [edges.index(x) for x in cuts]
     print(f"  denominator coverage, pT >= {coverage['ptmin']:.1f}, particles/event "
-          f"(census denominator / >= 4 layers anywhere):")
+          f"(census denominator / >= 4 credited modules anywhere, charged):")
     for i0, i1 in zip(at[:-1], at[1:]):
         c = sum(coverage["census"][i0:i1]) / max(coverage["n_events"], 1)
         t = sum(coverage["all"][i0:i1]) / max(coverage["n_events"], 1)
@@ -651,8 +661,10 @@ def main():
                   "sorted_by": "tp_key, noise-seeded rows first"},
         **({"conflict": conflict} if conflict else {}),
         "notes": [
-            "Efficiency denominator is TPs with >= 4 layers hit: MinLayers = 4 "
-            "means fewer cannot be emitted by any seed.",
+            "Efficiency denominator is the findable TPs (census.findable; decisions "
+            "of 2026-10-13 and 2026-10-14): charged, with credited hits on >= 4 "
+            "distinct modules, IT clusters plus OT stubs in any mix, each stub one "
+            "hit and a TP's hits on one module one hit.",
             "Track rows are PRE duplicate removal and carry rank_score, so the "
             "browser can run DR over whatever seed subset is selected. Numbers "
             "will not match a fixed full-menu DR.",

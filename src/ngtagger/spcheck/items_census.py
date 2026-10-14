@@ -159,13 +159,16 @@ class CensusBuilds(Item):
     id = "census.builds_and_dr"
     title = "census output: no hit outside its build's surfaces, DR groups within one build, owner columns sane"
     c4_row = "per-build follow; DR over all builds (+ int32 owner sentinel on the output)"
-    known_bad_desc = ("the same census output with one AAAI track's hit moved onto IL4 (another build's surface), "
-                      "one DR group spanning both builds, and one n_own set beyond nhit")
+    known_bad_desc = ("two variants of the same census output, each of which must be red: (structure) one AAAI "
+                      "track's hit moved onto IL4 (another build's surface), one DR group spanning both builds, and "
+                      "one n_own set beyond nhit; (findable count) one TP with credited hits on 3 modules given a "
+                      "fourth, as a second hit on one module counted again would, judged by the identities")
     rule_desc = ("on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported "
                  "hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in "
                  "its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; "
                  "identity of the counts with the reference: tracks, and the truth the census wires in (TPs in the "
-                 "census table, findable TPs (TF.findable: charged, >= 4 credited hits, the efficiency denominator) "
+                 "census table, findable TPs (TF.findable: charged, credited hits on >= 4 modules, the efficiency "
+                 "denominator) "
                  "and hits crediting their track's owner, which move if the stub credit of M.credited_tps stops "
                  "reaching the census)")
     trees = (CENSUS_DIR,)
@@ -187,7 +190,7 @@ class CensusBuilds(Item):
         ctx.cache[key] = d
         return d
 
-    def _stat(self, ctx, perturb=False):
+    def _stat(self, ctx, perturb=False, perturb_findable=False):
         from ngtagger.data import spix_nano as SPN
 
         KF = ctx.script_module(CENSUS_DIR, "kf_emulation")
@@ -201,14 +204,18 @@ class CensusBuilds(Item):
         TC = list(KF.TRACK_COLS)
         it_slots = [i for i, L in enumerate(KF.LAYER_ORDER) if L <= 4]
         out = {"input": ctx.input, "events": CENSUS_EVENTS, "builds": sorted(builds), "perturbed": perturb,
+               "findable_count_perturbed": perturb_findable,
                "n_tracks": 0, "hits_off_build": 0, "seed_or_follow_off_build": 0, "dr_groups_spanning_builds": 0,
                "n_own_gt_nhit": 0, "owner_sentinel_inconsistent": 0, "n_owned_hits": 0,
                "n_census_tps": 0, "n_findable_tps": 0}
-        for c in glob.glob(os.path.join(d, "chunk_*.npz")):
+        for j, c in enumerate(sorted(glob.glob(os.path.join(d, "chunk_*.npz")))):
             z = np.load(c)
             out["n_census_tps"] += len(z["cen_key"])
-            out["n_findable_tps"] += int(TF.findable({k: z[f"cen_{k}"] for k in
-                                                       ("n_hit_it", "n_hit_ot", "charge")}).sum())
+            tpt = {k: z[f"cen_{k}"].copy() for k in ("n_mod_it", "n_mod_ot", "charge")}
+            if perturb_findable and j == 0:      # one charged TP on 3 modules gets a 4th
+                three = np.flatnonzero((tpt["n_mod_it"] + tpt["n_mod_ot"] == 3) & (tpt["charge"] != 0))
+                tpt["n_mod_ot"][three[0]] += 1
+            out["n_findable_tps"] += int(TF.findable(tpt).sum())
         if perturb:
             dr = [dr[0] + dr[1][:1], dr[1][1:]] + dr[2:]
         for g in dr:
@@ -245,9 +252,16 @@ class CensusBuilds(Item):
         return self._stat(ctx)
 
     def known_bad(self, ctx):
-        return self._stat(ctx, perturb=True)
+        return {"input": ctx.input, "events": CENSUS_EVENTS,
+                "variants": {"structure": self._stat(ctx, perturb=True),
+                             "findable_count": self._stat(ctx, perturb_findable=True)}}
 
     def judge(self, stat, ref):
+        if "variants" in stat:
+            # a known-bad of several variants is red only when EVERY variant is red
+            res = {k: self.judge(v, ref) for k, v in stat["variants"].items()}
+            ok = any(r[0] for r in res.values())
+            return ok, "; ".join(f"{k}: {'GREEN' if r[0] else 'red'} ({r[1]})" for k, r in res.items())
         why = [f"{k} = {stat[k]}" for k in ("hits_off_build", "seed_or_follow_off_build", "dr_groups_spanning_builds",
                                             "n_own_gt_nhit", "owner_sentinel_inconsistent") if stat[k]]
         if stat["n_tracks"] == 0:

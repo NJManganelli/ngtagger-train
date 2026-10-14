@@ -122,7 +122,7 @@ tr.partacc td:first-child { background: repeating-linear-gradient(45deg, #e4e4e4
       <option value="prompt">prompt only</option>
       <option value="displaced">displaced only</option>
     </select>
-    <br>minimum credited hits <input type="number" id="minlay" value="4" min="4" max="30">
+    <br>minimum credited modules <input type="number" id="minmod" value="4" min="4" max="30">
     <br>a track delivers a particle when it holds
     <select id="owndef">
       <option value="majority">more than half its hits (min 3)</option>
@@ -911,7 +911,7 @@ async function drawInner() {
       sl.step = '0.01';
       return [name, +num.value];
     });
-  const minLay = +document.getElementById('minlay').value;
+  const minMod = +document.getElementById('minmod').value;
   const fd = document.getElementById('fakedef').value;
   const panels = [...document.querySelectorAll('.cellsel')].map(e => e.value);
 
@@ -1040,19 +1040,19 @@ async function drawInner() {
   const keepS = C.tpSplit(S.tp, m.tp.cols, S.nTp, keep, split, D0_SPLIT_CM);
   const bandR = FM.eff_seed
     ? C.effByBand(S.tp, m.tp.cols, S.nTp, keepS, FM.eff_seed,
-                  PT_BANDS, minLay, 'pt', false) : null;
+                  PT_BANDS, minMod, 'pt', false) : null;
   const bandD = FM.eff_deliv
     ? C.effByBand(S.tp, m.tp.cols, S.nTp, keepS, FM.eff_deliv, PT_BANDS,
-                  minLay, 'pt', false)
+                  minMod, 'pt', false)
     : null;
   // the impact-parameter table always shows BOTH populations, whatever the
   // selector says, so the displaced number cannot be lost behind a mode
   const IPB = [[0, D0_SPLIT_CM], [D0_SPLIT_CM, 1e9]];
   const ipS = FM.eff_seed
     ? C.effByBand(S.tp, m.tp.cols, S.nTp, keep, FM.eff_seed, IPB,
-                  minLay, 'd0', true) : null;
+                  minMod, 'd0', true) : null;
   const ipD = FM.eff_deliv
-    ? C.effByBand(S.tp, m.tp.cols, S.nTp, keep, FM.eff_deliv, IPB, minLay,
+    ? C.effByBand(S.tp, m.tp.cols, S.nTp, keep, FM.eff_deliv, IPB, minMod,
                   'd0', true) : null;
   const NO_EFF = '<p class="hint">This export carries no tp_row for this '
     + 'collection, so its tracks cannot be linked to the particle census and no '
@@ -1103,7 +1103,7 @@ async function drawInner() {
     ? `<p class="hint">${rows.length.toLocaleString()} tracks selected. No `
       + `efficiency: this collection carries no link to the particle census.</p>`
     : `<table class="kv"><tr><th align="left">denominator</th><td>`
-    + `${dt.toLocaleString()} TPs, &ge;${minLay} credited hits`
+    + `${dt.toLocaleString()} TPs, &ge;${minMod} credited modules`
     + `${split === 'all' ? '' : ', ' + split + ' only'}</td></tr>`
     + (bandR ? `<tr><th align="left">seed-truthful</th><td><b>`
         + `${dt > 0 ? (100 * nt / dt).toFixed(1) : '--'}%</b> `
@@ -1135,10 +1135,10 @@ async function drawInner() {
   const delivE = FM.eff_deliv
     ? C.deliveredMask(TB.t, TB.cols, rowsE, S.nTp, owndef) : null;
   const effSE = FM.eff_seed
-    ? C.effByRanges(S.tp, m.tp.cols, S.nTp, keepE, FM.eff_seed, ER, minLay, 'eta')
+    ? C.effByRanges(S.tp, m.tp.cols, S.nTp, keepE, FM.eff_seed, ER, minMod, 'eta')
     : null;
   const effDE = delivE
-    ? C.effByRanges(S.tp, m.tp.cols, S.nTp, keepE, delivE, ER, minLay, 'eta') : null;
+    ? C.effByRanges(S.tp, m.tp.cols, S.nTp, keepE, delivE, ER, minMod, 'eta') : null;
   const nevT = TB.isBaseline
     ? (((blk || {}).eta_hist || {}).n_events || (blk || {}).n_events || m.n_events)
     : m.n_events;
@@ -1190,16 +1190,16 @@ async function drawInner() {
             + `does not carry. `
           : `${(m.acceptance || {}).text || ''} `)
        + 'In those ranges the efficiency denominator holds only particles that '
-       + 'still leave &ge; 4 credited hits in the barrel (coverage below), so an efficiency '
+       + 'still leave credited hits on &ge; 4 barrel modules (coverage below), so an efficiency '
        + 'there is not forward performance.</span>' : '');
   const cov = m.coverage;
   if (cov) {
     const cC = C.rangeSums(cov.census, cov.edges, ER), cA = C.rangeSums(cov.all, cov.edges, ER);
     document.getElementById('etacov').innerHTML =
       `<b>Denominator coverage</b> (pT &ge; ${f1(cov.ptmin)} GeV, no other cut): `
-      + 'charged particles per event the efficiency denominator holds (&ge; 4 '
-      + 'credited hits in the emulated barrel), of those with &ge; 4 credited hits '
-      + 'anywhere (IT discs and OT disks included):<table class="kv">'
+      + 'charged particles per event the efficiency denominator holds (credited '
+      + 'hits on &ge; 4 modules of the emulated barrel), of those with credited hits on '
+      + '&ge; 4 modules anywhere (IT discs and OT disks included):<table class="kv">'
       + ER.slice(0, -1).map((lo, k) =>
           `<tr${states[k] === 'out' ? ' class="outacc"' : states[k] === 'partial'
                 ? ' class="partacc"' : ''}><td>${k === 0 ? '&lt; ' + ER[1]
@@ -1615,7 +1615,7 @@ async function drawInner() {
     if (metric === 'lossd0') {
       const sel = idx.slice(0, 12);
       const g = C.effGridPerSeed(S.tp, m.tp.cols, S.nTp, keep, fb, S.nW, sel,
-                                 D0_BANDS, minLay, 'd0', true);
+                                 D0_BANDS, minMod, 'd0', true);
       const traces = sel.map((si, k) => ({
         type: 'scatter', mode: 'lines+markers',
         name: (m.seeds[si] || {}).tag || ('seed ' + si),

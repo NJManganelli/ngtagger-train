@@ -91,7 +91,7 @@ var Plotly={ purge:function(el){ purges.push(el.id); delete el._fullLayout; },
   z:(tr[0]&&tr[0].z)||null, y:(tr[0]&&tr[0].y)||null}); } };
 // ---- a synthetic dataset with the same SHAPE as the real one -------------
 var NTP=8, NTRK=6, NW=1, NSC=2;
-var TPCOLS=['key','event','pt','eta','phi','d0','z0','vr','hit_it','hit_ot','n_layers','n_hits'];
+var TPCOLS=['key','event','pt','eta','phi','d0','z0','vr','hit_it','hit_ot','n_layers','n_modules'];
 var TRKCOLS=['seed_idx','tp_key','tp_row','pt','phi','eta','d0','z0','n_layers','nhit',
              'n_own','n_it_right','n_it_wrong','n_ot_right','n_ot_wrong','sig_kf_d0',
              'n_wrong','d_d0','d_z0','d_kappa','d_phi0','d_cot'];
@@ -330,7 +330,7 @@ PANELS=['sd0_wrong'];
   try { HS.drawInner(); } catch(e){ log.push('snap THREW '+e.message); }
   var info=String((els['mvainfo']||{}).innerHTML||'');
   var shown=(info.match(/shown<\/th><td><b>([0-9,]+)/)||[])[1];
-  if (tc[0]==='0.05') log.push('DEBUG mvainfo: '+info+' | status: '+els['status'].textContent+' | minlay '+els['minlay'].value);
+  if (tc[0]==='0.05') log.push('DEBUG mvainfo: '+info+' | status: '+els['status'].textContent+' | minmod '+els['minmod'].value);
   log.push('snap cutA='+tc[0]+' -> num '+els['cutA'].value+' step '+els['cutA'].step
     +' shown '+shown+'   (expect '+tc[1]+') status: '+els['status'].textContent.slice(-30));
 });
@@ -391,7 +391,7 @@ function setOpen(){
   [['pt',0,25],['eta',-1.6,1.6],['phi',-3.2,3.2],['d0',-0.05,0.05],['z0',-20,20],['n_layers',3,16]]
     .forEach(function(c){ document.getElementById('lo_'+c[0]).value=String(c[1]);
                           document.getElementById('hi_'+c[0]).value=String(c[2]); });
-  els['minlay']=mkEl('minlay'); els['minlay'].value='4';
+  els['minmod']=mkEl('minmod'); els['minmod'].value='4';
   els['tpsplit']=mkEl('tpsplit'); els['tpsplit'].value='all';
   els['owndef']=mkEl('owndef'); els['owndef'].value='majority';
   els['fakedef']=mkEl('fakedef'); els['fakedef'].value='unusable';

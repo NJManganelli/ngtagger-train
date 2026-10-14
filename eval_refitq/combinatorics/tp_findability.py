@@ -10,7 +10,7 @@ ttbar set before the stub credit (format < 28), 9,515 per event -- carrying
     d0 z0 vr       L1TTP d0 and z0 [cm] at the POCA to the beamline, production radius [cm]
     charge         L1TTP charge (findable() requires a charged TP)
     hit_it hit_ot  bitmasks of which IL1-IL4 / OL1-OL6 the TP actually hit
-    n_hit_it/_ot   credited IT clusters / OT stubs (each one hit; findable() at >= 4)
+    n_mod_it/_ot   IT / OT modules carrying a credited hit (findable() at >= 4 in all)
     found          BITMAP over every candidate seed: did that seed recover this TP
 
 so that efficiency in any slice of (pT, eta, phi, d0, z0, build, seed menu) is a
@@ -68,7 +68,10 @@ ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
 # (M.STUB_TP_COLS).
 OT_COLS = ["layer", "isBarrel", "r", "phi", "z", "tpIdx", "tpPt",
            "tpGenuine", "tpCombinatoric", "tpUnknown", "bend", "isPS", "isTilted",
-           "tpIdxInner", "tpIdxOuter"]
+           "tpIdxInner", "tpIdxOuter", "detId"]
+# the module (rawId) of every IT cluster: with L1TOTStub_detId, what the findable
+# count counts (one per module; census.findable)
+IT_MODULE_COL = "detId"
 
 # THE INPUT CONTRACT (format 27). Every census input carries the module flags
 # the L1 track finder attaches to a stub, L1TOTStub_isPS (PS vs 2S module) and
@@ -83,7 +86,12 @@ OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:]
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 30   # 30: THE FINDABLE DENOMINATOR (definition sheet census.findable;
+FORMAT_VERSION = 31   # 31: ONE HIT PER MODULE (census.findable; decision of 2026-10-14):
+                      # the findable count is the number of distinct modules (IT
+                      # L1TSmartPixelsCluster_detId, OT L1TOTStub_detId, the two
+                      # systems kept apart) carrying a credited hit of the TP, columns
+                      # n_mod_it / n_mod_ot in place of 30's n_hit_it / n_hit_ot.
+                      # 30: THE FINDABLE DENOMINATOR (definition sheet census.findable;
                       # decision of 2026-10-13): census columns n_hit_it, n_hit_ot
                       # (credited IT clusters and OT stubs, each ONE hit per TP)
                       # and charge; findable() = charged with >= FINDABLE_MIN_HITS
@@ -481,7 +489,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, res=None):
     improve = res is not None and (res.get("alpha_k", 1.0) < 1.0
                                    or res.get("beta_k", 1.0) < 1.0)
     ref_cols = angle_ref_columns(res["ref"]) if improve else []
-    itk = M.table_branches(paths[0], M.IT_TABLE, M.IT_COLS + ref_cols)
+    itk = M.table_branches(paths[0], M.IT_TABLE, M.IT_COLS + ref_cols + [IT_MODULE_COL])
     otk = M.table_branches(paths[0], M.OT_TABLE, OT_COLS)
     seen = 0
     for A in uproot.iterate(srcs, itk + otk + M.tp_branches(paths[0]), step_size=step):
@@ -492,12 +500,12 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, res=None):
                 return
             if len(A) > nev - seen:
                 A = A[:nev - seen]
-        JI = M.table_columns(A, M.IT_TABLE, M.IT_COLS + ref_cols)  # TBPX only
+        JI = M.table_columns(A, M.IT_TABLE, M.IT_COLS + ref_cols + [IT_MODULE_COL])  # TBPX only
         JO = M.table_columns(A, M.OT_TABLE, OT_COLS)
         nI = ak.to_numpy(ak.num(JI[M.IT_COLS[0]]))
         nO = ak.to_numpy(ak.num(JO[OT_COLS[0]]))
         ev = np.arange(seen, seen + len(nI))
-        I = {c: ak.to_numpy(ak.flatten(JI[c])) for c in M.IT_COLS}
+        I = {c: ak.to_numpy(ak.flatten(JI[c])) for c in M.IT_COLS + [IT_MODULE_COL]}
         I["event"] = np.repeat(ev, nI)
         O = {c: ak.to_numpy(ak.flatten(JO[c])) for c in OT_COLS}
         O["event"] = np.repeat(ev, nO)
@@ -558,6 +566,12 @@ def angle_ref_coverage(spec, nev, ref_spec):
     return out
 
 
+def module_key(system, det_id):
+    """int64 key of a module: its rawId (uint32) with the system (0 IT, 1 OT) above
+    bit 32, so an IT and an OT module can never share a key."""
+    return (np.int64(system) << np.int64(32)) | np.asarray(det_id).astype(np.int64)
+
+
 def _unify(I, O, sigz_ot, bench=None, res=None, ref=None):
     eta = np.abs(np.arcsinh(O["z"] / np.maximum(O["r"], 1e-6)))
     bar = (O["isBarrel"] > 0) & (eta <= M.ETA_MATCHED)
@@ -611,6 +625,9 @@ def _unify(I, O, sigz_ot, bench=None, res=None, ref=None):
          "ot_ps": np.r_[np.zeros(len(I["layer"]), bool), O["isPS"][bar].astype(bool)],
          "ot_tilted": np.r_[np.zeros(len(I["layer"]), bool),
                             O["isTilted"][bar].astype(bool)],
+         # TRUTH-SIDE KEY: the module of every hit, the IT and OT systems kept apart
+         # (module_key), for the findable count's one hit per module
+         "module": np.r_[module_key(0, I[IT_MODULE_COL]), module_key(1, O["detId"][bar])],
          "event": np.r_[I["event"], O["event"][bar]]}
     # EVERY angle any stage reads comes from here: pull-scaled, degraded by the
     # resolution knob, quantized. An OT stub carries no alpha/beta: huge sigmas
@@ -647,7 +664,7 @@ def chunk_census(U):
                 "z0": z.astype(np.float32), "vr": z.astype(np.float32),
                 "charge": z.astype(np.float32),
                 "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8),
-                "n_hit_it": z.astype(np.int16), "n_hit_ot": z.astype(np.int16)}
+                "n_mod_it": z.astype(np.int16), "n_mod_ot": z.astype(np.int16)}
     key = M.tp_key(U["event"][hi], T[hi, sl])
     # per TP: hits on which it is the hit's own tpIdx (slot 0) first, each group
     # in hit order, so a TP some hit owns is represented by the first such hit
@@ -664,11 +681,13 @@ def chunk_census(U):
     it = ls <= 4
     np.bitwise_or.at(hit_it, pos[it], (1 << (ls[it] - 1)).astype(np.uint8))
     np.bitwise_or.at(hit_ot, pos[~it], (1 << (ls[~it] - 11)).astype(np.uint8))
-    # CREDITED HITS per TP: one per (hit, TP) credit, and credited_tps lists a TP
-    # once per hit, so an OT stub is ONE hit for each TP it is credited to, however
-    # many of its clusters credit it (census.findable)
-    n_hit_it = np.bincount(pos[it], minlength=len(uk)).astype(np.int16)
-    n_hit_ot = np.bincount(pos[~it], minlength=len(uk)).astype(np.int16)
+    # CREDITED MODULES per TP (census.findable): credited_tps lists a TP once per
+    # hit, so an OT stub is one hit for each TP it is credited to however many of
+    # its clusters credit it, and hits of one TP on one module count once
+    pm = np.unique(np.stack([pos, U["module"][hi_s]], axis=1), axis=0)
+    it_m = (pm[:, 1] >> 32) == 0
+    n_mod_it = np.bincount(pm[it_m, 0], minlength=len(uk)).astype(np.int16)
+    n_mod_ot = np.bincount(pm[~it_m, 0], minlength=len(uk)).astype(np.int16)
     L = U["l1ttp"]
     p, row = M.tp_rows(L, U["event"][rep], T[rep, sl_s[first]])
     nan = np.float32(np.nan)
@@ -687,22 +706,23 @@ def chunk_census(U):
             "event": M.tp_key_parts(uk)[0].astype(np.int32),
             "pt": pt, "eta": eta, "phi": phi, "d0": d0, "z0": z0,
             "vr": np.hypot(vx, vy).astype(np.float32), "charge": charge,
-            "hit_it": hit_it, "hit_ot": hit_ot, "n_hit_it": n_hit_it, "n_hit_ot": n_hit_ot}
+            "hit_it": hit_it, "hit_ot": hit_ot, "n_mod_it": n_mod_it, "n_mod_ot": n_mod_ot}
 
 
-# THE CENSUS EFFICIENCY DENOMINATOR (definition sheet census.findable; decision of
-# 2026-10-13): a TP is FINDABLE when it is charged and carries at least
-# FINDABLE_MIN_HITS credited hits, IT clusters plus OT stubs in any mix, counting
-# HITS, not layers (two overlapping hits in one layer both count), each OT stub one
-# hit. Charged as in CMSSW's L1TrackNtupleMaker (charge == 0 skipped): a neutral TP
-# (photon, K0L, neutron) can be credited with its unstored daughters' hits. The pT
-# and |eta| selections are the consumer's.
+# THE CENSUS EFFICIENCY DENOMINATOR (definition sheet census.findable; decisions of
+# 2026-10-13 and 2026-10-14): a TP is FINDABLE when it is charged and carries
+# credited hits on at least FINDABLE_MIN_HITS distinct modules, IT clusters plus OT
+# stubs in any mix: hits, not layers (two overlapping modules of one layer both
+# count), but two or more credited hits of the TP on ONE module count once, and an
+# OT stub is one hit. Charged as in CMSSW's L1TrackNtupleMaker (charge == 0
+# skipped): a neutral TP (photon, K0L, neutron) can be credited with its unstored
+# daughters' hits. The pT and |eta| selections are the consumer's.
 FINDABLE_MIN_HITS = 4
 
 
 def findable(C):
     """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_HITS)."""
-    n = C["n_hit_it"].astype(np.int64) + C["n_hit_ot"]
+    n = C["n_mod_it"].astype(np.int64) + C["n_mod_ot"]
     return (n >= FINDABLE_MIN_HITS) & np.isfinite(C["charge"]) & (C["charge"] != 0)
 
 
@@ -1222,7 +1242,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     if not shards:
         raise SystemExit(f"{d} has no shards")
     cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "charge", "hit_it", "hit_ot",
-            "n_hit_it", "n_hit_ot"]
+            "n_mod_it", "n_mod_ot"]
     parts = {c: [] for c in cols}
     fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
     non = []

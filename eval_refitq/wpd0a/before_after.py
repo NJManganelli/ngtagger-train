@@ -1,14 +1,14 @@
 """WP-D0a before/after: census runs on the same events (A format 26, B 27, C 28, C2 29,
-D 30), one set of figures of merit, paired event-bootstrap errors.
+D 30, E 31), one set of figures of merit, paired event-bootstrap errors.
 
     # each census read by its OWN code root (a census refuses other formats); with
     # PYTHONPATH=ROOT/src so ngtagger comes from the same root
     python before_after.py extract LABEL CENSUS ROOT OUT.npz
-    python before_after.py compare A.npz B.npz ... --universe D [--pairs A:B,B:C,...] -o out.json
+    python before_after.py compare A.npz B.npz ... --universe E [--pairs A:B,B:C,...] -o out.json
 
 extract keeps, per TP of the census's own table: event, true pT, |eta|, |d0|, phi, z0,
-production radius, the hit patterns and, from census format 30, the credited hit counts
-and the charge; per build (the census's DR group): seed-truthful (found_dr over the build's
+production radius, the hit patterns, the charge and the findable flag (census format >= 30:
+credited hits per TP in format 30, credited modules from format 31); per build (the census's DR group): seed-truthful (found_dr over the build's
 entries; definition sheet truth.seed_truthful of the census's own format), delivered (a DR
 survivor of the build's full menu, DR recomputed from the exported tracks as
 angle_stage_metrics does, owned by the TP: n_own >= 3 and more than half the hits) and
@@ -20,18 +20,19 @@ contributor; CMSSW truth spec sec. 6), not a bound: delivered and fake if every 
 stub that has a TP also credited the CURRENT owner.
 
 compare quotes every efficiency on the same TP sets for every run, built once from the
-universe run's table (a census of format >= 30), a TP missing from a run's table counting as
+universe run's table (a census of format >= 31), a TP missing from a run's table counting as
 not found by that run:
-  findable   THE CENSUS DENOMINATOR (definition sheet census.findable; decision of
-             2026-10-13): charged, >= 4 credited hits, IT clusters plus OT stubs in any
-             mix, hits not layers, each OT stub one hit (TF.findable of the universe run)
+  findable   THE CENSUS DENOMINATOR (definition sheet census.findable; decisions of
+             2026-10-13 and 2026-10-14): charged, credited hits on >= 4 distinct modules,
+             IT clusters plus OT stubs in any mix, each OT stub one hit, a TP's hits on one
+             module one hit (TF.findable of the universe run)
   ot_cmssw   comparison only: the barrel analogue of CMSSW's L1TrackNtupleMaker
              denominator, charged TPs with credited stubs in >= 4 OT layers (hence >= 4
              stubs), event-id 0 as its plot macro (L1TrackNtuplePlot.C:1315)
 at pT >= 2 GeV in |eta| < 1.1 (c), < 0.9 (h), 1.1-1.8 (f) and pT 1-2 GeV in |eta| < 1.1,
-each |eta| range with its OT-truncated label (M.eta_range_label). It also reports what
-counting hits instead of layers adds, and how many neutral TPs the charge requirement
-removes, per pT bin. Errors are the standard deviation over event-bootstrap replicas
+each |eta| range with its OT-truncated label (M.eta_range_label). It also reports, per pT
+bin, what counting modules instead of layers adds, what one hit per module removes from a
+format-30 run's per-hit count (given one), and how many neutral TPs the charge removes. Errors are the standard deviation over event-bootstrap replicas
 (1000; the 100 events resampled with replacement, every figure recomputed as a ratio of
 sums), PAIRED across runs (same replica weights: the runs share their events), so a
 difference's error includes the correlation.
@@ -49,8 +50,9 @@ ETA = {"c": (0.0, 1.1), "h": (0.0, 0.9), "f": (1.1, 1.8)}
 EFFS = [("hi", "c"), ("hi", "h"), ("hi", "f"), ("lo", "c")]
 PT = {"hi": (2.0, np.inf), "lo": (1.0, 2.0)}
 PT_REPORT = [(0.0, 1.0), (1.0, 2.0), (2.0, 5.0), (5.0, np.inf)]
-DENS = {"findable": "the census denominator: charged, >= 4 credited hits (IT clusters + OT stubs, "
-                    "each stub one hit), decision of 2026-10-13",
+DENS = {"findable": "the census denominator: charged, credited hits on >= 4 distinct modules (IT "
+                    "clusters + OT stubs, each stub one hit, one hit per module), decisions of "
+                    "2026-10-13 and 2026-10-14",
         "ot_cmssw": "comparison only: charged, credited stubs in >= 4 OT layers, event-id 0 "
                     "(L1TrackNtupleMaker analogue, barrel)"}
 HERE = Path(__file__).resolve().parents[1] / "combinatorics"
@@ -81,15 +83,15 @@ def extract(label, census, root, out):
     fmt, nev = man["format"], int(C["n_events"])
     col = {c: j for j, c in enumerate(C["track_cols"])}
     key = np.asarray(C["key"], np.int64)
+    count = ("n_mod_it", "n_mod_ot") if "n_mod_it" in C else ("n_hit_it", "n_hit_ot")
     R = {"label": label, "format": fmt, "n_events": nev, "census": d, "code_root": root,
          "builds": list(C["builds"]), "inputs": [r["path"] for r in man["inputs"]],
-         "has_hit_counts": "n_hit_it" in C}
+         "findable_count": count[0][:5] if count[0] in C else None}
     A = {"key": key, "event": np.asarray(C["event"], np.int32), "pt": C["pt"],
          "aeta": np.abs(C["eta"]), "ad0": np.abs(C["d0"]), "phi": C["phi"], "z0": C["z0"],
          "vr": C["vr"], "hit_it": C["hit_it"], "hit_ot": C["hit_ot"]}
-    if R["has_hit_counts"]:
-        A.update(n_hit_it=C["n_hit_it"], n_hit_ot=C["n_hit_ot"], charge=C["charge"],
-                 findable=TF.findable(C))
+    if R["findable_count"]:
+        A.update(n_it=C[count[0]], n_ot=C[count[1]], charge=C["charge"], findable=TF.findable(C))
     seed_cls = {i: KF.sysclass_of(C["seeds"][i].layers) for i in range(len(C["seeds"]))}
     for b, ent in C["builds"].items():
         seed = {k: np.zeros(len(key), bool) for k in ("all", *SYS.values())}
@@ -186,29 +188,40 @@ def l1ttp_evt(path):
     return key, ak.to_numpy(ak.flatten(A["L1TTP_evt"]))
 
 
-def denominators(U, umeta):
+def denominators(U, umeta, hits=None):
     """The census denominator and the CMSSW-like comparison one over the universe table
-    U (a census of format >= 30), plus what hits-not-layers and the charge requirement do."""
+    U (a census of format >= 31), plus, per pT bin, what counting modules instead of
+    layers adds, what one hit per module removes from the per-hit count of a format-30
+    run `hits` (same TP table), and how many neutral TPs the charge requirement removes."""
     tkey, tevt = l1ttp_evt(umeta["inputs"][0])
     p = np.clip(np.searchsorted(tkey, U["key"]), 0, len(tkey) - 1)
     hard = (tkey[p] == U["key"]) & (tevt[p] == 0)
     charged = np.isfinite(U["charge"]) & (U["charge"] != 0)
-    n_hit = U["n_hit_it"].astype(np.int64) + U["n_hit_ot"]
+    n_mod = U["n_it"].astype(np.int64) + U["n_ot"]
     n_lay = popcount8(U["hit_it"]) + popcount8(U["hit_ot"])
-    if not np.array_equal(U["findable"], charged & (n_hit >= 4)):
-        raise SystemExit("the universe's findable flag disagrees with charge and >= 4 hits")
+    if not np.array_equal(U["findable"], charged & (n_mod >= 4)):
+        raise SystemExit("the universe's findable flag disagrees with charge and >= 4 modules")
     D = {"findable": U["findable"], "ot_cmssw": charged & (popcount8(U["hit_ot"]) >= 4) & hard}
+    per_hit = None
+    if hits is not None:
+        if not np.array_equal(hits["key"], U["key"]):
+            raise SystemExit("the per-hit run's TP table differs from the universe's")
+        per_hit = hits["findable"]
     report = {}
     for eta_nm, (e0, e1) in (("all_census", (0.0, np.inf)), ("c", ETA["c"])):
         for lo, hi in PT_REPORT:
             k = (U["pt"] >= lo) & (U["pt"] < hi) & (U["aeta"] >= e0) & (U["aeta"] < e1)
             layers = charged & (n_lay >= 4)
-            report[f"{eta_nm}/pt_{lo:g}_{hi:g}"] = {
-                "findable_hits": int((k & D["findable"]).sum()),
-                "charged_4_layers": int((k & layers).sum()),
-                "added_by_counting_hits": int((k & D["findable"] & ~layers).sum()),
-                "removed_by_counting_hits": int((k & layers & ~D["findable"]).sum()),
-                "neutral_with_4_hits_excluded": int((k & ~charged & (n_hit >= 4)).sum())}
+            r = {"findable": int((k & D["findable"]).sum()),
+                 "charged_4_layers": int((k & layers).sum()),
+                 "added_by_counting_modules_not_layers": int((k & D["findable"] & ~layers).sum()),
+                 "layer_findable_not_findable": int((k & layers & ~D["findable"]).sum()),
+                 "neutral_with_4_modules_excluded": int((k & ~charged & (n_mod >= 4)).sum())}
+            if per_hit is not None:
+                r["findable_per_hit_format30"] = int((k & per_hit).sum())
+                r["removed_by_one_hit_per_module"] = int((k & per_hit & ~D["findable"]).sum())
+                r["added_by_one_hit_per_module"] = int((k & ~per_hit & D["findable"]).sum())
+            report[f"{eta_nm}/pt_{lo:g}_{hi:g}"] = r
     return D, report
 
 
@@ -266,7 +279,7 @@ def _pair(F, x, y):
     return d
 
 
-def compare(paths, pairs, out, universe):
+def compare(paths, pairs, out, universe, per_hit=None):
     runs = {}
     for p in paths:
         meta, Z = load(p)
@@ -276,12 +289,12 @@ def compare(paths, pairs, out, universe):
         raise SystemExit(f"runs have different event counts {nev}")
     nev = nev.pop()
     umeta, U = runs[universe]
-    if not umeta.get("has_hit_counts"):
-        raise SystemExit(f"the universe run {universe} must be a census of format >= 30")
+    if umeta.get("findable_count") != "n_mod":
+        raise SystemExit(f"the universe run {universe} must be a census of format >= 31")
     W = np.random.default_rng(SEED).multinomial(nev, np.full(nev, 1.0 / nev), size=N_REP).astype(float)
     sys.path.insert(0, str(HERE))
     import tracklet_topology_cost as M
-    D, hits_report = denominators(U, umeta)
+    D, hits_report = denominators(U, umeta, runs[per_hit][1] if per_hit else None)
     F = {lab: figures(m, Z, W) for lab, (m, Z) in runs.items()}
     G = den_figures(runs, U, D, W, nev)
     sd = lambda d: {k: {"value": v, "sd": float(np.std(r, ddof=1))} for k, (v, r) in d.items()}
@@ -290,7 +303,7 @@ def compare(paths, pairs, out, universe):
                     for lab, (m, _) in runs.items()},
            "eta_labels": {k: M.eta_range_label(*v) for k, v in ETA.items()},
            "denominators": {"definitions": DENS, "universe": universe},
-           "hits_vs_layers_and_charge": hits_report,
+           "modules_vs_layers_hits_and_charge": hits_report,
            "figures": {lab: sd(f) for lab, f in F.items()},
            "efficiencies": {lab: sd(g) for lab, g in G.items()},
            "pairs": {}, "tp_changes": {}}
@@ -314,13 +327,15 @@ def main():
     c = sub.add_parser("compare")
     c.add_argument("npz", nargs="+")
     c.add_argument("--pairs", default="A:B,B:C,A:C")
-    c.add_argument("--universe", required=True, help="the label of a census of format >= 30")
+    c.add_argument("--universe", required=True, help="the label of a census of format >= 31")
+    c.add_argument("--per-hit", default=None,
+                   help="the label of a format-30 census (findable per hit), to report what one hit per module removes")
     c.add_argument("-o", "--out", required=True)
     a = ap.parse_args()
     if a.cmd == "extract":
         extract(a.label, a.census, a.root, a.out)
     else:
-        compare(a.npz, a.pairs.split(","), a.out, a.universe)
+        compare(a.npz, a.pairs.split(","), a.out, a.universe, a.per_hit)
 
 
 if __name__ == "__main__":

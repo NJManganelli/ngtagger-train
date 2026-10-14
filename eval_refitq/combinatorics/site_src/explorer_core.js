@@ -352,15 +352,15 @@ function binnedFakeRate(trk, cols, rows, xName, yName, xEdges, yEdges, nEvents,
 // Banded efficiency over any TP column. `absolute` bands on |value|, which is
 // what the prompt/displaced split needs: a particle is displaced by the
 // MAGNITUDE of its true impact parameter, either sign.
-function effByBand(tp, cols, nRows, keep, fmask, bands, minHits,
+function effByBand(tp, cols, nRows, keep, fmask, bands, minMods,
                    colName, absolute) {
   const nc = cols.length;
   const jv = need(cols, colName || 'pt', 'effByBand');
-  const jl = need(cols, 'n_hits', 'effByBand');
+  const jl = need(cols, 'n_modules', 'effByBand');
   const num = new Float64Array(bands.length), den = new Float64Array(bands.length);
   for (let i = 0; i < nRows; i++) {
     if (!keep[i]) continue;
-    if (tp[i * nc + jl] < minHits) continue;
+    if (tp[i * nc + jl] < minMods) continue;
     let v = tp[i * nc + jv];
     if (absolute) v = Math.abs(v);
     for (let k = 0; k < bands.length; k++) {
@@ -394,16 +394,16 @@ function tpSplit(tp, cols, nRows, keep, mode, d0Cut) {
 // (say) true impact parameter. Calling the single-seed path 30 times would walk
 // 2.7M rows 30 times over.
 function effGridPerSeed(tp, cols, nRows, keep, found, nWords, seedList, bands,
-                        minHits, colName, absolute) {
+                        minMods, colName, absolute) {
   const nc = cols.length;
   const jv = need(cols, colName || 'pt', 'effGridPerSeed');
-  const jl = need(cols, 'n_hits', 'effGridPerSeed');
+  const jl = need(cols, 'n_modules', 'effGridPerSeed');
   const ns = seedList.length, nb = bands.length;
   const num = new Float64Array(ns * nb), den = new Float64Array(nb);
   const word = seedList.map(i => i >>> 5), bit = seedList.map(i => 1 << (i & 31));
   for (let i = 0; i < nRows; i++) {
     if (!keep[i]) continue;
-    if (tp[i * nc + jl] < minHits) continue;
+    if (tp[i * nc + jl] < minMods) continue;
     let v = tp[i * nc + jv];
     if (absolute) v = Math.abs(v);
     let b = -1;
@@ -713,15 +713,15 @@ function linEdges(lo, hi, n) {
 // The summaries split on |eta| into a few RANGES (edges [0, 1.1, X, 2.4]) whose
 // last one includes its upper edge -- binIndex's convention, which is why these
 // do not reuse effByBand (half-open on every band).
-function effByRanges(tp, cols, nRows, keep, fmask, edges, minHits, colName) {
+function effByRanges(tp, cols, nRows, keep, fmask, edges, minMods, colName) {
   const nc = cols.length;
   const jv = need(cols, colName || 'eta', 'effByRanges');
-  const jl = need(cols, 'n_hits', 'effByRanges');
+  const jl = need(cols, 'n_modules', 'effByRanges');
   const nb = edges.length - 1;
   const num = new Float64Array(nb), den = new Float64Array(nb);
   for (let i = 0; i < nRows; i++) {
     if (!keep[i]) continue;
-    if (tp[i * nc + jl] < minHits) continue;
+    if (tp[i * nc + jl] < minMods) continue;
     const b = binIndex(Math.abs(tp[i * nc + jv]), edges);
     if (b < 0) continue;
     den[b] += 1;
