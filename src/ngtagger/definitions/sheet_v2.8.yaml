@@ -1,0 +1,652 @@
+# SmartPixels L1 study: definition sheet v2.8 (working rule 8: one definitions sheet read by every tool).
+# Machine-readable source; the human rendering is sheet_v2.8.md (python -m ngtagger.definitions render).
+# v2 (WP-D0a, census format 28) amends v1: truth.stub states the census's three stub truth columns and what the
+# nano cannot carry; truth.census_owner votes per credited TP; truth.seed_truthful is new; census.ot_truncated
+# names its implementation. Every other item is v1's, unchanged. NOTE: v1's truth.stub (credit to every TP behind
+# either cluster) was not implemented by census formats <= 27, which credited a stub to its own tpIdx only; it was
+# first implemented in format 28.
+# v2.1 (WP-D0a review 01, 2026-10-13; census format 29) corrects v2's wording, no rule change: truth.stub opens
+# with what is implemented, says how the dominant TP is chosen (summed TP pT, not charge), where the stub's
+# position comes from (its inner cluster: an outer-only credit holds another particle's position), the provenance
+# of tpIdx / tpGenuine (CMSSW_20_0_0_pre1) and the citation TTStubAssociator.cc:72-88; truth.census_owner and
+# truth.seed_truthful name the format-29 diagnostics.
+# v2.2 (WP-D0a review 02 R2-L1, 2026-10-13; census format 29 unchanged) qualifies truth.stub: a principal or
+# inner-cluster credit carries the TP's position as a rule, not always (out-of-time-TP credits never do in this
+# input); "position-carrying" is an approximation from above.
+# v2.3 (decision of 2026-10-13; census format 30): new item census.findable, the census efficiency denominator
+# (charged, >= 4 credited hits, IT clusters plus OT stubs in any mix, hits not layers, each OT stub one hit);
+# every credited hit counts the same in every census figure, with no position-based variant (the v2.2
+# position qualifier and the format-29 position diagnostics are withdrawn); a credit means the hit was made by
+# the TP or by one of its unstored Geant4 daughters (truth.cluster_tp, truth.stub; WDMac
+# wpd0a/oot_truth_investigation.md).
+# v2.4 (decision of 2026-10-14; census format 31) amends census.findable only: two or more credited hits of a TP on
+# one module count as ONE hit, so the findable count is the number of distinct modules carrying a credited IT
+# cluster (L1TSmartPixelsCluster_detId) or a credited OT stub (L1TOTStub_detId) of the TP, the IT and OT modules
+# kept apart; >= 4, charged, each stub one hit, as in v2.3.
+# v2.5 (decisions of 2026-10-14, P0.3 pre-registration amendment 1d) amends angle.error_table and angle.cut_level
+# only: every quantile (table and cutting consumers) is the k-th smallest with k = min(ceil(L (n + 1)), n), so
+# E[coverage] >= L (levels n values cannot reach are listed); the table centre is the median of the pulls; the
+# weighting width is q95 / 1.96 of |pull - centre| (a quantile, validated by the table's coverage tests), the B.1
+# core width and clipped mean being reported diagnostics only.
+# v2.6 (decision 12 "as CMSSW", applied 2026-10-14; census format 32) amends truth.census_owner and
+# truth.seed_truthful only: a tie gives no owner (CMSSW never breaks a tie; truth spec sec. 4), replacing the
+# larger-index rule of census formats <= 31; a seed credited to several TPs by every hit has no seed TP.
+# v2.7 (the physicist's approval of 2026-10-14 of statistics review 02's round-4 recipe; P0.3 pre-registration
+# amendment 1e) amends angle.error_table only: the centre is the 25 %-trimmed mean of the pulls (the mean of their
+# central 50 %) and the weighting width is the mean of the smallest 95 % of |pull - centre| divided by 0.7168 (its
+# unit-Gaussian value), replacing v2.5's median and q95 / 1.96; the width is not a quantile and is validated by the
+# table test's adequacy check. Cut quantiles and their rank (and angle.cut_level) are v2.5's, unchanged.
+# v2.8 (P0.3 pre-registration amendment 2, the physicist's decisions of 2026-10-14) adds the item
+# angle.error_table_disc_local: module-frame disc rows of the angle table for module-frame consumers (the
+# replay's disc calibration), with the angle.error_table recipe and test unchanged. It also repoints
+# angle.k_knob.implementation to ngtagger.spdefs as the single implementation of the knob (census format 33
+# removed the census's own knob and imports spdefs). No other item changes.
+# Amendments are versioned (v1.1, v2 ...) and never edit a published version in place: a result names
+# the version it used (registry field `definition_sheet`).
+# Status per item: adopted | provisional (set by the named package, as an amendment).
+version: v2.8
+date: "2026-10-14"
+sources:
+  - "plan.md round 7 (2026-10-06): App. B.1, B.4, C.2, D.1, D.3, D.9, F, J.3"
+  - "report.md decisions of 2026-10-08/09 (they override the plan where they differ)"
+  - "WP-D0a (2026-10-09): decision 12 implemented in the census, format 28"
+  - "WP-D0a review 01 (2026-10-13; WDMac wpd0a/review-01.md) and the CMSSW truth spec (wpd0a/cmssw_truth_spec.md): v2.1 wording"
+  - "WP-D0a review 02 (2026-10-13; WDMac wpd0a/review-02.md): v2.2, the position qualifier"
+  - "decision of 2026-10-13 (the census denominator) and the out-of-time truth investigation (WDMac wpd0a/oot_truth_investigation.md): v2.3"
+  - "decision of 2026-10-14 (one hit per module in the census denominator): v2.4"
+  - "decisions of 2026-10-14 (P0.3 amendment 1d: quantile rank, median centre, width = q95 / 1.96): v2.5"
+  - "decision 12 'as CMSSW' (ties: CMSSW truth spec sec. 4, WDMac wpd0a/cmssw_truth_spec.md), applied 2026-10-14: v2.6"
+  - "physicist's approval of 2026-10-14 of statistics review 02 round 4 (P0.3 amendment 1e: trimmed-mean centre and width): v2.7"
+  - "P0.3 amendment 2 (module-frame disc rows; reviews stats-review-a2-01, geom-review-a2-01; the physicist's decision to pool the facings, 2026-10-14) and census format 33 (297852e): v2.8"
+implementation: "ngtagger.definitions (estimators, helix, matched_wp, puppi_dxy); registry statuses in ngtagger.spops.registry"
+
+sections:
+
+- id: scenarios
+  title: Scenarios, samples, surfaces
+  items:
+  - id: scenario.masks
+    title: Scenario masks
+    summary: "A/I per inner layer IL1..IL4 (and disc IDk); IIII = outer tracker only (passthrough)."
+    definition: >-
+      Four characters, one per inner-tracker layer IL1..IL4: A = SmartPixels active, I = inactive; character k
+      applies to barrel layer ILk AND disc IDk together. IIII = outer-tracker (OT) only: the SmartPixels track
+      equals its OT track (passthrough). Studied: IIII, AAAA, AAAI, IAAA.
+    implementation: [ngtagger.data.spix_nano.mask_surfaces]
+    status: adopted
+  - id: scenario.track_parameters
+    title: Track parameters
+    summary: "5-parameter tracks in every arm; no 4-parameter IIII."
+    definition: >-
+      Every arm, IIII included, uses 5-parameter tracks (fitted d0). No 4-parameter IIII is produced
+      (decision 5): only IIII with 5-parameter tracks is a meaningful baseline.
+    source: "decision 5"
+    status: adopted
+  - id: scenario.eras
+    title: Production eras
+    summary: "canon_v2 and canon_v3; never mix their jet labels; validation on canon_v3 TTbar files 1-10."
+    definition: >-
+      canon_v2 (CMSSW 92bad91b2ba) and canon_v3 (c4437481dec: adds PS / tilted flags to the OT stubs; gen-jet
+      partonFlavour differs, canon_v2's is non-stock). Never mix canon_v2 and canon_v3 jet labels in one
+      training. Validation input: canon_v3 TTbar files 1-10, all four scenarios (decision 11); canon_v2 TTbar
+      is kept until each canon_v3 file has been compared with it.
+    source: "report status; decision 11; plan B.3 last row"
+    status: adopted
+  - id: scenario.samples
+    title: Samples and the in-sample files
+    summary: "TTbar files 1-2 are cluster-CNN training data: train-only for tagging, in-sample for angles."
+    definition: >-
+      150X D121 PU200 RelVal TTbar, 100 events per file. TTbar files 1-2 hold the cluster-CNN training
+      events: their class-C angles are in-sample, so they are never test data for tagging (train-only) and
+      any result on them is marked in-sample. The angle-uncertainty table is fitted on files 1-2 and tested
+      on files 3-10.
+    status: adopted
+  - id: scenario.surfaces
+    title: Surfaces and their codes
+    summary: "IL1-IL4, ID1-ID4, OL1-OL6; the nano and the census number surfaces differently (11-14 discs vs 11-16 OT)."
+    definition: >-
+      Inner tracker barrel IL1-IL4 (module centres at 2.75-3.50, 5.9-6.65, 10.2-10.95, 14.4-15.15 cm; 150 um
+      sensors), inner-tracker discs ID1-ID4, outer-tracker barrel OL1-OL6. Two code spaces exist and must not
+      be mixed: the nano / spix_nano use 1-4 = IL1-IL4 and 11-14 = ID1-ID4; the census (barrel only) uses
+      1-4 = IL1-IL4 and 11-16 = OL1-OL6.
+    params: {nano_codes: {IL: [1, 2, 3, 4], ID: [11, 12, 13, 14]}, census_codes: {IL: [1, 2, 3, 4], OL: [11, 12, 13, 14, 15, 16]}}
+    status: adopted
+
+- id: truth
+  title: Truth
+  items:
+  - id: truth.cluster_tp
+    title: Cluster truth
+    summary: "Dominant-charge TP (its own hits or its unstored daughters'); -1/-2 none; <= -3 a TP not in L1TTP."
+    definition: >-
+      tpIdx = the TrackingParticle (TP) whose hits deposited the most charge (an L1TTP row); -1 / -2 = no TP;
+      <= -3 = a TP not written to L1TTP (a real particle). tpChargeFrac = its charge fraction. A TP's hits are
+      those made by the TP or by one of its unstored Geant4 daughters (born outside the tracker volume or with
+      kinetic energy <= 0.2 GeV, which SIM gives the parent's track id; TkAccumulatingSensitiveDetector.cc:
+      147-156, 236-249), so a credited cluster need not lie on the TP's own path (WDMac
+      wpd0a/oot_truth_investigation.md).
+    status: adopted
+  - id: truth.class_T
+    title: Class T and class C
+    summary: "Class T = TP helix within 1 cm (truth + 1.5x PixelAV residual); class C = the rest; truth columns never inputs."
+    definition: >-
+      Class T (tpEmuClass == 1): the cluster's TP helix passes within 1 cm of the cluster (no pT cut since the
+      2026-09-27 emulator fix round); its emitted angles are truth + 1.5 x a PixelAV Conv1D residual. Class C
+      (tpEmuClass == 0): every other cluster; its angles are a CNN estimate plus a donor residual. tpEmuClass
+      and every tp* cluster column are truth: never an input to a tracking or tagging decision.
+    status: adopted
+  - id: truth.shared_cluster
+    title: Shared cluster
+    summary: "Dominant TP below a charge fraction; threshold set by the refit-v2 audit (provisional)."
+    definition: >-
+      A cluster whose dominant TP carries less than `shared_charge_fraction` of its charge. Used in the
+      per-hit classes (correct / wrong-T / wrong-C / shared).
+    params: {shared_charge_fraction: null}
+    status: "provisional: the threshold is fixed by the refit-v2 audit (P0.2) as amendment v1.1; until then every result using 'shared' states its threshold"
+  - id: truth.stub
+    title: OT stub truth (census)
+    summary: "A stub counts for its principal TP and each cluster's dominant TP, one hit per TP; every credited hit counts the same; join by row index only."
+    definition: >-
+      An OT stub is credited to its principal TP and to the dominant TP of each of its two clusters, each
+      distinct matched TP once, so a stub is ONE hit for each TP it is credited to, however many of its
+      clusters credit that TP (decision 12; decision of 2026-10-13). A credit means the hit was made by the TP
+      or by one of its unstored Geant4 daughters (truth.cluster_tp), not necessarily on the TP's own path.
+      Columns: L1TOTStub_tpIdx (the principal: set only on a genuine stub, a TP
+      present in both clusters, occasionally neither cluster's dominant one), tpIdxInner and tpIdxOuter (the
+      dominant TP of the inner- and outer-sensor cluster: the TP with the largest SUMMED TP pT over the
+      cluster's strip simlinks, not the largest charge, so one strip of a high-pT TP can outrank the particle
+      that made most of the cluster). This is the nano's emulation of CMSSW's TP-to-stubs map, which credits
+      EVERY contributor of either cluster (TTStubAssociator.cc:72-88); the nano carries one TP per cluster, so a
+      minor contributor goes uncredited (measured by eval_refitq/wpd0a/owner_vs_cmssw.py). An unknown stub (no
+      TP in either cluster) is credited to nobody; -1 and -2 are not credited, <= -3 is a real TP; no
+      bunch-crossing cut. EVERY CREDITED HIT COUNTS THE SAME in every census figure (efficiencies, owner,
+      clean, resolution), whichever cluster credits it; there is no position-based variant (decision of
+      2026-10-13). For reference only: the stub's position is its inner cluster's
+      (L1SmartPixelsAllStubTableProducer.cc:132-135), and a credited stub can lie off the TP's path (a daughter's
+      hit, or a credit through the other cluster). An IT cluster is credited to its dominant TP only
+      (truth.cluster_tp). The
+      CMSSW flags genuine / combinatoric / unknown are kept as they are; tpIdx and tpGenuine were made by the
+      input's CMSSW_20_0_0_pre1 associator, whose genuine-cluster TP was the first raw simlink entry (CMSSW
+      truth spec sec. 0, 2), which decides the genuine / combinatoric split of the OT counters but not the
+      credit. Truth only: never an input to seeding, following or fitting. Stubs are joined by row index
+      (otStubIdx) only: their positions are not a key (about 1 % of stubs share (detId, x, y, z) with another
+      stub of the same seed cluster, and fully identical stub rows occur; fast-gate item nano.join_uniqueness).
+    implementation: [eval_refitq/combinatorics/tracklet_topology_cost.py credited_tps, hit_tps (census format 28); tests/test_census_credit.py]
+    source: "decision 12 (D13 a); v2: the columns and the dominant-TP limit; v2.1: wording, provenance (review 01); v2.3: one hit per stub, every credited hit the same, the daughter rule (decision of 2026-10-13)"
+    status: adopted
+  - id: truth.ot_track
+    title: OT track truth
+    summary: "CMSSW TTTrackAssociator categories."
+    definition: "CMSSW TTTrackAssociator: genuine, loosely genuine, combinatoric, unknown; tpIdx = its TP."
+    status: adopted
+  - id: truth.sp_track
+    title: SmartPixels track truth
+    summary: "SP track truth = its OT track's TP; hits correct / wrong-T / wrong-C / shared."
+    definition: >-
+      The OT track's TP everywhere SP-track truth is needed ("otlink"): residuals and labels of an SP track
+      are taken against the TP of the OT track it refits. Per IT hit: correct (dominant TP = that TP), wrong-T
+      (another TP, class T), wrong-C (class C), shared (truth.shared_cluster).
+    status: adopted
+  - id: truth.census_owner
+    title: Census owner
+    summary: "Majority owner in int64, each hit voting once per TP it is credited to; unmatched never wins; a tie gives no owner."
+    definition: >-
+      The majority owner: the TP credited by the most of the track's attached hits (IT clusters and OT
+      stubs), each hit voting once for every TP it is credited to (truth.stub), so an OT stub votes for the
+      TPs behind both of its clusters; n_own counts the hits crediting the owner and every other hit is wrong.
+      Hits with no TP (-1 / -2) never win; a TP not in L1TTP (<= -3) is a real owner. A TIE GIVES NO OWNER:
+      when two or more TPs share the largest count the track has no owner (own_tpidx -1, n_own 0, every hit
+      wrong), as CMSSW, which never breaks a tie (truth spec sec. 4; census formats <= 31 gave a tie to the
+      larger index). Computed in int64 (an int32 sentinel silently became TP 0 from 813be3e to format 24).
+      Diagnostics: n_tp_majority (census format >= 29), the TPs credited by more than half the hits (2 or
+      more: an ambiguous owner, which CMSSW's track associator would call combinatoric); n_tp_top (format >=
+      32), the TPs sharing the largest count (2 or more: a tie, no owner).
+    implementation: [eval_refitq/combinatorics/kf_emulation.py credited_owner, majority_owner, n_tps_above_half]
+    source: "v2: votes per credited TP (census format 28); v2.1: the format-29 diagnostic; v2.3: the outer-only diagnostic withdrawn; v2.6: a tie gives no owner (decision 12 'as CMSSW', census format 32)"
+    status: adopted
+  - id: truth.seed_truthful
+    title: Seed-truthful (census)
+    summary: "A seed finds a TP when every seed hit is credited to it."
+    definition: >-
+      A track is seed-truthful for a TP when every hit of its seed (2 or 3) is credited to that TP
+      (truth.stub); it then counts for each such TP. Confirmations on followed layers are not required (they
+      are what the layer rule counts). The census's found / found_dr bitmaps and its trip_true counter use it.
+      The seed's TP (seed_tp: the seed residual sample) is that TP when it is unique; a seed credited to two
+      or more TPs by every hit is truthful but has no seed TP (a tie, as truth.census_owner; format >= 32).
+    implementation: [eval_refitq/combinatorics/tracklet_topology_cost.py seed_credit, seed_tp, recovered_keys; seed_arity.py recovered_keys]
+    source: "v2 (census format 28); before, every seed cluster's own tpIdx had to agree; v2.6: the seed TP on a tie (format 32)"
+    status: adopted
+  - id: truth.delivery
+    title: Delivery (census) -- two definitions, always both
+    summary: "Delivered = majority owner (> half, >= 3 hits); clean = no wrong IT hit; always both (+ no wrong hit at all)."
+    definition: >-
+      A TP is delivered by a track that survives duplicate removal (DR) when it owns more than half, and at
+      least 3, of the track's hits (majority owner; the explorer's default). Clean delivery additionally
+      requires that the track carry no wrong IT hit. A third column, no wrong hit at all, is reported beside
+      them. Majority-owner delivery scores the rejection of tracks with wrong IT hits as an efficiency loss
+      (pessimistic for the angle stages); comparisons between angle arms use clean delivery.
+    status: adopted
+  - id: truth.census_fake
+    title: Census fake
+    summary: "DR survivor with >= 2 wrong hits; quoted at fixed clean efficiency after an angle-free quality cut."
+    definition: >-
+      A DR survivor with >= 2 wrong hits (n_wrong >= 2 with respect to its majority owner). Quoted at a working
+      point: the fake rate and fakes per event at a fixed clean delivered efficiency, after a track-quality
+      selection that uses no angle stage (the census chi2, or the quality MVA without angle features); the raw
+      post-DR count beside it, labelled "no quality selection".
+    status: adopted
+  - id: truth.genealogy
+    title: TP genealogy
+    summary: "b/c daughter, hard scatter vs pile-up, born beyond IL1 (r > 2.5 cm) / IL2 (r > 5.65 cm); |d0| bins are separate."
+    definition: >-
+      b / c-hadron daughter: L1TTP_genFromB / genFromC. Hard scatter: L1TTP_evt == 0, else pile-up. Production
+      radius r_prod = hypot(L1TTP_vx, L1TTP_vy). Born beyond IL1: r_prod > 2.5 cm (the boundary the refit-v2
+      harm and the cut calibration population already use); born beyond IL2: r_prod > 5.65 cm (the same
+      0.25 cm inside the innermost module centre as IL1's 2.5 vs 2.75 cm). Origin classes for tracking
+      figures: HF daughter (b or c), secondary (not HF, born beyond IL1), prompt (the rest). The |d0| bins are
+      a different axis: the WP2 `dlvHF` column is the |d0| 0.2-1 mm bin, not heavy-flavour genealogy.
+    params: {born_beyond_IL1_cm: 2.5, born_beyond_IL2_cm: 5.65}
+    status: "adopted (the IL2 radius is a v1 choice; amend if a package needs another)"
+  - id: truth.tagger_labels
+    title: Jet labels
+    summary: "8 classes by gen matching (dR < 0.4); kept = labelled and gen pT > 5 GeV; udsg = light + gluon."
+    definition: >-
+      Eight classes (b, charm, light, gluon, taup, taum, muon, electron), framework labels.py: L1 jet matched
+      to a GenJet within dR < 0.4 (hadronFlavour 5 = b, 4 = charm; 0 with |partonFlavour| <= 3 = light, 0 with
+      partonFlavour 21 = gluon), to a GenVisTau (charge sign), or to a prompt gen electron / muon with pT >
+      5 GeV; gen pT > 5 GeV. Kept jets: labelled (label >= 0) and gen pT > 5 GeV. Unmatched (pile-up) jets are
+      not in the labelled ROC; they enter only as evaluation-only backgrounds (per-jet mistag on pile-up
+      ttbar and MinBias jets). Background udsg = light + gluon. Pairs: b vs udsg, c vs udsg (c / (c + uds +
+      g)), tau vs light + gluon.
+    implementation: [ngtagger.data.labels.label_jets, eval_refitq/tagger_sp/analyze.py PAIRS]
+    status: adopted
+  - id: truth.tagger_population
+    title: Jet population and split
+    summary: "pT > 15 GeV, |eta| < 2.4; event-identity split, files 1-2 train-only; the across-arm jet key needs a tie-break."
+    definition: >-
+      Study acceptance: reco L1 jet pT > 15 GeV, |eta| < 2.4. Split by event identity (run, lumi, event): TTbar
+      files 1-2 always train; 20 % of all TTbar events are test, drawn from files 3-10 (seed 20260930); 20 % of
+      each H->tautau file. Comparisons use jets common to all four arms; the per-arm population is reported
+      beside it. The across-arm key (event, label, truth pT) is NOT unique (about 5 % of jets share it with
+      another jet of the same event): a matching must break those ties explicitly and say how.
+    implementation: [eval_refitq/tagger_sp/common.py split_table, event_key]
+    status: "adopted (the tie-breaking rule of the across-arm match is set by the stock-tagger package P0.5a)"
+
+- id: frames
+  title: Frames and conventions
+  items:
+  - id: frame.d0
+    title: d0 sign
+    summary: "d0 = x0 sin phi0 - y0 cos phi0 = -dxy at the POCA to the beam line."
+    definition: >-
+      d0 = x0 sin(phi0) - y0 cos(phi0) = -dxy (CMSSW L1 / TTTrack convention), at the point of closest approach
+      (POCA) to the beam line (the z axis): the POCA is (d0 sin phi0, -d0 cos phi0).
+    implementation: [ngtagger.definitions.helix]
+    source: "checked on canon_v2 TTbar AAAA file 3: the helix built this way passes the TP's innermost class-T cluster with a 3-4 um median (fast-gate item truth.tp_phi0_helix); the opposite sign gives 457 um for displaced TPs"
+    status: adopted
+  - id: frame.phi0
+    title: phi0 and the helix
+    summary: "phi0 at the POCA (tp_phi is at production); pT = KPT / |rInv|, KPT = 0.29979246 x 3.8112 / 100."
+    definition: >-
+      phi0 = the momentum azimuth AT THE POCA. tp_phi / L1TTP_phi are at the PRODUCTION vertex; use tp_phi0 /
+      L1TTP_phi0 (nanos from 2026-09-24) or truth_helix.poca_phi0. pT = KPT / |rInv| with KPT = 0.29979246 x
+      3.8112 / 100 (B at the origin); in B along +z a particle of charge q turns as dphi / ds = -q / R,
+      R = pT / KPT cm. Agreement of stored and recomputed phi0: < 3e-7 rad for prompt TPs, up to 7e-6 rad for
+      displaced ones (float32 inputs).
+    implementation: [ngtagger.truth_helix, ngtagger.definitions.helix]
+    status: adopted
+  - id: frame.module_orientation
+    title: Module orientation and the local-to-global sign
+    summary: "The global sense is outward; cotBeta's local-to-global sign follows each module's orientation."
+    definition: >-
+      A module's local +z (its normal) points away from or toward the beam line. cotAlpha = lx / lz and cotBeta
+      = ly / lz are unchanged when the direction is reversed, so the global sense comes from physics: the global
+      direction has a positive radial component at the module (an outward-going track). The local-to-global
+      sign of cotBeta flips with the orientation (the 2026-09-06 sense bug, SmartPixelsFrames.h). A module-local
+      consumer applies table centres with the module's own orientation sign, never with the global cot theta sign.
+    status: adopted
+  - id: frame.angles
+    title: Angle columns
+    summary: "Emitted local cotAlpha/cotBeta; usable if has-flag and |cot| <= 12; has-flags are uint8 (cast to bool)."
+    definition: >-
+      Emitted: localCotAlpha, localCotBeta (module frame), globalClusterPhi, globalClusterCotTheta. Truth:
+      tpLocalCotAlpha / tpLocalCotBeta at the cluster. Published uncertainties sigAlpha / sigBeta: the
+      emulator's inclusive (class T + C) table, (q84 - q16) / 2 per surface. An angle is usable when its
+      has-flag is set and |cot| <= 12 (MEAS_ANGLE_MAX_ABS); has-flags are uint8 columns: convert to bool
+      before using them as masks.
+    implementation: [ngtagger.data.spix_nano.angle_usable]
+    status: adopted
+  - id: frame.incidence_key
+    title: Incidence key of angle tables
+    summary: "Signed cot theta (barrel), signed 1/cot theta per module facing (discs); each consumer in its own key."
+    definition: >-
+      Barrel: signed cot theta. Discs: signed 1 / cot theta (= tan theta), separately per module facing
+      (equivalently the local signed cotBeta). Each consumer reads a table in its own key: the emitted angle
+      (the S1 cluster veto, which has no prediction) or the predicted angle (pair and projection gates, the
+      replay; the true angle stands in for the prediction when a table is fitted).
+    status: adopted
+  - id: frame.puppi_dxy
+    title: PF/PUPPI candidate dxy
+    summary: "Read hwDxy through the code table, never the float as cm; code 3 = d0 in [-39, +78) um."
+    definition: >-
+      The stock tagger receives hwDxy, an 8-bit sqrt-like code of the linked track's d0; the nano float `dxy` is
+      hwDxy / 64 in sqrt(cm) units and must never be read as cm (a prompt track would read 469 um). The only
+      valid reading is the measured code table: hwD0 = floor(d0 / (1/256 cm)), code = table(|hwD0|). Code 3
+      covers d0 in [-39.06, +78.13) um -- not |d0| < 78 um: a negative d0 between -78 and -39 um already gets
+      code 7, because hwD0 floors a signed value. Codes then step by 78.125 um in |hwD0| pairs (7, 9, 11, 12, 13).
+    implementation: [ngtagger.definitions.puppi_dxy]
+    source: "d0 study code table (2026-10-03); asymmetry measured on canon_v2 TTbar AAAA file 3 (fast-gate item puppi.dxy_lut)"
+    status: adopted
+
+- id: angles
+  title: Angles
+  items:
+  - id: angle.k_knob
+    title: Improved-angle knob k and its two uncertainty modes
+    summary: "angle' = truth + k(angle - truth) on class T, k <= 1; fixed and scaled (floor 5%) uncertainties, both reported."
+    definition: >-
+      On class T only: angle' = truth + k (angle - truth), 0 <= k <= 1 (k > 1 refused); class C unchanged.
+      Both modes are always reported (decision 10): fixed (the uncertainty is unchanged) and scaled
+      (max(k, 0.05) x the uncertainty: floored at 5 %). In both modes the subtracted table centre is k x the
+      centre in absolute angle units. Scaled-mode rejection is quoted as an upper bound (class C is not
+      improved, so an MVA can learn the class).
+    params: {k_range: [0.0, 1.0], scaled_floor: 0.05, modes: [fixed, scaled]}
+    implementation: ["ngtagger.spdefs.angles (knob, improve, sigma_k, centre_k, check_k): the single implementation; the census imports it (format 33, commit 297852e: census_angles.CensusAngles with per-angle handles k_alpha / k_beta, fixed / scaled), its own knob is removed"]
+    source: "decision 10 (D11 c)"
+    status: adopted
+  - id: angle.error_table
+    title: Angle-uncertainty table
+    summary: "Per surface x signed incidence bin: 25%-trimmed-mean centre, 95%-trimmed-mean width, 95-99.7% quantiles (rank ceil(L(n+1))); fit 1-2, test 3-10."
+    definition: >-
+      Per surface (IL1-IL4, ID1-ID4) x signed incidence bin (frame.incidence_key), for alpha and beta, from
+      class-T, helix-consistent clusters with pT >= 1 GeV. Per bin: the centre = the 25 %-trimmed mean of the
+      pulls (the mean of their central 50 %: floor(n / 4) values dropped at each end); the weighting width = the
+      mean of the smallest 95 % of d = |pull - centre| (the smallest 0.95 n values, the boundary value weighted by
+      the fractional part) divided by 0.7168, its unit-Gaussian value; and the quantiles of d at 95, 97.5, 99 and
+      99.7 %, each the k-th smallest of the n fit values with k = min(ceil(L (n + 1)), n), so that the expected
+      coverage on new clusters is >= L (a level n values cannot reach, e.g. 99.7 % with n <= 332, is listed per
+      row). Both keys (emitted; true). Fitted on files 1-2, tested on files 3-10; a bin with < 200 fit clusters
+      merges with its neighbour away from the plateau edges. Weighting consumers (KF update, hit arbitration,
+      replay / refit metric) use (pull - centre) / width; the width is a trimmed mean, continuous where two
+      populations meet (a quantile jumps there), so it is validated by the table test's adequacy check, not by
+      coverage; it is about the Gaussian core width in typical rows and narrower than the tails, so weighting
+      consumers keep their outlier gate. The B.1 core width (estimator.core), the clipped mean and the MAD are
+      reported per row as diagnostics, never used. Cutting consumers use angle.cut_level. The full residual shape
+      (the recorded two-component fits) follows in the refit investigation (decision 3, D10(c)). Every table
+      carries its era and fit sample.
+    params:
+      barrel_signed_cot_edges: [0, 0.3, 0.4, 0.5, 0.55, 0.6, 0.67, 0.8, 1.07, 1.5, 2.5, .inf]
+      disc_signed_tan_edges_per_facing: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.67, 0.8, .inf]
+      quantile_levels: [0.95, 0.975, 0.99, 0.997]
+      quantile_rank: "k = min(ceil(L (n + 1)), n)"
+      centre: trimmed_mean_25
+      weighting_width: {lower_fraction: 0.95, divisor: 0.7168}
+      min_fit_clusters_per_bin: 200
+      pt_min_gev: 1.0
+      fit_files: [1, 2]
+      test_files: [3, 4, 5, 6, 7, 8, 9, 10]
+    source: "decision 3 (D10 b); decisions of 2026-10-14 (P0.3 amendments 1d and 1e; statistics review 02 round 4)"
+    status: adopted
+  - id: angle.error_table_disc_local
+    title: Angle-uncertainty table, module-frame disc rows
+    summary: "Discs ID1-ID4 x signed local-incidence bin (facings pooled): the angle.error_table recipe on module-frame cot pulls with the local sigma."
+    definition: >-
+      For module-frame consumers on the discs (the replay's disc calibration). Per disc ID1-ID4 x signed
+      local-incidence bin, for alpha and beta, from the angle.error_table population on the discs (class T,
+      helix-consistent, TP pT >= 1 GeV) with finite local sigmas. Key k_loc = sign(cotBeta) sqrt(cotAlpha^2 +
+      cotBeta^2) of the module-frame cots (the tangent of the angle to the module normal, signed by cotBeta;
+      no orientation): emitted_local from localCotAlpha / localCotBeta, true_local from the TP's
+      tpLocalCotAlpha / tpLocalCotBeta. k_loc = (-sx sign(d_r)) x the global disc key: s x it on canon_v3's
+      radial-sense global columns, not under the CMSSW disc sense-rule fix (15c345f36da); the rows use only
+      the module-frame angles, which the fix leaves bit-identical. Bin |edges| and the merge rule are
+      angle.error_table's disc ones. Pull = (localCot - tpLocalCot) / sigma, with sigma = sigAlpha / sigBeta,
+      the published local resolutions in cot units (the emulator's correctionlib "cotAlpha / cotBeta
+      resolution"). Per row: centre, weighting width and quantiles exactly as angle.error_table (25 %-trimmed
+      mean; mean of the smallest 95 % of |pull - centre| / 0.7168; k = min(ceil(L (n + 1)), n) at 95 - 99.7 %),
+      tested with angle.error_table's test and materiality rule. The two module facings are POOLED (the
+      physicist's decision of 2026-10-14): in canon_v3 they agree by construction of the emulator (its
+      response and sigma tables have no facing input), which is not evidence about a real sensor; re-test if
+      the payload becomes orientation-aware. The geometric facing of every disc module (-sign of the
+      determinant of the local -> global position map, |det| ~ 1) is stored with the table. Consumers in the
+      module frame apply a row in pull units: cot' = cot - c sigma, sigma' = w sigma.
+    params:
+      keys: [emitted_local, true_local]
+      key: "k_loc = sign(cotBeta) sqrt(cotAlpha^2 + cotBeta^2), module frame"
+      pull: "(localCot - tpLocalCot) / sigAlpha|sigBeta, cot units"
+      facings: pooled
+      surfaces: [ID1, ID2, ID3, ID4]
+      recipe_and_test: angle.error_table
+      fit_files: [1, 2]
+      test_files: [3, 4, 5, 6, 7, 8, 9, 10]
+    implementation: ["ngtagger.spdefs.angles (MODULE_KEYS, local_incidence_key, local_key, local_cot, true_local_cot, sigma_local, local_pull, facing_from_positions); eval_refitq/p03_angles/table.py --frame module"]
+    source: "P0.3 pre-registration amendment 2 (2026-10-14) and its review addition; stats-review-a2-01, geom-review-a2-01"
+    status: adopted
+  - id: angle.cut_level
+    title: Census angle cuts
+    summary: "Each census angle cut keeps 99% of correct particles in its own statistic; S6 per number of angle measurements."
+    definition: >-
+      Each cut keeps 99 % of correctly reconstructed particles (decision 2): it cuts at the per-bin 99 %
+      quantile of the consumer's OWN statistic (the k-th smallest, k = min(ceil(L (n + 1)), n), as in
+      angle.error_table, so the expected efficiency is >= 99 % in every bin with n >= 99; ngtagger.spdefs
+      consumer_quantile), measured on class-T clusters of TPs born inside 2.5 cm (prompt
+      and b / c daughters, every event origin), with the efficiency reported per genealogy class. Statistics:
+      S1 the single-cluster alpha pull (emitted key); S2a the larger of the two clusters' alpha pulls against
+      the pair's curvature; S2z / S2j the pair z0-difference pull (inner cluster's signed incidence bin); S3 /
+      S4w the residual including the prediction; S6 the total angle chi2 of the track, cut separately for each
+      number of angle measurements (2-8) and each build. Calibration on canon_v3 file 1 (class T), coverage on
+      file 4, gated on file 3. In scaled mode the quantile is re-measured at each k; in fixed mode it stays at
+      its k = 1 value. Weighting consumers add their prediction error once; cutting consumers do not (the
+      quantile contains it).
+    params: {level: 0.99, s6: "per number of angle measurements and per build", quantile_rank: "k = min(ceil(L (n + 1)), n)"}
+    source: "decision 2 (replaces D19's recommended (b')); decision of 2026-10-14 (quantile rank, P0.3 amendment 1d)"
+    status: adopted
+  - id: angle.disc_default
+    title: Disc angles
+    summary: "Disc angles on by default, labelled unvalidated until the disc calibration."
+    definition: "On by default wherever they can help; labelled unvalidated until the disc calibration (decision 7)."
+    source: "decision 7"
+    status: adopted
+
+- id: census
+  title: Census conventions
+  items:
+  - id: census.ot_truncated
+    title: OT-truncated region
+    summary: "|eta| 0.94-1.4 labelled OT truncated; headlines also at |eta| < 0.9."
+    definition: >-
+      |eta| 0.94-1.4 is labelled "OT truncated" (the census's OT barrel ends there) until the disc work. The
+      explorer's bins (< 1.1, 1.1-1.8, 1.8-2.4) stay; the < 1.1 bin is labelled as containing the truncated
+      0.94-1.1 region, and headlines are also quoted at |eta| < 0.9.
+    params: {truncated_abs_eta: [0.94, 1.4]}
+    implementation: [eval_refitq/combinatorics/tracklet_topology_cost.py OT_TRUNCATED_ETA, eta_range_label (census format 28; angle_stage_metrics, export_site, wpd0a/before_after)]
+    source: "decision 12 (D13 b)"
+    status: adopted
+  - id: census.findable
+    title: Findable TP (the census efficiency denominator)
+    summary: "Charged TP with credited hits on >= 4 distinct modules, IT plus OT in any mix; one hit per module, each stub one hit."
+    definition: >-
+      A TrackingParticle is findable, and enters the denominator of every census efficiency (seed-truthful and
+      delivered), when it is charged and carries credited hits on at least 4 distinct modules in the census's
+      acceptance: IT barrel clusters plus OT barrel stubs (|stub eta| <= 1.4) in any mix (4 IT, 4 OT or any
+      combination summing to >= 4), credited by truth.stub. ONE HIT PER MODULE: two or more credited hits of the
+      TP on one module count once (decision of 2026-10-14); hits on two overlapping modules of one layer count
+      twice (modules, not layers). The module is L1TSmartPixelsCluster_detId for an IT cluster (the pixel
+      module's rawId) and L1TOTStub_detId for an OT stub (the stacked module's lower-sensor rawId, one value per
+      module); IT and OT modules are kept apart (a system tag above the 32-bit rawId; the rawIds' subdetector
+      fields already differ). An OT stub is ONE hit (never two, although it holds two sensor clusters and may be
+      credited through either or both); an IT cluster is one hit. Charged as in CMSSW's L1TrackNtupleMaker, which skips charge == 0: a
+      neutral TP (photon, K0L, neutron) can be credited with its unstored daughters' hits (truth.cluster_tp) and
+      is never findable. The pT and |eta| selections are those of each figure. Every credited hit counts the same;
+      no position-based definition. Comparison only (registry and before_after, not the page): the barrel
+      analogue of L1TrackNtupleMaker's denominator, charged TPs with credited stubs in >= 4 OT layers, event-id 0.
+    params: {min_credited_modules: 4, charged: true, ot_stub_counts_as: 1, hits_per_module_count_as: 1, it_module: L1TSmartPixelsCluster_detId, ot_module: L1TOTStub_detId}
+    implementation: [eval_refitq/combinatorics/tp_findability.py findable, FINDABLE_MIN_HITS, module_key, chunk_census n_mod_it / n_mod_ot (census format 31); tests/test_census_credit.py]
+    source: "decision of 2026-10-13 (the physicist): >= 4 credited hits, any IT/OT mix, hits not layers, one hit per stub, charged; v2.4: decision of 2026-10-14, one hit per module"
+    status: adopted
+  - id: census.builds
+    title: Builds and duplicate removal
+    summary: "Each build follows only into its own surfaces; duplicate removal within a build."
+    definition: >-
+      One build per scenario: its seeds follow only into that build's active IT surfaces and the OT; duplicate
+      removal runs within a build, never across builds (fast-gate item census.builds_and_dr).
+    status: adopted
+  - id: census.stages
+    title: Census stages
+    summary: "S1-S8; each switch changes only its own stage; the no-angle arm is position-complete."
+    definition: >-
+      S1 cluster alpha veto; S2a / S2z / S2j pair pre-gates; S3 triplet attach; S4w / S4a projection window /
+      arbitration; S5 KF update; S6 angle-chi2 accept; S7 DR rank; S8 MVA features. Each switch changes only
+      its own stage; the no-angle arm uses every position measurement the angle arm uses.
+    status: adopted
+
+- id: foms
+  title: Figures of merit
+  items:
+  - id: fom.thresholds
+    title: Common absolute thresholds
+    summary: "|dd0| 0.1/0.2/0.5/1/5 mm, |dz0| 0.5/1/5 mm, |dpT/pT| 0.2/0.5, same for every arm."
+    definition: "|delta d0| 0.1 / 0.2 / 0.5 / 1 / 5 mm; |delta z0| 0.5 / 1 / 5 mm; |delta pT / pT| 0.2 / 0.5 -- identical for every arm."
+    params: {d0_mm: [0.1, 0.2, 0.5, 1, 5], z0_mm: [0.5, 1, 5], rel_pt: [0.2, 0.5]}
+    status: adopted
+  - id: fom.harm
+    title: Harm
+    summary: "SP worse than OT by > 0.5 mm in d0 or > 1 mm in z0."
+    definition: >-
+      A track is harmed when its SP track is worse than its OT track by more than 0.5 mm in d0
+      (|d0_SP - d0_true| - |d0_OT - d0_true| > 0.5 mm) or by more than 1 mm in z0 (the same with z0), truth =
+      the OT track's TP. H = harmed fraction of prompt tracks per |eta| x pT bin; P = wrong-hit rate at the
+      first-visited surface, per surface.
+    params: {d0_mm: 0.5, z0_mm: 1.0}
+    status: adopted
+  - id: fom.first_visited_surface
+    title: First-visited surface
+    summary: "First IT surface of an outside-in refit (IL4; IL3 in AAAI)."
+    definition: "The first IT surface an outside-in refit reaches: IL4 in AAAA and IAAA, IL3 in AAAI (on the discs, the outermost active disc)."
+    status: adopted
+  - id: fom.attachment
+    title: Attachment
+    summary: "Correct hit at a surface among tracks whose TP has a cluster there."
+    definition: >-
+      The fraction of tracks given the correct hit at a surface, among the tracks whose TP left a cluster on
+      that surface (attachable).
+    status: "adopted (the denominator is a v1 choice)"
+  - id: fom.resolution
+    title: Resolution reporting
+    summary: "Core, fraction outside, full RMS, thresholds, harm; |eta| x pT x origin bins."
+    definition: >-
+      Core (estimator.core), fraction outside the core, full RMS about zero, plus the common thresholds and
+      harm. Binned |eta| x pT {2-3, 3-5, 5-10, > 10 GeV} x origin {prompt, HF daughter, secondary}; heavy-flavour
+      daughters |eta|-inclusive in 2 pT bins. Every k table also gives the absolute angle uncertainty (core and
+      full) per surface.
+    status: adopted
+  - id: fom.matched_wp
+    title: Matched working points
+    summary: "Exactly matched background with tie splitting, in every arm and replica; realised fraction reported."
+    definition: >-
+      Every arm is compared at exactly the same background fraction: on discrete scores the jets tied at the
+      threshold are accepted with the fraction that makes the weighted background fraction equal the target
+      (tie splitting = ROC interpolation), in every arm and every bootstrap replica (thresholds re-derived per
+      replica); the realised background fraction is reported beside every efficiency. Points: the menu point
+      (the udsg mistag of the stock cut bTagScore > 0.15 on IIII), 10 %, 1 % udsg mistag; c / (c + uds + g) at
+      30 % and 10 %; tau vs light + gluon at matched background.
+    params: {stock_menu_cut: 0.15, mistag_points: ["menu", 0.10, 0.01]}
+    implementation: [ngtagger.definitions.matched_wp]
+    status: adopted
+  - id: fom.vertexing
+    title: Vertexing
+    summary: "Correct vertex = nearest gen vertex is the hard scatter; common |dz| windows."
+    definition: "Correct vertex: the reco PV's nearest gen vertex is the hard scatter; |dz| < 0.5 / 1 / 1.5 mm, identical for every arm."
+    status: adopted
+
+- id: estimator
+  title: Estimator and statistics
+  items:
+  - id: estimator.core
+    title: The one width estimator (B.1 core)
+    summary: "RMS about zero of a mode-seeded iterative 3-sigma clip; unit-free (no magnitude cuts)."
+    definition: >-
+      The RMS about zero of a mode-seeded iterative 3-sigma clip: centre seeded at the most populated of 400
+      bins over the 0.5-99.5 % quantiles, width at the 68.27 % quantile of |x - centre|; iterate {window
+      |x - c| < 3 w; c, w = mean, std of the window} until both move by less than 1e-5 of w (at most 50 times);
+      at least 200 values. Reported with the fraction outside the window and the full RMS about zero. The
+      estimator is unit-free: core(k x) = k core(x); it never cuts on magnitude. MAD is a shape flag only.
+    implementation: [ngtagger.definitions.estimators.core]
+    source: "census pull table core (emu_pulls_table.py), made unit-free on 2026-10-09 after the refit-v2 audit found its |x| < 1e3 cut wrong for residuals in um"
+    status: adopted
+  - id: estimator.sentinels
+    title: Sentinels and validity
+    summary: "Remove sentinels with explicit validity masks (tpIdx >= 0, has-flags), never by magnitude."
+    definition: >-
+      Absent or unmatched values are removed with an explicit validity mask by the caller, never by magnitude:
+      truth columns of unmatched OT tracks (tp_d0, tp_z0 = -999; tp_pt = -1) are valid only where tpIdx >= 0;
+      cluster tp* columns (-999) only where tpIdx >= 0; absent angle columns (< spix_nano.ABSENT_BELOW = -900)
+      and has-flag 0 are invalid, and |cot| > 12 is not usable; tpIdx -1 / -2 means no TP. A magnitude cut is
+      a physics selection and is stated as one.
+    status: adopted
+  - id: stats.bootstrap
+    title: Errors
+    summary: "Event-level paired bootstrap, >= 250 replicas, every fitted step re-fitted."
+    definition: >-
+      Event-level bootstrap (paired across arms; tracks and jets of one event correlate), >= 250 replicas, with
+      every threshold and fitted step re-derived per replica.
+    status: adopted
+  - id: stats.family_wise
+    title: Many bins
+    summary: "Per-bin threshold t(N) (Sidak, 1%) and chi2 p > 0.01 / number of tests."
+    definition: >-
+      Per-bin threshold t(N), the two-sided z that N correct z-scores exceed with total probability 1 % (Sidak):
+      3.89 / 4.01 / 4.17 / 4.33 / 4.47 / 4.62 / 4.70 sigma at N = 100 / 168 / 328 / 672 / 1312 / 2624 / 3904;
+      over bins, chi2 p > 0.01 divided by the number of chi2 tests.
+    implementation: [ngtagger.spcheck.core.t_family]
+    status: adopted
+  - id: stats.equivalence
+    title: No change and saturation
+    summary: "No change only by an equivalence test with a pre-set margin and measured power >= 80%."
+    definition: >-
+      Only by an equivalence test: the one-sided 95 % bound of the change lies inside a margin fixed in advance
+      by the decision; its power (pass probability at zero true change) is measured on the known-good input,
+      must be >= 80 % and is stated. A non-significant difference never certifies "no change".
+    status: adopted
+  - id: stats.gates
+    title: Gates
+    summary: "Tolerance from a named known-good; shown to fail on a named known-bad first."
+    definition: >-
+      A gate's tolerance comes from a named known-good input; the gate is shown to fail on a named known-bad
+      input before it judges anything; otherwise it is a report, not a gate (plan App. D.0).
+    status: adopted
+
+- id: tagger
+  title: Tagger
+  items:
+  - id: tagger.recipe
+    title: Training recipe
+    summary: "Deployed architecture, linear outputs, fixed epoch count past saturation of both arms, no early stopping."
+    definition: >-
+      The deployed architecture with linear class outputs, a fixed epoch count at which both the SmartPixels
+      and the IIII trainings have stopped improving, no early stopping (decision 4).
+    source: "decision 4"
+    status: adopted
+  - id: tagger.deployed_comparison
+    title: The deployed tagger on SmartPixels tracks
+    summary: "The deployed tagger (4-parameter training) on SP tracks is not used; retrained taggers decide."
+    definition: >-
+      The deployed (stock) NG tagger was trained on 4-parameter tracks (no fitted d0), while every scenario here
+      uses 5-parameter tracks: its measured gain on SmartPixels tracks is not a fair comparison and is not used.
+      The tagging result comes from taggers retrained on IIII and on the SmartPixels scenarios, all with
+      5-parameter tracks.
+    source: "report finding 6"
+    status: adopted
+
+- id: registry
+  title: Result statuses
+  items:
+  - id: registry.statuses
+    title: Status vocabulary
+    summary: "valid / void / pathology-affected / superseded / refit-v2 / payload-era / in-sample / exploratory / not-used."
+    definition: >-
+      valid; void (wrong, never used); pathology-affected; superseded; refit-v2 (valid for CMSSW refit v2 only);
+      payload-era (made with the payload-era angle model); in-sample; exploratory (indicative only); not-used
+      (correct but excluded from decisions by a user decision). Every result names its status, the reason, its
+      bias line and the definition-sheet version.
+    implementation: [ngtagger.spops.registry.STATUSES]
+    status: adopted

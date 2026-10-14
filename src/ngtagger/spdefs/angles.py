@@ -279,6 +279,82 @@ def to_local(angle, value, orientation, surface):
     return np.where(is_disc(surface), np.nan, v)
 
 
+
+# ---------------------------------------------------------------- module frame (angle.error_table_disc_local)
+# P0.3 amendment 2: disc rows keyed and measured in the MODULE frame, for module-frame consumers (the replay's
+# disc calibration). Added only: nothing above changes.
+MODULE_KEYS = ("emitted_local", "true_local")
+LOCAL_COLS = {"alpha": ("localCotAlpha", "tpLocalCotAlpha", "sigAlpha"),
+              "beta": ("localCotBeta", "tpLocalCotBeta", "sigBeta")}
+
+
+def local_incidence_key(cot_alpha, cot_beta):
+    """The module-frame incidence key k_loc = sign(cotBeta) sqrt(cotAlpha^2 + cotBeta^2): the tangent of the
+    angle to the module normal, signed by cotBeta; no orientation. On a disc module it equals
+    (-sx sign(d_r)) x the global disc key (signed 1 / cot theta): s x the global key on canon_v3's
+    radial-sense global columns, not under the CMSSW disc sense-rule fix (P0.3 amendment 2, R1)."""
+    ca = np.asarray(cot_alpha, np.float64)
+    cb = np.asarray(cot_beta, np.float64)
+    return np.sign(cb) * np.sqrt(ca * ca + cb * cb)
+
+
+def local_cot(angle, cols):
+    """The emitted module-frame cot of `angle` (localCotAlpha / localCotBeta)."""
+    return np.asarray(cols[LOCAL_COLS[angle][0]], np.float64)
+
+
+def true_local_cot(angle, cols):
+    """The TP's module-frame cot of `angle` at the hit (tpLocalCotAlpha / tpLocalCotBeta; valid where tpIdx >= 0)."""
+    return np.asarray(cols[LOCAL_COLS[angle][1]], np.float64)
+
+
+def sigma_local(angle, cols):
+    """The published LOCAL uncertainty of `angle`, in cot units (sigAlpha / sigBeta: the emulator's correctionlib
+    'cotAlpha / cotBeta resolution', keyed on surface and |reported cot|)."""
+    return np.asarray(cols[LOCAL_COLS[angle][2]], np.float64)
+
+
+def local_pull(angle, cols):
+    """The module-frame pull of angle.error_table_disc_local: (localCot - tpLocalCot) / sigma_local, cot units."""
+    return (local_cot(angle, cols) - true_local_cot(angle, cols)) / sigma_local(angle, cols)
+
+
+def local_key(key, cols):
+    """k_loc of the emitted (key 'emitted_local') or the TP's (key 'true_local') module-frame cots."""
+    which = {"emitted_local": local_cot, "true_local": true_local_cot}[key]
+    return local_incidence_key(which("alpha", cols), which("beta", cols))
+
+
+def facing_from_positions(det_id, local_x, local_y, global_r, global_phi):
+    """The geometric facing of disc modules from cluster positions (P0.3 amendment 2, M3 / R3): per module, the
+    least-squares affine map (localX, localY) -> (global x, global y) of its clusters; J = its 2 x 2 linear
+    part, det J = the z component of the module normal (+-1 for a flat disc module), facing = -sign(det J)
+    (canon_v3's orientation sign s). Returns (detIds, facing int8, det J, rms residual [cm], n clusters) for
+    the modules with >= 3 non-collinear clusters; disc clusters only (det J of a barrel module is ~0)."""
+    det_id = np.asarray(det_id)
+    lx, ly = np.asarray(local_x, np.float64), np.asarray(local_y, np.float64)
+    r, ph = np.asarray(global_r, np.float64), np.asarray(global_phi, np.float64)
+    gx, gy = r * np.cos(ph), r * np.sin(ph)
+    o = np.argsort(det_id, kind="stable")
+    ids, start, cnt = np.unique(det_id[o], return_index=True, return_counts=True)
+    keep, dets, rmss, ns = [], [], [], []
+    for i, (a, n) in enumerate(zip(start, cnt)):
+        sl = o[a:a + n]
+        if n < 3:
+            continue
+        X = np.c_[lx[sl], ly[sl], np.ones(n)]
+        if np.linalg.matrix_rank(X) < 3:
+            continue
+        cx, *_ = np.linalg.lstsq(X, gx[sl], rcond=None)
+        cy, *_ = np.linalg.lstsq(X, gy[sl], rcond=None)
+        res = np.r_[X @ cx - gx[sl], X @ cy - gy[sl]]
+        keep.append(i)
+        dets.append(cx[0] * cy[1] - cx[1] * cy[0])
+        rmss.append(float(np.sqrt(np.mean(res * res))))
+        ns.append(int(n))
+    dets = np.asarray(dets, np.float64)
+    return (ids[keep], (-np.sign(dets)).astype(np.int8), dets, np.asarray(rmss), np.asarray(ns, np.int64))
+
 # ---------------------------------------------------------------- the knob k (decision 10, D11 c)
 def check_k(k) -> float:
     k = float(k)

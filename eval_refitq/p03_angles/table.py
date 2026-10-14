@@ -40,6 +40,14 @@ Test, on the test sample, per bin of the same binning (every bin with >= 200 tes
     python table.py fit-only   ...   the recipe on files 1-2 without the test: UNTESTED table
 Exit: 0 pass; 5 MINOR deviations only (the table ships, deviations listed); 4 MATERIAL; 3 a known-bad passed.
 Outputs: $P03_OUT/p03_table_<mode>_a1e.json; the demonstration's fitted table in $P03_OUT/amend1e/.
+
+--frame module (amendment 2): the MODULE-FRAME DISC ROWS (angle.error_table_disc_local), the same recipe and
+rule: discs ID1-ID4 x signed local-incidence bin k_loc = sign(cotBeta) sqrt(cotAlpha^2 + cotBeta^2), facings
+pooled, keys emitted_local / true_local, pull = (localCot - tpLocalCot) / sigAlpha|sigBeta (cot units); the
+geometric facing map (disc modules, from positions) is stored with the table; known-bads (a) global rows read
+in the local frame, (c) wrong key, (d) folded, (e) x 1.05, (f) sigma swapped, (g) units swapped, KB-q95 / c / w;
+(b) the per-facing split is reported. Outputs p03_table_<mode>_a2.json, amend2/, the table
+angle_table_v1a1e_disclocal_canon_v3.json; the gated run needs amendment2_approval.txt.
 Earlier results (v1, amendments 1-1d) stay as they are.
 """
 from __future__ import annotations
@@ -60,7 +68,16 @@ import common as CM  # noqa: E402
 from ngtagger.spcheck.core import t_family  # noqa: E402
 from ngtagger.spdefs import angles as SA  # noqa: E402
 
-RULE = "P0.3 pre-registration amendment 1e (2026-10-14)"
+FRAMES = {   # --frame: the global table (amendment 1e) or the module-frame disc rows (amendment 2, the 1e rule)
+    "global": {"rule": "P0.3 pre-registration amendment 1e (2026-10-14)", "tag": "a1e", "keys": SA.KEYS,
+               "table": "angle_table_v1a1e_canon_v3.json", "untested": "angle_table_v1a1e_canon_v3_UNTESTED.json",
+               "approval": "amendment1e_approval.txt", "amend_dir": "amend1e", "item": "angle.error_table"},
+    "module": {"rule": "P0.3 pre-registration amendment 2 (2026-10-14; the amendment-1e rule)", "tag": "a2",
+               "keys": SA.MODULE_KEYS, "table": "angle_table_v1a1e_disclocal_canon_v3.json",
+               "untested": "angle_table_v1a1e_disclocal_canon_v3_UNTESTED.json", "approval": "amendment2_approval.txt",
+               "amend_dir": "amend2", "item": "angle.error_table_disc_local"},
+}
+FRAME = FRAMES["global"]
 SEED = 20261014          # amendment 1b; replica streams are keyed by (seed, scheme, fit files, replica)
 LEVELS = SA.LEVELS
 I95 = LEVELS.index(0.95)
@@ -69,10 +86,6 @@ REGISTRY_SCALES = Path.home() / "smartpixels" / "sp_registry" / "results" / "app
 DEMO_SPLIT = ((7, 8), (3, 4, 5, 6, 9, 10))   # amendment 1b (amendment 1: fit 9-10, test 3-8)
 SPLITS = {"diagnosis": ((3, 4), (5, 6, 7, 8, 9, 10)), "known-good": DEMO_SPLIT, "known-bad": DEMO_SPLIT,
           "gated": (SA.FIT_FILES, SA.TEST_FILES), "fit-only": (SA.FIT_FILES, SA.FIT_FILES)}
-TABLE_FILE = "angle_table_v1a1e_canon_v3.json"
-UNTESTED_FILE = "angle_table_v1a1e_canon_v3_UNTESTED.json"
-APPROVAL_FILE = "amendment1e_approval.txt"
-AMEND_DIR = "amend1e"
 KNOWN_BADS = {
     "folded": "the folded |key| table (signs pooled; the round-4 table's binning), read by |key|",
     "cotbinned_disc": "disc rows binned like the barrel in signed cot theta (barrel edges; 75-98% of disc clusters in "
@@ -84,6 +97,20 @@ KNOWN_BADS = {
                        "cut's efficiency): the rule must detect it",
 }
 TEST_SCALE = {"test_scale_1p05": 1.05}
+KNOWN_BADS_LOCAL = {   # amendment 2 (R5): the module-frame known-bads
+    "global_rows": "(a) the GLOBAL-key table read in the local frame: the amendment-1e global disc rows (global pulls, "
+                   "global key and facing; canon_v3's radial-sense columns) fitted on the same fit sample, applied to "
+                   "the module-frame pulls: must fail",
+    "wrong_key": "(c) the table read in the wrong key (emitted_local <-> true_local): must fail",
+    "folded": "(d) the folded |k_loc| table (signs pooled): must fail",
+    "test_scale_1p05": "(e) every test-sample pull x 1.05: must fail",
+    "sigma_swapped": "(f) the global published sigma mapped to local cot units (beta: sigma(cot theta) tan^2 theta; "
+                     "alpha: sigma(phi) |cotBeta| (1 + cotAlpha^2 / cotBeta^2)) in place of the local sigma, test side: "
+                     "must fail through (i)",
+    "units_swapped": "(g) atan-angle pulls (atan cot_e - atan cot_t) / (sigCot / (1 + cot_e^2)), test side, against the "
+                     "cot-unit table: must fail through (i), per-row power reported",
+}
+MUST_FAIL_I_LOCAL = ("sigma_swapped", "units_swapped")
 PERTURBED = {   # amendments 1d / 1e: defects of the fitted table, applied in every replica to the plateau-edge rows
     "kb_q95_plateau_x0p9": {
         "pert": {"q95_scale": 0.9},
@@ -111,8 +138,14 @@ MATERIAL_SHARE = 0.02                     # ... and (i) / (ii) failing bins hold
 FALSE_VETO_MAX = 0.057                    # ... and a (i) + (ii) false-veto rate above 5.7 % on the run's re-splits
 
 
+def set_frame(name: str) -> None:
+    """Select the table frame (FRAMES) for the run, its outputs and its rule."""
+    global FRAME
+    FRAME = FRAMES[name]
+
+
 def result_name(mode: str) -> str:
-    return f"p03_table_{mode}_a1e.json"
+    return f"p03_table_{mode}_{FRAME['tag']}.json"
 
 
 # ---------------------------------------------------------------- binnings
@@ -121,17 +154,26 @@ def _fold(fb, n):
     return np.where(fb >= h, fb - h, h - 1 - fb)
 
 
-def fine_index(kind: str, C: dict, cot: np.ndarray):
-    """(facing used, fine bin index) of each cluster under binning `kind`, from its cot theta."""
+def fine_index(kind: str, C: dict, key: str):
+    """(facing used, fine bin index) of each cluster under binning `kind` in table key `key`: from the
+    cluster's incidence key C["kv"][key] (global: signed cot theta / 1 / cot theta; module frame: k_loc), or
+    from cot theta for the cotbinned_disc known-bad; the module-frame known-bad global_rows uses the global
+    key and facing (kv_g, facing_g), the reported facing split the geometric facing (facing_geo)."""
     s = C["surface"]
     disc = SA.is_disc(s)
-    fac = np.where(disc & (kind == "pooled_disc"), 0, C["facing"]).astype(np.int8)
+    if kind == "global_rows":
+        kv, fac = C["kv_g"][key], C["facing_g"]
+    else:
+        kv = C["kv"][key]
+        fac = C["facing_geo"] if kind == "facing_split" else C["facing"]
+    fac = np.where(disc & (kind == "pooled_disc"), 0, fac).astype(np.int8)
     if kind == "cotbinned_disc":
+        cot = C["cotv"][key]
         se = SA.signed_edges(SA.BARREL_ABS_EDGES)
         fb_cot = np.clip(np.searchsorted(se, cot, side="right") - 1, 0, len(se) - 2).astype(np.int16)
-        fb = np.where(disc, fb_cot, SA.fine_bin(s, SA.incidence_key(s, cot)))
+        fb = np.where(disc, fb_cot, SA.fine_bin(s, kv))
     else:
-        fb = SA.fine_bin(s, SA.incidence_key(s, cot))
+        fb = SA.fine_bin(s, kv)
         if kind == "folded":
             for sv in SA.SURFACES:
                 m = (s == sv) & (fb >= 0)
@@ -156,17 +198,24 @@ def bounds(kind: str, s: int) -> list:
     return [SA.fine_bin_bounds(s, b) for b in range(SA.N_FINE[s])]
 
 
-def facings(kind: str, s: int) -> tuple:
-    return (0,) if (s in SA.BARREL or kind == "pooled_disc") else (-1, 1)
+def facings(kind: str, s: int, C: dict) -> tuple:
+    """The facings a table of binning `kind` has rows for on surface s: one row set on the barrel, for
+    pooled discs, and on the module frame's discs (facings pooled, amendment 2 R2) except for its reported
+    facing split and its global_rows known-bad."""
+    if s in SA.BARREL or kind == "pooled_disc":
+        return (0,)
+    if C.get("pooled_facings") and kind not in ("facing_split", "global_rows"):
+        return (0,)
+    return (-1, 1)
 
 
 def build_rows(kind: str, C: dict, key: str):
     """Rows of a table of binning `kind` in `key` from the fit clusters C (merge rule on their
     counts). Returns (rows meta, rowmap {(s, f): array over fine bins -> row id})."""
-    fac, fb = fine_index(kind, C, C["cotv"][key])
+    fac, fb = fine_index(kind, C, key)
     rows, rowmap = [], {}
     for s in SA.SURFACES:
-        for f in facings(kind, s):
+        for f in facings(kind, s, C):
             g = (C["surface"] == s) & (fac == f) & (fb >= 0)
             if not g.any():
                 continue
@@ -183,7 +232,7 @@ def build_rows(kind: str, C: dict, key: str):
 
 
 def row_of(kind: str, rowmap: dict, C: dict, key: str) -> np.ndarray:
-    fac, fb = fine_index(kind, C, C["cotv"][key])
+    fac, fb = fine_index(kind, C, key)
     out = np.full(len(fb), -1, np.int32)
     for (s, f), arr in rowmap.items():
         m = (C["surface"] == s) & (fac == f) & (fb >= 0)
@@ -200,10 +249,99 @@ def mirror_row(rows: list, rowmap: dict, i: int) -> int:
 
 
 # ---------------------------------------------------------------- data
+LOCAL_EXTRA_COLS = ("tpLocalCotAlpha", "tpLocalCotBeta", "sigAlpha", "sigBeta")
+
+
+def _disc_local_population(Z) -> np.ndarray:
+    """amendment 2: the angle table's population (class T, usable direction, TP pT >= 1 GeV) on the discs
+    ID1-ID4, with finite positive local sigmas."""
+    ok = CM.table_population(Z) & SA.is_disc(Z["surface"]) & np.isin(Z["surface"], SA.SURFACES)
+    for c in ("sigAlpha", "sigBeta"):
+        ok &= np.isfinite(Z[c]) & (Z[c] > 0)
+    return ok
+
+
 def load_split(files) -> dict:
-    C = CM.load(files, CM.ANGLE_COLS, mask_fn=CM.table_population)
+    if FRAME is FRAMES["module"]:
+        C = CM.load(files, CM.ANGLE_COLS + LOCAL_EXTRA_COLS, mask_fn=_disc_local_population)
+    else:
+        C = CM.load(files, CM.ANGLE_COLS, mask_fn=CM.table_population)
     assert (C["w"] == 1).all(), "the table population must be unsubsampled"
     return C
+
+
+def geometric_facing(files) -> dict:
+    """amendment 2 (M3 / R3): the geometric facing map of the disc modules (SA.facing_from_positions) from the
+    nano of `files` (their caches' inputs; disc clusters, 5 columns). Asserts | |det J| - 1 | < 1e-3 and an rms
+    fit residual < 1e-3 cm per module; a module with < 3 non-collinear clusters falls back to canon_v3's
+    orientation rule (counted)."""
+    import awkward as ak
+    import uproot
+
+    cols = ("detId", "surface", "localX", "localY", "globalR", "globalPhi")
+    parts = {c: [] for c in cols}
+    for f in files:
+        with uproot.open(f"{CM.cache_meta(f)['input']}:Events") as t:
+            A = t.arrays([f"L1TSmartPixelsCluster_{c}" for c in cols])
+        D = {c: ak.to_numpy(ak.flatten(A[f"L1TSmartPixelsCluster_{c}"])) for c in cols}
+        m = SA.is_disc(D["surface"]) & np.isin(D["surface"], SA.SURFACES)
+        for c in cols:
+            parts[c].append(D[c][m])
+    D = {c: np.concatenate(v) for c, v in parts.items()}
+    ids, fac, det, rms, n = SA.facing_from_positions(D["detId"], D["localX"], D["localY"], D["globalR"], D["globalPhi"])
+    bad = (np.abs(np.abs(det) - 1.0) >= 1e-3) | (rms >= 1e-3)
+    if bad.any():
+        raise RuntimeError(f"geometric facing: {int(bad.sum())} disc modules fail |det J| ~ 1 / rms ~ 0 (e.g. detId "
+                           f"{ids[bad][:5].tolist()}, det {det[bad][:5].round(4).tolist()}, rms {rms[bad][:5].tolist()})")
+    all_ids = np.unique(D["detId"])
+    miss = np.setdiff1d(all_ids, ids)
+    fb_ids, fb_sg = np.zeros(0, ids.dtype), np.zeros(0, np.int8)
+    if len(miss):
+        o_ids, o_sg = CM.orientation_map(files)
+        k = np.isin(o_ids, miss)
+        fb_ids, fb_sg = o_ids[k], o_sg[k]
+    return {"ids": np.r_[ids, fb_ids], "sign": np.r_[fac, fb_sg].astype(np.int8),
+            "summary": {"modules_fitted": int(len(ids)), "fallback_canon_rule": int(len(fb_ids)),
+                        "unknown": int(len(miss) - len(fb_ids)),
+                        "abs_det_minus_1_max": float(np.max(np.abs(np.abs(det) - 1.0))) if len(det) else None,
+                        "rms_cm_max": float(rms.max()) if len(rms) else None,
+                        "clusters_per_module_min": int(n.min()) if len(n) else None}}
+
+
+def derive_local(C: dict, orient, facing_map: dict) -> dict:
+    """amendment 2: the global quantities (CM.derive, for known-bads (a) and (f)) kept as pull_g / kv_g /
+    facing_g, and the module-frame ones the table uses: the cot-unit local pulls (SA.local_pull), the keys
+    k_loc of the emitted / TP local cots (SA.local_key), facings pooled (facing 0) and the geometric facing
+    (facing_geo) for the reported split."""
+    C = CM.derive(C, orient)
+    C["pull_g"] = C["pull"]
+    C["kv_g"] = {loc: C["kv"][glob] for loc, glob in zip(SA.MODULE_KEYS, SA.KEYS)}
+    C["facing_g"] = C["facing"]
+    C["pull"] = {a: SA.local_pull(a, C) for a in SA.ANGLES}
+    C["kv"] = {k: SA.local_key(k, C) for k in SA.MODULE_KEYS}
+    C["facing_geo"] = SA.orientation_lookup(C["detId"], facing_map["ids"], facing_map["sign"])
+    C["facing"] = np.zeros(len(C["surface"]), np.int8)
+    C["pooled_facings"] = True
+    del C["cotv"]
+    return C
+
+
+def local_test_pulls(name: str, C: dict) -> dict:
+    """amendment 2 (R5): the test-side pulls of known-bads (f) sigma_swapped and (g) units_swapped."""
+    out = {}
+    with np.errstate(divide="ignore", invalid="ignore"):
+        for a in SA.ANGLES:
+            ce, ct = SA.local_cot(a, C), SA.true_local_cot(a, C)
+            if name == "units_swapped":
+                out[a] = (np.arctan(ce) - np.arctan(ct)) / (SA.sigma_local(a, C) / (1.0 + ce * ce))
+            elif a == "beta":
+                cot = np.asarray(C["globalClusterCotTheta"], np.float64)
+                out[a] = (ce - ct) / (np.asarray(C["sigGlobalClusterCotTheta"], np.float64) / (cot * cot))
+            else:
+                cb = SA.local_cot("beta", C)
+                out[a] = (ce - ct) / (np.asarray(C["sigGlobalClusterPhi"], np.float64) * np.abs(cb)
+                                      * (1.0 + ce * ce / (cb * cb)))
+    return out
 
 
 def event_index(ev: np.ndarray):
@@ -221,9 +359,12 @@ def fit_rows(kind: str, rowmap: dict, C: dict, key: str, flagged) -> np.ndarray:
 
 def pooled_sample(fit: dict, test: dict) -> dict:
     """The fit and test clusters as one sample (for the permutation), with the columns the chain uses."""
-    out = {c: np.concatenate([fit[c], test[c]]) for c in ("ev", "surface", "facing", "tp_pt")}
-    for d in ("pull", "cotv"):
-        out[d] = {k: np.concatenate([fit[d][k], test[d][k]]) for k in fit[d]}
+    out = {c: np.concatenate([fit[c], test[c]]) for c in ("ev", "surface", "facing", "tp_pt", "facing_g", "facing_geo")
+           if c in fit}
+    for d in ("pull", "cotv", "kv", "pull_g", "kv_g"):
+        if d in fit:
+            out[d] = {k: np.concatenate([fit[d][k], test[d][k]]) for k in fit[d]}
+    out["pooled_facings"] = fit.get("pooled_facings", False)
     return out
 
 
@@ -238,10 +379,10 @@ def _sorted_slices(row: np.ndarray, n: int):
 
 
 def prepare(fit: dict, test: dict, spec: dict, flags: dict | None = None, pooled: bool = False) -> dict:
-    """spec = {test_key: {"kind", "lookup_key"[, "pert"]}}; the table's binning `kind` is built in test_key
-    on the fit sample and read with lookup_key; the test bins are the canonical rows of test_key on
+    """spec = {test_key: {"kind", "lookup_key"[, "pert"][, "pull_src"]}}; the table's binning `kind` is built in
+    test_key on the fit sample and read with lookup_key; the test bins are the canonical rows of test_key on
     the same fit sample; "pert" (amendment 1d / 1e known-bads) perturbs the fitted plateau-edge rows in every
-    replica (_fit_params). flags = {test_key: set of row ids refitted at pT >= 2} (canonical tables).
+    replica (_fit_params); "pull_src" (amendment 2 known-bad (a): "pull_g") is the fit side's pull column. flags = {test_key: set of row ids refitted at pT >= 2} (canonical tables).
     pooled=False: the chain's fit side is the fit sample, its test side the test sample (bootstrap).
     pooled=True: both sides hold the pooled fit + test clusters and a replica assigns each event to
     one side (permutation); the nominal assignment reproduces the actual split.
@@ -301,7 +442,8 @@ def prepare(fit: dict, test: dict, spec: dict, flags: dict | None = None, pooled
         P["keys"][key] = {
             "rows": rows, "trows": trows, "trowmap": trowmap, "flags": sorted(int(x) for x in fl), "kind": sp["kind"],
             "lookup_key": sp["lookup_key"],
-            "fit_ev": evf[fo], "fit_p": {a: fside["pull"][a][fo] for a in SA.ANGLES}, "fs": fs, "fe": fe,
+            "fit_ev": evf[fo], "fit_p": {a: fside[sp.get("pull_src", "pull")][a][fo] for a in SA.ANGLES},
+            "fs": fs, "fe": fe,
             "test_ev": evt[to], "test_p": {a: tside["pull"][a][to] for a in SA.ANGLES},
             "test_lrow": lrow[to], "ts": ts, "te": te, "n_lookup_missing": int(np.sum((lr_a < 0) & (tb_a >= 0))),
             "test_n": n_test.astype(int), "nf_row": nf_row, "E0": E0, "Vfit": Vfit, "pert": pert,
@@ -532,12 +674,16 @@ def _decide(zk: dict, judged: dict, uk: dict, w_i: float):
             float(np.max(np.abs(zall))) if N else None, n_beyond, chi_res, chi_fail, n_i_fail)
 
 
-def _iii_fail_cells(C: dict, sd: dict, levels) -> list:
-    """(iii) failing cells at `levels`: one-sided 95 % upper bound of the shortfall L - C beyond iii_margin(L)."""
+def _iii_fail_cells(C: dict, sd: dict, levels, n: dict) -> list:
+    """(iii) failing cells at `levels`: one-sided 95 % upper bound of the shortfall L - C beyond iii_margin(L).
+    A cell with ZERO test clusters (n[key][region, angle], the nominal split's) is skipped; a NaN in a
+    populated cell is a failure (amendment 2, R6)."""
     out = []
     for key in C:
         for r, (rn, _) in enumerate(REGIONS):
             for j, a in enumerate(SA.ANGLES):
+                if n[key][r, j] == 0:
+                    continue
                 for li, lv in enumerate(LEVELS):
                     if lv not in levels:
                         continue
@@ -642,23 +788,26 @@ def judge(P: dict, boot: dict, perm: dict, min_n: int = SA.MIN_FIT, false_veto: 
         reg = _region_index(K)
         n0 = np.nan_to_num(boot[key]["st"][0][..., ST_N])
         e0 = np.nan_to_num(K["E0"])
-        E0p[key] = np.stack([(n0[reg == r][:, :, None] * e0[reg == r][:, None, :]).sum(0) / n0[reg == r].sum(0)[:, None]
-                             for r in (0, 1)])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            E0p[key] = np.stack([(n0[reg == r][:, :, None] * e0[reg == r][:, None, :]).sum(0)
+                                 / n0[reg == r].sum(0)[:, None] for r in (0, 1)])
     R = perm[next(iter(P["keys"]))]["st"].shape[0] - 1
     power = {}
     for li, lv in enumerate(LEVELS):
         ok = np.ones(R, bool)
         for key in Cn:
             ub = (lv - Cperm[key][:, :, :, li]) + POOLED_Z * Csd[key][None, :, :, li]
-            ok &= np.all(ub <= iii_margin(lv), axis=(1, 2))
+            ok &= np.all((ub <= iii_margin(lv)) | (Cn_n[key] == 0)[None], axis=(1, 2))
         power[f"{lv:g}"] = float(ok.mean())
     low_power = [lv for lv in GATED_LEVELS if power[f"{lv:g}"] < POWER_MIN]
-    iii_fail = _iii_fail_cells(Cn, Csd, GATED_LEVELS)
+    iii_fail = _iii_fail_cells(Cn, Csd, GATED_LEVELS, Cn_n)
     cells = []
     for key, K in P["keys"].items():
         reg = _region_index(K)
         for r, (rn, _) in enumerate(REGIONS):
             for j, a in enumerate(SA.ANGLES):
+                if Cn_n[key][r, j] == 0:
+                    continue
                 for li, lv in enumerate(LEVELS):
                     zz = zk[key][(reg == r) & judged[key], j, li]
                     zz = zz[np.isfinite(zz)]
@@ -714,7 +863,7 @@ def judge(P: dict, boot: dict, perm: dict, min_n: int = SA.MIN_FIT, false_veto: 
     zl = np.concatenate([zlev[k][judged[k]].ravel() for k in zlev])
     zl = zl[np.isfinite(zl)]
     res = {
-        "rule": RULE,
+        "rule": FRAME["rule"],
         "i": {"bins": len(details_i), "N_i": n_i, "W_i": w_i, "fail": n_i_fail,
               "worst_fraction_of_widened_band": worst_i[0]["fraction_of_band"] if worst_i else None,
               "worst": worst_i[:8], "failures": [x for x in worst_i if x["fraction_of_band"] > 1.0][:60],
@@ -755,7 +904,7 @@ def judge(P: dict, boot: dict, perm: dict, min_n: int = SA.MIN_FIT, false_veto: 
     res["_z"] = {k: v.tolist() for k, v in zk.items()}
     res["_u"] = {k: v.tolist() for k, v in uk.items()}
     if false_veto:
-        fv = false_veto_rate(P, perm, judged, sdb, w_i, Csd)
+        fv = false_veto_rate(P, perm, judged, sdb, w_i, Csd, Cn_n)
         for nm in ("fail_any", "fail_i_ii"):
             lo = beta_d.ppf(0.025, fv[nm], R - fv[nm] + 1)
             hi = beta_d.ppf(0.975, fv[nm] + 1, R - fv[nm])
@@ -809,7 +958,7 @@ def materiality(P: dict, res: dict, zk: dict, uk: dict, judged: dict, w_i: float
                           "run's own re-splits; anything else MINOR (the table ships, deviations listed)"}
 
 
-def false_veto_rate(P, perm, judged, sdb, w_i, Csd) -> dict:
+def false_veto_rate(P, perm, judged, sdb, w_i, Csd, Cn_n) -> dict:
     """The rule applied to every re-split as if it were the observed split (each is a known-good
     split of the pooled events), with leave-one-out errors: (i) the replica's after-table centre and
     width against the band widened by w_i x max(bootstrap sd of the observed split, re-split sd WITHOUT
@@ -840,9 +989,9 @@ def false_veto_rate(P, perm, judged, sdb, w_i, Csd) -> dict:
         zb = {k: zrep[k][b] for k in keys}
         ub = {k: _band_excess(perm[k]["st"][1 + b], sdloo[k][b]) for k in keys}
         pi, pii, N, t, mz, nb, chi_res, chi_fail, _ = _decide(zb, judged, ub, w_i)
-        piii = not _iii_fail_cells({k: Crep[k][b] for k in keys}, Csd, GATED_LEVELS)
+        piii = not _iii_fail_cells({k: Crep[k][b] for k in keys}, Csd, GATED_LEVELS, Cn_n)
         for lv in GATED_LEVELS:
-            iii_pass_by_level[f"{lv:g}"] += not _iii_fail_cells({k: Crep[k][b] for k in keys}, Csd, [lv])
+            iii_pass_by_level[f"{lv:g}"] += not _iii_fail_cells({k: Crep[k][b] for k in keys}, Csd, [lv], Cn_n)
         u_b = []
         for k in keys:
             u = np.where(judged[k][:, None], ub[k], np.nan)
@@ -913,7 +1062,7 @@ def pt_check(fit: dict, n_rep: int, n_proc: int, min_n: int = SA.MIN_FIT):
     uf, evf = event_index(fit["ev"])
     hi = fit["tp_pt"] >= 2.0
     PT = {"n_ev": len(uf), "keys": {}}
-    for key in SA.KEYS:
+    for key in FRAME["keys"]:
         rows, rowmap = build_rows("canonical", fit, key)
         r = row_of("canonical", rowmap, fit, key)
         o = np.lexsort((hi, r))
@@ -1016,7 +1165,9 @@ def before_after(P: dict, boot: dict, judgement: dict, test: dict, scales: dict)
 
 
 def table_doc(P: dict, stack: dict, orient, flags, prov: dict) -> dict:
-    """The table document (angle.error_table, sheet v2.7). Per row and angle: the centre, the weighting
+    """The table document (FRAME["item"]: angle.error_table, or angle.error_table_disc_local with keys
+    emitted_local / true_local, disc rows, facing 0, and the geometric facing map as its orientation). Per row
+    and angle: the centre, the weighting
     width and the quantiles (with their bootstrap sd), n_fit (the clusters the row was fitted
     on), E0 per level (k / (n_fit + 1)) and q_meets_level_in_expectation (False at a level the row's
     n_fit cannot reach: at 99.7 %, n_fit <= 332), and the reported diagnostics (B.1 clipped mean and core
@@ -1051,7 +1202,8 @@ def table_doc(P: dict, stack: dict, orient, flags, prov: dict) -> dict:
                                f"canon_v3 AAAA files {list(SA.FIT_FILES)}, class T, pT >= {SA.PT_MIN:g} GeV (the class-C "
                                "angles of these files are cluster-CNN training data; class T is truth + 1.5 x a PixelAV "
                                "residual and is not)"))
-    doc["recipe"] = f"angle.error_table (sheet {SA.SHEET_VERSION}); tested under {RULE}"
+    doc["recipe"] = f"{FRAME['item']} (sheet {SA.SHEET_VERSION}); tested under {FRAME['rule']}"
+    doc["frame"] = "module (cot-unit local pulls, key k_loc, facings pooled)" if FRAME is FRAMES["module"] else "global"
     return doc
 
 
@@ -1063,6 +1215,35 @@ def plateau_edge_rows(rows: list) -> np.ndarray:
         a, b = (min(abs(lo), abs(hi)), max(abs(lo), abs(hi))) if lo * hi >= 0 else (0.0, max(abs(lo), abs(hi)))
         out.append(b > 0.50 and a < 0.67)
     return np.array(out, bool)
+
+
+def facing_pairs(P: dict, boot: dict) -> dict:
+    """amendment 2 (R2), reported: over the row pairs of the facing-split table with the same disc and k_loc
+    range, per key and angle, the chi2 / ndf of the centre difference over its bootstrap error, the median
+    |centre difference| / width and the width ratio (facing +1 over -1), 10 / 50 / 90 %."""
+    from scipy.stats import chi2 as chi2_d
+
+    out = {}
+    for key, K in P["keys"].items():
+        par = boot[key]["par"]
+        sd = np.nanstd(par[1:], axis=0, ddof=1)
+        idx = {(r["surface"], r["facing"], r["lo"], r["hi"]): i for i, r in enumerate(K["rows"])}
+        pairs = [(i, idx[(r["surface"], -1, r["lo"], r["hi"])]) for i, r in enumerate(K["rows"])
+                 if r["facing"] == 1 and (r["surface"], -1, r["lo"], r["hi"]) in idx]
+        for j, a in enumerate(SA.ANGLES):
+            d = np.array([par[0, i, j, 0] - par[0, k, j, 0] for i, k in pairs])
+            e = np.array([np.hypot(sd[i, j, 0], sd[k, j, 0]) for i, k in pairs])
+            w = np.array([0.5 * (par[0, i, j, 1] + par[0, k, j, 1]) for i, k in pairs])
+            rw = np.array([par[0, i, j, 1] / par[0, k, j, 1] for i, k in pairs])
+            ok = np.isfinite(d) & np.isfinite(e) & (e > 0)
+            c2 = float(np.sum((d[ok] / e[ok]) ** 2))
+            out[f"{key}/{a}"] = {"pairs": int(ok.sum()), "chi2": c2, "ndf": int(ok.sum()),
+                                 "p": float(chi2_d.sf(c2, ok.sum())) if ok.any() else None,
+                                 "median_abs_dcentre_over_width": float(np.median(np.abs(d[ok] / w[ok]))) if ok.any() else None,
+                                 "max_abs_dcentre_over_width": float(np.max(np.abs(d[ok] / w[ok]))) if ok.any() else None,
+                                 "width_ratio_pct_10_50_90": (np.percentile(rw[ok], [10, 50, 90]).round(3).tolist()
+                                                              if ok.any() else None)}
+    return out
 
 
 def _strip(j: dict) -> dict:
@@ -1092,12 +1273,21 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> 
     fit_files, test_files = SPLITS[mode]
     t0 = time.time()
     orient = CM.orientation_map(fit_files)
-    fit = CM.derive(load_split(fit_files), orient)
-    test = CM.derive(load_split(test_files), orient)
+    module = FRAME is FRAMES["module"]
+    facing_map = None
+    if module:
+        facing_map = geometric_facing(fit_files)
+        print(f"[{mode}] geometric facing map: {facing_map['summary']}", flush=True)
+        fit = derive_local(load_split(fit_files), orient, facing_map)
+        test = derive_local(load_split(test_files), orient, facing_map)
+    else:
+        fit = CM.derive(load_split(fit_files), orient)
+        test = CM.derive(load_split(test_files), orient)
+    keys = FRAME["keys"]
     print(f"[{mode}] fit files {fit_files}: {len(fit['ev'])} clusters; test files {test_files}: "
           f"{len(test['ev'])} clusters; orientation of {len(orient[0])} modules ({time.time() - t0:.0f} s)", flush=True)
     G["seed"], G["fit_files"] = seed, tuple(int(x) for x in fit_files)
-    res = {"mode": mode, "rule": RULE, "fit_files": list(fit_files),
+    res = {"mode": mode, "rule": FRAME["rule"], "frame": "module" if module else "global", "fit_files": list(fit_files),
            "test_files": list(test_files), "n_rep": n_rep, "seed": seed, "n_fit": int(len(fit["ev"])),
            "n_test": int(len(test["ev"])), "code": CM.git_state(), "definition_sheet": SA.SHEET_VERSION,
            "inputs": CM.inputs_provenance(sorted(set(fit_files) | set(test_files))),
@@ -1118,25 +1308,32 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> 
                "materiality": {"iii_levels": list(MATERIAL_LEVELS), "failing_bin_share": MATERIAL_SHARE,
                                "false_veto_max": FALSE_VETO_MAX},
                "seed": "replica streams [seed, scheme, fit files..., replica]"}}
+    if module:
+        res["facing_map"] = facing_map["summary"]
+        res["rule_parameters"]["frame"] = ("module frame (amendment 2): disc rows ID1-ID4 x k_loc bin, facings pooled; "
+                                           "pull = (localCot - tpLocalCot) / sigma_local (cot units); keys "
+                                           "emitted_local / true_local")
     if mode in ("diagnosis", "known-good", "gated", "fit-only"):
         ptc, flags = pt_check(fit, n_rep, n_proc)
         res["pt_check"] = ptc
         print(f"[{mode}] pT check: refit at pT >= 2 {ptc['flags']}", flush=True)
-        spec = {k: {"kind": "canonical", "lookup_key": k} for k in SA.KEYS}
+        spec = {k: {"kind": "canonical", "lookup_key": k} for k in keys}
         P = prepare(fit, test, spec, flags)
         boot = run_chain(P, n_rep, n_proc, mode, "bootstrap")
         if mode != "fit-only":
             perm = run_chain(prepare(fit, test, spec, flags, pooled=True), n_rep, n_proc, mode, "permutation")
             res["judgement"] = judge(P, boot, perm)
             res["bins"] = before_after(P, boot, res["judgement"], test, census_scales())
-        prov = {"code": res["code"], "inputs": res["inputs"], "fit_files": list(fit_files), "rule": RULE,
+        prov = {"code": res["code"], "inputs": res["inputs"], "fit_files": list(fit_files), "rule": FRAME["rule"],
                 "job_id": os.environ.get("SP_JOB_ID"), "n_rep_bootstrap": n_rep, "pt_check_refit_rows": ptc["flags"]}
         if mode in ("gated", "fit-only"):
             prov["test"] = (f"files 3-10; see {result_name('gated')}" if mode == "gated" else
-                            "NOT TESTED: the gated test did not run (amendment 1e not approved, its known-good "
+                            f"NOT TESTED: the gated test did not run ({FRAME['rule']} not approved, its known-good "
                             f"demonstration failed or a known-bad passed; see {result_name('known-good')}, "
                             f"{result_name('known-bad')})")
-            doc = table_doc(P, boot, orient, flags, prov)
+            doc = table_doc(P, boot, (facing_map["ids"], facing_map["sign"]) if module else orient, flags, prov)
+            if module:
+                doc["facing_map"] = facing_map["summary"]
             if mode == "gated":
                 j = res["judgement"]
                 doc["test_result"] = {k: j[k] for k in ("pass", "pass_i", "pass_ii", "pass_iii")}
@@ -1147,37 +1344,52 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> 
                                                     ("fail_i_ii_rate", "fail_i_ii_95cl", "iii_pass_probability_by_level")}
             else:
                 doc["test_result"] = {"pass": None, "status": "untested"}
-            fn = TABLE_FILE if mode == "gated" else UNTESTED_FILE
+            fn = FRAME["table"] if mode == "gated" else FRAME["untested"]
             SA.AngleTable(doc).save(str(out_dir / fn))
             res["table_file"] = str(out_dir / fn)
         else:      # the demonstration's own fit, for the width comparison and the packet
             prov["fit_sample_text"] = (f"DEMONSTRATION FIT ONLY (not for use): canon_v3 AAAA files {list(fit_files)}, "
                                        f"class T, pT >= {SA.PT_MIN:g} GeV")
             prov["test"] = f"files {list(test_files)}; see {result_name(mode)}"
-            doc = table_doc(P, boot, orient, flags, prov)
-            (out_dir / AMEND_DIR).mkdir(exist_ok=True)
-            fn = out_dir / AMEND_DIR / f"angle_table_{mode}_fit_a1e.json"
+            doc = table_doc(P, boot, (facing_map["ids"], facing_map["sign"]) if module else orient, flags, prov)
+            (out_dir / FRAME["amend_dir"]).mkdir(exist_ok=True)
+            fn = out_dir / FRAME["amend_dir"] / f"angle_table_{mode}_fit_{FRAME['tag']}.json"
             SA.AngleTable(doc).save(str(fn))
             res["demo_table_file"] = str(fn)
     else:
         res["known_bads"] = {}
-        canonical = {k: {"kind": "canonical", "lookup_key": k} for k in SA.KEYS}
-        for name, desc in KNOWN_BADS.items():
+        canonical = {k: {"kind": "canonical", "lookup_key": k} for k in keys}
+        for name, desc in (KNOWN_BADS_LOCAL if module else KNOWN_BADS).items():
             tst = test
             if name == "wrong_key":
-                spec = {"true": {"kind": "canonical", "lookup_key": "emitted"},
-                        "emitted": {"kind": "canonical", "lookup_key": "true"}}
+                spec = {keys[1]: {"kind": "canonical", "lookup_key": keys[0]},
+                        keys[0]: {"kind": "canonical", "lookup_key": keys[1]}}
             elif name in TEST_SCALE:
                 spec = canonical
                 tst = {**test, "pull": {a: v * TEST_SCALE[name] for a, v in test["pull"].items()}}
+            elif name in MUST_FAIL_I_LOCAL:
+                spec = canonical
+                tst = {**test, "pull": local_test_pulls(name, test)}
+            elif name == "global_rows":
+                spec = {k: {"kind": "global_rows", "lookup_key": k, "pull_src": "pull_g"} for k in keys}
             else:
-                spec = {k: {"kind": name, "lookup_key": k} for k in SA.KEYS}
+                spec = {k: {"kind": name, "lookup_key": k} for k in keys}
             P = prepare(fit, tst, spec)
             boot = run_chain(P, n_rep, n_proc, f"known-bad {name}", "bootstrap")
             perm = run_chain(prepare(fit, tst, spec, pooled=True), n_rep, n_proc, f"known-bad {name}", "permutation")
-            j = _strip(judge(P, boot, perm, false_veto=False))
-            res["known_bads"][name] = {"description": desc, "judgement": j, "fails_as_required": not j["pass"],
-                                       "materiality_verdict": j["materiality"]["verdict"]}
+            j = judge(P, boot, perm, false_veto=False)
+            entry = {"description": desc, "fails_as_required": not (j["pass_i"] if name in MUST_FAIL_I_LOCAL and module
+                                                                     else j["pass"]),
+                     "materiality_verdict": j["materiality"]["verdict"]}
+            if name in MUST_FAIL_I_LOCAL and module:
+                u = [np.asarray(j["_u"][k]) for k in P["keys"]]
+                jd = [P["keys"][k]["test_n"] >= SA.MIN_FIT for k in P["keys"]]
+                n_ba = sum(int(np.isfinite(x[m]).sum()) for x, m in zip(u, jd))
+                n_fail = sum(int(np.sum(x[m] > j["i"]["W_i"])) for x, m in zip(u, jd))
+                entry.update({"must_fail_through": "i", "judged_bin_angles": n_ba, "failing_i": n_fail,
+                              "per_row_power_i": n_fail / n_ba if n_ba else None})
+            entry["judgement"] = _strip(j)
+            res["known_bads"][name] = entry
             print(f"[known-bad {name}] pass={j['pass']} (i fail {j['i']['fail']}/{j['i']['bins']}, ii beyond t "
                   f"{j['ii']['n_beyond_t']}, max|z| {j['ii']['max_abs_z']:.1f}, chi2 fail {len(j['ii']['chi2_fail'])}, "
                   f"iii fail {len(j['iii']['fail_cells'])}); materiality {j['materiality']['verdict']}", flush=True)
@@ -1188,6 +1400,19 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> 
         jc = _strip(judge(P, boot, perm, false_veto=False))
         ref = {c["cell"]: c for c in jc["iii"]["cells"]}
         je = res["known_bads"]["test_scale_1p05"]["judgement"]
+        if module:      # (b), reported: the per-facing split
+            spec = {k: {"kind": "facing_split", "lookup_key": k} for k in keys}
+            P = prepare(fit, test, spec)
+            boot = run_chain(P, n_rep, n_proc, "report facing_split", "bootstrap")
+            perm = run_chain(prepare(fit, test, spec, pooled=True), n_rep, n_proc, "report facing_split", "permutation")
+            js = _strip(judge(P, boot, perm, false_veto=False))
+            res["reports"] = {"facing_split": {
+                "description": "(b) the per-facing split, REPORTED (amendment 2, R2): the same chain with rows split by "
+                               "the geometric facing; the equivalence of the facings holds by construction of the "
+                               "emulator (no facing input), not as evidence about the sensor",
+                "verdict": js["materiality"]["verdict"], "pass": js["pass"], "pairs": facing_pairs(P, boot),
+                "judgement": js}}
+            print(f"[report facing_split] pass={js['pass']}; pairs {res['reports']['facing_split']['pairs']}", flush=True)
         res["known_bads"]["test_scale_1p05"]["per_cell_vs_canonical"] = [
             {"cell": c["cell"], "coverage_shift": c["coverage"] - ref[c["cell"]]["coverage"],
              "max_abs_z_bins": c["max_abs_z_bins"], "max_abs_z_bins_canonical": ref[c["cell"]]["max_abs_z_bins"],
@@ -1195,7 +1420,7 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> 
             for c in je["iii"]["cells"]]
         # KB-q95, KB-c and KB-w: the canonical table with its plateau-edge rows perturbed in every replica
         for name, kb in PERTURBED.items():
-            spec = {k: {**canonical[k], "pert": kb["pert"]} for k in SA.KEYS}
+            spec = {k: {**canonical[k], "pert": kb["pert"]} for k in keys}
             P = prepare(fit, test, spec)
             boot = run_chain(P, n_rep, n_proc, f"known-bad {name}", "bootstrap")
             perm = run_chain(prepare(fit, test, spec, pooled=True), n_rep, n_proc, f"known-bad {name}", "permutation")
@@ -1221,22 +1446,22 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> 
 
 
 def gated_refusal(out_dir: Path) -> str | None:
-    """Why the gated test may not run yet (None when it may): the amendment-1e known-good and known-bad
-    results must exist and behave as required, and the approval file must exist."""
+    """Why the gated test may not run yet (None when it may): the frame's known-good and known-bad results
+    under its rule (FRAME["rule"]) must exist and behave as required, and its approval file must exist."""
     try:
         kg = json.load(open(out_dir / result_name("known-good")))
         kb = json.load(open(out_dir / result_name("known-bad")))
     except FileNotFoundError as e:
-        return f"the gated test needs the amendment-1e known-good and known-bad results first ({e})"
-    if kg.get("rule") != RULE or kb.get("rule") != RULE:
-        return "the known-good / known-bad results are not from the amendment-1e rule"
+        return f"the gated test needs the known-good and known-bad results of {FRAME['rule']} first ({e})"
+    if kg.get("rule") != FRAME["rule"] or kb.get("rule") != FRAME["rule"]:
+        return f"the known-good / known-bad results are not from {FRAME['rule']}"
     if kg["judgement"]["materiality"]["verdict"] != "pass" or not kb["all_known_bads_fail"] or kg["n_rep"] < 250 \
             or kb["n_rep"] < 250:
-        return ("the amendment-1e known-good demonstration did not pass, or a known-bad did not fail, or < 250 "
+        return ("the known-good demonstration did not pass, or a known-bad did not fail, or < 250 "
                 "replicas: the rule goes back for redesign (D.0 step 4)")
-    ap = out_dir / APPROVAL_FILE
+    ap = out_dir / FRAME["approval"]
     if not ap.exists():
-        return f"amendment 1e is not approved: {ap} does not exist (it quotes the physicist's approval and its date)"
+        return f"{FRAME['rule']} is not approved: {ap} does not exist (it quotes the approval and its date)"
     return None
 
 
@@ -1247,7 +1472,10 @@ def main(argv=None) -> int:
     ap.add_argument("--proc", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--out", default=str(CM.OUT_DIR))
     ap.add_argument("--seed", type=int, default=SEED, help="replica seed (smoke tests: never the demonstration's)")
+    ap.add_argument("--frame", choices=tuple(FRAMES), default="global",
+                    help="global: the angle table (amendment 1e); module: the module-frame disc rows (amendment 2)")
     a = ap.parse_args(argv)
+    set_frame(a.frame)
     out_dir = Path(a.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     if a.mode == "gated":

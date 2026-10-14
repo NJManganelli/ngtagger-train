@@ -186,3 +186,29 @@ def test_materiality_verdict():
     z[0, 1, 2] = -6.0                                                      # bin 0: 985 of 1000 IL1 clusters
     mt = T.materiality(P, res(ok=False), {"emitted": z}, uk, judged, 4.0, 4.7)
     assert mt["verdict"] == "material" and mt["failing_bin_shares"]["emitted/IL1"]["test_cluster_share"] == 0.985
+
+
+def test_iii_skips_only_empty_cells():
+    """Amendment 2 (R6): a (iii) cell with zero test clusters is skipped; a NaN in a populated cell fails."""
+    C = {"k": np.full((2, 2, len(SA.LEVELS)), np.nan)}
+    C["k"][1] = 0.999
+    sd = {"k": np.zeros((2, 2, len(SA.LEVELS)))}
+    n = {"k": np.array([[0, 0], [100, 100]])}
+    assert T._iii_fail_cells(C, sd, T.GATED_LEVELS, n) == []
+    n["k"][0, 1] = 5                                                         # populated, NaN: a failure
+    assert T._iii_fail_cells(C, sd, T.GATED_LEVELS, n) == [f"k/barrel/beta/{lv:g}" for lv in T.GATED_LEVELS]
+
+
+def test_module_frame_binning_kinds():
+    """amendment 2: the module frame's canonical rows pool the facings (k_loc key), facing_split uses the
+    geometric facing, global_rows the global key and facing."""
+    C = {"surface": np.array([11, 11, 11, 11]), "facing": np.zeros(4, np.int8), "pooled_facings": True,
+         "facing_geo": np.array([1, -1, 1, -1], np.int8), "facing_g": np.array([-1, 1, -1, 1], np.int8),
+         "kv": {"true_local": np.array([0.05, 0.05, -0.35, 0.95])}, "kv_g": {"true_local": np.array([0.05, -0.05, -0.35, -0.95])}}
+    fac, fb = T.fine_index("canonical", C, "true_local")
+    assert fac.tolist() == [0, 0, 0, 0] and T.facings("canonical", 11, C) == (0,)
+    assert fb.tolist() == SA.fine_bin(C["surface"], C["kv"]["true_local"]).tolist()
+    fac, _ = T.fine_index("facing_split", C, "true_local")
+    assert fac.tolist() == [1, -1, 1, -1] and T.facings("facing_split", 11, C) == (-1, 1)
+    fac, fb = T.fine_index("global_rows", C, "true_local")
+    assert fac.tolist() == [-1, 1, -1, 1] and fb.tolist() == SA.fine_bin(C["surface"], C["kv_g"]["true_local"]).tolist()

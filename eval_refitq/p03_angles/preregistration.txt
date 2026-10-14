@@ -801,3 +801,90 @@ Expected (not decisive):
   - the demonstration passes;
   - known-bad (a) fails strongly, through alpha above all;
   - about 2 x 4 x 2 x ~19 rows per key, as in the global disc rows.
+
+Addition to amendment 2 (2026-10-14, after review round 1; written before any code or run). Both reviews
+approve with no blocker:
+  - stats-review-a2-01.md: APPROVE;
+  - geom-review-a2-01.md: SOUND.
+Where this addition differs from M1-M11, it holds.
+R1 The key (M1, reworded). k_loc = (-sx sign(d_r)) x the global disc key, with sx = +-1 the module's local-x
+   sense (u = sx phi-hat, v = -r-hat, w = sx z-hat).
+     - On canon_v3 the global columns use the radial sense rule (d_r > 0), so k_loc = s x the canon_v3 global
+       disc key, with s = -sx the facing.
+     - Under the CMSSW disc sense-rule fix (15c345f36da) the global key becomes sign(z) |tan theta|. The
+       identity then holds only where the emitted radial sense is outward: it fails for about 34 % of class-T
+       disc clusters, those with a wrong emitted cotBeta sign.
+     - k_loc uses only localCotAlpha / localCotBeta, which are bit-identical under the fix: the ROWS are
+       fix-independent, the identity is not.
+     - Known-bad (a) is defined on canon_v3's global columns. On regenerated files it must be rebuilt.
+R2 Facings POOLED: the physicist's DECISION (2026-10-14, relayed by the coordinator), following both reviewers'
+   recommendation. The rows are disc x k_loc bin, both facings together, and the lookup needs no facing.
+     - The per-facing split is a REPORTED diagnostic, not a gate. The same chain runs with rows split by the
+       geometric facing. Reported for the row pairs with the same disc and k_loc range:
+         - chi2 / ndf of the centre difference over its bootstrap error;
+         - the width ratio, 10 / 50 / 90 %;
+         - the split table's own verdict.
+       Known-bad (b) is this diagnostic.
+     - The equivalence holds by construction of the emulator: the canon_v3 response (the PixelAV dump row
+       nearest in local alpha, beta) and its sigma table have no facing input. It is not evidence about the
+       sensor. It must be re-tested if the payload becomes orientation-aware (a real sensor's charge
+       collection is not symmetric in w).
+R3 The geometric facing map (M3) is still computed and stored with the table (orientation field: 864 disc
+   modules).
+     - It is read from the fit files' nano: detId, localX, localY, globalR, globalPhi of the disc clusters.
+     - For every module the code asserts | |det J| - 1 | < 1e-3 and an rms fit residual < 1e-3 cm. That
+       catches a mis-joined cluster table or a non-disc module.
+     - A module with fewer than 3 non-collinear clusters falls back to canon_v3's orientation rule (counted).
+     - With pooled facings the map enters only the diagnostic (R2) and the table's provenance.
+R4 Units (M2), the citation corrected. sigAlpha / sigBeta are cot-unit resolutions:
+     - the emulator's correctionlib table spix_emu_sigma_v2.json (customizeSmartPixels_cff.py:94,
+       SmartPixelsRecHitProducer.cc:1030-1038) describes them as "cotAlpha resolution: weighted (q84-q16)/2
+       of (emitted - true) cot ... by surface code and |reported cot|" (and the same for cotBeta);
+     - the payload route's spix_angle_response_Conv1D_Full-2bit_v5.json describes "sigma(cotAlpha_NN -
+       cotAlpha_true), robust".
+   They are keyed on surface and |reported cot| only, with no facing.
+R5 Known-bads, final (on the demonstration split; each must fail as stated):
+     - (a) the global-key table read in the local frame: the amendment-1e global disc rows (global pulls,
+       global key and facing), fitted on the same fit sample, applied to the module-frame pulls; must fail;
+     - (b) the per-facing split: REPORTED (R2);
+     - (c) wrong key, emitted_local <-> true_local: must fail;
+     - (d) folded |k_loc|: must fail. The review measured the k_loc > 0 and < 0 rows of beta 0.75 widths
+       apart (file 4);
+     - (e) test pulls x 1.05: must fail;
+     - (f) NEW (LOW), sigma swapped: the global published sigma mapped to local cot units through the
+       canon_v3 frame, in place of the local sigma, on the test side.
+         - beta: sigma(cot theta) x tan^2 theta, since cotBeta = s tan theta;
+         - alpha: sigma(phi) x |cotBeta| (1 + cotAlpha^2 / cotBeta^2), since global disc alpha =
+           atan(cotAlpha / |cotBeta|);
+         - emitted columns.
+       Must fail through (i);
+     - (g) NEW (LOW), units swapped: atan-angle pulls, (atan cot_e - atan cot_t) / (sigCot / (1 + cot_e^2)),
+       on the test side, against the cot-unit table (beta width about +12 %). Must fail through (i); its
+       per-row power is reported;
+     - KB-q95 (through (ii) or (iii)), KB-c (through (i)), KB-w (through (i), per-row power reported): as in
+       1e, in the plateau-edge rows.
+   Each known-bad's materiality verdict is reported.
+R6 (iii), stated precisely: a cell is skipped only if it has ZERO test clusters (here the barrel region of
+   the disc-only table). A NaN in a populated cell is a failure. The same rule applies to the (iii) power and
+   false-veto counting. It leaves every result of the global table unchanged, since all of its cells are
+   populated.
+R7 File exposure (review LOW, harmless). The cot-against-atan width (20 events of file 3) and the facing
+   comparison (files 7-8) were measured on files later used as test and demonstration-fit files. These are
+   representation and binning choices, not tuned rule parameters, and the reviewer reproduced both on file 4.
+   Files 1-2 remain unread before the gated run.
+R8 Outputs:
+     - p03_table_{known-good,known-bad,gated}_a2.json;
+     - the demonstration fit in amend2/;
+     - the table angle_table_v1a1e_disclocal_canon_v3.json, keys emitted_local / true_local, disc rows,
+       facing 0;
+     - the gated run refuses without amendment2_approval.txt;
+     - registry p03.table.a2.* and p03.table.v1a1e-disclocal.
+R9 Disclosed, before the demonstration:
+     - unit tests;
+     - a code smoke test outside the lock: throwaway seed 777, 4 replicas, the demonstration split.
+         - The geometric facing map fitted all 864 disc modules (| |det J| - 1 | <= 7e-6, rms <= 9e-5 cm); no
+           fallback was needed.
+         - The known-good ran; with 4 replicas its false-veto rate is meaningless.
+         - Every known-bad failed: (a) 201, (c) 176, (d) 133, (f) 237 and (g) 31 of 282 judged bin-angles
+           fail (i).
+   No parameter above was set or changed after it.

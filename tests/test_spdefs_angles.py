@@ -207,3 +207,50 @@ def test_coverage_z_sign_inflation_and_calibration():
     assert abs(z.mean()) < 0.06 and abs(z.std() - 1) < 0.05
     from scipy.stats import skew
     assert abs(skew(z)) < 0.15 < abs(skew(zg))
+
+
+# ---------------------------------------------------------------- module frame (P0.3 amendment 2)
+def test_local_incidence_key_is_facing_times_global_key_on_radial_sense():
+    """k_loc = (-sx sign(d_r)) x the global disc key: on canon_v3's radial sense (d_r > 0) it is s x the global key
+    with s = -sx; with an inward radial sense it flips (amendment 2, R1)."""
+    rng = np.random.default_rng(5)
+    n = 2000
+    d_r, d_phi = rng.uniform(0.05, 0.6, n), rng.normal(0, 0.05, n)
+    d_z = rng.choice([-1.0, 1.0], n)
+    sx = rng.choice([-1, 1], n)
+    cot_a, cot_b = d_phi / d_z, -sx * d_r / d_z
+    glob = np.sign(d_z) * np.hypot(d_r, d_phi) / np.abs(d_z)
+    k = SA.local_incidence_key(cot_a, cot_b)
+    assert np.allclose(k, -sx * glob)
+    assert np.allclose(SA.local_incidence_key(cot_a, sx * d_r / d_z), sx * glob)      # inward sense: the identity flips
+    cols = {"localCotAlpha": cot_a, "localCotBeta": cot_b, "tpLocalCotAlpha": cot_a, "tpLocalCotBeta": cot_b,
+            "sigAlpha": np.full(n, 0.1), "sigBeta": np.full(n, 0.2)}
+    assert np.allclose(SA.local_key("emitted_local", cols), k) and np.allclose(SA.local_key("true_local", cols), k)
+    cols["localCotBeta"] = cot_b + 0.2
+    assert np.allclose(SA.local_pull("beta", cols), 1.0) and np.allclose(SA.local_pull("alpha", cols), 0.0)
+
+
+def test_facing_from_positions_on_synthetic_disc_modules():
+    rng = np.random.default_rng(9)
+    ids, lx, ly, gr, gp, want = [], [], [], [], [], {}
+    for m in range(20):
+        sx = 1 if m % 2 else -1
+        psi, t = rng.uniform(0, 2 * np.pi), rng.uniform(5, 15, 2)
+        R = np.array([[np.cos(psi), -np.sin(psi)], [np.sin(psi), np.cos(psi)]]) @ np.diag([sx, 1.0])
+        loc = rng.uniform(-1, 1, (30, 2))
+        g = loc @ R.T + t
+        ids += [1000 + m] * 30
+        lx += list(loc[:, 0])
+        ly += list(loc[:, 1])
+        gr += list(np.hypot(g[:, 0], g[:, 1]))
+        gp += list(np.arctan2(g[:, 1], g[:, 0]))
+        want[1000 + m] = -sx
+    ids += [2000, 2000]                      # two clusters only: not fitted
+    lx += [0.0, 1.0]
+    ly += [0.0, 1.0]
+    gr += [10.0, 11.0]
+    gp += [0.1, 0.1]
+    got_ids, fac, det, rms, n = SA.facing_from_positions(np.array(ids), np.array(lx), np.array(ly), np.array(gr), np.array(gp))
+    assert 2000 not in got_ids and len(got_ids) == 20
+    assert all(fac[i] == want[d] for i, d in enumerate(got_ids))
+    assert np.allclose(np.abs(det), 1.0) and np.all(rms < 1e-9) and np.all(n == 30)
