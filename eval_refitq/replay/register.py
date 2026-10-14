@@ -65,11 +65,11 @@ def entry(job_dir, overwrite):
     material = S["material"]
     base = {"bias": "refit-v2 mirror and replay arms; numbers are the entry gate's, not physics results",
             "sources": [str(CM.OUT / "entry" / "entry_summary.json")]}
-    gates = {"E1a": "the table import in INN (P0.3 test (i) form)", "E1b": "the 99 % cuts' coverage",
-             "E23": "the ORP-cal identity", "E4": "the forced replay's final parameters vs CMSSW",
-             "E5": "the mirror PM vs refit v2", "E7": "K's skip-loss on real data"}
-    for g, title in gates.items():
-        mat = [m for m in material if m.startswith(g[:2])]
+    gates = {"E1a": ("E1(a)", "the table import in INN (P0.3 test (i) form)"), "E1b": ("E1(b)", "the 99 % cuts' coverage"),
+             "E23": ("E2/E3", "the ORP-cal identity"), "E4": ("E4 ", "the forced replay's final parameters vs CMSSW"),
+             "E5": ("E5", "the mirror PM vs refit v2"), "E7": ("E7", "K's skip-loss on real data")}
+    for g, (prefix, title) in gates.items():
+        mat = [m for m in material if m.startswith(prefix)]
         vals = [{"name": scen, "value": json.dumps(v)[:2000]} for scen, v in S[g].items()]
         _reg({**base, "id": f"wpc.entry.{g.lower()}", "title": f"WP-C entry gate {g}: {title}",
               "status": "valid" if not mat else "void", "status_note": "; ".join(mat) if mat else "",
@@ -79,7 +79,8 @@ def entry(job_dir, overwrite):
          job_dir, overwrite)
     _reg({**base, "id": "wpc.entry.verdict", "title": "WP-C entry gate: MATERIAL / MINOR verdict",
           "status": "valid", "values": [{"name": "material", "value": "; ".join(material) or "none"},
-                                        {"name": "minor", "value": "; ".join(S["minor"]) or "none"}]},
+                                        {"name": "minor", "value": "; ".join(S["minor"]) or "none"},
+                                        {"name": "blinded", "value": json.dumps(S["blinded"]) if S["blinded"] else "none"}]},
          job_dir, overwrite)
 
 
