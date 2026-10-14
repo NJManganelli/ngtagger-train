@@ -4,7 +4,7 @@ configurations (M.ANGLE_STAGES, the resolution knob) side by side.
 Each census is read with its tracks; per build (the census's "builds"):
 
   efficiency   over the census's denominator, its findable TPs (TF.findable:
-               charged, >= 4 credited hits, IT clusters and OT stubs) in the stated
+               charged, credited hits on >= 4 distinct modules, IT and OT) in the stated
                true pT / |eta| range (ETA_RANGES, each with its OT-truncated label), split
                prompt / displaced at |true d0| = 200 um (the site's D0_SPLIT_CM),
                the displaced split again at 1 mm: "hf" 0.2-1 mm (heavy flavour),
