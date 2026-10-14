@@ -94,7 +94,8 @@ def p02_closure(scen, f, nev=None):
         rk = (f"{scen}__H_either__{key}__num" if (kind == "H" and nd == "num") else
               f"{scen}__H__{key}__den" if kind == "H" else f"{scen}__P__{key}__{nd}")
         if rk not in ref.files:
-            mism.append((k, "missing in reference"))
+            if np.any(v):                       # P0.2 skips a surface without crossings (an inactive one)
+                mism.append((k, "missing in reference"))
             continue
         if not np.array_equal(ref[rk][sl].astype(np.float64), v.astype(np.float64)):
             mism.append((k, float(np.abs(ref[rk][sl] - v).sum())))
