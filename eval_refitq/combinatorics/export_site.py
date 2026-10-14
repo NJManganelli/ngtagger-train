@@ -71,7 +71,7 @@ ACCEPTANCE_TEXT = ("IT seeding uses the barrel layers IL1-IL4 only; there are no
 def denominator_coverage(paths, nev, ptmin, edges):
     """Particles per |eta| bin that the census denominator holds, against all of
     them: charged L1TTP particles with pT >= ptmin and credited hits on
-    >= TF.FINDABLE_MIN_HITS distinct modules (census.findable), counted
+    >= TF.FINDABLE_MIN_MODULES distinct modules (census.findable), counted
       census  as the census counts them: IL1-IL4 clusters, OT barrel stubs with
               |stub eta| <= M.ETA_MATCHED (tp_findability._unify)
       all     every SmartPixels cluster in the cluster table (IL1-IL4, ID1-ID4) and
@@ -133,7 +133,7 @@ def denominator_coverage(paths, nev, ptmin, edges):
         aeta = np.minimum(np.abs(ak.to_numpy(ak.flatten(T["eta"]))), edges[-1] - 1e-9)
         sel = (pt >= ptmin) & (ak.to_numpy(ak.flatten(T["charge"])) != 0)
         for k, n in (("census", n_cen), ("all", n_all)):
-            s = sel & (n >= TF.FINDABLE_MIN_HITS)
+            s = sel & (n >= TF.FINDABLE_MIN_MODULES)
             out[k] += np.histogram(aeta[s], bins=np.asarray(edges))[0]
         seen += len(ntp)
     return {"edges": list(edges), "n_events": seen, "ptmin": float(ptmin),

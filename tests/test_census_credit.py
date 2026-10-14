@@ -77,7 +77,7 @@ def test_one_hit_per_module_modules_not_layers_and_the_threshold():
     assert (cen["n_mod_it"][rB], cen["n_mod_ot"][rB]) == (2, 1)
     f = TF.findable(cen)
     assert f[rA] and not f[rB] and not f[rN]
-    assert TF.FINDABLE_MIN_HITS == 4
+    assert TF.FINDABLE_MIN_MODULES == 4
 
 
 def test_unknown_stub_and_unmatched_cluster_credit_nobody():

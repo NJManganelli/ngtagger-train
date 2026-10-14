@@ -724,19 +724,19 @@ def chunk_census(U):
 
 # THE CENSUS EFFICIENCY DENOMINATOR (definition sheet census.findable; decisions of
 # 2026-10-13 and 2026-10-14): a TP is FINDABLE when it is charged and carries
-# credited hits on at least FINDABLE_MIN_HITS distinct modules, IT clusters plus OT
+# credited hits on at least FINDABLE_MIN_MODULES distinct modules, IT clusters plus OT
 # stubs in any mix: hits, not layers (two overlapping modules of one layer both
 # count), but two or more credited hits of the TP on ONE module count once, and an
 # OT stub is one hit. Charged as in CMSSW's L1TrackNtupleMaker (charge == 0
 # skipped): a neutral TP (photon, K0L, neutron) can be credited with its unstored
 # daughters' hits. The pT and |eta| selections are the consumer's.
-FINDABLE_MIN_HITS = 4
+FINDABLE_MIN_MODULES = 4
 
 
 def findable(C):
-    """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_HITS)."""
+    """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_MODULES)."""
     n = C["n_mod_it"].astype(np.int64) + C["n_mod_ot"]
-    return (n >= FINDABLE_MIN_HITS) & np.isfinite(C["charge"]) & (C["charge"] != 0)
+    return (n >= FINDABLE_MIN_MODULES) & np.isfinite(C["charge"]) & (C["charge"] != 0)
 
 
 def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
