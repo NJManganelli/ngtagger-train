@@ -369,6 +369,19 @@ def cmd_run(a) -> int:
             except (OSError, ValueError):
                 pass
             L.log_event("released", lane_dir, job=job_id)
+        registry_snapshot(job_id)
+
+
+def registry_snapshot(job_id: str) -> None:
+    """Copy the results registry to WDMac after a job (ops/registry_snapshot.sh: only when it changed;
+    skips without WDMac). Runs after the lock is released and never affects the job's exit code."""
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "ops", "registry_snapshot.sh")
+    if os.path.exists(script):
+        try:
+            subprocess.run(["bash", script, job_id], timeout=120, check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            pass
 
 
 def cmd_status(a) -> int:
