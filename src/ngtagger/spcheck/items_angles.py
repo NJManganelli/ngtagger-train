@@ -122,7 +122,7 @@ class AngleImport(Item):
                             "mode": "fixed", "bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL,
                             "floors": [2.0]},
                "s1": {"bins": [], "thr": []}, "s2a": {"bins": [], "thr": []},
-               "s2z": {"bins": [], "thr": []}, "win": {"bins": [], "thr": {}},
+               "s2z": {"bins": [], "thr": []}, "win": {"bins": [[0, 10203, 3, 1, 2.0]], "thr": {"ab": [[3.0, 4.0]]}},
                "s6": {"bins": [["AAAA", "ab", "emitted", "ab", 4]], "thr": [20.0]}}
         TF = ctx.script_module(CENSUS_DIR, "tp_findability")
         ang = M.AngleUse.parse(off="kf" if variant == "cutfile" else "")
