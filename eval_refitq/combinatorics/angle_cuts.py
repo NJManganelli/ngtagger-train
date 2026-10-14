@@ -296,8 +296,10 @@ def _unit_index(units, keys):
 # ==========================================================================
 # fitting
 # ==========================================================================
-def _fit_simple(units, unit_idx, stat, tp, ev_w, grp, level):
-    """Per unit, the group's weighted quantile of `stat` (records with unit_idx >= 0)."""
+def _fit_simple(units, unit_idx, stat, tp, ev_w, grp, level, pool_of=None):
+    """Per unit, the group's weighted quantile of `stat` (records with unit_idx >= 0). A group
+    without any calibration record takes the pooled quantile of its pool (pool_of(unit): e.g. the
+    floor), so that no bin is left without a threshold; returns (thr, fallback unit indices)."""
     m = (unit_idx >= 0) & np.isfinite(stat)
     g = grp[unit_idx[m]]
     w = tp_weights(tp[m], unit_idx[m], None if ev_w is None else ev_w[m])
@@ -305,7 +307,15 @@ def _fit_simple(units, unit_idx, stat, tp, ev_w, grp, level):
     for gid in np.unique(grp):
         mm = g == gid
         thr_g[gid] = wquantile(stat[m][mm], w[mm], level) if mm.any() else np.nan
-    return np.array([thr_g[grp[i]] for i in range(len(units))])
+    thr = np.array([thr_g[grp[i]] for i in range(len(units))])
+    fb = np.flatnonzero(~np.isfinite(thr))
+    if len(fb):
+        pools = np.array([pool_of(u) if pool_of else 0 for u in units], dtype=object)
+        um = unit_idx[m]
+        for i in fb:
+            pm = np.array([pools[j] == pools[i] for j in um], bool) if len(um) else np.zeros(0, bool)
+            thr[i] = wquantile(stat[m][pm], w[pm], level) if pm.any() else wquantile(stat[m], w, level)
+    return thr, fb
 
 
 def _fit_joint(units, unit_idx, pa, pb, tp, ev_w, grp, level):
@@ -416,9 +426,9 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
         ui = np.where(pop, ui, -1)
         cnt = n_tp(T["tp_key"][ui >= 0], ui[ui >= 0], len(units["s1"]))
         grp = merge_rows(units["s1"], cnt, model.table)
-        out["s1"] = {"bins": units["s1"],
-                     "thr": _fit_simple(units["s1"], ui, st, T["tp_key"], evw(T), grp, level).tolist(),
-                     "n_tp": cnt.tolist(), "group": grp.tolist()}
+        thr, fb = _fit_simple(units["s1"], ui, st, T["tp_key"], evw(T), grp, level, lambda u: u[0])
+        out["s1"] = {"bins": units["s1"], "thr": thr.tolist(), "n_tp": cnt.tolist(),
+                     "group": grp.tolist(), "fallback": fb.tolist()}
     if want("s2a") or want("s2z"):
         T = R["pair"]
         st_a, st_z = S["pair"]
@@ -429,9 +439,10 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
             ui = np.where(pop, ui, -1)
             cnt = n_tp(T["tp_key"][ui >= 0], ui[ui >= 0], len(units["s2a"]))
             grp = np.arange(len(units["s2a"]))
-            thr = _fit_simple(units["s2a"], ui, st_a, T["tp_key"], evw(T), grp, level)
+            thr, fb = _fit_simple(units["s2a"], ui, st_a, T["tp_key"], evw(T), grp, level,
+                                  lambda u: u[0])
             out["s2a"] = {"bins": units["s2a"], "thr": thr.tolist(), "n_tp": cnt.tolist(),
-                          "group": grp.tolist()}
+                          "group": grp.tolist(), "fallback": fb.tolist()}
         if want("s2z"):
             keys = list(zip(T["floor"].tolist(), T["la"].tolist(), T["lb"].tolist(),
                             T["A_row"].tolist()))
@@ -439,10 +450,10 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
             ui = np.where(pop & np.isfinite(st_z), ui, -1)
             cnt = n_tp(T["tp_key"][ui >= 0], ui[ui >= 0], len(units["s2z"]))
             grp = merge_rows(units["s2z"], cnt, model.table)
-            out["s2z"] = {"bins": units["s2z"],
-                          "thr": _fit_simple(units["s2z"], ui, st_z, T["tp_key"], evw(T), grp,
-                                             level).tolist(),
-                          "n_tp": cnt.tolist(), "group": grp.tolist()}
+            thr, fb = _fit_simple(units["s2z"], ui, st_z, T["tp_key"], evw(T), grp, level,
+                                  lambda u: (u[0], u[1], u[2]))
+            out["s2z"] = {"bins": units["s2z"], "thr": thr.tolist(), "n_tp": cnt.tolist(),
+                          "group": grp.tolist(), "fallback": fb.tolist()}
     if want("win"):
         T = R["win"]
         pa, pb = S["win"]
@@ -461,10 +472,23 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
         grp = merge_axis(cnt, [(u[0], u[2], u[4]) for u in U_], [a * 10 ** 9 + u[1] for u, a
                                                                 in zip(U_, arity)], start=g2)
         thr, sstar = _fit_joint(U_, ui, pa, pb, T["tp_key"], evw(T), grp, level)
+        # a merged group without any calibration record (a target the menu never reached in the
+        # calibration sample) takes the pooled thresholds of its role and floor
+        fb = [i for i in range(len(U_)) if not np.isfinite(thr["ab"][i][0])]
+        if fb:
+            m = (ui >= 0) & np.isfinite(pa) & np.isfinite(pb)
+            for i in fb:
+                pm = m & np.isin(ui, [j for j, u in enumerate(U_) if (u[0], u[4]) == (U_[i][0], U_[i][4])])
+                if not pm.any():
+                    pm = m
+                pt, _ = _fit_joint([(0,)], np.where(pm, 0, -1), pa, pb, T["tp_key"], evw(T),
+                                   np.zeros(1, np.int64), level)
+                for s_ in SUBS:
+                    thr[s_][i] = pt[s_][0]
         if only is not None and "win" in only:
             thr = {s: thr[s] for s in only["win"]}
         out["win"] = {"bins": U_, "thr": {s: [list(x) for x in v] for s, v in thr.items()},
-                      "s_star": sstar, "n_tp": cnt.tolist(), "group": grp.tolist()}
+                      "s_star": sstar, "n_tp": cnt.tolist(), "group": grp.tolist(), "fallback": fb}
     if want("s6"):
         T = (R if s6_R is None else s6_R)["trk"]
         pop = population(T, "trk")
