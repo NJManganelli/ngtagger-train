@@ -772,7 +772,11 @@ M9 Outputs:
        emitted_local / true_local and disc rows only. Its orientation map is the geometric facing. Lookup:
        AngleTable.rows_of(key, surface, k_loc, facing).
      - registry p03.table.v1a1e-disclocal and p03.table.a2.* (v1a1e is unchanged);
-     - a new definition-sheet item angle.error_table_disc_local, in the next sheet version (add only).
+     - a new definition-sheet item angle.error_table_disc_local, in the next sheet version (add only). The
+       same version updates angle.k_knob.implementation, which still points at the census's own knob. WP-D0b
+       removed that knob in census format 33 (297852e). The item will name ngtagger.spdefs.angles (knob,
+       improve, sigma_k, centre_k, check_k) as the single implementation, and note the census's per-angle
+       handles k_alpha / k_beta (census_angles, fixed / scaled).
 M10 Code:
      - table.py gets --frame module (disc-only rows, module-frame cot pulls and key, geometric facing,
        known-bad (a)), with separate output names; the rule code is shared and unchanged.
