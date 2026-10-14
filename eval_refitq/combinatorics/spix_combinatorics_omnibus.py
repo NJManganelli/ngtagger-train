@@ -6068,7 +6068,8 @@ def study_track_mva(X, K, P, ax_row, out):
 # particle's eta), x = |true local angle|, y = sign(true) x emitted local angle, per class.
 AR_ETA_EDGES = np.array([0, .2, .4, .6, .8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2, 2.5])
 AR_ETA_LABELS = [f"{AR_ETA_EDGES[i]:.1f}-{AR_ETA_EDGES[i + 1]:.1f}" for i in range(len(AR_ETA_EDGES) - 1)]
-AR_PT_MIN = 1.0           # GeV: linked clusters of TPs at or above it (angle.error_table's population; see the study)
+# linked clusters of TPs in each pT set (>= 1 GeV in all: angle.error_table's population; see the study): key, title, range
+AR_PT_SETS = (("pt_1_2", "TP pT 1-2 GeV", 1.0, 2.0), ("pt_ge_2", "TP pT ≥ 2 GeV", 2.0, np.inf))
 AR_NBINS = 16             # equal-population bins of |true| per panel, shared among its clumps
 AR_GAP = (3.0, 0.08)      # a gap: an empty |true| stretch wider than max(3 deg, 8 % of the 1-99 % range)
 AR_MIN_PANEL = 50         # clusters a panel needs to be drawn
@@ -6081,13 +6082,14 @@ AR_ANGLES = (("alpha", "localCotAlpha", "tpLocalCotAlpha", "hasAlpha", "sizeX"),
 AR_COLS = ["surface", "tpIdx", "tpEmuClass", "tpPt", "globalR", "globalZ"] + [c for a in AR_ANGLES for c in a[1:]]
 # the truth-free pages: emitted |angle| against the cluster length along it, per class (no truth cut)
 AR_TF_CLASSES = (("T", "#2563eb", "class T"), ("C linked", "#ea580c", "linked class C"),
-                 ("C unlinked", "#7c3aed", "unlinked class C (no true angle)"))
+                 ("C unlinked", "#7c3aed", "unlinked class C (no true angle, no TP pT: all)"))
 AR_TF_DEG_BINS = 360      # 0.25 deg bins of the emitted |angle| (0-90 deg), for the medians
 AR_TF_SIZES = 256         # cluster lengths 0-255 pixels (the nano's uint8)
 AR_CONTEXT = [
-    "Class C alpha is flat at about 0 deg for inclined clusters, while their TP-true alpha rises with cluster length as "
-    "geometry predicts. The likely cause: the CNN was trained on class T, where long clusters have small true alpha, "
-    "and it uses prompt-direction inputs.",
+    "Class C's folded mean near 0 is mainly a SIGN effect: the sign of its emitted alpha agrees with the linked "
+    "particle's only ~50 % of the time (class T: 84-98 %). Whether the CNN is wrong or the linked particle (which "
+    "passes more than 1 cm from the hit, or is neutral) is the wrong reference cannot be decided from the nano; no "
+    "further test is planned (question closed by the physicist, 2026-10-14).",
     "The CNN image crop is 24 x 16 pixels; it truncates only 0.5 % of clusters.",
     "Module-frame angles: atan(localCot*) emitted, atan(tpLocalCot*) true (the TP's helix at the hit); the disc "
     "sense-rule fix does not affect them. Module orientations are combined (they agree within fluctuations).",
@@ -6135,18 +6137,19 @@ def _ar_summary(cv):
 
 
 def _ar_load(files):
-    """The study's own read, file by file (only its columns). Returns (d, tf, n_all, n_ev):
-    d[angle] = the folded angles [deg], class and detector |eta| of the linked clusters (tpIdx >= 0) of TPs
-    with pT >= AR_PT_MIN whose emitted angle is present (the stored has-flag: the omnibus's |cot| <= 12 cap
+    """The study's own read, file by file (only its columns). Returns (d, tf, n_all, n_ev), per pT set k of
+    AR_PT_SETS:
+    d[k][angle] = the folded angles [deg], class and detector |eta| of the linked clusters (tpIdx >= 0) of TPs
+    in the set's pT range whose emitted angle is present (the stored has-flag: the omnibus's |cot| <= 12 cap
     is not applied, so the response is shown up to +-90 deg) and whose true angle is not the -999 fill;
-    tf[angle] = for the truth-free pages, over EVERY cluster with the emitted angle present (no truth cut),
-    per surface x class (T / linked C / unlinked C) x cluster length: a 0.25 deg histogram of the emitted
-    |angle| and its sum and sum of squares; n_all = the count of all clusters per surface x |eta| bin (a
-    panel without any has no sensors)."""
-    deg = {}
+    tf[k][angle] = for the truth-free pages, over every cluster with the emitted angle present, per surface x
+    class (T / linked C in the set's pT range; unlinked C, which has no TP, in every set) x cluster length: a
+    0.25 deg histogram of the emitted |angle| and its sum and sum of squares; n_all = the count of all
+    clusters per surface x |eta| bin (a panel without any has no sensors)."""
+    deg = {k: {} for k, *_ in AR_PT_SETS}
     shp = (len(SURFACES), len(AR_TF_CLASSES), AR_TF_SIZES)
-    tf = {a[0]: {"h": np.zeros(shp + (AR_TF_DEG_BINS,), np.int64), "s1": np.zeros(shp), "s2": np.zeros(shp)}
-          for a in AR_ANGLES}
+    tf = {k: {a[0]: {"h": np.zeros(shp + (AR_TF_DEG_BINS,), np.int64), "s1": np.zeros(shp), "s2": np.zeros(shp)}
+              for a in AR_ANGLES} for k, *_ in AR_PT_SETS}
     sidx = np.full(32, -1, np.int64)
     sidx[list(SURFACES)] = np.arange(len(SURFACES))
     n_all = {S: np.zeros(len(AR_ETA_EDGES) - 1, np.int64) for S in SURFACES}
@@ -6168,34 +6171,37 @@ def _ar_load(files):
         okb = (ebin >= 0) & (ebin < len(AR_ETA_EDGES) - 1)
         for S in SURFACES:
             n_all[S] += np.bincount(ebin[okb & (D["surface"] == S)], minlength=len(n_all[S]))
-        base = (D["tpIdx"] >= 0) & (D["tpPt"] >= AR_PT_MIN)
         linked = D["tpIdx"] >= 0
         c3 = np.where(D["tpEmuClass"] == 1, 0, np.where(D["tpEmuClass"] == 0, np.where(linked, 1, 2), -1))
         si = sidx[np.clip(D["surface"].astype(np.int64), 0, 31)]
-        for ang, em_c, tr_c, has_c, size_c in AR_ANGLES:
-            m = base & (D[has_c] > 0) & (D[tr_c] > SPN.ABSENT_BELOW)
-            tr = np.degrees(np.arctan(D[tr_c][m].astype(np.float64)))
-            em = np.degrees(np.arctan(D[em_c][m].astype(np.float64)))
-            part = {"surface": D["surface"][m].astype(np.int16), "cls": D["tpEmuClass"][m].astype(np.int8),
-                    "aeta": aeta[m].astype(np.float32), "tr": np.abs(tr).astype(np.float32),
-                    "em": (np.sign(tr) * em).astype(np.float32)}
-            for k, v in part.items():
-                deg.setdefault(ang, {}).setdefault(k, []).append(v)
-            mt = (D[has_c] > 0) & (c3 >= 0) & (si >= 0)
-            a = np.abs(np.degrees(np.arctan(D[em_c][mt].astype(np.float64))))
-            cell = (si[mt] * len(AR_TF_CLASSES) + c3[mt]) * AR_TF_SIZES + np.minimum(D[size_c][mt].astype(np.int64),
-                                                                                     AR_TF_SIZES - 1)
-            ab = np.minimum((a / 90.0 * AR_TF_DEG_BINS).astype(np.int64), AR_TF_DEG_BINS - 1)
-            T_ = tf[ang]
-            T_["h"] += np.bincount(cell * AR_TF_DEG_BINS + ab, minlength=T_["h"].size).reshape(T_["h"].shape)
-            T_["s1"] += np.bincount(cell, weights=a, minlength=T_["s1"].size).reshape(shp)
-            T_["s2"] += np.bincount(cell, weights=a * a, minlength=T_["s2"].size).reshape(shp)
-        print(f"   (G) {os.path.basename(f)}: {len(ncl)} events, {int(base.sum())} linked clusters with TP pT >= "
-              f"{AR_PT_MIN:g} GeV")
-    return {ang: {k: np.concatenate(v) for k, v in d.items()} for ang, d in deg.items()}, tf, n_all, n_ev
+        counts = []
+        for key, title, lo, hi in AR_PT_SETS:
+            inset = linked & (D["tpPt"] >= lo) & (D["tpPt"] < hi)
+            counts.append(f"{title} {int(inset.sum())}")
+            for ang, em_c, tr_c, has_c, size_c in AR_ANGLES:
+                m = inset & (D[has_c] > 0) & (D[tr_c] > SPN.ABSENT_BELOW)
+                tr = np.degrees(np.arctan(D[tr_c][m].astype(np.float64)))
+                em = np.degrees(np.arctan(D[em_c][m].astype(np.float64)))
+                part = {"surface": D["surface"][m].astype(np.int16), "cls": D["tpEmuClass"][m].astype(np.int8),
+                        "aeta": aeta[m].astype(np.float32), "tr": np.abs(tr).astype(np.float32),
+                        "em": (np.sign(tr) * em).astype(np.float32)}
+                for c, v in part.items():
+                    deg[key].setdefault(ang, {}).setdefault(c, []).append(v)
+                mt = (D[has_c] > 0) & (si >= 0) & (((c3 == 0) | (c3 == 1)) & inset | (c3 == 2))
+                a = np.abs(np.degrees(np.arctan(D[em_c][mt].astype(np.float64))))
+                cell = ((si[mt] * len(AR_TF_CLASSES) + c3[mt]) * AR_TF_SIZES
+                        + np.minimum(D[size_c][mt].astype(np.int64), AR_TF_SIZES - 1))
+                ab = np.minimum((a / 90.0 * AR_TF_DEG_BINS).astype(np.int64), AR_TF_DEG_BINS - 1)
+                T_ = tf[key][ang]
+                T_["h"] += np.bincount(cell * AR_TF_DEG_BINS + ab, minlength=T_["h"].size).reshape(T_["h"].shape)
+                T_["s1"] += np.bincount(cell, weights=a, minlength=T_["s1"].size).reshape(shp)
+                T_["s2"] += np.bincount(cell, weights=a * a, minlength=T_["s2"].size).reshape(shp)
+        print(f"   (G) {os.path.basename(f)}: {len(ncl)} events; linked clusters " + ", ".join(counts))
+    return ({key: {ang: {c: np.concatenate(v) for c, v in dd.items()} for ang, dd in d.items()} for key, d in deg.items()},
+            tf, n_all, n_ev)
 
 
-def _ar_size_page(pdf, S, tf, files):
+def _ar_size_page(pdf, S, tf, files, pt_title):
     """The truth-free page of surface S: emitted |alpha| vs sizeX and |beta| vs sizeY, per class (T, linked
     C, unlinked C) over every cluster with the angle present: the median (from the 0.25 deg histogram) and
     the median +-1 sd / +-2 sd bands per cluster length with >= AR_MIN_BIN clusters."""
@@ -6240,8 +6246,9 @@ def _ar_size_page(pdf, S, tf, files):
     handles += [Patch(color="0.4", alpha=0.45), Patch(color="0.4", alpha=0.15)]
     fig.legend(handles, [lab + ": median" for *_, lab in AR_TF_CLASSES] + ["median ± 1 sd", "median ± 2 sd"],
                loc="lower center", ncol=5, frameon=False, fontsize=9)
-    fig.suptitle(f"{SNAME[S]}, TRUTH-FREE: emitted |angle| against the cluster length along it, per class   "
-                 f"({len(files)} inputs; every cluster with the angle present, no truth cut)\nline = median, dark band "
+    fig.suptitle(f"[{pt_title}]  {SNAME[S]}, TRUTH-FREE: emitted |angle| against the cluster length along it, per "
+                 f"class   ({len(files)} inputs; every cluster with the angle present; unlinked class C: all)\nline = "
+                 f"median, dark band "
                  f"= median ± 1 sd, light band = median ± 2 sd, per cluster length with ≥ {AR_MIN_BIN} clusters",
                  fontsize=11)
     fig.tight_layout(rect=(0, 0.05, 1, 0.93))
@@ -6249,7 +6256,7 @@ def _ar_size_page(pdf, S, tf, files):
     plt.close(fig)
 
 
-def _ar_page(pdf, S, ang, d, n_all, files):
+def _ar_page(pdf, S, ang, d, n_all, files, pt_title):
     """One page: the twelve |eta| panels of surface S, angle `ang`, both classes (the prototype's drawing);
     returns the per-class summary per |eta| bin."""
     s = d["surface"] == S
@@ -6294,8 +6301,8 @@ def _ar_page(pdf, S, ang, d, n_all, files):
     handles += [Patch(color="0.4", alpha=0.45), Patch(color="0.4", alpha=0.15), Line2D([0], [0], ls="--", color="0.5")]
     fig.legend(handles, [lab for *_, lab in AR_CLASSES] + ["±1 sd", "±2 sd", "emitted = true"],
                loc="lower center", ncol=3, frameon=False, fontsize=9)
-    fig.suptitle(f"{SNAME[S]}: emitted vs |true| local {ang}, signs folded, per detector |η| bin (cluster position)   "
-                 f"({len(files)} inputs; linked clusters, TP pT ≥ {AR_PT_MIN:g} GeV)\nline = mean, dark band = ±1 sd, "
+    fig.suptitle(f"[{pt_title}]  {SNAME[S]}: emitted vs |true| local {ang}, signs folded, per detector |η| bin "
+                 f"(cluster position)   ({len(files)} inputs; linked clusters)\nline = mean, dark band = ±1 sd, "
                  f"light band = ±2 sd per class; both module orientations combined; dashed = emitted = true; "
                  f"equal-population bins of |true|, none across an empty stretch (lone bins as bars)", fontsize=11)
     fig.tight_layout(rect=(0, 0.05, 1, 0.95))
@@ -6320,10 +6327,12 @@ def study_angle_response(X, K, P, ax_row, out):
     than max(3 deg, 8 % of the 1-99 % range), so no bin spans an empty stretch; a class needs AR_MIN_BIN
     clusters in a bin; a lone bin is drawn as bars. Then one TRUTH-FREE page per surface (_ar_size_page):
     emitted |alpha| vs sizeX and |beta| vs sizeY for class T, linked class C and unlinked class C (which has
-    no true angle), over every cluster with the angle present.
+    no true angle), over every cluster with the angle present. The pages come in TWO SETS (the physicist's
+    decision of 2026-10-14), TP pT 1-2 GeV and TP pT >= 2 GeV (AR_PT_SETS), each titled with its range;
+    unlinked class C has no TP pT and appears whole in both sets' truth-free pages.
 
-    POPULATION. Clusters linked to a TP (tpIdx >= 0) with TP pT >= AR_PT_MIN = 1 GeV (the angle table's
-    population, angle.error_table pt_min_gev), emitted angle present (the stored has-flag), true angle not
+    POPULATION. Clusters linked to a TP (tpIdx >= 0) with TP pT >= 1 GeV (the angle table's population,
+    angle.error_table pt_min_gev), split at 2 GeV, emitted angle present (the stored has-flag), true angle not
     the -999 fill. The prototype read the P0.3 cache, which holds those clusters, the hard-scatter TPs'
     clusters below 1 GeV and an UNWEIGHTED 1-in-20 sample of all other clusters: a third of its linked
     clusters were below 1 GeV, while the nano's full linked population is ~89 % below 1 GeV (pile-up
@@ -6335,8 +6344,8 @@ def study_angle_response(X, K, P, ax_row, out):
     selected clusters, not per-file summaries. Run it on canon_v3 AAAA files 3-10 (files 1-2 hold the
     CNN's training events).
 
-    MONITOR (spix_monitor_summary.json, "G_angle_response"): per surface x angle x class x |eta| bin, the
-    mean slope of emitted vs true (_ar_summary) and the median sd, so emulator versions can be compared."""
+    MONITOR (spix_monitor_summary.json, "G_angle_response"): per pT set x surface x angle x class x |eta| bin,
+    the mean slope of emitted vs true (_ar_summary) and the median sd, so emulator versions can be compared."""
     from matplotlib.backends.backend_pdf import PdfPages
     files = out.get("_response_inputs") or out["_inputs"]
     d, tf, n_all, n_ev = _ar_load(files)
@@ -6348,49 +6357,62 @@ def study_angle_response(X, K, P, ax_row, out):
         fig.text(0.04, 0.95, "(G) Angle response: emitted vs true local angle, per surface, class and detector |η|",
                  fontsize=15, fontweight="bold", va="top")
         body = ([textwrap.fill(p, 150) for p in AR_CONTEXT[:3]]
-                + [textwrap.fill(f"Population: clusters linked to a TP with pT >= {AR_PT_MIN:g} GeV (the angle table's), "
-                                 "emitted angle present (stored flag; the |cot| <= 12 cap is not applied), true angle "
-                                 "present. Class T = tpEmuClass 1 (emulated from truth); linked class C = tpEmuClass 0 (CNN) with a "
-                                 "linked TP.",
-                                 150),
+                + [textwrap.fill("Population: clusters linked to a TP with pT >= 1 GeV (the angle table's), in two sets of "
+                                 "pages: " + " and ".join(t for _, t, *_ in AR_PT_SETS) + "; emitted angle present (stored "
+                                 "flag; the |cot| <= 12 cap is not applied), true angle present. Class T = tpEmuClass 1 "
+                                 "(emulated from truth); linked class C = tpEmuClass 0 (CNN) with a linked TP.", 150),
                    textwrap.fill("Detector |η| = |asinh(globalZ / globalR)| of the cluster POSITION (not the particle's "
                                  "eta). Bins: equal-population in |true|, never across an empty stretch "
                                  "(> max(3°, 8 % of the 1-99 % range)); lone bins drawn as bars. Monitor: the count-"
                                  "weighted least-squares slope of the bin means (1 = unbiased, 0 = flat) and the median "
-                                 "per-bin sd, per surface x angle x class x |η| bin.", 150),
+                                 "per-bin sd, per pT set x surface x angle x class x |η| bin.", 150),
                    textwrap.fill(AR_CONTEXT[3], 150),
                    f"Inputs ({len(files)} files, {n_ev} events):"] + [f"   {f}" for f in files])
         fig.text(0.04, 0.90, "\n\n".join(body[:6]) + "\n\n" + "\n".join(body[6:]), fontsize=10, va="top")
         pdf.savefig(fig)
         plt.close(fig)
-        for S in SURFACES:
-            for ang, *_ in AR_ANGLES:
-                sm = _ar_page(pdf, S, ang, d[ang], n_all, files)
-                summ.setdefault(SNAME[S], {})[ang] = sm
-                for cl, e in sm.items():
-                    for el, v in e.items():
-                        rows.append([SNAME[S], ang, cl, el, f"{v['n']:,}", v["n_bins"], OSU.fmt(v["mean_slope"], "{:.3f}"),
-                                     OSU.fmt(v["median_sd_deg"], "{:.2f}")])
-        for S in SURFACES:
-            _ar_size_page(pdf, S, tf, files)
-        OSU.table_pages(pdf, "(G) angle response per surface x angle x class x detector |η| bin",
-                        ["surface", "angle", "class", "|η| bin", "n", "bins", "mean slope", "median sd [deg]"], rows,
+        for key, title, *_ in AR_PT_SETS:
+            fig = plt.figure(figsize=(17, 11.5))
+            fig.text(0.5, 0.55, f"Pages for {title}", fontsize=28, fontweight="bold", ha="center")
+            fig.text(0.5, 0.45, "16 response pages (IL1-IL4, ID1-ID4 x alpha, beta), then one truth-free page per surface",
+                     fontsize=13, ha="center")
+            pdf.savefig(fig)
+            plt.close(fig)
+            for S in SURFACES:
+                for ang, *_ in AR_ANGLES:
+                    sm = _ar_page(pdf, S, ang, d[key][ang], n_all, files, title)
+                    summ.setdefault(key, {}).setdefault(SNAME[S], {})[ang] = sm
+                    for cl, e in sm.items():
+                        for el, v in e.items():
+                            rows.append([title, SNAME[S], ang, cl, el, f"{v['n']:,}", v["n_bins"],
+                                         OSU.fmt(v["mean_slope"], "{:.3f}"), OSU.fmt(v["median_sd_deg"], "{:.2f}")])
+            for S in SURFACES:
+                _ar_size_page(pdf, S, tf[key], files, title)
+        OSU.table_pages(pdf, "(G) angle response per pT set x surface x angle x class x detector |η| bin",
+                        ["pT set", "surface", "angle", "class", "|η| bin", "n", "bins", "mean slope", "median sd [deg]"],
+                        rows,
                         notes=["mean slope = count-weighted least-squares slope of the bin means of sign(true) x emitted "
                                "against |true| (1 = unbiased, 0 = flat); median sd = median over bins of the emitted sd.",
-                               f"Linked clusters, TP pT >= {AR_PT_MIN:g} GeV; {len(files)} inputs, {n_ev} events."])
-    res = {"pdf": pdf_path, "inputs": files, "n_events": n_ev, "population": f"linked, TP pT >= {AR_PT_MIN:g} GeV",
-           "eta_edges": AR_ETA_EDGES.tolist(), "summary": summ}
+                               f"Linked clusters, TP pT >= 1 GeV in two sets; {len(files)} inputs, {n_ev} events."])
+    res = {"pdf": pdf_path, "inputs": files, "n_events": n_ev,
+           "pt_sets": {k: {"title": t, "pt_min": lo, "pt_max": None if not np.isfinite(hi) else hi}
+                       for k, t, lo, hi in AR_PT_SETS},
+           "population": "linked clusters, TP pT >= 1 GeV, split into the pt_sets", "eta_edges": AR_ETA_EDGES.tolist(),
+           "summary": summ}
     out["angle_response"] = res
-    out["_monitor"]["G_angle_response"] = {k: res[k] for k in ("inputs", "n_events", "population", "eta_edges", "summary")}
+    out["_monitor"]["G_angle_response"] = {k: res[k] for k in ("inputs", "n_events", "pt_sets", "population", "eta_edges",
+                                                               "summary")}
 
-    def weighted_slope(S, ang, cl):
-        e = [v for v in summ.get(SNAME[S], {}).get(ang, {}).get(cl, {}).values() if v["mean_slope"] is not None]
+    def weighted_slope(key, S, ang, cl):
+        e = [v for v in summ.get(key, {}).get(SNAME[S], {}).get(ang, {}).get(cl, {}).values() if v["mean_slope"] is not None]
         n = np.array([v["n"] for v in e], float)
         return float(np.sum(n * [v["mean_slope"] for v in e]) / n.sum()) if len(e) else np.nan
     xp = np.arange(len(SURFACES))
     for ax, (ang, *_) in zip(ax_row[:2], AR_ANGLES):
-        for cl, _, colr, lab in AR_CLASSES:
-            ax.plot(xp, [weighted_slope(S, ang, cl) for S in SURFACES], "o-", color=colr, label=lab)
+        for (key, title, *_), ls in zip(AR_PT_SETS, ("--", "-")):
+            for cl, _, colr, lab in AR_CLASSES:
+                ax.plot(xp, [weighted_slope(key, S, ang, cl) for S in SURFACES], marker="o", ls=ls, color=colr,
+                        label=f"{lab.split(':')[0]}, {title}")
         ax.axhline(1.0, color="0.5", ls="--", lw=0.9)
         ax.axhline(0.0, color="0.5", ls=":", lw=0.9)
         surface_axis(ax); ax.set_ylabel("mean slope of emitted vs |true| (over |η| bins)"); ax.grid(alpha=.3)
@@ -6458,10 +6480,10 @@ SECTIONS = [
 
     ("G. Angle response: emitted vs true local angle, per class and detector |eta|",
      "The SmartPixels emulator's angle response per surface, angle and class (T: emulated from truth; C: the"
-     " CNN), in panels of the cluster position's |eta|. Class C alpha is flat at about 0 deg for inclined"
-     " clusters while their TP-true alpha rises with cluster length: the CNN was trained on class T, where"
-     " long clusters have small true alpha, and uses prompt-direction inputs. Its 24 x 16 crop truncates"
-     " only 0.5 % of clusters.",
+     " CNN), in panels of the cluster position's |eta|, for TP pT 1-2 GeV and >= 2 GeV. Class C's folded mean"
+     " near 0 is mainly a sign effect: its emitted alpha sign agrees with the linked particle's only ~50 % of"
+     " the time (class T 84-98 %); whether the CNN or the reference is wrong cannot be decided from the nano"
+     " (closed). Its 24 x 16 crop truncates only 0.5 % of clusters.",
      [("angle response by class", study_angle_response, 3, SHARED)]),
 ]
 
