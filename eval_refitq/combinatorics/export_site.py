@@ -622,7 +622,13 @@ def main():
         "angles": {**C["angle_use"].key(),
                    "labels": {s: TF.M.ANGLE_STAGES[s][0]
                               for s in C["angle_use"].key()["stages"]}},
-        "angle_res": C["angle_res"],
+        # the angle model (the locked table, k per angle, sigma mode), the cut
+        # file, what the angle figures cannot say (discs, class C) and the
+        # clusters the knob moved
+        "angle_model": C["angle_model"],
+        "angle_cuts": C["angle_cuts"],
+        "angle_notes": C["angle_notes"],
+        "n_moved": C["n_moved"],
         # how a projection picked one hit among its candidates (M.POS_ARB)
         "pos_arb": C["pos_arb"],
         # each range's label (definition sheet census.ot_truncated): "OT truncated"

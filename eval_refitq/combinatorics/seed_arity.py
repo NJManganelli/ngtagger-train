@@ -271,6 +271,7 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0,
     """
     allidx = np.arange(len(U["layer"]))
     la, lb = seed.layers[0], seed.layers[1]
+    sid = M.seed_code(seed.layers, seed.soft)
     out, gA, gB, kap, cot, z0p, idx = M.it_pairs(
         U, Q, allidx, la, lb, ptmin, use_angles, False, d0_cm, 0.0,
         z_inner=M.ot_vmr_inner_z(seed.layers),
@@ -292,7 +293,8 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0,
         # innerThirdTable_ and will not fake it with the wrong table.
         o3 = M.it_project(U, Q, dict(out), gA, gB, kap, cot, z0p, idx,
                           la, lb, lc, ptmin, False, d0_cm,
-                          use_angles=use_angles, role="attach", pos_arb=pos_arb)
+                          use_angles=use_angles, role="attach", pos_arb=pos_arb,
+                          seed_id=sid)
         if "_trip" not in o3:
             return None
         ta, tb, tc = o3["_trip"]
@@ -324,7 +326,7 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0,
         oj = M.it_project(U, Q, {}, gA, gB, kap, cot, z0p, idx, la, lb, L,
                           ptmin, False, d0_cm, use_angles=use_angles,
                           d0_meas=d0m, seed_layers=seed.layers, role="follow",
-                          pos_arb=pos_arb)
+                          pos_arb=pos_arb, seed_id=sid, seed_c=gC)
         cand[L] = int(oj.get("match_cand", 0))
         out["follow_angle_rejected"] = (out.get("follow_angle_rejected", 0)
                                         + int(oj.get("angle_window_rejected", 0)))

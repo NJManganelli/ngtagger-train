@@ -19,6 +19,7 @@ from .core import Item, identity, same_input
 
 CENSUS_DIR = "eval_refitq/combinatorics"
 CENSUS_EVENTS = 4
+CENSUS_TIMEOUT_S = 1800
 CENSUS_BUILDS = "AAAI,IAAA"
 
 
@@ -183,7 +184,8 @@ class CensusBuilds(Item):
                       "one n_own set beyond nhit; (findable count) one TP with credited hits on 3 modules given a "
                       "fourth, as a second hit on one module counted again would, judged by the identities; (tie "
                       "break) one tied track (n_tp_top >= 2) given an owner, as index tie-breaking would")
-    rule_desc = ("on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported "
+    rule_desc = ("on a fresh 4-event AAAI+IAAA census of the gate input run from this code root (angle cuts "
+                 "open, --calibrate): every exported "
                  "hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in "
                  "its build; every DR group lies inside one build; n_own <= nhit; own_tpidx = -1 iff n_own = 0 iff "
                  "n_tp_top != 1 (no credited hit, or a tie: no owner, as CMSSW); "
@@ -200,11 +202,21 @@ class CensusBuilds(Item):
             return ctx.cache[key]
         root = ctx.tree(CENSUS_DIR)
         out = tempfile.mkdtemp(prefix="spcheck_census_", dir=ctx.scratch)
+        # --calibrate: every angle cut open (census format >= 33 cuts with a cut file); the
+        # structure and the truth this item checks do not depend on the cut levels, and the item
+        # must run before any cut file exists
         cmd = [sys.executable, "-u", str(root / "tp_findability.py"), "-i", ctx.input, "-n", str(CENSUS_EVENTS),
                "--chunk", "2", "--calib-events", str(CENSUS_EVENTS), "--export-tracks", "--it-ptmin", "1.0",
                "--min-layers", "4", "--min-it-layers", "3", "--masks", CENSUS_BUILDS, "--cache-dir", out,
-               "-o", os.path.join(out, "census.json")]
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ctx.code_root))
+               "--calibrate", "-o", os.path.join(out, "census.json")]
+        # A STARVED RUN FAILS LOUDLY: the 4-event census takes ~2 min (cuts open); under memory
+        # pressure it once crawled for 2 h while holding the heavy lane, so it is bounded
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ctx.code_root),
+                               timeout=CENSUS_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"the 4-event census exceeded {CENSUS_TIMEOUT_S} s (machine starved? "
+                               f"check memory pressure and swap)") from None
         if r.returncode != 0:
             raise RuntimeError(f"census failed rc={r.returncode}: {r.stderr[-2000:]}")
         d = glob.glob(os.path.join(out, "tpcensus_*"))[0]

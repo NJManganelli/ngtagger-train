@@ -182,14 +182,13 @@ def main():
         P = tp_rows(C)
         nev = C["n_events"]
         r = {"pos_arb": C["pos_arb"],
-             "angles": C["angle_use"].key(), "angle_res": C["angle_res"],
+             "angles": C["angle_use"].key(), "angle_model": C["angle_model"],
+             "angle_cuts": C["angle_cuts"], "angle_notes": C["angle_notes"],
+             "n_moved": C["n_moved"],
              "label": C["angle_use"].label(), "n_events": nev,
              "eta_ranges": {k: {"abs_eta": list(v), "label": M.eta_range_label(*v)}
                             for k, v in ETA_RANGES.items()},
              "builds": {}}
-        if C["angle_res_caveat"]:
-            # a k < 1 census: its numbers travel with the caveat
-            r["angle_res_caveat"] = C["angle_res_caveat"]
         if a.logs:
             r["s_per_event"] = census_seconds_per_event(Path(a.logs) / f"{lab}.log")
         for b in C["builds"]:
@@ -201,9 +200,9 @@ def main():
             r["mva_auc_all_feats"] = mva_auc(C, col, fall)
             r["mva_auc_no_angle_feats"] = mva_auc(C, col, fno)
         res[lab] = r
-        print(f"{lab}: {r['label']} k={C['angle_res']}"
-              + (f"  CAVEAT: {C['angle_res_caveat']['text']}" if C["angle_res_caveat"] else ""),
-              flush=True)
+        am = C["angle_model"]
+        print(f"{lab}: {r['label']} k alpha {am['k_alpha']:g} beta {am['k_beta']:g} "
+              f"({am['mode']}); clusters moved {C['n_moved']}", flush=True)
     json.dump(res, open(a.out, "w"), indent=1, default=float)
     print(f"wrote {a.out}")
 

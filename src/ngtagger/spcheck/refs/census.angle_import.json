@@ -1,0 +1,74 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261014T201127Z-wpd0b-gate-derive-91667/copy",
+ "derived": "2026-10-14T20:13:16Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+ "item": "census.angle_import",
+ "job_id": "20261014T201127Z-wpd0b-gate-derive-91667",
+ "known_bad": "four variants, each of which must be red: (scales) the legacy per-layer pull scales and no centre in place of the table; (key) the cluster correction read in the true key; (sign) the centre added instead of subtracted; (cut file) a cut file whose S6 entries were made with S5 on, applied to an S5-off run",
+ "rule": "on the first events of the gate input, every IT barrel cluster's census-path corrected alpha / beta and uncertainty (census_angles.prepare, k = 1) equal spdefs' (the emitted-key row's centre subtracted, the width applied) to 1e-12; the table's sha256 equals the reference's (the locked p03.table.v1a1e); per surface and angle the class-T (usable, pT >= 1 GeV) after-table centre (25 %-trimmed mean) within 0 +- 0.25 and width (95 %-trimmed) within 1 +- 0.1, each widened by t(N = 8) event-bootstrap sd; a cut file is accepted for its own configuration (CutSet.check) and refused for an S5-off run when made with S5 on; identity of the cluster counts with the reference",
+ "stat": {
+  "band": {
+   "alpha/IL1": {
+    "centre": 0.014456520427383808,
+    "n": 4610,
+    "ok": true,
+    "width": 0.9994393822727053
+   },
+   "alpha/IL2": {
+    "centre": -0.007354035339532305,
+    "n": 3209,
+    "ok": true,
+    "width": 1.0025954592177329
+   },
+   "alpha/IL3": {
+    "centre": 0.013982619933018709,
+    "n": 2345,
+    "ok": true,
+    "width": 0.9942550851167921
+   },
+   "alpha/IL4": {
+    "centre": -0.02609753646545198,
+    "n": 1923,
+    "ok": true,
+    "width": 1.011600838592604
+   },
+   "beta/IL1": {
+    "centre": 0.006139248948920735,
+    "n": 4610,
+    "ok": true,
+    "width": 0.9612633289107787
+   },
+   "beta/IL2": {
+    "centre": -0.024537422264859554,
+    "n": 3209,
+    "ok": true,
+    "width": 0.9666093480725862
+   },
+   "beta/IL3": {
+    "centre": -0.014609232606345704,
+    "n": 2345,
+    "ok": true,
+    "width": 0.9875777783613001
+   },
+   "beta/IL4": {
+    "centre": -0.05034385533957105,
+    "n": 1923,
+    "ok": true,
+    "width": 1.0054490553700741
+   }
+  },
+  "cutfile_refused": null,
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+  "max_diff": {
+   "alpha": 0.0,
+   "beta": 0.0
+  },
+  "n_clusters": 132215,
+  "n_usable": 131703,
+  "table_registry": "p03.table.v1a1e",
+  "table_sha256": "84cf24e12bb21cde300e730c46f5a611122818dbfb621ab5147647d25ccdd0b3",
+  "variant": null
+ }
+}

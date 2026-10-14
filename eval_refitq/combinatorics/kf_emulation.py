@@ -242,8 +242,11 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
              nhit, ok, chi2_rphi, chi2_rz, var_phi0).
     """
     nt, nl = H.shape
-    ANG = has_angle is not None and ma is not None
+    # alpha and beta enter independently (S5 per angle, WP-D0b): ma / mb None
+    # means that angle is not fed to the fit
     has_b = has_angle if has_beta is None else has_beta
+    ANG_A = has_angle is not None and ma is not None
+    ANG_B = has_b is not None and mb is not None
     # ---- DIFFUSE PRIOR, NOT A TWO-POINT SEED -----------------------------
     # calcSeeds' exact two-point initialisation is valid only for the
     # 4-parameter fit, where two azimuths determine two r-phi parameters. With
@@ -391,10 +394,10 @@ def kf_run(H, m0, m1, v0, v1, valid, ma=None, va=None, mb=None, vb=None,
     # The angle consistency of a track is NOT accumulated here: it is the
     # final-state angle_chi2, one definition whether or not the angles were fed
     # to the fit (fit_tracks).
-    if ANG:
+    if ANG_A or ANG_B:
         for L in range(nl):
-            ua = valid[:, L] & has_angle[:, L] & ok
-            ub = valid[:, L] & has_b[:, L] & ok
+            ua = (valid[:, L] & has_angle[:, L] & ok) if ANG_A else np.zeros(nt, bool)
+            ub = (valid[:, L] & has_b[:, L] & ok) if ANG_B else np.zeros(nt, bool)
             if ua.any():
                 r = np.where(ua, np.maximum(H[:, L], 1e-3), 1.0)
                 h4 = 1.0 / (r * r)                 # alpha term: x0 + d0 / r^2 (TTTrack d0)
@@ -690,14 +693,21 @@ def hits_from_seed(U, out, layers=None):
     return GIDX
 
 
-def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
-               d0_prior_cm=D0_PRIOR_CM, layers=LAYER_ORDER, gidx=None,
-               pt_hint=None, ms_scale=MS_SCALE, it_ot_scale=IT_OT_SCALE,
-               reverse=False):
+def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
+               layers=LAYER_ORDER, gidx=None, pt_hint=None, ms_scale=MS_SCALE,
+               it_ot_scale=IT_OT_SCALE, reverse=False, angles=("alpha", "beta"),
+               key="emitted", model=None):
     """Assemble each seed's track and fit it. Returns fitted parameters + hits.
 
     gidx, when given, is the hit table the seeding already built; otherwise the
     track is assembled here by projecting the seed helix.
+
+    S5 (use_angles): the angles in `angles` enter the update, in the table key
+    `key` (WP-D0b): "emitted" takes the clusters' prepared values (Q), whose
+    sigma is the table width x the published sigma in the census; "prediction"
+    re-reads each cluster in the table's true-key row at the track's cot theta
+    from a position-only fit (needs the census angle model). The KF's innovation
+    adds the state's own error, so the prediction error enters once.
     """
     T = (gather_hits(U, Q, gidx, layers) if gidx is not None
          else collect_track_hits(U, Q, trip, layers))
@@ -722,23 +732,36 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
     i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
     v0 = np.where(is_ot, o0, i0)
     v1 = np.where(is_ot, o1, i1)
-    ma = va = mb = vb = ang = angb = None
-    if use_angles:
-        # alpha and beta enter as measurements of x0 + x4/r^2 and of x2, with
-        # the same pull-scaled sigmas as every seeding stage and the angle chi2
-        # (it_prepare); alpha_scale / beta_scale multiply them on top.
-        ma = -M.C_BEND * T["KA"]
-        va = (M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale) ** 2
-        mb = T["CT"]
-        vb = (np.maximum(T["SCT"], 1e-9) * beta_scale) ** 2
-        ang, angb = T["ANG_A"], T["ANG_B"]
     # azimuth relative to each track's own first hit, so no 2pi wrap enters
     ref = np.where(T["VALID"], T["PH"], 0.0)
     first = np.argmax(T["VALID"], axis=1)
     phi_ref = ref[np.arange(len(first)), first]
     m0 = M.wrap(T["PH"] - phi_ref[:, None])
-    out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb, ang,
-                 d0_prior_cm, ms_scale, it_ot_scale,
+    ma = va = mb = vb = ang = angb = None
+    if use_angles and angles:
+        # alpha and beta enter as measurements of x0 + x4/r^2 and of x2, with the
+        # sigmas every angle stage reads
+        KA, SKA, CT, SCT = T["KA"], T["SKA"], T["CT"], T["SCT"]
+        if key == "prediction":
+            if model is None:
+                raise ValueError("the S5 prediction key needs the census angle model")
+            pos = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], None, None, None, None,
+                         None, d0_prior_cm, ms_scale, it_ot_scale,
+                         pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse)
+            KA, SKA, CT, SCT = model.kf_measurements(Q, T["GIDX"], T["VALID"] & T["ANG"],
+                                                     pos[3], (KA, SKA, CT, SCT))
+        elif key != "emitted":
+            raise ValueError(f"table key {key!r}")
+        if "alpha" in angles:
+            ma = -M.C_BEND * KA
+            va = (M.C_BEND * np.maximum(SKA, 1e-9)) ** 2
+            ang = T["ANG_A"]
+        if "beta" in angles:
+            mb = CT
+            vb = np.maximum(SCT, 1e-9) ** 2
+            angb = T["ANG_B"]
+    out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb,
+                 ang if ang is not None else angb, d0_prior_cm, ms_scale, it_ot_scale,
                  pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse,
                  has_beta=angb)
     (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
@@ -750,29 +773,29 @@ def fit_tracks(U, Q, trip, use_angles=True, alpha_scale=1.0, beta_scale=1.0,
            "chi2_rphi": c2p, "chi2_rz": c2z}
     # THE FINAL-STATE ANGLE CHI2, whether or not the angles entered the fit, so
     # that the stages reading it (S6 acceptance, S7 rank, S8 features) see one
-    # definition and switching S5 changes the state, not the yardstick.
-    fit["chi2_angle"], fit["n_angle"] = angle_chi2(T, fit, alpha_scale, beta_scale)
-    fit["n_angle_meas"] = ((T["VALID"] & T["ANG_A"]).sum(axis=1)
-                           + (T["VALID"] & T["ANG_B"]).sum(axis=1)).astype(np.int32)
+    # definition and switching S5 changes the state, not the yardstick. Its
+    # alpha and beta parts are kept apart for S6's per-angle sets.
+    c2a, na, c2b, nb = angle_chi2_parts(T, fit)
+    fit["chi2_a"], fit["n_a"], fit["chi2_b"], fit["n_b"] = c2a, na, c2b, nb
+    fit["chi2_angle"] = c2a + c2b
+    fit["n_angle"] = (T["VALID"] & T["ANG"]).sum(axis=1).astype(np.int32)
+    fit["n_angle_meas"] = (na + nb).astype(np.int32)
     return fit
 
 
-# THE PER-LAYER PULL SCALES (M.ALPHA_PULL_SCALE / M.BETA_PULL_SCALE) are
-# applied once, in it_prepare, to the sigmas every stage reads (T["SKA"],
-# T["SCT"]), so nothing here multiplies them again. They replace the 2026-09-15
-# values (alpha 1.089/1.045/1.079/0.922, beta 1.231/1.191/1.124/1.131; 60
-# events, before the payload-units fix).
-#
-# This supersedes an earlier inference that the sigmas were ~6.6x optimistic,
-# taken from a MEAN chi2_angle per cluster of 44-50. That mean was arithmetic,
-# not calibration: with ~2% of surviving tracks contaminated and carrying angle
-# pulls near 40, those few dominate the average.
+# THE ANGLE SIGMAS are the ones every stage reads (T["SKA"], T["SCT"]): in the
+# census the table width x the published sigma, centre-corrected
+# (census_angles.prepare); nothing here rescales them. An earlier inference that
+# the sigmas were ~6.6x optimistic came from a MEAN chi2_angle per cluster of
+# 44-50; that mean was arithmetic, not calibration: with ~2% of surviving tracks
+# contaminated and carrying angle pulls near 40, those few dominate the average.
 
 
-def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
-    """SmartPixels angle consistency for a track fitted on POSITIONS ONLY.
+def angle_chi2_parts(T, fit):
+    """(chi2_alpha, n_alpha, chi2_beta, n_beta): the SmartPixels angle consistency
+    of each track at its final state, per angle.
 
-    THIS IS THE ANGLES' JOB. Feeding alpha and beta into the fit buys nothing --
+    THIS IS THE ANGLES' JOB. Feeding alpha and beta into the fit buys little --
     measured: sigma(kappa) 0.0093 with them against 0.0093 without, at any
     weighting, because sigma(kappa_alpha) is 0.64 at IL1 where the positions
     already deliver 0.019. What they CAN do is say whether a cluster's own
@@ -783,27 +806,28 @@ def angle_chi2(T, fit, alpha_scale=1.0, beta_scale=1.0):
 
     alpha predicts x0 + x4 / r^2 and beta predicts x2, the same rows the fit
     would have used. The pull uses the MEASUREMENT variance only and neglects
-    the fitted state's own uncertainty, which makes the chi2 conservative -- the
-    same simplification bend chi2 makes, and harmless for a discriminant that
-    only has to be monotonic.
+    the fitted state's own uncertainty (S6 cuts at the measured quantile of this
+    statistic, which contains it).
     """
-    pa, pb = angle_pulls(T, fit, alpha_scale, beta_scale)
-    c2 = (np.where(T["VALID"] & T["ANG_A"], pa * pa, 0.0).sum(axis=1)
-          + np.where(T["VALID"] & T["ANG_B"], pb * pb, 0.0).sum(axis=1))
-    return c2, (T["VALID"] & T["ANG"]).sum(axis=1).astype(np.int32)
+    pa, pb = angle_pulls(T, fit)
+    ma = T["VALID"] & T["ANG_A"]
+    mb = T["VALID"] & T["ANG_B"]
+    return (np.where(ma, pa * pa, 0.0).sum(axis=1), ma.sum(axis=1).astype(np.int32),
+            np.where(mb, pb * pb, 0.0).sum(axis=1), mb.sum(axis=1).astype(np.int32))
 
 
-def angle_gate(chi2_angle, n_meas, accept_chi2):
-    """S6: keep a track (or, with KF branching, a state) whose angle chi2 per
-    angle measurement is at most accept_chi2. A track with no angle
-    measurement (OT-only, or no usable IT direction) passes: no angle, no
-    verdict. Takes any angle chi2 -- the final-state one today, a state's
-    predicted one when the per-state gate arrives -- so the cut carries over."""
+def angle_gate(chi2_angle, n_meas, thr):
+    """S6: keep a track (or, with KF branching, a state) whose angle chi2 is at
+    most its threshold `thr` (per track: the cut file's for its build and number
+    of angle measurements). A track with no angle measurement (OT-only, or no
+    usable IT direction) passes: no angle, no verdict. Takes any angle chi2 --
+    the final-state one today, a state's predicted one when the per-state gate
+    arrives -- so the cut carries over."""
     n = np.asarray(n_meas)
-    return (n == 0) | (np.asarray(chi2_angle) <= accept_chi2 * np.maximum(n, 1))
+    return (n == 0) | (np.asarray(chi2_angle) <= np.asarray(thr))
 
 
-def angle_pulls(T, fit, alpha_scale=1.0, beta_scale=1.0):
+def angle_pulls(T, fit):
     """Per-(track, layer) alpha and beta pulls against the fitted trajectory.
 
     Kept separate from the summed chi2 because WHICH layer disagrees is the
@@ -814,9 +838,9 @@ def angle_pulls(T, fit, alpha_scale=1.0, beta_scale=1.0):
     x0 = -M.C_BEND * fit["kappa"][:, None]
     pred_a = x0 + fit["d0"][:, None] / (r * r)
     res_a = (-M.C_BEND * T["KA"]) - pred_a
-    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale
+    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9)
     res_b = T["CT"] - fit["cot"][:, None]
-    sig_b = np.maximum(T["SCT"], 1e-9) * beta_scale
+    sig_b = np.maximum(T["SCT"], 1e-9)
     return res_a / sig_a, res_b / sig_b
 
 
@@ -824,7 +848,7 @@ ANGLE_COLS = ("track_row", "layer", "res_a", "pred_a", "res_b", "pred_b",
               "sig_a", "sig_b", "hit_wrong", "n_wrong")
 
 
-def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
+def angle_rows(U, T, fit, trip, keep_idx):
     """Per-CLUSTER angle residuals for the IT hits of selected tracks.
 
     THE RESIDUAL, NOT THE PULL. angle_pulls divides by sigma immediately, which
@@ -848,10 +872,10 @@ def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
     x0 = -M.C_BEND * fit["kappa"][:, None]
     pred_a = x0 + fit["d0"][:, None] / (r * r)
     res_a = (-M.C_BEND * T["KA"]) - pred_a
-    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9) * alpha_scale
+    sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9)
     pred_b = np.broadcast_to(fit["cot"][:, None], T["CT"].shape)
     res_b = T["CT"] - pred_b
-    sig_b = np.maximum(T["SCT"], 1e-9) * beta_scale
+    sig_b = np.maximum(T["SCT"], 1e-9)
     # ownership, per hit, against the same majority owner the residuals use
     G = T["GIDX"]
     on = G >= 0
@@ -1056,92 +1080,6 @@ def tp_truth_rows(TP, event, tpidx):
     return p, has
 
 
-def rs(x):
-    if len(x) < 30:
-        return float("nan")
-    q = np.percentile(x, [15.865, 84.135])
-    return float(0.5 * (q[1] - q[0]))
-
-
-def retune(U, Q, trip, TP, scales=(0.25, 0.5, 1.0, 2.0, 4.0, 8.0), **kw):
-    """Scan the alpha and beta variance scales and report what each buys.
-
-    THE REFIT'S OWN WEIGHTS ARE NOT TRANSFERABLE. It weights alpha and beta by
-    the sigmas its network reports, tuned for per-cluster angle recovery on a
-    different population; here they enter a 5-parameter helix fit alongside
-    positions from two detector systems. Scanning the scale applied to those
-    variances is what says whether they are over- or under-trusted, and the
-    minimum of the resolution curve is the retuned value. A scale above 1 means
-    the reported sigmas are too small.
-    """
-    rows = []
-    base = fit_tracks(U, Q, trip, use_angles=False, **kw)
-    dk, dd, dc, dz, _ = truth_residuals(U, trip, base, TP)
-    rows.append({"alpha_scale": None, "beta_scale": None, "n": int(len(dk)),
-                 "sig_kappa": rs(dk), "sig_d0_um": 1e4 * rs(dd),
-                 "sig_cot": rs(dc), "sig_z0_um": 1e4 * rs(dz)})
-    for s in scales:
-        f = fit_tracks(U, Q, trip, True, s, s, **kw)
-        dk, dd, dc, dz, _ = truth_residuals(U, trip, f, TP)
-        rows.append({"alpha_scale": s, "beta_scale": s, "n": int(len(dk)),
-                     "sig_kappa": rs(dk), "sig_d0_um": 1e4 * rs(dd),
-                     "sig_cot": rs(dc), "sig_z0_um": 1e4 * rs(dz)})
-    return rows
-
-
-def main():
-    import argparse
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("-i", "--input", required=True)
-    ap.add_argument("-n", "--nev", type=int, default=20)
-    ap.add_argument("--ptmin", type=float, default=2.0)
-    ap.add_argument("--seed", default="IL1+IL2>IL3")
-    ap.add_argument("--max-tracks", type=int, default=3000)
-    ap.add_argument("--d0-prior-cm", type=float, default=D0_PRIOR_CM)
-    a = ap.parse_args()
-    import tp_findability as TF
-    cal = calibrate_for(a.input, a.ptmin)
-    la, rest = a.seed.split("+"); lb, lc = rest.split(">")
-    LA, LB, LC = TF.CODE[la], TF.CODE[lb], TF.CODE[lc]
-    Us, Qs, trips = [], [], []
-    for (U, Q), ev in TF.unified_chunks(a.input, a.nev, 4, cal):
-        o = M.it_pair_seed(U, Q, np.arange(len(U["layer"])), LA, LB, LC,
-                           a.ptmin, True, False, 0.0)
-        if "_trip" not in o:
-            continue
-        Us.append(U); Qs.append(Q); trips.append(o["_trip"])
-    if not trips:
-        raise SystemExit("no triples")
-    print(f"{a.seed}: {sum(len(t[0]) for t in trips):,} candidate triples "
-          f"over {a.nev} events")
-    allrows = []
-    for U, Q, trip in zip(Us, Qs, trips):
-        if len(trip[0]) > a.max_tracks:
-            k = np.random.default_rng(0).choice(len(trip[0]), a.max_tracks, False)
-            trip = tuple(x[k] for x in trip)
-        TP = tp_truth_table(U)
-        allrows.append(retune(U, Q, trip, TP, d0_prior_cm=a.d0_prior_cm))
-    keys = ["n", "sig_kappa", "sig_d0_um", "sig_cot", "sig_z0_um"]
-    print(f"\n{'alpha/beta scale':>17}{'n':>8}{'sig(kappa)':>12}"
-          f"{'sig(d0) um':>12}{'sig(cot)':>11}{'sig(z0) um':>12}")
-    for i in range(len(allrows[0])):
-        lab = allrows[0][i]["alpha_scale"]
-        n = sum(r[i]["n"] for r in allrows)
-        vals = [np.median([r[i][k] for r in allrows if np.isfinite(r[i][k])])
-                for k in keys[1:]]
-        print(f"{'positions only' if lab is None else f'x{lab:g}':>17}{n:>8,}"
-              f"{vals[0]:>12.4f}{vals[1]:>12.0f}{vals[2]:>11.4f}{vals[3]:>12.0f}")
-
-
-def calibrate_for(spec, ptmin, nev=50):
-    import tp_findability as TF
-    c = TF.calibrate(spec, nev, ptmin)
-    return {int(k): float(v) for k, v in c["sigz_ot"].items()}
-
-
-
-
-
 # ==========================================================================
 # per-track features for a track-quality MVA
 # ==========================================================================
@@ -1249,8 +1187,7 @@ def sysclass_of(layers):
     return SYS_MIX if (it and ot) else (SYS_IT if it else SYS_OT)
 
 
-def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
-               alpha_scale=1.0, beta_scale=1.0):
+def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank):
     """One row per track, ordered by TRACK_COLS. float32 throughout.
 
     tp_key (M.tp_key of the owner) is -1 for a track whose owner has no L1TTP
@@ -1264,7 +1201,7 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     nhit = use.sum(axis=1).astype(np.float64)
     is_it = use & (lay <= 4)
     is_ot = use & (lay > 10)
-    pa, pb = angle_pulls(T, fit, alpha_scale, beta_scale)
+    pa, pb = angle_pulls(T, fit)
     apull = np.maximum(np.where(use & T["ANG_A"], np.abs(pa), 0.0),
                        np.where(use & T["ANG_B"], np.abs(pb), 0.0))
     srt = np.sort(apull, axis=1)[:, ::-1]
@@ -1276,7 +1213,7 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     hi = np.where(use, idx, -1).max(axis=1)
     span = (idx >= lo[:, None]) & (idx <= hi[:, None])
     n_miss = (span & ~use).sum(axis=1).astype(np.float64)
-    c2a, nang = angle_chi2(T, fit, alpha_scale, beta_scale)
+    c2a, nang = fit["chi2_angle"], fit["n_angle"]
     chi2s = fit["chi2_rphi"] / CHI2_RPHI_SCALE + fit["chi2_rz"]
     # ---- truth, referenced to the MAJORITY OWNER of the hits -------------
     ga = trip[0]
@@ -1399,10 +1336,9 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
 
 if __name__ == "__main__":
     import sys as _s
-    if "--selftest" in _s.argv:
-        _selftest()
-    else:
-        main()
+    if "--selftest" not in _s.argv:
+        raise SystemExit("kf_emulation is a library; --selftest runs its self-test")
+    _selftest()
 
 
 # ---- DEFERRED: hardware-style bit encoding -------------------------------

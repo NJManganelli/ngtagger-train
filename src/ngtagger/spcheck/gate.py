@@ -26,9 +26,10 @@ from pathlib import Path
 
 from . import core
 from .core import KNOWN_GOOD_EVENTS, KNOWN_GOOD_INPUT, Ctx, NotApplicable, jsonable, now_utc
-from . import items_census, items_defs, items_infra, items_nano, items_tagger
+from . import items_angles, items_census, items_defs, items_infra, items_nano, items_tagger
 
-ALL_ITEMS = (items_infra.ITEMS + items_defs.ITEMS + items_nano.ITEMS + items_census.ITEMS + items_tagger.ITEMS)
+ALL_ITEMS = (items_infra.ITEMS + items_defs.ITEMS + items_nano.ITEMS + items_census.ITEMS
+             + items_angles.ITEMS + items_tagger.ITEMS)
 BY_ID = {it.id: it for it in ALL_ITEMS}
 
 

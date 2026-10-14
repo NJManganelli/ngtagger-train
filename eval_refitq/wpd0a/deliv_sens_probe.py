@@ -158,7 +158,14 @@ def rules(census, root, census_b, census_c, out):
     if meta.get("ot_bend_cal"):
         M.set_ot_bend_cal({int(k): tuple(v) for k, v in meta["ot_bend_cal"].items()})
     cfg = meta["config"]
-    if cfg.get("bench") or cfg["angle_res"].get("alpha_k", 1.0) < 1.0 or cfg["angle_res"].get("beta_k", 1.0) < 1.0:
+    if meta["format"] >= 33:         # the angle model (census_angles) since format 33
+        am = cfg["angle_model"]
+        knob = am["k_alpha"] < 1.0 or am["k_beta"] < 1.0
+        angles_arg = TF.CA.Model(am["table_path"])
+    else:
+        knob = cfg["angle_res"].get("alpha_k", 1.0) < 1.0 or cfg["angle_res"].get("beta_k", 1.0) < 1.0
+        angles_arg = {"alpha_k": 1.0, "beta_k": 1.0}
+    if cfg.get("bench") or knob:
         raise SystemExit("rules re-reads the input with full-float angles and no resolution knob only")
     spec = ",".join(r["path"] for r in meta["inputs"])
     import glob
@@ -167,7 +174,7 @@ def rules(census, root, census_b, census_c, out):
     CELLS = [("B", "index"), ("C", "index"), ("C", "none")]
     per = {}                                   # entry -> list over chunks of {cell: arrays}
     for ci, ((U, Q), ev) in enumerate(TF.unified_chunks(spec, nev, cfg["chunk"], sigz, None,
-                                                        {"alpha_k": 1.0, "beta_k": 1.0})):
+                                                        angles_arg)):
         z = np.load(shards[ci])
         own_b = M.credited_tps(U["tpIdx"])     # the hit's own tpIdx alone (formats <= 27)
         is_ot_u = U["layer"] >= 11
