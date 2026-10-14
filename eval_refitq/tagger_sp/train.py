@@ -12,6 +12,16 @@ per seed before keras' validation_split (which takes the LAST fraction).
 Outputs: OUT/models/<mask>/<variant>/s<seed>/ (framework model dir) and
 OUT/preds/<mask>_<variant>_s<seed>.npz (softmax probabilities of the test jets + jet
 kinematics + event identity).
+
+--d0 A|B|C|D: the PV-(x, y) d0 upper-bound study (d0pv.py): the variant's d0 inputs are
+transformed (d0pv.apply), outputs go to OUT/d0_upper_bound/{models,preds} as
+<mask>_<variant>_<d0>_s<seed>, and keras is seeded before the model is built (the
+framework seeds only at fit, after the weights exist), so the four variants share each
+seed's initialisation and shuffling.
+
+--recipe linout: tagger_sp_linout.yaml (linout.py: the framework DeepSetHGQ2 with linear class
+logits instead of a ReLU on them, which leaves 0-50% of the test jets of a seed with an exactly
+uniform output); outputs under <out>/linout/.
 """
 from __future__ import annotations
 
@@ -27,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import common as C  # noqa: E402
 
 CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp.yaml")
+CONFIG_LINOUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp_linout.yaml")
 
 
 def load_mask(mask, samples):
@@ -69,10 +80,14 @@ def main():
     ap.add_argument("--variant", required=True, choices=sorted(C.VARIANTS))
     ap.add_argument("--seeds", nargs="+", type=int, default=[0, 1, 2])
     ap.add_argument("--samples", nargs="+", default=["ttbar", "htt"], choices=sorted(C.SAMPLES))
-    ap.add_argument("--config", default=CONFIG)
+    ap.add_argument("--config", default=None, help="default: the --recipe's yaml")
+    ap.add_argument("--recipe", choices=["ladder", "linout"], default="ladder",
+                    help="linout: DeepSetHGQ2 with linear class logits (linout.py); outputs under <out>/linout")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--gpu", action="store_true", help="use the Metal GPU (default: CPU only)")
     ap.add_argument("--tag", default="", help="suffix of the output names (dev runs)")
+    ap.add_argument("--d0", choices=["A", "B", "C", "D"], default=None,
+                    help="PV-(x, y) d0 upper-bound variant (d0pv.py); outputs under OUT/d0_upper_bound")
     a = ap.parse_args()
 
     C.tf_setup(a.threads, a.gpu)
@@ -82,15 +97,29 @@ def main():
     from ngtagger.train.trainer import run_training
 
     D, names = load_mask(a.mask, a.samples)
+    X = D["X"]
     cols = resolve_feature_groups(C.VARIANTS[a.variant])
+    out, vname = C.OUT, a.variant
+    if a.d0:
+        import d0pv
+
+        X, names = d0pv.apply(X, names, d0pv.load_side(a.mask, a.samples, D), a.d0)
+        cols = cols + d0pv.extra_columns(a.d0)
+        out, vname = d0pv.OUTD, f"{a.variant}_{a.d0}"
+    config = a.config or CONFIG
+    if a.recipe == "linout":
+        import linout  # noqa: F401  (registers DeepSetHGQ2LinOut)
+
+        config = a.config or CONFIG_LINOUT
+        out = os.path.join(out, "linout")
     ci = [names.index(c) for c in cols]
-    X = D["X"][:, :, ci]
+    X = X[:, :, ci]
     y = np.eye(len(CLASS_LABELS))[D["label"]]
     te = D["is_test"].astype(bool)
     counts = {s: {c: [int(((D["label"] == i) & (D["sample"] == si) & ~te).sum()),
                       int(((D["label"] == i) & (D["sample"] == si) & te).sum())]
                   for i, c in enumerate(CLASS_LABELS)} for si, s in enumerate(a.samples)}
-    print(f"{a.mask} {a.variant}: {len(cols)} features, train {int((~te).sum())} / test {int(te.sum())} jets; "
+    print(f"{a.mask} {vname}: {len(cols)} features, train {int((~te).sum())} / test {int(te.sum())} jets; "
           f"[train, test] per class {json.dumps(counts)}", flush=True)
 
     tr_idx = np.flatnonzero(~te)
@@ -104,16 +133,20 @@ def main():
             "reco_pt_test": D["pt"][te], "reco_eta_test": D["eta"][te],
             "feature_names": cols, "class_labels": CLASS_LABELS,
         }
-        name = f"{a.mask}_{a.variant}_s{seed}{a.tag}"
-        odir = os.path.join(C.OUT, "models", a.mask, a.variant + a.tag, f"s{seed}")
-        model = run_training(a.config, [], odir, seed=seed, mlflow_run_name=name, dataset=ds)
+        name = f"{a.mask}_{vname}_s{seed}{a.tag}"
+        odir = os.path.join(out, "models", a.mask, vname + a.tag, f"s{seed}")
+        if a.d0:
+            import keras
+
+            keras.utils.set_random_seed(seed)
+        model = run_training(config, [], odir, seed=seed, mlflow_run_name=name, dataset=ds)
         logits = model.predict(X[te])[0]
         z = logits - logits.max(axis=1, keepdims=True)
         prob = np.exp(z) / np.exp(z).sum(axis=1, keepdims=True)
         h = model.history.history
-        os.makedirs(os.path.join(C.OUT, "preds"), exist_ok=True)
+        os.makedirs(os.path.join(out, "preds"), exist_ok=True)
         np.savez_compressed(
-            os.path.join(C.OUT, "preds", name + ".npz"), prob=prob.astype(np.float32),
+            os.path.join(out, "preds", name + ".npz"), prob=prob.astype(np.float32),
             label=D["label"][te], pt=D["pt"][te], eta=D["eta"][te], sample=D["sample"][te],
             fileno=D["file"][te], entry=D["entry"][te], evid=D["evid"][te],
             samples=np.array(a.samples), classes=np.array(CLASS_LABELS), features=np.array(cols),

@@ -1,0 +1,42 @@
+model: DeepSetHGQ2LinOut    # linout.py: DeepSetHGQ2 with linear class logits (no output ReLU)
+experiment: tagger_sp
+
+run_config:
+  verbose: 2
+
+data_config:
+  n_constituents: 16
+  # composable groups: baseline | track | trkquality (BDT score) | cluster
+  feature_groups: [baseline]
+
+model_config:
+  name: tagger_sp
+  conv1d_layers: [10, 10]
+  conv1d_parallelisation_factor: [16, 16]
+  classification_layers: [32, 16]
+  regression_layers: [10]
+  beta: 1.0e-8
+
+quantization_config:
+  pt_output_quantization: [16, 6]
+
+training_config:
+  weight_method: onlyclass     # none | ptref | onlyclass
+  validation_split: 0.1
+  epochs: 150
+  # DEVIATION from configs/deepset_hgq2.yaml (batch 2048, lr 0.01): with ~3.5k TTbar training
+  # jets that schedule does not learn (AUCs ~0.5, best val loss at epoch 3; 1.7 steps/epoch).
+  # Architecture, inputs, loss, class weighting and callbacks are the framework's.
+  batch_size: 128
+  learning_rate: 0.001
+  loss_weights: [1.0, 1.0]
+  EarlyStopping_patience: 15
+  ReduceLROnPlateau_factor: 0.5
+  ReduceLROnPlateau_patience: 5
+  ReduceLROnPlateau_min_lr: 1.0e-5
+
+firmware_config:
+  backend: Vitis
+  clock_period: 2.5
+  fpga_part: xcvu13p-flga2577-2-e
+  project_name: L1TSC4NGJetModel_ngt
