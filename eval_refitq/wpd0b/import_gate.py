@@ -520,9 +520,9 @@ def _print(res, lab):
 
 
 def _core(x):
-    from ngtagger.spdefs import angles as SD_
-    x = x[np.isfinite(x)]
-    return float(SD_.core_w(x)) if len(x) > 30 else np.nan
+    """The B.1 core width (estimator.core sigma) of the finite x; NaN below its minimum count."""
+    r = SD.core_w(x[np.isfinite(x)])
+    return r["sigma"] if r else np.nan
 
 
 def cmd_keys(a):
