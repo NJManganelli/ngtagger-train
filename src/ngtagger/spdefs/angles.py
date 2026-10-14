@@ -31,15 +31,18 @@ angle (the census's rule); class C is untouched. Uncertainty modes: `fixed` keep
 uses max(k, 0.05) sigma (for every cluster: a real system cannot know the class). In both modes
 the subtracted table centre is k x the centre in absolute angle units.
 
-Table (angle.error_table): per surface x signed incidence bin (x facing on the discs), for alpha
-and beta, in both keys: the centre (the clipped mean of the B.1 clip), the core width (B.1 core of
-the centred pulls) and the quantiles of |pull - centre| at 95 / 97.5 / 99 / 99.7 %; bins with fewer
-than 200 fit clusters merge with their neighbour away from the plateau edges.
+Table (angle.error_table, P0.3 amendment 1d): per surface x signed incidence bin (x facing on the
+discs), for alpha and beta, in both keys: the centre (the median of the pulls; centre_of), the
+quantiles of |pull - centre| at 95 / 97.5 / 99 / 99.7 % with the distribution-free rank
+k = min(ceil(L (n + 1)), n) (quantile_order), and the weighting width = q95 / 1.96 (a quantile, so it
+is validated by the table's coverage tests); the B.1 core width and clipped mean are reported
+diagnostics only. Bins with fewer than 200 fit clusters merge with their neighbour away from the
+plateau edges.
 
-Coverage of a fitted quantile (P0.3 pre-registration amendment 1, 2026-10-13, PROPOSED): the exact
-order-statistic null of the number of new values beyond an inverted-CDF quantile (expected_coverage,
-fit_coverage_variance, exchangeable_coverage_variance, coverage_z), used by the table's coverage test and reusable by every cutting
-consumer that fits a per-bin quantile (angle.cut_level).
+Coverage of a fitted quantile: the exact order-statistic null of the number of new values beyond the
+fitted quantile (expected_coverage, fit_coverage_variance, exchangeable_coverage_variance,
+coverage_z), used by the table's coverage test and reusable by every cutting consumer that fits a
+per-bin quantile (angle.cut_level, consumer_quantile: the same rank).
 """
 from __future__ import annotations
 
@@ -74,11 +77,15 @@ TEST_FILES = tuple(int(x) for x in _ET["test_files"])
 K_FLOOR = float(_KK["scaled_floor"])
 K_MODES = tuple(_KK["modes"])
 CUT_LEVEL = float(_CL["level"])
+CENTRES = ("median", "trimmed_mean_25")
+CENTRE = str(_ET["centre"])
+WIDTH_LEVEL = float(_ET["weighting_width"]["quantile"])
+WIDTH_DIVISOR = float(_ET["weighting_width"]["divisor"])
 # |key| of the plateau edges: 27 deg (PixelAV, |cot| 0.5) and 34 deg (Phase-2, |eta| 0.62, |cot| 0.67)
 # (plan B.4); the merge rule keeps them resolved. The disc incidence variable tan theta steps at
 # the same values (B.4).
 PLATEAU_EDGES = (0.5, 0.67)
-TABLE_SCHEMA = "sp-angle-table/1"
+TABLE_SCHEMA = "sp-angle-table/2"      # /2 (sheet v2.5): centre = median, width = q95 / 1.96, rank ceil(L (n + 1))
 
 SURFACE_NAMES = {s: (f"ID{s - DISC_SURFACE_OFFSET}" if s > DISC_SURFACE_OFFSET else f"IL{s}") for s in SURFACES}
 
@@ -368,27 +375,44 @@ def core_w(x, w=None):
     return core(x)
 
 
-def bin_estimates(pulls, levels=LEVELS, w=None, rank: str = "n") -> dict | None:
-    """The table entries of one bin from its class-T pulls (angle.error_table): centre = the
-    clipped mean of the B.1 clip, width = the B.1 core of the centred pulls, q = quantiles of
-    |pull - centre| (the k-th smallest, k = quantile_order(n, level, rank): rank "n" is the sheet-v1
-    inverted CDF, rank "n+1" the recipe option (a)); plus the reported shape flags (MAD of the
-    centred pulls / 0.6745, the fraction outside 3 core widths, the full RMS). None below 200 values."""
+def centre_of(x, estimator: str = CENTRE):
+    """The table centre of a pull sample (angle.error_table): 'median' (adopted), or 'trimmed_mean_25'
+    (the mean of the central 50 %, an alternative evaluated for the physicist in P0.3 amendment 1d)."""
+    x = np.asarray(x, np.float64)
+    if estimator == "median":
+        return float(np.median(x))
+    if estimator == "trimmed_mean_25":
+        s = np.sort(x)
+        a = int(np.floor(0.25 * len(s)))
+        return float(s[a:len(s) - a].mean())
+    raise ValueError(f"centre estimator {estimator!r} not in {CENTRES}")
+
+
+def bin_estimates(pulls, levels=LEVELS, w=None, centre: str = CENTRE, diagnostics: bool = True) -> dict | None:
+    """The table entries of one bin from its class-T pulls (angle.error_table): centre = centre_of
+    (the median), q = quantiles of |pull - centre| (the k-th smallest, k = quantile_order(n, level)),
+    width = q95 / 1.96 (the weighting width). With diagnostics: the B.1 clipped mean and core width
+    of the centred pulls, the MAD / 0.6745, the fraction outside 3 widths and the full RMS (reported,
+    never used). None below 200 values."""
     p = np.asarray(pulls, np.float64)
     if w is not None:
         p = np.repeat(p, np.asarray(w, np.int64))
-    c0 = core(p)
-    if c0 is None:
+    if len(p) < MIN_FIT:
         return None
-    c = c0["mean"]
-    cc = core(p - c)
+    c = centre_of(p, centre)
     d = np.abs(p - c)
-    k = quantile_order(len(d), np.asarray(levels, np.float64), rank).astype(np.int64)
-    q = np.partition(d, k - 1)[k - 1]
-    return {"n": int(len(p)), "centre": float(c), "width": float(cc["rms0"]),
-            "q": {f"{lv:g}": float(v) for lv, v in zip(levels, q)},
-            "mad": float(np.median(d) / 0.6744897501960817), "out3": float(np.mean(d > 3.0 * cc["rms0"])),
-            "full_rms0": float(cc["full_rms0"])}
+    lv = np.asarray(levels, np.float64)
+    k = quantile_order(len(d), np.r_[lv, WIDTH_LEVEL]).astype(np.int64)
+    qs = np.partition(d, k - 1)[k - 1]
+    width = float(qs[-1] / WIDTH_DIVISOR)
+    out = {"n": int(len(p)), "centre": c, "width": width, "q": {f"{v:g}": float(x) for v, x in zip(levels, qs[:-1])}}
+    if diagnostics:
+        c0 = core(p)
+        cc = core(p - c0["mean"])
+        out.update({"clip_centre": float(c0["mean"]), "core_width": float(cc["rms0"]),
+                    "mad": float(np.median(np.abs(p - np.median(p))) / 0.6744897501960817),
+                    "out3": float(np.mean(d > 3.0 * width)), "full_rms0": float(np.sqrt(np.mean(d * d)))})
+    return out
 
 
 # ---------------------------------------------------------------- the merge rule
@@ -433,9 +457,11 @@ class AngleTable:
     doc = {"schema", "definition_sheet", "provenance": {...}, "era", "fit_sample", "pt_min",
            "levels", "orientation": {"det_id": [...], "sign": [...]},
            "keys": {key: {"rows": [ {surface, facing, lo, hi, fine: [fine bins], n_fit, flags,
-                                      "alpha": {centre, width, q, mad, out3, ...},
+                                      "alpha": {centre, width, q, E0, core_width, clip_centre, mad, ...},
                                       "beta": {...}} ]}}}
-    Centres, widths and quantiles are in published-sigma units of this module's representation."""
+    Centres, widths and quantiles are in published-sigma units of this module's representation:
+    centre = the median, width = q95 / 1.96 (the weighting width), q = the quantiles of
+    |pull - centre| (angle.error_table, sheet v2.5); core_width, clip_centre and mad are diagnostics."""
 
     def __init__(self, doc: dict):
         if doc.get("schema") != TABLE_SCHEMA:
@@ -523,14 +549,12 @@ def new_table_doc(keys_rows: dict, orientation: tuple, provenance: dict, era: st
 
 
 # ---------------------------------------------------------------- cutting consumers
-def consumer_quantile(stat, bin_id, levels=LEVELS, population=None, w=None, n_bins=None, rank: str = "n"):
+def consumer_quantile(stat, bin_id, levels=LEVELS, population=None, w=None, n_bins=None):
     """Per-bin quantiles of a cutting consumer's OWN statistic over `population` (class-T
     clusters of the consumer's calibration population). Returns an array [n_bins, n_levels]
     (NaN for an empty bin). angle.cut_level: the consumer cuts at the bin's quantile at its
-    level (decision 2: 99 %). rank as in quantile_order (with weights: the smallest value whose
-    cumulative weight reaches level x total, or level x (total + 1) for rank "n+1", capped)."""
-    if rank not in RANKS:
-        raise ValueError(f"rank {rank!r} not in {RANKS}")
+    level (decision 2: 99 %), with the rank of quantile_order (with weights: the smallest value
+    whose cumulative weight reaches min(level x (total + 1), total))."""
     stat = np.asarray(stat, np.float64)
     bin_id = np.asarray(bin_id, np.int64)
     m = np.isfinite(stat) & (bin_id >= 0)
@@ -557,7 +581,7 @@ def consumer_quantile(stat, bin_id, levels=LEVELS, population=None, w=None, n_bi
             continue
         base = cw[a0 - 1] if a0 > 0 else 0.0
         tot = cw[a1 - 1] - base
-        target = np.minimum(lv * (tot + 1.0), tot) if rank == "n+1" else lv * tot
+        target = np.minimum(lv * (tot + 1.0), tot)
         j = np.searchsorted(cw[a0:a1] - base, target * (1 - 1e-12), side="left")
         out[i] = s[a0:a1][np.clip(j, 0, a1 - a0 - 1)]
     return out
@@ -571,45 +595,43 @@ def consumer_quantile_at_k(stat_at_k, k, mode, bin_id, population, levels=LEVELS
 
 
 # ---------------------------------------------------------------- coverage of a fitted quantile (amendment 1)
-RANKS = ("n", "n+1")
-
-
-def quantile_order(n_fit, level, rank: str = "n"):
-    """k of the quantile at `level` of n_fit values (the k-th smallest). rank "n" (sheet v1):
-    k = ceil(level n), the inverted CDF (matches numpy's method='inverted_cdf' for n_fit 200-20000 and
-    the four table levels); E[coverage] = k / (n + 1) <= level. rank "n+1" (recipe option (a), P0.3
-    amendment 1c, not adopted unless approved): k = min(ceil(level (n + 1)), n), the distribution-free
-    (conformal) quantile with E[coverage] >= level whenever ceil(level (n + 1)) <= n."""
+def quantile_order(n_fit, level):
+    """k of the quantile at `level` of n_fit values (the k-th smallest): k = min(ceil(level (n + 1)), n),
+    the distribution-free (conformal) rank, E[coverage] = k / (n + 1) >= level whenever
+    ceil(level (n + 1)) <= n (angle.error_table, angle.cut_level; P0.3 amendment 1d; sheet v1's
+    ceil(level n) is retired). Levels that n values cannot reach (at 99.7 %: n <= 332) get the maximum."""
     n = np.asarray(n_fit, np.float64)
-    if rank == "n":
-        return np.ceil(level * n - 1e-9)
-    if rank == "n+1":
-        return np.minimum(np.ceil(level * (n + 1.0) - 1e-9), n)
-    raise ValueError(f"rank {rank!r} not in {RANKS}")
+    return np.minimum(np.ceil(level * (n + 1.0) - 1e-9), n)
 
 
-def expected_coverage(n_fit, level, rank: str = "n"):
+def level_reachable(n_fit, level):
+    """Whether n_fit values can deliver E[coverage] >= level (ceil(level (n + 1)) <= n)."""
+    n = np.asarray(n_fit, np.float64)
+    return np.ceil(level * (n + 1.0) - 1e-9) <= n
+
+
+def expected_coverage(n_fit, level):
     """E[coverage] on new exchangeable values of the quantile fitted on n_fit values: k / (n_fit + 1)
-    (order statistics; distribution-free). Rank "n": below the level by up to 1 / (n_fit + 1)."""
+    (order statistics; distribution-free)."""
     n = np.asarray(n_fit, np.float64)
-    return quantile_order(n, level, rank) / (n + 1.0)
+    return quantile_order(n, level) / (n + 1.0)
 
 
-def fit_coverage_variance(n_fit, level, rank: str = "n"):
+def fit_coverage_variance(n_fit, level):
     """Variance of the true coverage F(q) of that quantile: Beta(k, n - k + 1), pi (1 - pi) / (n + 2)
     with pi = 1 - k / (n + 1)."""
     n = np.asarray(n_fit, np.float64)
-    pi = 1.0 - expected_coverage(n, level, rank)
+    pi = 1.0 - expected_coverage(n, level)
     return pi * (1.0 - pi) / (n + 2.0)
 
 
-def exchangeable_coverage_variance(n_fit, n_test, level, rank: str = "n"):
+def exchangeable_coverage_variance(n_fit, n_test, level):
     """Variance of the test coverage 1 - M / n_test of that quantile for exchangeable values: with
     C ~ Beta the true coverage, Var = E0 (1 - E0) / n_test + Var(C) (1 - 1 / n_test) (total variance;
     the beta-binomial(n_test, n_fit - k + 1, k) variance exactly)."""
-    e0 = expected_coverage(n_fit, level, rank)
+    e0 = expected_coverage(n_fit, level)
     n_t = np.asarray(n_test, np.float64)
-    return e0 * (1.0 - e0) / n_t + fit_coverage_variance(n_fit, level, rank) * (1.0 - 1.0 / n_t)
+    return e0 * (1.0 - e0) / n_t + fit_coverage_variance(n_fit, level) * (1.0 - 1.0 / n_t)
 
 
 def coverage_z(m, n_test, e0, var):
@@ -650,36 +672,6 @@ def coverage_z(m, n_test, e0, var):
     # z > 0: fewer exceedances than expected (over-coverage); computed on the smaller tail for precision
     z[ok] = np.where(upper < 0.5, -stats.norm.isf(upper), stats.norm.isf(lower))
     return z
-
-
-# ---------------------------------------------------------------- single-cluster consumer statistics
-Z_LUMI_CM = 15.0     # the census's luminous-region half-window (tracklet_topology_cost Z_LUMI) [cm]
-
-
-def alpha_band(r_cm, pt_floor):
-    """|alpha| of a prompt track of transverse momentum pt_floor at radius r: asin(KPT r / 2 pT)."""
-    return np.arcsin(np.clip(KPT_CMSSW * np.asarray(r_cm, np.float64) / (2.0 * pt_floor), 0.0, 1.0))
-
-
-def s1_statistic(a, sigma_cons, centre_abs, r_cm, pt_floor):
-    """S1-like single-cluster alpha test against the pT floor: (|alpha - c| - band(r, floor)) /
-    sigma (negative inside the band). `centre_abs` = the subtracted centre (centre_k x sigma_pub)."""
-    return (np.abs(wrap_2pi(np.asarray(a) - centre_abs)) - alpha_band(r_cm, pt_floor)) / sigma_cons
-
-
-def beta_window(r_cm, z_cm, z_lumi=Z_LUMI_CM):
-    """(mid, half-length) of the lambda interval pointing to |z0| <= z_lumi from (r, z)."""
-    r = np.asarray(r_cm, np.float64)
-    z = np.asarray(z_cm, np.float64)
-    lo, hi = np.arctan((z - z_lumi) / r), np.arctan((z + z_lumi) / r)
-    return 0.5 * (lo + hi), 0.5 * (hi - lo)
-
-
-def z0_window_statistic(lam, sigma_cons, centre_abs, r_cm, z_cm, z_lumi=Z_LUMI_CM):
-    """Single-cluster beta test against the luminous region: (distance of lambda - c from the
-    interval of directions pointing to |z0| <= z_lumi) / sigma (negative inside)."""
-    mid, h = beta_window(r_cm, z_cm, z_lumi)
-    return (np.abs(wrap_pi(np.asarray(lam) - centre_abs - mid)) - h) / sigma_cons
 
 
 # ---------------------------------------------------------------- single-cluster consumer statistics

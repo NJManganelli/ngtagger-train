@@ -248,12 +248,13 @@ class FrameSign(Item):
     c4_row = "frame sign (the 2026-09-06 sense bug class)"
     known_bad_desc = "the centre applied with the global cot theta sign on reversed-orientation modules"
     rule_desc = ("a consumer in the module frame (residual of atan(localCotBeta), the global table converted with "
-                 "local_beta_sign): per surface x orientation x table row with >= 200 class-T clusters, the mean of "
-                 "its pull after the table inside the fixed window |pull| < 3 (three table widths about the table "
-                 f"centre; no mode seeding) within +-{BAND_CENTRE} widened by 2 event-bootstrap sigma ({N_REP} "
-                 "replicas). Redesigned 2026-10-09 before use: the B.1 clipped mean failed the known-good (IL4, "
-                 "plateau row, s = +1: 0.94 for the module-frame pulls vs 0.01 for the identical global ones), "
-                 "because the mode seed latches onto either peak of the bimodal plateau response")
+                 "local_beta_sign): per surface x orientation x table row with >= 200 class-T clusters, the table's "
+                 "centre estimator (angle.error_table: the median) of its pull after the table within "
+                 f"+-{BAND_CENTRE} widened by 2 event-bootstrap sigma ({N_REP} replicas). Redesigned 2026-10-09 before "
+                 "use (the B.1 clipped mean latched onto either peak of the bimodal plateau response; a window mean "
+                 "replaced it), and 2026-10-14 with the table (P0.3 amendment 1d, sheet v2.5): the after-table centre "
+                 "is the table's own centre estimator, as in the table test's check (i); the window mean of pulls "
+                 "about a median centre is not zero on skewed rows")
 
     def _stat(self, ctx, bad=False):
         D = clusters(ctx)
@@ -276,16 +277,9 @@ class FrameSign(Item):
                     if m.sum() < SA.MIN_FIT:
                         continue
                     x, ev = after[m], D["event"][m]
-                    win = np.abs(x) < 3.0
-                    if win.sum() < 2:
-                        continue
-                    vals = []
-                    for cnt in reps:
-                        ww = cnt[ev] * win
-                        if ww.sum() > 0:
-                            vals.append(float(np.sum(ww * x) / ww.sum()))
+                    vals = [SA.centre_of(np.repeat(x, cnt[ev])) for cnt in reps if cnt[ev].sum() > 0]
                     groups[f"{SA.SURFACE_NAMES[s]}/s{so:+d}/row{int(rw)}"] = {
-                        "n": int(m.sum()), "n_window": int(win.sum()), "centre": float(x[win].mean()),
+                        "n": int(m.sum()), "centre": SA.centre_of(x),
                         "sigma": float(np.std(vals, ddof=1)), "global_centre": float(np.nanmean(c[m]))}
         return {"input": ctx.input, "events": ctx.events, "bad": bad, "groups": groups}
 

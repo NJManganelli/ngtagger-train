@@ -411,3 +411,155 @@ Outputs: $P03_OUT/p03_table_{diagnosis,known-good,known-bad}_a1c.json and
 p03_table_{known-good,known-bad}_a1c_rankA.json; the demonstration fits in $P03_OUT/amend1c/;
 registry p03.table.a1c.*. The gated run refuses without $P03_OUT/amendment1c_approval.txt naming the
 rank.
+
+===================================================================================================
+Amendment 1d (2026-10-14). PROPOSED: the physicist's decisions of 2026-10-14 (relayed by the
+coordinator) put into the rule; pending the physicist's choice of the centre (D3) before the gated run.
+Written BEFORE the amendment-1d demonstration. Amendments 1, 1b and 1c stay as written; where 1d
+differs, 1d holds. Disclosed, run before this text:
+  - the centre-stability measurement on the four 2-file pairs of files 3-10 (D3) and a per-pair look
+    at q95 in the rows where it moves (D9);
+  - the shared module's checks on 5 events of file 3 (D10);
+  - unit tests;
+  - a code smoke test through the heavy lane: throwaway seed 777, 4 replicas, the demonstration split.
+      - The known-good passed under both centres.
+      - Known-bads, median only: every known-bad failed as declared below.
+          - KB-q95 failed through (ii) only: 37 of 252 perturbed judged bin-angles beyond t(N); (iii)
+            passed.
+          - KB-c failed through (i) in 204 of 252.
+No parameter below was set or changed after the smoke test. The "Expected" paragraph was written
+before the smoke known-bad results arrived and was not changed after them.
+
+D1 Quantile rank (decision 1). Every quantile of the table, and of the cutting consumers
+   (SA.consumer_quantile, angle.cut_level), is the k-th smallest value with k = min(ceil(L (n + 1)), n).
+   This is recipe option (a), now adopted. The sheet-v1 rank ceil(L n) is retired, and with it the
+   --rank switch.
+     - E0 = k / (n_fit + 1) >= L wherever the level is reachable.
+     - 99.7 % is unreachable for n_fit <= 332 (ceil(0.997 x 333) = 333 > 332; "n_fit < 332" in the
+       relayed decision is the same boundary off by one).
+     - Such rows are listed per level (quantile_unreachable_rows). The table marks them only at that
+       level: q_meets_level_in_expectation = false, with E0 = n_fit / (n_fit + 1).
+     - (iii) gates 99.7 % with margin 0.045 % (as 1c C2).
+D2 Weighting width (decision 2). The table's width, the one every weighting consumer uses (the KF update,
+   hit arbitration, the refit metric), is pre-declared here as
+       width = q95 / 1.96,
+   with q95 the 95 % quantile of |pull - centre| at the D1 rank.
+     - The fitted B.1 core width is no longer the table's width. It is kept as a reported diagnostic,
+       next to the MAD (median |pull - median| / 0.6745), the B.1 clipped mean, the fraction beyond 3
+       widths and the full RMS.
+     - The two-component fits of amendment 1b (amend1b/recipe_options.json) stay the D10(c) record.
+       They are registered as p03.d10c.disc-beta-two-component.
+     - There is no flagged-row list to approve.
+D3 Centre. Decision 2 says: if the clipped mean is still unstable in some rows, use the median in
+   every row, without a new flag list. It is still unstable. Measurement: sd over the four 2-file pair
+   fits (3-4, 5-6, 7-8, 9-10; rows built on files 7-8; 874 row-angles), in units of the derived width.
+
+       centre             rows > 0.125   rows > 0.0625   max     rows above 0.125
+       ---------------    ------------   -------------   -----   ------------------------------------------
+       B.1 clipped mean   5              8               0.304   the five true-key disc-beta rows at
+                                                                 |key| 0.40-0.50 (0.27-0.30)
+       median             4              40              0.232   emitted beta ID2 f-1 [-0.20,-0.10), emitted
+                                                                 beta ID4 f+1 [-0.30,-0.20), emitted alpha
+                                                                 ID2 f+1 [-0.10,0), emitted beta ID4 f-1
+                                                                 [+0.20,+0.30)
+       25 %-trimmed mean  1              5               0.130   true beta ID1 f+1 [-0.10,+0.10)
+         (mean of the central 50 %)
+
+     - The premise that the median is stable holds in the five clipped-mean rows: there the median's sd
+       is 0.001.
+     - It does not hold everywhere. In emitted/beta/ID2/f-1/[-0.20,-0.10), with about 17,000 clusters
+       per pair, the median is +1.56, +0.63, +1.49 and +0.88 published sigma in the four pairs. It sits
+       between two populations of nearly equal weight. The clipped mean there is 1.48-1.54, and the
+       trimmed mean's sd is 0.022 widths.
+     - The median's 40 rows above 0.0625 are mostly its lower efficiency (sd about 1.25 / sqrt(n),
+       0.07-0.09 at 200-300 clusters). A sd from four pairs has 3 degrees of freedom.
+   Rule: the centre is the median in every row (sheet v2.5). The 25 %-trimmed mean is run as a measured
+   alternative on the same seed and split, so the physicist can choose before the gated run.
+     - --centre trimmed_mean_25; outputs suffixed _centre-tm25.
+     - The approval file amendment1d_approval.txt must contain the line centre=median or
+       centre=trimmed_mean_25. table.py refuses the gated run otherwise.
+     - If the trimmed mean is chosen, the sheet's centre parameter changes (a new sheet version) and the
+       median branch is removed. If the median is chosen, the trimmed-mean branch is removed.
+D4 The test. The test bins are every bin with >= 200 test clusters (no flag scope).
+   (i) reduces to the centre. The after-table centre of a bin is the table's centre estimator applied
+       to (pull - table centre) / table width over the bin's test clusters that have an estimate
+       (>= 200 of them). It must lie within 0 +- 0.25, widened by W_i x max(bootstrap sd, re-split sd),
+       as before. W_i = t1(N_i) is the one-sided Sidak threshold at 1 %, with N_i = the judged
+       bin-angles (one statistic per bin-angle, not two).
+   The width check of (i) is removed. The weighting width is a quantile (q95 / 1.96), so it is
+   validated by the coverage tests: (ii) per bin and (iii) pooled, at 95 %.
+   (ii) Unchanged (beta-binomial null at the D1 rank, variance max(re-split, exchangeable), mid-p,
+        t(N), chi2 per level x key).
+   (iii) Unchanged except the fixed gated levels: 95 / 97.5 / 99 / 99.7 %, with margins 0.5 / 0.25 /
+         0.1 / 0.045 % absolute, and the power diagnostic below 0.8 escalates (1c C2).
+   Missing replica rows as 1c C1.
+   Demonstration criteria:
+     - (i), (ii) and (iii) pass;
+     - the (i) + (ii) false-veto rate over the 250 re-splits (leave-one-out errors) is <= 5.7 %;
+     - at each fixed (iii) level, the re-split pass probability is >= 0.8.
+   Gated-run criteria: as 1c C3.
+D5 Removed (no dead code):
+     - the per-row stability flag (all of its criteria), width_validated, the flagged list and its
+       by-name acceptance, the flag churn;
+     - KB-f, the KB-g report, KB-h1 and KB-h2;
+     - the after-the-fact width rescaling (scaled_width), the knife-edge bisection, the two-Gaussian
+       bimodality fit (em_two_gaussians);
+     - the rank switch;
+     - recipe_options.py: its option (a) is now the recipe and its option (b) is not adopted. Its
+       two-component output is the D10(c) record, reproducible from commit 716d482.
+     - run_amend1c.sh.
+   Reported instead, with no effect on the rule: per row and angle, the bootstrap and re-split sd of
+   the fitted centre and weighting width. The re-split sd is scaled to a fresh fit by
+   1 / sqrt(1 - n_ev_fit / n_ev_pool) (stability_report).
+D6 Known-bads, on the demonstration split, each required to fail:
+     - (a)-(e) are kept: folded, cotbinned_disc, pooled_disc, wrong_key, test_scale_1p05. Under 1c,
+       (e) failed through (ii) and (iii), so it still tests what remains.
+     - KB-q95 (decision 2): q95, and with it the weighting width, x 0.9 in every row whose |key| range
+       overlaps the plateau edges [0.50, 0.67). This applies to both angles, both keys and all
+       surfaces, in every replica. The expected 95 % coverage is about 92 % and the Kalman weight 23 %
+       too large. It must fail through (ii) or (iii).
+     - KB-c: the centre + 0.5 weighting widths in the same rows (twice the (i) band; the 95 % window
+       holds about 92 %). It must fail through (i). This replaces KB-f as (i)'s decision-scale
+       known-bad.
+D7 Seeds and split as 1b / 1c: seed 20261014; fit files 7-8, test files 3-6 and 9-10; 250 bootstrap
+   and 250 re-split replicas.
+     - The diagnosis split (fit 3-4) is not re-run: without the flag there is no churn to measure.
+     - Files 1-2 are not read.
+D8 Definition sheet v2.5 (sheet v2.4 plus this amendment; v2.4 was another package's census change).
+   angle.error_table gets the median centre, the D1 rank, the weighting width q95 / 1.96, and the B.1
+   core and clipped mean as diagnostics. angle.cut_level gets the D1 rank. The table schema is
+   sp-angle-table/2: a /1 table (centre = clipped mean, width = core) does not load.
+D9 Reported finding (not a flag; the decision stands): the derived width is a quantile, and where q95
+   falls at the edge of a separate population its value jumps, while its coverage does not.
+     - The spread over the four pair fits, (max - min) / median of q95 / 1.96 with the median centre,
+       has percentiles 50 / 90 / 99 / max = 0.04 / 0.15 / 0.66 / 6.5. It exceeds 0.25 in 40 and 0.5 in
+       12 of 874 row-angles, mostly disc beta.
+     - Examples:
+         - emitted/beta/ID3 outer rows (|key| > 0.80, about 3,500 clusters per pair): 1.72-1.79 in
+           three pairs and 12.8-13.2 in one. q95 sits at the edge of a 5-8 % population at
+           |pull - centre| of about 25-30.
+         - emitted/beta/ID1/f-1/[+0.60,+0.67): 2.06-2.14 in three pairs, 0.81 in one.
+         - emitted/beta/IL3/f+0/[-inf,-2.50): 4.1-14.4.
+     - (ii) and (iii) cannot see such a jump: the coverage at 95 % is right in either basin. The run
+       reports each row's width sd (D5). A Kalman consumer of such a row gets a weight that depends on
+       which basin the fit landed in.
+D10 Consequence outside the table test. The shared module's frame-sign check (spdefs.frame_sign)
+   builds its in-sample table with the recipe. Its statistic now follows the table's centre estimator,
+   as (i) does. The window mean of 2026-10-09 is not zero about a median centre on skewed rows.
+     - With the new recipe its known-good is red in 8 of 214 groups: disc beta in the module frame,
+       after-table centre -0.4 to -0.7 widths against a band of 0.25 + 2 sd.
+     - Its known-bad (the global sign on reversed modules) reaches 2.7.
+     - With the old recipe and the median as the statistic, 51 groups were already off, by up to 0.9.
+       The module-frame and global disc-beta residuals agree near their mode, not in their median.
+     - This is reported to the physicist. The band is not changed. It is not part of the table test.
+Expected (not decisive):
+  - the demonstration passes under both centres, with (iii) power about 1.0 at all four levels;
+  - 4 rows cannot reach 99.7 % (as under 1c rank n+1);
+  - every known-bad fails as declared;
+  - KB-q95 fails through (ii) (chi2 at 95 %) more than through (iii);
+  - KB-c fails (i) in most of its perturbed judged bins.
+Outputs:
+  - $P03_OUT/p03_table_{known-good,known-bad}_a1d.json and _a1d_centre-tm25.json;
+  - the demonstration fits in $P03_OUT/amend1d/;
+  - registry p03.table.a1d.* and p03.d10c.disc-beta-two-component.
+The gated run refuses without $P03_OUT/amendment1d_approval.txt naming the centre.

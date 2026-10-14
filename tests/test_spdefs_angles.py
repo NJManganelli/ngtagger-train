@@ -121,16 +121,21 @@ def test_table_pull_centre_scales_with_k():
     assert (r - c * s)[0] / (w * s)[0] != 0.0
 
 
-def test_consumer_quantile_matches_numpy_inverted_cdf():
+def test_consumer_quantile_is_the_rank_n_plus_1_order_statistic():
+    """angle.cut_level (sheet v2.5): the k-th smallest, k = min(ceil(L (n + 1)), n); with integer weights,
+    the same order statistic of the repeated values."""
     rng = np.random.default_rng(3)
     x, b = rng.normal(size=5000), rng.integers(0, 3, 5000)
     q = SA.consumer_quantile(x, b, levels=(0.5, 0.99), n_bins=3)
     for i in range(3):
-        assert np.allclose(q[i], np.quantile(x[b == i], (0.5, 0.99), method="inverted_cdf"))
+        xi = np.sort(x[b == i])
+        k = SA.quantile_order(len(xi), np.array([0.5, 0.99])).astype(int)
+        assert np.array_equal(q[i], xi[k - 1])
     w = rng.integers(0, 3, 5000)
     qw = SA.consumer_quantile(x, b, levels=(0.9,), w=w, n_bins=3)
     for i in range(3):
-        assert qw[i, 0] == pytest.approx(np.quantile(np.repeat(x[b == i], w[b == i]), 0.9, method="inverted_cdf"))
+        xi = np.sort(np.repeat(x[b == i], w[b == i]))
+        assert qw[i, 0] == xi[int(SA.quantile_order(len(xi), 0.9)) - 1]
     # fixed mode calibrates at k = 1, scaled at k
     seen = []
     SA.consumer_quantile_at_k(lambda k: seen.append(k) or x, 0.3, "fixed", b, None)
@@ -151,14 +156,18 @@ def test_local_conversion_signs():
 
 
 # ---------------------------------------------------------------- coverage of a fitted quantile (amendment 1)
-def test_quantile_order_and_expected_coverage_match_numpy():
-    for n in (200, 201, 744, 5082):
+def test_quantile_order_is_the_distribution_free_rank():
+    """k = min(ceil(L (n + 1)), n): E[coverage] = k / (n + 1) >= L exactly when ceil(L (n + 1)) <= n; at 99.7 %
+    that needs n >= 333."""
+    for n in (200, 201, 332, 333, 744, 5082):
         for lv in SA.LEVELS:
             k = SA.quantile_order(n, lv)
-            assert k == np.quantile(np.arange(1, n + 1), lv, method="inverted_cdf")
+            assert k == min(np.ceil(lv * (n + 1) - 1e-9), n)
             assert SA.expected_coverage(n, lv) == pytest.approx(k / (n + 1))
-    # the inverted-CDF shortfall: up to 1 / (n + 1) below the level (200 values, 99 %: 198 / 201)
-    assert SA.expected_coverage(200, 0.99) == pytest.approx(198 / 201)
+            assert (SA.expected_coverage(n, lv) >= lv - 1e-12) == SA.level_reachable(n, lv)
+    assert SA.expected_coverage(200, 0.99) == pytest.approx(199 / 201)
+    assert not SA.level_reachable(332, 0.997) and SA.level_reachable(333, 0.997)
+    assert SA.expected_coverage(332, 0.997) == pytest.approx(332 / 333)
 
 
 def test_coverage_z_is_the_exact_order_statistic_null():
@@ -187,10 +196,11 @@ def test_coverage_z_sign_inflation_and_calibration():
     assert abs(SA.coverage_z(mean_m * 3, nt, e0, 3 * v0)) < abs(SA.coverage_z(mean_m * 3, nt, e0, v0))
     # discriminating toy: exchangeable values -> z ~ N(0, 1); the Gaussian z with the same sd is skewed
     rng = np.random.default_rng(11)
+    k = int(SA.quantile_order(nf, lv))
     z, zg = [], []
     for _ in range(3000):
         x, y = np.abs(rng.standard_normal(nf)), np.abs(rng.standard_normal(nt))
-        m = np.sum(y > np.quantile(x, lv, method="inverted_cdf"))
+        m = np.sum(y > np.partition(x, k - 1)[k - 1])
         z.append(SA.coverage_z(m, nt, e0, v0))
         zg.append(((1 - m / nt) - e0) / np.sqrt(v0))
     z, zg = np.array(z), np.array(zg)

@@ -4,8 +4,9 @@ launcher's launch-time record when run inside a launched job: $SP_JOB_DIR) and s
 
     python registry_seed.py [--dry-run] [--overwrite] [--only ID_PREFIX]
 
-The table results are those of the amendment-1c rule (p03_table_<mode>_a1c[_rankA].json, ids p03.table.a1c.*
-[.rankA]); earlier entries (v1 rule, amendments 1 and 1b) stay registered as they are.
+The table results are those of the amendment-1d rule (p03_table_<mode>_a1d[_centre-tm25].json, ids p03.table.a1d.*
+[.centre-tm25]); earlier entries (v1 rule, amendments 1, 1b and 1c) stay registered as they are. Also the D10(c)
+record: the two-component fits of the disc-beta rows (amendment 1b, item B9; $P03_OUT/amend1b/recipe_options.json).
 """
 from __future__ import annotations
 
@@ -18,6 +19,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as CM  # noqa: E402
+import table as T  # noqa: E402
 
 from ngtagger.spdefs import angles as SA  # noqa: E402
 from ngtagger.spops import registry as R  # noqa: E402
@@ -54,21 +56,23 @@ def entries() -> list:
                   "values": [v(f"{k} known-good", x["status"], note=x["why"][:200]) for k, x in chk["items"].items()]
                   + [v(f"{k} known-bad", x["status"], note=x["why"][:200]) for k, x in chkb["items"].items()],
                   "provenance": {**common_prov, "files": ["spdefs_checks_run.json", "spdefs_checks_known_bad.json"]}})
-    for suffix, rank_txt in (("", "rank n (sheet v1)"), ("_rankA", "rank n+1 (recipe option (a))")):
-        tag_sfx = "" if not suffix else ".rank-n1"
-        dg, kg, kb, gt = (load(f"p03_table_{m}_a1c{suffix}.json") for m in ("diagnosis", "known-good", "known-bad", "gated"))
-        for tag, r, title in (("diagnosis", dg, f"amendment-1c rule on fit 3-4 / test 5-10 (diagnosis, flag churn), {rank_txt}"),
-                              ("known-good", kg, f"amendment-1c rule demonstration (fit 7-8, test 3-6 and 9-10), {rank_txt}"),
-                              ("gated", gt, f"test of the table fitted on files 1-2, on files 3-10 (judged once), {rank_txt}")):
+    for centre in SA.CENTRES:
+        suffix = T.CENTRE_SUFFIX[centre]
+        tag_sfx = suffix.replace("_", ".")
+        c_txt = f"centre {centre}"
+        dg, kg, kb, gt = (load(T.result_name(m, centre)) for m in ("diagnosis", "known-good", "known-bad", "gated"))
+        for tag, r, title in (("diagnosis", dg, f"amendment-1d rule on fit 3-4 / test 5-10 (diagnosis), {c_txt}"),
+                              ("known-good", kg, f"amendment-1d rule demonstration (fit 7-8, test 3-6 and 9-10), {c_txt}"),
+                              ("gated", gt, f"test of the table fitted on files 1-2, on files 3-10 (judged once), {c_txt}")):
             if not r:
                 continue
             j = r["judgement"]
             fv = j.get("false_veto", {})
+            stab = j["stability"]
             vals = [v("pass", j["pass"]), v("(i) pass", j["pass_i"]), v("(ii) pass", j["pass_ii"]),
                     v("(iii) pass", j["pass_iii"]),
-                    v("flagged row-angles (width not validated)", j["flags"]["n_rows_flagged"],
-                      note=f"of {j['flags']['n_row_angles']}; list in judgement.flags.rows"),
-                    v("(i) bins outside the widened band", j["i"]["fail"], note=f"of {j['i']['bins']} judged bin-angles"),
+                    v("(i) bins outside the widened band (after-table centre)", j["i"]["fail"],
+                      note=f"of {j['i']['bins']} judged bin-angles"),
                     v("(i) one-sided family-wise widening W_i", round(j["i"]["W_i"], 3), unit="sigma",
                       note=f"N_i = {j['i']['N_i']}"),
                     v("(i) worst fraction of the widened band", j["i"]["worst_fraction_of_widened_band"]),
@@ -79,44 +83,43 @@ def entries() -> list:
                     v("(iii) power by level (diagnostic)", json.dumps(j["iii"]["power_by_level"])),
                     v("(iii) escalate (power < 0.8 at a gated level)", json.dumps(j["iii"]["escalate_power_below_0p8"])),
                     v("(iii) failing cells", ", ".join(j["iii"]["fail_cells"]) or "none"),
-                    v("rows short of the level by > 0.1 % (row x level)", len(j["e0_short_rows"])),
-                    v("rows whose level is unreachable (rank n+1)", len(j.get("quantile_unreachable_rows", [])))]
+                    v("rows that cannot reach a level (row x level)", len(j["quantile_unreachable_rows"]),
+                      note="E0 = n_fit / (n_fit + 1) < L; at 99.7 %: n_fit <= 332"),
+                    v("reported: rows with centre sd / width > 0.125", stab["centre_sd_over_width"]["rows_above_0.125"],
+                      note=f"of {stab['row_angles']} row-angles; max(bootstrap, fpc-scaled re-split) sd; no effect on the rule"),
+                    v("reported: rows with width relative sd > 0.25", stab["width_rel_sd"]["rows_above_0.25"],
+                      note=f"of {stab['row_angles']}; pct 50/90/99/max {stab['width_rel_sd']['pct_50_90_99_max']}")]
             if fv:
                 vals += [v("(i)+(ii) false-veto over re-splits", fv["fail_i_ii"],
                            note=f"of {fv['n_replicas']}; rate {fv['fail_i_ii_rate']:.3f}, 95% CL "
                                 f"{fv['fail_i_ii_95cl'][0]:.3f}-{fv['fail_i_ii_95cl'][1]:.3f}"),
                          v("(iii) pass probability over re-splits by gated level", json.dumps(fv["iii_pass_probability_by_level"]))]
             vals += [v(f"(ii) chi2 p {k}", x["p"]) for k, x in j["ii"]["chi2"].items()]
-            E.append({"id": f"p03.table.a1c.{tag}{tag_sfx}", "title": f"Angle-uncertainty table: {title}", "status": "valid",
+            E.append({"id": f"p03.table.a1d.{tag}{tag_sfx}", "title": f"Angle-uncertainty table: {title}", "status": "valid",
                       "bias": BIAS, "values": vals,
-                      "provenance": {**common_prov, "file": f"p03_table_{tag}_a1c{suffix}.json", "n_rep": r["n_rep"],
-                                     "seed": r.get("seed"), "quantile_rank": r.get("quantile_rank"),
-                                     "inputs": r["inputs"], "code": r["code"]},
+                      "provenance": {**common_prov, "file": T.result_name(tag, centre), "n_rep": r["n_rep"],
+                                     "seed": r.get("seed"), "centre_estimator": r.get("centre_estimator"),
+                                     "definition_sheet": r.get("definition_sheet"), "inputs": r["inputs"], "code": r["code"]},
                       "status_note": None})
         if kb:
             def kb_note(n, x):
-                if n.startswith("kbh"):
-                    rr = x["rows"]
-                    return (f"{sum(r_['flagged'] for r_ in rr)} of {len(rr)} perturbed row-angles flagged, "
-                            f"{sum(r_['fails_i'] for r_ in rr)} fail (i)")
                 j = x["judgement"]
                 extra = ""
-                if n.startswith("kbf"):
-                    extra = f"; {x['perturbed_failing_i']} / {x['perturbed_judged_bin_angles']} perturbed judged bin-angles fail (i)"
+                if "perturbed_bins" in x:
+                    pb = x["perturbed_bins"]
+                    extra = (f"; perturbed judged bin-angles {pb['perturbed_judged_bin_angles']}: {pb['failing_i']} fail (i), "
+                             f"{pb['z95_beyond_t']} with |z95| > t(N); must fail through {x['must_fail_through']}")
                 return (f"(i) {j['i']['fail']} bins; (ii) beyond t {j['ii']['n_beyond_t']}, max |z| {j['ii']['max_abs_z']:.1f}; "
                         f"chi2 failing {len(j['ii']['chi2_fail'])} of 8; (iii) failing cells {len(j['iii']['fail_cells'])}" + extra)
             vals = [v(f"{n} fails as required", x["fails_as_required"], note=kb_note(n, x)) for n, x in kb["known_bads"].items()]
-            g = kb.get("reports", {}).get("kbg_flagged_other_basin")
-            if g:
-                vals.append(v("KB-g report: perturbed row-angles flagged", g["perturbed_flagged"],
-                              note=f"of {g['perturbed_row_angles']}; under amendment 1: {json.dumps(g['under_amendment1'])}"))
-            E.append({"id": f"p03.table.a1c.known-bads{tag_sfx}", "title": "Angle-uncertainty table: known-bads (a)-(e), KB-f, "
-                      f"KB-h1, KB-h2 and the KB-g report under the amendment-1c rule (fit 7-8, test 3-6 and 9-10), {rank_txt}",
+            E.append({"id": f"p03.table.a1d.known-bads{tag_sfx}", "title": "Angle-uncertainty table: known-bads (a)-(e), "
+                      f"KB-q95 and KB-c under the amendment-1d rule (fit 7-8, test 3-6 and 9-10), {c_txt}",
                       "status": "valid", "bias": BIAS, "values": vals,
-                      "provenance": {**common_prov, "file": f"p03_table_known-bad_a1c{suffix}.json", "n_rep": kb["n_rep"],
-                                     "seed": kb.get("seed"), "quantile_rank": kb.get("quantile_rank")}})
-    gt, fo = load("p03_table_gated_a1c.json") or load("p03_table_gated_a1c_rankA.json"), \
-        load("p03_table_fit-only_a1c.json") or load("p03_table_fit-only_a1c_rankA.json")
+                      "provenance": {**common_prov, "file": T.result_name("known-bad", centre), "n_rep": kb["n_rep"],
+                                     "seed": kb.get("seed"), "centre_estimator": kb.get("centre_estimator")}})
+    gts = [x for x in (load(T.result_name("gated", c)) for c in SA.CENTRES) if x]
+    fos = [x for x in (load(T.result_name("fit-only", c)) for c in SA.CENTRES) if x]
+    gt, fo = (gts[0] if gts else None), (fos[0] if fos else None)
     tab_res = gt or fo
     if tab_res:
         tested = gt is not None
@@ -135,28 +138,51 @@ def entries() -> list:
                     q = [r[a]["q"]["0.99"] for r in rows]
                     nm = f"{key}/{a}/{SA.SURFACE_NAMES[s_]}"
                     vals += [v(f"{nm} rows", len(rows)),
-                             v(f"{nm} width min / median / max", f"{min(w):.3f} / {np.median(w):.3f} / {max(w):.3f}",
+                             v(f"{nm} weighting width min / median / max", f"{min(w):.3f} / {np.median(w):.3f} / {max(w):.3f}",
                                unit="published sigma"),
                              v(f"{nm} max |centre|", round(float(np.max(np.abs(c))), 3), unit="published sigma"),
                              v(f"{nm} q99 min / median / max", f"{min(q):.3f} / {np.median(q):.3f} / {max(q):.3f}",
                                unit="published sigma")]
         vals.append(v("table file sha256", CM.file_digest(Path(tf)), note=tf))
         st = "valid" if passed else "exploratory"
-        note = None if passed else ("the table failed its pre-declared test; see p03.table.gated" if tested else
-                                    "UNTESTED: the gated test did not run (amendment 1c not approved, or its known-good "
-                                    "demonstration or a known-bad did not behave as required); see p03.table.a1c.*")
-        E.append({"id": "p03.table.v1a1c", "title": "Angle-uncertainty table v1 tested under amendment 1c (canon_v3, fit "
-                  "files 1-2, pT >= 1 GeV)",
+        note = None if passed else ("the table failed its pre-declared test; see p03.table.a1d.gated" if tested else
+                                    "UNTESTED: the gated test did not run (amendment 1d not approved, or its known-good "
+                                    "demonstration or a known-bad did not behave as required); see p03.table.a1d.*")
+        E.append({"id": "p03.table.v1a1d", "title": "Angle-uncertainty table (sheet v2.5 recipe) tested under amendment 1d "
+                  f"(canon_v3, fit files 1-2, pT >= 1 GeV, centre {tab_res['centre_estimator']})",
                   "status": st, "status_note": note, "bias": BIAS, "values": vals,
                   "provenance": {**common_prov, "table_file": tf, "fit_files": list(SA.FIT_FILES),
                                  "pt_check_refit_rows": tab_res["pt_check"]["flags"]}})
         pc = tab_res["pt_check"]["detail"]
-        E.append({"id": "p03.table.a1c.pt-check", "title": "Angle table pT check (1-2 vs >= 2 GeV, fit sample)",
+        E.append({"id": "p03.table.a1d.pt-check", "title": "Angle table pT check (1-2 vs >= 2 GeV, fit sample)",
                   "status": "valid", "bias": BIAS,
                   "values": [v(f"{k} {f}", json.dumps(pc[k]["summary"][f])) for k in SA.KEYS
                              for f in ("t_N", "max_abs_z", "failing_rows", "failing_both_signs_refit_pt2",
                                        "failing_one_sign_reported", "p")],
                   "provenance": common_prov})
+    ro = load("amend1b/recipe_options.json")
+    if ro:
+        vals = []
+        for key, rows in ro["option_b_rows"].items():
+            for r in rows:
+                comp = r.get("two_component_fits") or []
+                if not comp:
+                    continue
+                f = np.array([c["narrow_fraction"] for c in comp])
+                vals.append(v(f"{r['row']} narrow fraction (mean over file pairs)", round(float(f.mean()), 4),
+                              round(float(f.std(ddof=1)), 4) if len(f) > 1 else None,
+                              note="per pair (narrow centre / width, broad centre / width) [published sigma]: " + "; ".join(
+                                  f"{c['pair'][0]}-{c['pair'][1]}: {c['narrow_centre']:+.2f}/{c['narrow_width']:.2f}, "
+                                  f"{c['broad_centre']:+.2f}/{c['broad_width']:.2f}" for c in comp)))
+        E.append({"id": "p03.d10c.disc-beta-two-component", "title": "D10(c) record: two-Gaussian ML fits of the "
+                  "disc-beta class-T pulls per table row and file pair (input of a later full response model)",
+                  "status": "valid", "bias": BIAS + "; unbinned two-Gaussian EM fit of pulls clipped to +-50; error = sd over "
+                  "the four 2-file pairs", "values": vals, "definition_sheet": "v2.1",
+                  "provenance": {**common_prov, "file": "amend1b/recipe_options.json",
+                                 "file_sha256": CM.file_digest(CM.OUT_DIR / "amend1b" / "recipe_options.json"),
+                                 "code": "eval_refitq/p03_angles/recipe_options.py at commit 716d482 (removed in "
+                                         "amendment 1d; reproduce from that commit)",
+                                 "fit_files": ro["fit_files"], "pairs": ro["pairs"]}})
     roc = load("p03_roc.json")
     if roc:
         validated = bool(gt and gt["judgement"]["pass"])
