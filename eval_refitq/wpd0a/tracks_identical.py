@@ -42,7 +42,7 @@ TRUTH_TRACK_COLS = ("tp_key", "n_wrong", "n_own", "n_it_right", "n_it_wrong", "n
                     "n_ot_wrong", "n_ot_combinatoric", "n_ot_unknown", "own_is_seed",
                     "own_tpidx", "is_clean", "tp_pt", "tp_eta", "tp_d0", "tp_z0", "tp_phi0",
                     "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0",
-                    "n_ot_right_outer_only", "n_tp_majority")
+                    "n_ot_right_outer_only", "n_tp_majority", "n_tp_top")
 TRUTH_ANGLE_COLS = ("hit_wrong", "n_wrong")
 TRUTH_COUNTERS = ("found_standalone", "trip_true")
 

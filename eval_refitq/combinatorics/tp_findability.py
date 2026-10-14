@@ -89,7 +89,13 @@ IT_REQUIRED = (IT_MODULE_COL,)
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 31   # 31: ONE HIT PER MODULE (census.findable; decision of 2026-10-14):
+FORMAT_VERSION = 32   # 32: A TIE GIVES NO OWNER (decision 12, "as CMSSW"; CMSSW truth
+                      # spec sec. 4): KF.majority_owner returns owner -1 / n_own 0 when
+                      # two or more TPs share the largest credit count (<= 31: the
+                      # larger index won), and M.seed_tp -1 when several TPs are
+                      # credited by every seed hit; track column n_tp_top (TPs
+                      # sharing the largest count) appended.
+                      # 31: ONE HIT PER MODULE (census.findable; decision of 2026-10-14):
                       # the findable count is the number of distinct modules (IT
                       # L1TSmartPixelsCluster_detId, OT L1TOTStub_detId, the two
                       # systems kept apart) carrying a credited hit of the TP, columns

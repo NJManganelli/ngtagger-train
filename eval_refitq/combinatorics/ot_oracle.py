@@ -134,7 +134,7 @@ def track_composition(T, S, O):
     on = np.zeros((ntrk, width), bool)
     tps[gs, slot] = stub_credited(S, O)[so]
     on[gs, slot] = True
-    owner, _, _, right_ts = KF.credited_owner(tps, on)
+    owner, _, _, right_ts, _ = KF.credited_owner(tps, on)
     right = np.zeros(len(gid), bool)
     right[so] = right_ts[gs, slot]
 

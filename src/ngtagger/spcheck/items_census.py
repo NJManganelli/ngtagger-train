@@ -34,13 +34,15 @@ class MajorityOwner(Item):
     title = ("the census majority owner on real track hit tables, every hit voting for every TP it is credited to: "
              "n_own <= real hits, owner on the track, dtypes")
     c4_row = "int32 owner sentinel (+ the format-28 stub credit, definition sheet v2 truth.stub)"
-    known_bad_desc = ("an int32 sentinel injected: empty layer slots handed to the census as valid hits carrying "
-                      "np.iinfo(int32).min (the missing-mask/sentinel class of the 813be3e bug)")
+    known_bad_desc = ("two variants, each of which must be red: (sentinel) an int32 sentinel injected: empty layer "
+                      "slots handed to the census as valid hits carrying np.iinfo(int32).min (the missing-mask/sentinel "
+                      "class of the 813be3e bug); (index tie-break) the census owner with every tie given to the larger "
+                      "index again, the rule of census formats <= 31")
     rule_desc = ("KF.credited_owner on the OT tracks of the gate input (stubs from L1TTrackStub -> L1TOTStub, each "
                  "credited to its tpIdx, tpIdxInner and tpIdxOuter through M.credited_tps; SP-refit IT clusters from "
                  "L1TSmartPixelsTrackCluster, credited to their tpIdx; empty slots invalid) equals a plain counting "
-                 "reference (each real hit counts once for every distinct matched TP among its raw truth columns) on "
-                 "every track; n_own <= real hits; owner -1 or a TP credited by a hit on the track; input tpIdx "
+                 "reference (each real hit counts once for every distinct matched TP among its raw truth columns; "
+                 "the most counts wins, a tie gives no owner, as CMSSW) on every track; n_own <= real hits; owner -1 or a TP credited by a hit on the track; input tpIdx "
                  "int32, output int64; identity of the counts with the reference, including the number of tracks "
                  "whose owner the cluster credit changes (against the stub's own tpIdx alone)")
     trees = (CENSUS_DIR,)
@@ -98,33 +100,42 @@ class MajorityOwner(Item):
         return KF, np.vstack(creds), np.vstack(raws), np.vstack(valids), dtype_in
 
     @staticmethod
-    def reference(raw, va, matched):
+    def reference(raw, va, matched, ties="none"):
         """Plain counting: every valid hit counts once for each distinct matched TP among its raw columns; the most
-        counts wins, ties to the largest index."""
+        counts wins. A tie gives no owner (-1, 0) as CMSSW, or with ties="largest" (only to build the known-bad)
+        the largest index, the rule of census formats <= 31."""
         own, n = np.full(len(raw), -1, np.int64), np.zeros(len(raw), np.int64)
         for i in range(len(raw)):
             c = Counter(int(x) for h in range(raw.shape[1]) if va[i, h]
                         for x in {int(y) for y, m in zip(raw[i, h], matched[i, h]) if m})
             if c:
                 best = max(c.values())
-                own[i], n[i] = max(k for k, v in c.items() if v == best), best   # ties: largest index
+                top = [k for k, v in c.items() if v == best]
+                if len(top) == 1 or ties == "largest":
+                    own[i], n[i] = max(top), best
         return own, n
 
-    def _stat(self, ctx, inject=False):
+    def _stat(self, ctx, inject=False, index_tiebreak=False):
         from ngtagger.data import spix_nano as SPN
 
         KF, cred, raw, va, dtype_in = self._tables(ctx)
         real = va & SPN.tp_matched(raw).any(axis=2)
         ref_own, ref_n = self.reference(raw, va, SPN.tp_matched(raw))
         # context: the owner with each stub credited to its own tpIdx alone (format <= 27)
-        own27, _ = KF.majority_owner(raw[:, :, 0], va)
+        own27, _, _ = KF.majority_owner(raw[:, :, 0], va)
         if inject:
             cred = np.where(va[:, :, None], cred, np.iinfo(np.int32).min).astype(np.int32)
-            va = np.ones_like(va)
-        own, n, _, _ = KF.credited_owner(cred, va)
+            va_in = np.ones_like(va)
+        else:
+            va_in = va
+        own, n, _, _, n_top = KF.credited_owner(cred, va_in)
+        if index_tiebreak:                       # every tie given to the larger index again (formats <= 31)
+            lo, ln = self.reference(raw, va, SPN.tp_matched(raw), ties="largest")
+            own, n = np.where(n_top >= 2, lo, own), np.where(n_top >= 2, ln, n)
         on_track = np.array([o == -1 or bool(np.any(real[i] & (raw[i] == o).any(axis=1))) for i, o in enumerate(own)])
-        return {"input": ctx.input, "events": ctx.events, "sentinel_injected": inject, "n_tracks": int(len(own)),
-                "n_with_owner": int((ref_own != -1).sum()), "n_agree_with_reference": int(np.sum((own == ref_own) & (n == ref_n))),
+        return {"input": ctx.input, "events": ctx.events, "sentinel_injected": inject,
+                "index_tiebreak": index_tiebreak, "n_tracks": int(len(own)),
+                "n_with_owner": int((ref_own != -1).sum()), "n_tied": int((n_top >= 2).sum()), "n_agree_with_reference": int(np.sum((own == ref_own) & (n == ref_n))),
                 "n_owner_changed_by_cluster_credit": int(np.sum(ref_own != own27)),
                 "n_own_gt_real_hits": int(np.sum(n > real.sum(1))), "n_owner_not_on_track": int(np.sum(~on_track)),
                 "tpIdx_dtype_read": dtype_in, "tpIdx_dtype_census_input": str(cred.dtype),
@@ -134,9 +145,16 @@ class MajorityOwner(Item):
         return self._stat(ctx)
 
     def known_bad(self, ctx):
-        return self._stat(ctx, inject=True)
+        return {"input": ctx.input, "events": ctx.events,
+                "variants": {"sentinel": self._stat(ctx, inject=True),
+                             "index_tiebreak": self._stat(ctx, index_tiebreak=True)}}
 
     def judge(self, stat, ref):
+        if "variants" in stat:
+            # a known-bad of several variants is red only when EVERY variant is red
+            res = {k: self.judge(v, ref) for k, v in stat["variants"].items()}
+            return any(r[0] for r in res.values()), "; ".join(
+                f"{k}: {'GREEN' if r[0] else 'red'} ({r[1]})" for k, r in res.items())
         why = []
         if stat["n_agree_with_reference"] != stat["n_tracks"]:
             why.append(f"{stat['n_tracks'] - stat['n_agree_with_reference']} of {stat['n_tracks']} tracks disagree "
@@ -148,9 +166,10 @@ class MajorityOwner(Item):
         if stat["tpIdx_dtype_read"] != ["int32"] or stat["owner_dtype"] != "int64":
             why.append(f"dtypes read/out {stat['tpIdx_dtype_read']}/{stat['owner_dtype']}")
         if same_input(stat, ref) and stat["sentinel_injected"] == ref["stat"]["sentinel_injected"]:
-            why += identity(stat, ref, ["n_tracks", "n_with_owner", "n_owner_changed_by_cluster_credit"])[1]
+            why += identity(stat, ref, ["n_tracks", "n_with_owner", "n_tied", "n_owner_changed_by_cluster_credit"])[1]
         return not why, (f"{stat['n_tracks']} tracks, owners identical to the reference "
-                         f"({stat['n_owner_changed_by_cluster_credit']} changed by the cluster credit)") \
+                         f"({stat['n_tied']} tied, no owner; {stat['n_owner_changed_by_cluster_credit']} changed by "
+                         f"the cluster credit)") \
             if not why else "; ".join(why)
 
 
@@ -162,13 +181,15 @@ class CensusBuilds(Item):
     known_bad_desc = ("two variants of the same census output, each of which must be red: (structure) one AAAI "
                       "track's hit moved onto IL4 (another build's surface), one DR group spanning both builds, and "
                       "one n_own set beyond nhit; (findable count) one TP with credited hits on 3 modules given a "
-                      "fourth, as a second hit on one module counted again would, judged by the identities")
+                      "fourth, as a second hit on one module counted again would, judged by the identities; (tie "
+                      "break) one tied track (n_tp_top >= 2) given an owner, as index tie-breaking would")
     rule_desc = ("on a fresh 4-event AAAI+IAAA census of the gate input run from this code root: every exported "
                  "hit lies on its build's active IT surfaces or the OT; every seed and follow surface is active in "
-                 "its build; every DR group lies inside one build; n_own <= nhit and own_tpidx = -1 iff n_own = 0; "
+                 "its build; every DR group lies inside one build; n_own <= nhit; own_tpidx = -1 iff n_own = 0 iff "
+                 "n_tp_top != 1 (no credited hit, or a tie: no owner, as CMSSW); "
                  "identity of the counts with the reference: tracks, and the truth the census wires in (TPs in the "
                  "census table, findable TPs (TF.findable: charged, credited hits on >= 4 modules, the efficiency "
-                 "denominator) "
+                 "denominator), tied tracks, "
                  "and hits crediting their track's owner, which move if the stub credit of M.credited_tps stops "
                  "reaching the census)")
     trees = (CENSUS_DIR,)
@@ -190,7 +211,7 @@ class CensusBuilds(Item):
         ctx.cache[key] = d
         return d
 
-    def _stat(self, ctx, perturb=False, perturb_findable=False):
+    def _stat(self, ctx, perturb=False, perturb_findable=False, perturb_tie=False):
         from ngtagger.data import spix_nano as SPN
 
         KF = ctx.script_module(CENSUS_DIR, "kf_emulation")
@@ -204,9 +225,10 @@ class CensusBuilds(Item):
         TC = list(KF.TRACK_COLS)
         it_slots = [i for i, L in enumerate(KF.LAYER_ORDER) if L <= 4]
         out = {"input": ctx.input, "events": CENSUS_EVENTS, "builds": sorted(builds), "perturbed": perturb,
-               "findable_count_perturbed": perturb_findable,
+               "findable_count_perturbed": perturb_findable, "tie_perturbed": perturb_tie,
                "n_tracks": 0, "hits_off_build": 0, "seed_or_follow_off_build": 0, "dr_groups_spanning_builds": 0,
-               "n_own_gt_nhit": 0, "owner_sentinel_inconsistent": 0, "n_owned_hits": 0,
+               "n_own_gt_nhit": 0, "owner_sentinel_inconsistent": 0, "owner_tie_inconsistent": 0, "n_tied": 0,
+               "n_owned_hits": 0,
                "n_census_tps": 0, "n_findable_tps": 0}
         for j, c in enumerate(sorted(glob.glob(os.path.join(d, "chunk_*.npz")))):
             z = np.load(c)
@@ -222,7 +244,7 @@ class CensusBuilds(Item):
             if sum(1 for es in builds.values() if set(g) <= set(es)) != 1:
                 out["dr_groups_spanning_builds"] += 1
         chunks = sorted(glob.glob(os.path.join(d, "chunk_*.npz")))
-        first_bad_done = False
+        first_bad_done = tie_done = False
         for b, es in builds.items():
             active = set(SPN.mask_surfaces(b)) & {1, 2, 3, 4}
             for e in es:
@@ -238,6 +260,12 @@ class CensusBuilds(Item):
                         h[0, KF.LAYER_ORDER.index(4)] = int(h[0].max())      # a hit moved onto IL4
                         t[0, TC.index("n_own")] = t[0, TC.index("nhit")] + 1
                         first_bad_done = True
+                    tied = t[:, TC.index("n_tp_top")] >= 2
+                    if perturb_tie and not tie_done and tied.any():        # index tie-breaking: an owner on a tie
+                        i = int(np.flatnonzero(tied)[0])
+                        t[i, TC.index("own_tpidx")] = 0
+                        t[i, TC.index("n_own")] = 1
+                        tie_done = True
                     out["n_tracks"] += len(h)
                     for i in it_slots:
                         if KF.LAYER_ORDER[i] not in active:
@@ -246,6 +274,9 @@ class CensusBuilds(Item):
                     out["n_own_gt_nhit"] += int(np.sum(n_own > nhit))
                     out["n_owned_hits"] += int(n_own.sum())
                     out["owner_sentinel_inconsistent"] += int(np.sum((own == -1) != (n_own == 0)))
+                    n_top = t[:, TC.index("n_tp_top")]
+                    out["owner_tie_inconsistent"] += int(np.sum((own == -1) != (n_top != 1)))
+                    out["n_tied"] += int(np.sum(n_top >= 2))
         return out
 
     def compute(self, ctx):
@@ -254,7 +285,8 @@ class CensusBuilds(Item):
     def known_bad(self, ctx):
         return {"input": ctx.input, "events": CENSUS_EVENTS,
                 "variants": {"structure": self._stat(ctx, perturb=True),
-                             "findable_count": self._stat(ctx, perturb_findable=True)}}
+                             "findable_count": self._stat(ctx, perturb_findable=True),
+                             "tie_break": self._stat(ctx, perturb_tie=True)}}
 
     def judge(self, stat, ref):
         if "variants" in stat:
@@ -263,13 +295,14 @@ class CensusBuilds(Item):
             ok = any(r[0] for r in res.values())
             return ok, "; ".join(f"{k}: {'GREEN' if r[0] else 'red'} ({r[1]})" for k, r in res.items())
         why = [f"{k} = {stat[k]}" for k in ("hits_off_build", "seed_or_follow_off_build", "dr_groups_spanning_builds",
-                                            "n_own_gt_nhit", "owner_sentinel_inconsistent") if stat[k]]
+                                            "n_own_gt_nhit", "owner_sentinel_inconsistent",
+                                            "owner_tie_inconsistent") if stat[k]]
         if stat["n_tracks"] == 0:
             why.append("no exported tracks")
         if same_input(stat, ref) and stat["perturbed"] == ref["stat"]["perturbed"]:
-            why += identity(stat, ref, ["n_tracks", "n_census_tps", "n_findable_tps", "n_owned_hits"])[1]
+            why += identity(stat, ref, ["n_tracks", "n_census_tps", "n_findable_tps", "n_tied", "n_owned_hits"])[1]
         return not why, (f"{stat['n_tracks']} census tracks over {stat['builds']} clean "
-                         f"({stat['n_census_tps']} TPs, {stat['n_findable_tps']} findable, "
+                         f"({stat['n_census_tps']} TPs, {stat['n_findable_tps']} findable, {stat['n_tied']} tied tracks, "
                          f"{stat['n_owned_hits']} owned hits)") if not why else "; ".join(why)
 
 

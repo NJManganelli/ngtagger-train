@@ -156,7 +156,7 @@ def one_collection(T, S, W):
                                                    f"{int((lg & loose_e).sum())}"}
         if rule == "io":
             continue
-        own, n_own, owned, _ = KF.credited_owner(tps, on)
+        own, n_own, owned, _, _ = KF.credited_owner(tps, on)
         held = owned & (n_own >= 3) & (n_own > 0.5 * nst)
         # stubs crediting CMSSW's TP, against CMSSW's own threshold n - 1
         k_tp = ((tps == cmssw_tp[:, None, None]).any(-1) & on).sum(1)

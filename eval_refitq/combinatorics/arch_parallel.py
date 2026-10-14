@@ -126,7 +126,7 @@ def pool_and_dr(U, per_seed, do_dr=True):
     sel = np.flatnonzero(surv)
     return {"gidx": G[sel], "score": SC[sel], "seed_idx": sidx[sel],
             "gA": ga[sel], "gB": gb[sel], "event": U["event"][ga[sel]],
-            # the TP both seed hits are credited to (M.seed_tp), -1 if none
+            # the TP both seed hits are credited to (M.seed_tp), -1 if none or several
             "tpIdx": M.seed_tp(U, ga[sel], gb[sel])[0],
             **{k: F[k][sel] for k in keys}}
 

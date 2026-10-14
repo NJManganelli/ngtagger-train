@@ -954,12 +954,14 @@ def seed_credit(D, ga, gb, gc=None):
 
 
 def seed_tp(D, ga, gb, gc=None):
-    """(tp, truthful) per seed: the TP every seed hit is credited to, -1 if none;
-    where several are, the largest index (the majority owner's tie rule)."""
+    """(tp, truthful) per seed: the TP every seed hit is credited to, -1 if none
+    or if several are (a tie gives no TP, as CMSSW and the majority owner);
+    truthful whenever at least one is (definition sheet truth.seed_truthful)."""
     ok, A = seed_credit(D, ga, gb, gc)
     v = np.where(ok, A.astype(np.int64), np.iinfo(np.int64).min).max(axis=1)
     real = ok.any(axis=1)
-    return np.where(real, v, -1), real
+    # credited_tps lists a TP once per hit, so ok counts the distinct TPs
+    return np.where(ok.sum(axis=1) == 1, v, -1), real
 
 
 def recovered_keys(D, ga, gb, gc=None):

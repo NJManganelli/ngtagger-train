@@ -14,7 +14,8 @@ survivor of the build's full menu, DR recomputed from the exported tracks as
 angle_stage_metrics does, owned by the TP: n_own >= 3 and more than half the hits) and
 clean delivered (the same track without a wrong IT hit); per event: fitted tracks, DR
 survivors and fakes (>= 2 wrong hits; truth.census_fake, raw) per seed class x arity, and
-ambiguous owners (n_tp_majority >= 2, format >= 29). The *_sens columns are a SENSITIVITY to
+ambiguous owners (n_tp_majority >= 2, format >= 29) and tied owners (n_tp_top >= 2, format >= 32:
+no owner, as CMSSW) among fitted tracks and DR survivors. The *_sens columns are a SENSITIVITY to
 the dominant-TP limit (the nano carries one TP per OT cluster, CMSSW credits every
 contributor; CMSSW truth spec sec. 6), not a bound: delivered and fake if every wrong OT
 stub that has a TP also credited the CURRENT owner.
@@ -127,6 +128,9 @@ def extract(label, census, root, out):
         A[f"{b}/n_dr"] = np.bincount(ev_s, minlength=nev)
         if "n_tp_majority" in col:
             A[f"{b}/n_ambiguous_dr"] = np.bincount(ev_s[S[:, col["n_tp_majority"]] >= 2], minlength=nev)
+        if "n_tp_top" in col:
+            A[f"{b}/n_tied_fit"] = np.bincount(ev_t[T[:, col["n_tp_top"]] >= 2], minlength=nev)
+            A[f"{b}/n_tied_dr"] = np.bincount(ev_s[S[:, col["n_tp_top"]] >= 2], minlength=nev)
         for fk, f in fakes.items():
             A[f"{b}/n_{fk}"] = np.bincount(ev_s[f], minlength=nev)
             for s, a in CATS:
@@ -167,6 +171,11 @@ def figures(meta, Z, W):
         if f"{b}/n_ambiguous_dr" in Z:
             out[f"{b}/frac_dr_ambiguous_owner"] = _ratio(Z[f"{b}/n_ambiguous_dr"].astype(float),
                                                          Z[f"{b}/n_dr"].astype(float), W)
+        if f"{b}/n_tied_dr" in Z:
+            for k in ("fit", "dr"):
+                n = Z[f"{b}/n_tied_{k}"].astype(float)
+                out[f"{b}/n_tied_{k}_per_ev"] = (float(n.sum() / nev), (W @ n) / nev)
+                out[f"{b}/frac_{k}_tied"] = _ratio(n, Z[f"{b}/n_{k}"].astype(float), W)
         for fk in ("fake", "fake_sens"):
             out[f"{b}/{fk}"] = _ratio(Z[f"{b}/n_{fk}"].astype(float), Z[f"{b}/n_dr"].astype(float), W)
             for s, a in CATS:

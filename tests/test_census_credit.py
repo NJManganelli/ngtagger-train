@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval_refitq" / "combinatorics"))
+import kf_emulation as KF           # noqa: E402
 import tp_findability as TF        # noqa: E402
 import tracklet_topology_cost as M  # noqa: E402
 
@@ -84,3 +85,27 @@ def test_unknown_stub_and_unmatched_cluster_credit_nobody():
     cen = TF.chunk_census(U)
     assert list(cen["key"]) == [M.tp_key(np.array([0]), np.array([C]))[0]]
     assert cen["n_mod_it"][0] == 0 and cen["n_mod_ot"][0] == 1
+
+
+def test_a_tied_owner_is_no_owner():
+    # majority_owner, as CMSSW (truth spec sec. 4; census format 32): a tie gives no owner and n_own 0
+    tp = np.array([[A, B, -1, -1],          # 1-1 tie
+                   [A, A, B, -1],           # A
+                   [A, B, A, B],            # 2-2 tie
+                   [-1, -1, -1, -1],        # nothing credited
+                   [-3, -3, B, -1]])        # an owner outside L1TTP still wins
+    own, n_own, n_top = KF.majority_owner(tp, np.ones(tp.shape, bool))
+    assert own.tolist() == [-1, A, -1, -1, -3]
+    assert n_own.tolist() == [0, 2, 0, 0, 2]
+    assert n_top.tolist() == [2, 1, 2, 0, 1]
+    # a stub voting for both of its clusters' TPs: A on one stub, B on one, both on a third -> tie
+    tps = np.array([[[A, -1, -1], [B, -1, -1], [A, B, -1]]])
+    own, n_own, owned, right, n_top = KF.credited_owner(tps, np.ones((1, 3), bool))
+    assert own[0] == -1 and n_own[0] == 0 and not owned[0] and not right.any() and n_top[0] == 2
+
+
+def test_a_seed_credited_to_two_tps_has_no_seed_tp_but_is_truthful():
+    # two stubs, each credited to A and B through its clusters: truthful, but no unique seed TP
+    U = _unified([], [(1, -1, A, B), (2, -1, B, A), (3, A, A, A)])
+    tp, real = M.seed_tp(U, np.array([0, 0]), np.array([1, 2]))
+    assert real.tolist() == [True, True] and tp.tolist() == [-1, A]

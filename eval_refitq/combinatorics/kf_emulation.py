@@ -855,7 +855,7 @@ def angle_rows(U, T, fit, trip, keep_idx, alpha_scale=1.0, beta_scale=1.0):
     # ownership, per hit, against the same majority owner the residuals use
     G = T["GIDX"]
     on = G >= 0
-    own, _, owned, right = credited_owner(M.hit_tps(U, G), on)
+    own, _, owned, right, _ = credited_owner(M.hit_tps(U, G), on)
     wrong = (on & ~right) | ~owned[:, None]
     n_wrong = (on & ~right).sum(axis=1)
     ti, li = np.nonzero(use)
@@ -938,7 +938,13 @@ def truth_residuals(U, trip, fit, TP):
 
 
 def majority_owner(tp, valid):
-    """Per track: the TP holding the most attached hits, and how many.
+    """Per track: (owner, n_own, n_top), the TP holding the most attached hits,
+    how many it holds, and how many TPs share that largest count.
+
+    A TIE GIVES NO OWNER (decision 12, "as CMSSW"; CMSSW truth spec sec. 4: a
+    track with two or more candidate TPs gets no principal, CMSSW never breaks a
+    tie): when n_top >= 2 the owner is -1 and n_own 0, like a track with no
+    credited hit (n_top 0). Census formats <= 31 gave a tie to the larger index.
 
     An unmatched tp (-1/-2, a cluster belonging to no TrackingParticle) never
     wins, so a track built entirely from unassociated clusters correctly gets
@@ -963,6 +969,7 @@ def majority_owner(tp, valid):
     cur_v = S[:, 0].copy()
     cur_n = (S[:, 0] != none).astype(np.int64)
     best_v, best_n = cur_v.copy(), cur_n.copy()
+    n_top = cur_n.copy()                     # TPs reaching best_n (a run counts once)
     for j in range(1, S.shape[1]):
         col = S[:, j]
         real = col != none
@@ -970,26 +977,29 @@ def majority_owner(tp, valid):
         cur_n = np.where(same, cur_n + 1, np.where(real, 1, 0))
         cur_v = np.where(same, cur_v, col)
         take = cur_n > best_n
+        n_top = np.where(take, 1, n_top + (real & (cur_n == best_n) & (cur_v != best_v)))
         best_n = np.where(take, cur_n, best_n)
         best_v = np.where(take, cur_v, best_v)
-    return np.where(best_n > 0, best_v, -1), best_n
+    unique = (best_n > 0) & (n_top == 1)
+    return np.where(unique, best_v, -1), np.where(unique, best_n, 0), n_top
 
 
 def credited_owner(tps, on):
-    """(own, n_own, owned, right) of tracks whose hits are credited to `tps`
-    (track x hit slot x M.N_CREDIT, as M.hit_tps; -1 = none) where `on`.
+    """(own, n_own, owned, right, n_top) of tracks whose hits are credited to
+    `tps` (track x hit slot x M.N_CREDIT, as M.hit_tps; -1 = none) where `on`.
 
     THE CENSUS OWNER UNDER THE STUB CREDIT (definition sheet truth.census_owner):
     each hit votes once for every TP it is credited to, so an OT stub votes for
-    the TPs behind both of its clusters; majority_owner picks the winner (ties
-    to the larger index, unmatched never wins). n_own counts the hits crediting
-    the owner; `right` marks them (False everywhere on a track without owner).
+    the TPs behind both of its clusters; majority_owner picks the winner
+    (unmatched never wins; a tie gives no owner, as CMSSW). n_own counts the
+    hits crediting the owner; `right` marks them (False everywhere on a track
+    without owner); n_top is the number of TPs sharing the largest count.
     """
     n = tps.shape[-1]
-    own, n_own = majority_owner(tps.reshape(len(tps), -1), np.repeat(on, n, axis=1))
+    own, n_own, n_top = majority_owner(tps.reshape(len(tps), -1), np.repeat(on, n, axis=1))
     owned = SPN.tp_matched(own)
     right = on & owned[:, None] & (tps == own[:, None, None]).any(axis=-1)
-    return own, n_own, owned, right
+    return own, n_own, owned, right, n_top
 
 
 def n_tps_above_half(tps, on):
@@ -1168,6 +1178,9 @@ TRACK_COLS = (
     # combinatoric). Format 29 also had n_ot_right_outer_only before it; the
     # census manifests carry their own column list (track_cols) since format 29
     "n_tp_majority",
+    # --- truth diagnostic (format >= 32): how many TPs share the largest credit
+    # count; >= 2 is a tie, which gives no owner (majority_owner, as CMSSW)
+    "n_tp_top",
 )
 N_TRACK_COLS = len(TRACK_COLS)
 # columns the quality MVA trains on; the rest are identity, fitted kinematics or
@@ -1180,7 +1193,7 @@ MVA_FEATURES = tuple(c for c in TRACK_COLS if c not in (
     "tp_d0",
     "tp_z0", "tp_phi0",
     "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0",
-    "n_tp_majority"))
+    "n_tp_majority", "n_tp_top"))
 SYS_IT, SYS_OT, SYS_MIX = 0, 1, 2
 # the MVA features that carry SmartPixels angle information: withheld when a
 # census runs without S8. rank_score EMBEDS the angle chi2 whenever the DR rank
@@ -1270,7 +1283,7 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
     G = T["GIDX"]
     on = G >= 0
     tps = M.hit_tps(U, G)
-    own, n_own, owned, right = credited_owner(tps, on)
+    own, n_own, owned, right, n_top = credited_owner(tps, on)
     n_wrong = (on & ~right).sum(axis=1).astype(np.float64)
     # A WRONG OT STUB IS NOT ONE THING. flg is 1 genuine / 2 combinatoric /
     # 3 unknown from the CMS per-stub flags (see tp_findability._unify), so the
@@ -1360,6 +1373,7 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank,
         "d_cot": np.where(hit, fit["cot"] - TP["cot"][p], nan),
         "d_z0": np.where(hit, fit["z0"] - TP["z0"][p], nan),
         "n_tp_majority": n_tps_above_half(tps, on).astype(np.float64),
+        "n_tp_top": n_top.astype(np.float64),
     }
     # THE OT PARTITION MUST BE EXACT, and this is the cheapest place to know it.
     # Every valid OT hit has to land in exactly one of right / wrong /
