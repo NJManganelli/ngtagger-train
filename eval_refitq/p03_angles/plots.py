@@ -67,8 +67,8 @@ def bin_x(lo, hi, cap):
 
 
 def pulls_pages(pdf, res, title):
-    """Per key x angle and bin: the weighting width (q95 / 1.96) of the test pulls before the table (published
-    and census sigma) with the table's fitted width; the centre before and after the table (the (i) statistic)."""
+    """Per key x angle and bin: the weighting width and the centre of the test pulls before the table
+    (published and census sigma) and after it (the (i) statistics), with the adequacy bands."""
     if not res or "bins" not in res:
         return
     for key, rows in res["bins"].items():
@@ -78,8 +78,8 @@ def pulls_pages(pdf, res, title):
                 groups.setdefault(f"{r['surface']} f{r['facing']:+d}" if r["surface"].startswith("ID") else r["surface"],
                                   []).append(r)
             names = list(groups)
-            for what, ylab in (("width", "weighting width q95 / 1.96 [published σ units]"),
-                               ("centre", "pull centre [published σ units]")):
+            for what, band, ylab in (("width", (1 - T.BAND_W, 1 + T.BAND_W), "pull weighting width [published σ units]"),
+                                     ("centre", (-T.BAND_C, T.BAND_C), "pull centre [published σ units]")):
                 fig, axs = plt.subplots(3, 4, figsize=A4L, constrained_layout=True)
                 for ax, g in zip(axs.flat, names):
                     cap = 3.0 if g.startswith("IL") else 1.0
@@ -91,16 +91,14 @@ def pulls_pages(pdf, res, title):
                         d = r[ang].get(k)
                         return np.nan if not d else d[what]
                     yb = np.array([get(r, "before") for r in groups[g]], float)
-                    src, lab = ("after", "after the table (test)") if what == "centre" else ("table", "the table (fit)")
-                    ya = np.array([r[ang][src][what] for r in groups[g]], float)
-                    sa = np.array([r[ang][src]["sd_" + what] for r in groups[g]], float)
-                    if what == "centre":
-                        ax.axhspan(-T.BAND_C, T.BAND_C, color=GRID, alpha=0.6, lw=0, label="adequacy band (i)")
+                    ya = np.array([r[ang]["after"][what] for r in groups[g]], float)
+                    sa = np.array([r[ang]["after"]["sd_" + what] for r in groups[g]], float)
+                    ax.axhspan(*band, color=GRID, alpha=0.6, lw=0, label="adequacy band (i)")
                     ax.plot(x, yb, "o", color=C2, ms=3, label="before (published σ)")
                     if g.startswith("IL"):
                         yc = np.array([get(r, "before_census") for r in groups[g]], float)
                         ax.plot(x, yc, "s", color=C3, ms=3, label="before (today's census σ)")
-                    ax.errorbar(x, ya, xerr=xe, yerr=sa, fmt="o", color=C1, ms=3, lw=1, label=lab)
+                    ax.errorbar(x, ya, xerr=xe, yerr=sa, fmt="o", color=C1, ms=3, lw=1, label="after the table (test)")
                     ax.set_title(g, fontsize=8, color=INK)
                     ax.set_xlabel(key_label(g), fontsize=7)
                     ax.set_ylabel(ylab, fontsize=7)
@@ -133,7 +131,7 @@ def coverage_page(pdf, res, title):
         ax.plot(xx, len(z) * 0.25 * np.exp(-xx ** 2 / 2) / np.sqrt(2 * np.pi), color=C2, label="unit Gaussian")
         for s in (-t, t):
             ax.axvline(s, color=INK2, ls="--", lw=1)
-        ax.set_xlabel(f"coverage z at {lv:.1%} [exact-shape null, amendments 1-1d; σ units]")
+        ax.set_xlabel(f"coverage z at {lv:.1%} [exact-shape null, amendments 1-1e; σ units]")
         ax.set_ylabel("bins [count]")
         ax.set_title(f"level {lv:.1%}; dashed: ±t(N) = {t:.2f}", fontsize=8)
     h, lab = axs.flat[0].get_legend_handles_labels()
@@ -231,13 +229,13 @@ def response_page(pdf):
 
 def summary_lines(kg, kb, gt, roc, ex):
     L = []
-    for name, r in (("amendment-1d known-good demonstration (fit 7-8, test 3-6, 9-10)", kg),
+    for name, r in (("amendment-1e known-good demonstration (fit 7-8, test 3-6, 9-10)", kg),
                     ("gated test (fit 1-2, test 3-10)", gt)):
         if not r:
             L.append(f"{name}: not run")
             continue
         j = r["judgement"]
-        L.append(f"{name}: PASS = {j['pass']}  [(i) {j['i']['fail']} / {j['i']['bins']} bins outside the widened band, "
+        L.append(f"{name}: PASS = {j['pass']}, verdict {j['materiality']['verdict']}  [(i) {j['i']['fail']} / {j['i']['bins']} bins outside the widened band, "
                  f"worst {j['i']['worst_fraction_of_widened_band']:.2f} of it; (ii) N = {j['ii']['N']}, t(N) = "
                  f"{j['ii']['t_N']:.2f}, max |z| = {j['ii']['max_abs_z']:.2f}, beyond t: {j['ii']['n_beyond_t']}, "
                  f"chi2 failing: {j['ii']['chi2_fail']}]")
@@ -263,14 +261,13 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=str(CM.OUT_DIR / "p03_summary.pdf"))
     ap.add_argument("--png-dir", help="also write every page as PNG here (visual checks)")
-    ap.add_argument("--centre", choices=SA.CENTRES, default=SA.CENTRE, help="which amendment-1d table results to show")
     a = ap.parse_args(argv)
     if a.png_dir:
         Path(a.png_dir).mkdir(parents=True, exist_ok=True)
         for f in Path(a.png_dir).glob("page_*.png"):
             f.unlink()
         PNG_DIR.append(a.png_dir)
-    kg, kb, gt = (load(T.result_name(m, a.centre)) for m in ("known-good", "known-bad", "gated"))
+    kg, kb, gt = (load(T.result_name(m)) for m in ("known-good", "known-bad", "gated"))
     roc, ex = load("p03_roc.json"), load("p03_extras.json")
     with PdfPages(a.out) as pdf:
         text_page(pdf, "P0.3 angle definitions, uncertainty table and cluster-level ROC (canon_v3 AAAA)",

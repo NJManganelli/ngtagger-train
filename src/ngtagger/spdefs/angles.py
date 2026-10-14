@@ -31,13 +31,13 @@ angle (the census's rule); class C is untouched. Uncertainty modes: `fixed` keep
 uses max(k, 0.05) sigma (for every cluster: a real system cannot know the class). In both modes
 the subtracted table centre is k x the centre in absolute angle units.
 
-Table (angle.error_table, P0.3 amendment 1d): per surface x signed incidence bin (x facing on the
-discs), for alpha and beta, in both keys: the centre (the median of the pulls; centre_of), the
-quantiles of |pull - centre| at 95 / 97.5 / 99 / 99.7 % with the distribution-free rank
-k = min(ceil(L (n + 1)), n) (quantile_order), and the weighting width = q95 / 1.96 (a quantile, so it
-is validated by the table's coverage tests); the B.1 core width and clipped mean are reported
-diagnostics only. Bins with fewer than 200 fit clusters merge with their neighbour away from the
-plateau edges.
+Table (angle.error_table, sheet v2.7, P0.3 amendment 1e): per surface x signed incidence bin (x facing
+on the discs), for alpha and beta, in both keys: the centre (the 25 %-trimmed mean of the pulls;
+centre_of), the weighting width (the mean of the smallest 95 % of |pull - centre| / 0.7168;
+weighting_width) and the quantiles of |pull - centre| at 95 / 97.5 / 99 / 99.7 % with the
+distribution-free rank k = min(ceil(L (n + 1)), n) (quantile_order); the B.1 core width and clipped
+mean are reported diagnostics only. Bins with fewer than 200 fit clusters merge with their neighbour
+away from the plateau edges.
 
 Coverage of a fitted quantile: the exact order-statistic null of the number of new values beyond the
 fitted quantile (expected_coverage, fit_coverage_variance, exchangeable_coverage_variance,
@@ -77,15 +77,15 @@ TEST_FILES = tuple(int(x) for x in _ET["test_files"])
 K_FLOOR = float(_KK["scaled_floor"])
 K_MODES = tuple(_KK["modes"])
 CUT_LEVEL = float(_CL["level"])
-CENTRES = ("median", "trimmed_mean_25")
-CENTRE = str(_ET["centre"])
-WIDTH_LEVEL = float(_ET["weighting_width"]["quantile"])
+if _ET["centre"] != "trimmed_mean_25":
+    raise ValueError(f"angle.error_table centre {_ET['centre']!r}: this module implements trimmed_mean_25")
+WIDTH_FRACTION = float(_ET["weighting_width"]["lower_fraction"])
 WIDTH_DIVISOR = float(_ET["weighting_width"]["divisor"])
 # |key| of the plateau edges: 27 deg (PixelAV, |cot| 0.5) and 34 deg (Phase-2, |eta| 0.62, |cot| 0.67)
 # (plan B.4); the merge rule keeps them resolved. The disc incidence variable tan theta steps at
 # the same values (B.4).
 PLATEAU_EDGES = (0.5, 0.67)
-TABLE_SCHEMA = "sp-angle-table/2"      # /2 (sheet v2.5): centre = median, width = q95 / 1.96, rank ceil(L (n + 1))
+TABLE_SCHEMA = "sp-angle-table/3"      # /3 (sheet v2.7): trimmed-mean centre and width, rank ceil(L (n + 1))
 
 SURFACE_NAMES = {s: (f"ID{s - DISC_SURFACE_OFFSET}" if s > DISC_SURFACE_OFFSET else f"IL{s}") for s in SURFACES}
 
@@ -375,23 +375,31 @@ def core_w(x, w=None):
     return core(x)
 
 
-def centre_of(x, estimator: str = CENTRE):
-    """The table centre of a pull sample (angle.error_table): 'median' (adopted), or 'trimmed_mean_25'
-    (the mean of the central 50 %, an alternative evaluated for the physicist in P0.3 amendment 1d)."""
-    x = np.asarray(x, np.float64)
-    if estimator == "median":
-        return float(np.median(x))
-    if estimator == "trimmed_mean_25":
-        s = np.sort(x)
-        a = int(np.floor(0.25 * len(s)))
-        return float(s[a:len(s) - a].mean())
-    raise ValueError(f"centre estimator {estimator!r} not in {CENTRES}")
+def centre_of(x):
+    """The table centre of a pull sample (angle.error_table): the 25 %-trimmed mean, the mean of the
+    central 50 % (floor(n / 4) values dropped at each end)."""
+    s = np.sort(np.asarray(x, np.float64))
+    a = int(np.floor(0.25 * len(s)))
+    return float(s[a:len(s) - a].mean())
 
 
-def bin_estimates(pulls, levels=LEVELS, w=None, centre: str = CENTRE, diagnostics: bool = True) -> dict | None:
-    """The table entries of one bin from its class-T pulls (angle.error_table): centre = centre_of
-    (the median), q = quantiles of |pull - centre| (the k-th smallest, k = quantile_order(n, level)),
-    width = q95 / 1.96 (the weighting width). With diagnostics: the B.1 clipped mean and core width
+def weighting_width(d):
+    """The weighting width from d = |pull - centre| (angle.error_table): the mean of the smallest
+    WIDTH_FRACTION (95 %) of d, i.e. of the smallest t = 0.95 n values with the boundary value weighted by
+    the fractional part of t, divided by WIDTH_DIVISOR (0.7168, its value for a unit Gaussian)."""
+    d = np.asarray(d, np.float64)
+    t = WIDTH_FRACTION * len(d)
+    m = int(np.floor(t))
+    if m >= len(d):
+        return float(d.mean() / WIDTH_DIVISOR)
+    part = np.partition(d, m)
+    return float((part[:m].sum() + (t - m) * part[m]) / t / WIDTH_DIVISOR)
+
+
+def bin_estimates(pulls, levels=LEVELS, w=None, diagnostics: bool = True) -> dict | None:
+    """The table entries of one bin from its class-T pulls (angle.error_table): centre = centre_of (the
+    25 %-trimmed mean), width = weighting_width of |pull - centre|, q = quantiles of |pull - centre| (the
+    k-th smallest, k = quantile_order(n, level)). With diagnostics: the B.1 clipped mean and core width
     of the centred pulls, the MAD / 0.6745, the fraction outside 3 widths and the full RMS (reported,
     never used). None below 200 values."""
     p = np.asarray(pulls, np.float64)
@@ -399,13 +407,12 @@ def bin_estimates(pulls, levels=LEVELS, w=None, centre: str = CENTRE, diagnostic
         p = np.repeat(p, np.asarray(w, np.int64))
     if len(p) < MIN_FIT:
         return None
-    c = centre_of(p, centre)
+    c = centre_of(p)
     d = np.abs(p - c)
-    lv = np.asarray(levels, np.float64)
-    k = quantile_order(len(d), np.r_[lv, WIDTH_LEVEL]).astype(np.int64)
+    k = quantile_order(len(d), np.asarray(levels, np.float64)).astype(np.int64)
     qs = np.partition(d, k - 1)[k - 1]
-    width = float(qs[-1] / WIDTH_DIVISOR)
-    out = {"n": int(len(p)), "centre": c, "width": width, "q": {f"{v:g}": float(x) for v, x in zip(levels, qs[:-1])}}
+    width = weighting_width(d)
+    out = {"n": int(len(p)), "centre": c, "width": width, "q": {f"{v:g}": float(x) for v, x in zip(levels, qs)}}
     if diagnostics:
         c0 = core(p)
         cc = core(p - c0["mean"])
@@ -460,8 +467,9 @@ class AngleTable:
                                       "alpha": {centre, width, q, E0, core_width, clip_centre, mad, ...},
                                       "beta": {...}} ]}}}
     Centres, widths and quantiles are in published-sigma units of this module's representation:
-    centre = the median, width = q95 / 1.96 (the weighting width), q = the quantiles of
-    |pull - centre| (angle.error_table, sheet v2.5); core_width, clip_centre and mad are diagnostics."""
+    centre = the 25 %-trimmed mean, width = the weighting width (95 %-trimmed mean of |pull - centre| /
+    0.7168), q = the quantiles of |pull - centre| (angle.error_table, sheet v2.7); core_width,
+    clip_centre and mad are diagnostics."""
 
     def __init__(self, doc: dict):
         if doc.get("schema") != TABLE_SCHEMA:

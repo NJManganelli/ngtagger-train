@@ -26,8 +26,9 @@ COLS = ("surface", "detId", "tpEmuClass", "tpIdx", "hasAlpha", "hasBeta", "globa
         "tpGlobalClusterPhi", "tpGlobalClusterCotTheta", "localCotAlpha", "localCotBeta", "tpLocalCotAlpha",
         "tpLocalCotBeta", "tpPt")
 K_TESTED = (0.0, 0.05, 0.3, 0.67, 0.999)
-BAND_CENTRE = 0.25           # the adequacy band of the table test (D.3 (i))
-N_REP = 50                   # event-bootstrap replicas of the frame-sign check (5 events)
+FRAME_RATIO_BAND = (0.8, 1.2)   # frame-sign check: median p_loc / map(p_glob) per group (P0.3 amendment 1e)
+FRAME_PULL_RANGE = (1.0, 10.0)  # ... over the clusters with 1 < |p_glob| < 10
+FRAME_MIN_CLUSTERS = 50         # ... a group needs >= 50 of them to be judged
 
 
 def _differ(x, y):
@@ -244,31 +245,33 @@ class KnobCentre(Item):
 # ---------------------------------------------------------------- frame sign and key conversion
 class FrameSign(Item):
     id = "spdefs.frame_sign"
-    title = "module-local consumer: class-T beta centre after the table ~0 on both module orientations"
+    title = "module-local consumer: the per-cluster frame map of the class-T beta pull, both module orientations"
     c4_row = "frame sign (the 2026-09-06 sense bug class)"
-    known_bad_desc = "the centre applied with the global cot theta sign on reversed-orientation modules"
-    rule_desc = ("a consumer in the module frame (residual of atan(localCotBeta), the global table converted with "
-                 "local_beta_sign): per surface x orientation x table row with >= 200 class-T clusters, the table's "
-                 "centre estimator (angle.error_table: the median) of its pull after the table within "
-                 f"+-{BAND_CENTRE} widened by 2 event-bootstrap sigma ({N_REP} replicas). Redesigned 2026-10-09 before "
-                 "use (the B.1 clipped mean latched onto either peak of the bimodal plateau response; a window mean "
-                 "replaced it), and 2026-10-14 with the table (P0.3 amendment 1d, sheet v2.5): the after-table centre "
-                 "is the table's own centre estimator, as in the table test's check (i); the window mean of pulls "
-                 "about a median centre is not zero on skewed rows")
+    known_bad_desc = "the global sign used on reversed-orientation modules (the orientation ignored in the map)"
+    rule_desc = ("per surface x orientation x table row with >= 200 class-T clusters: the median, over its clusters "
+                 f"with {FRAME_PULL_RANGE[0]:g} < |p_glob| < {FRAME_PULL_RANGE[1]:g} (>= {FRAME_MIN_CLUSTERS} of them; "
+                 "fewer: reported, not judged), of p_loc / map(p_glob) within "
+                 f"[{FRAME_RATIO_BAND[0]:g}, {FRAME_RATIO_BAND[1]:g}], where p_loc is the module-frame pull (residual of "
+                 "atan(localCotBeta) / published sigma), p_glob the global one and map = to_local (local_beta_sign); "
+                 "both orientations judged. Reported, not judged: the module-frame after-table centre (the table's "
+                 "trimmed mean) per group. Redesigned 2026-10-14 (P0.3 amendment 1e, statistics review 02 R4-3): the "
+                 "after-table centre depends on the location estimator (the module-frame and global disc-beta pulls "
+                 "agree cluster by cluster but not exactly: 90 % spread about 0.4 pull units), so the check tests the "
+                 "frame map itself; a sign error gives a ratio of about -1")
 
     def _stat(self, ctx, bad=False):
         D = clusters(ctx)
-        pulls = {"beta": SA.residual("beta", SA.emitted("beta", D), SA.truth("beta", D)) / SA.sigma_of("beta", D)}
-        row, est = _fit_rows(D, D["tpGlobalClusterCotTheta"], pulls, D["T"])
+        pg = SA.residual("beta", SA.emitted("beta", D), SA.truth("beta", D)) / SA.sigma_of("beta", D)
+        row, est = _fit_rows(D, D["tpGlobalClusterCotTheta"], {"beta": pg}, D["T"])
         c, w = est["beta"][row, 0], est["beta"][row, 1]
         o = D["orient"]
+        o_map = np.ones_like(o) if bad else o
         r_loc = np.arctan(D["localCotBeta"].astype(np.float64)) - np.arctan(D["tpLocalCotBeta"].astype(np.float64))
         p_loc = r_loc / SA.sigma_of("beta", D)
-        c_loc = c if bad else SA.to_local("beta", c, o, D["surface"])
-        after = (p_loc - c_loc) / w
-        rng = np.random.default_rng(20261009)
-        nev = int(D["event"].max()) + 1
-        reps = rng.multinomial(nev, np.full(nev, 1.0 / nev), size=N_REP)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            ratio = p_loc / SA.to_local("beta", pg, o_map, D["surface"])
+        after = (p_loc - SA.to_local("beta", c, o_map, D["surface"])) / w
+        in_range = (np.abs(pg) > FRAME_PULL_RANGE[0]) & (np.abs(pg) < FRAME_PULL_RANGE[1])
         groups = {}
         for s in SA.SURFACES:
             for so in (-1, 1):
@@ -276,11 +279,12 @@ class FrameSign(Item):
                     m = D["T"] & (D["surface"] == s) & (o == so) & (row == rw)
                     if m.sum() < SA.MIN_FIT:
                         continue
-                    x, ev = after[m], D["event"][m]
-                    vals = [SA.centre_of(np.repeat(x, cnt[ev])) for cnt in reps if cnt[ev].sum() > 0]
+                    r = ratio[m & in_range]
+                    r = r[np.isfinite(r)]
                     groups[f"{SA.SURFACE_NAMES[s]}/s{so:+d}/row{int(rw)}"] = {
-                        "n": int(m.sum()), "centre": SA.centre_of(x),
-                        "sigma": float(np.std(vals, ddof=1)), "global_centre": float(np.nanmean(c[m]))}
+                        "n": int(m.sum()), "n_ratio": int(len(r)),
+                        "ratio_median": float(np.median(r)) if len(r) >= FRAME_MIN_CLUSTERS else None,
+                        "after_centre_reported": SA.centre_of(after[m])}
         return {"input": ctx.input, "events": ctx.events, "bad": bad, "groups": groups}
 
     def compute(self, ctx):
@@ -290,18 +294,21 @@ class FrameSign(Item):
         return self._stat(ctx, bad=True)
 
     def judge(self, stat, ref):
-        g = stat["groups"]
-        fails = {k: v for k, v in g.items() if abs(v["centre"]) > BAND_CENTRE + 2 * v["sigma"]}
+        g = {k: v for k, v in stat["groups"].items() if v["ratio_median"] is not None}
+        lo, hi = FRAME_RATIO_BAND
+        fails = {k: v for k, v in g.items() if not lo <= v["ratio_median"] <= hi}
         orients = {k.split("/")[1] for k in g}
         why = []
         if orients != {"s-1", "s+1"}:
-            why.append(f"not both orientations tested ({sorted(orients)})")
+            why.append(f"not both orientations judged ({sorted(orients)})")
         if fails:
-            k = max(fails, key=lambda x: abs(fails[x]["centre"]))
-            why.append(f"{len(fails)} of {len(g)} groups outside the band; worst {k}: centre {fails[k]['centre']:+.2f} "
-                       f"+- {fails[k]['sigma']:.2f}")
-        worst = max(abs(v["centre"]) for v in g.values()) if g else float("nan")
-        return not why, (f"{len(g)} groups on both orientations, max |centre| {worst:.2f}" if not why else "; ".join(why))
+            k = min(fails, key=lambda x: fails[x]["ratio_median"])
+            why.append(f"{len(fails)} of {len(g)} groups outside [{lo:g}, {hi:g}]; lowest {k}: median ratio "
+                       f"{fails[k]['ratio_median']:+.2f}")
+        rr = [v["ratio_median"] for v in g.values()]
+        n_skip = len(stat["groups"]) - len(g)
+        return not why, (f"{len(g)} groups on both orientations ({n_skip} with < {FRAME_MIN_CLUSTERS} clusters in range "
+                         f"reported), median ratio {min(rr):.2f}-{max(rr):.2f}" if not why else "; ".join(why))
 
 
 class KeyFromLocal(Item):

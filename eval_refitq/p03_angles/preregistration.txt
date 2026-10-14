@@ -563,3 +563,120 @@ Outputs:
   - the demonstration fits in $P03_OUT/amend1d/;
   - registry p03.table.a1d.* and p03.d10c.disc-beta-two-component.
 The gated run refuses without $P03_OUT/amendment1d_approval.txt naming the centre.
+
+===================================================================================================
+Amendment 1e (2026-10-14). APPROVED in substance: the physicist approved statistics review 02's round-4
+recipe on 2026-10-14, in their words: "Go ahead, we need to lock this in, minor deviations should not kill
+progress for days anymore." This text puts that recipe into the rule. It was written BEFORE the
+amendment-1e demonstration. Amendments 1-1d stay as written; where 1e differs, 1e holds.
+amendment1e_approval.txt quotes the approval and its date. It is written only after the reviewer's code
+check of this commit is clean; then the gated run is made once.
+Disclosed, run before this text:
+  - unit tests;
+  - the shared module's checks on 5 events of file 3 (E6);
+  - a code smoke test through the heavy lane: throwaway seed 777, 4 replicas, the demonstration split.
+      - The known-good passed (verdict pass).
+      - Every known-bad failed as declared.
+      - KB-w failed (i) in only 5 of its 252 perturbed judged bin-angles (per-row power 0.02 at 4
+        replicas).
+No parameter below was set or changed after the smoke test.
+
+E1 Centre = the 25 %-trimmed mean of the pulls: the mean of the central 50 %, floor(n / 4) values dropped
+   at each end (sheet v2.7).
+     - The median branch, the --centre switch and its output suffixes are removed.
+     - 1d measured the two centres. The trimmed mean had 0 rows with centre sd / width > 0.125 against
+       the median's 9. The review gives 1 row against 5 in the pair fits, and the trimmed mean is
+       continuous where two populations meet.
+E2 Weighting width = the mean of the smallest 95 % of d = |pull - centre| / 0.7168. Over the smallest
+   t = 0.95 n values, the boundary value is weighted by the fractional part of t. 0.7168 is the value for
+   a unit Gaussian; the exact value is 0.71684.
+     - q95 / 1.96 is removed.
+     - The review measured, over the four pair fits and 150 re-splits: pair spread > 0.25 in 7 rows
+       (q95 / 1.96: 37); re-split relative sd at most 0.17 (q95 / 1.96: 3.5).
+     - The width is 0.83-0.90 of q95 / 1.96 in the median. Weighting consumers keep their outlier gate.
+E3 Cut quantiles are unchanged from 1d: the k-th smallest d with k = min(ceil(L (n + 1)), n), at 95 / 97.5
+   / 99 / 99.7 %. Rows that cannot reach 99.7 % (n_fit <= 332) are marked at that level only.
+E4 The test.
+   (i) Checks the after-table centre AND width with the table's own estimators.
+         - Over the bin's test clusters that have an estimate (>= 200), with a = (pull - table centre) /
+           table width: centre_a = the 25 %-trimmed mean of a; width_a = the E2 width of |a - centre_a|.
+         - The bands are 0 +- 0.25 and 1 +- 0.1, each widened by W_i x max(bootstrap sd, re-split sd) of
+           that statistic (as in 1b-1d).
+         - W_i = t1(N_i) is the one-sided Sidak threshold at 1 %, with N_i = 2 x the judged bin-angles.
+           The judged bins are every bin with >= 200 test clusters (no flag).
+       Not being a quantile, the width is validated by (i), not by coverage.
+   (ii) and (iii) are unchanged from 1d: gated levels 95 / 97.5 / 99 / 99.7 %, margins 0.5 / 0.25 / 0.1 /
+        0.045 %.
+   False veto: (i) + (ii) over the 250 re-splits, with leave-one-out errors.
+   The demonstration criteria are unchanged and strict (verdict "pass"):
+     - (i), (ii) and (iii) pass;
+     - the (i) + (ii) false-veto rate is <= 5.7 %;
+     - the (iii) pass probability is >= 0.8 at each gated level;
+     - every known-bad fails as declared.
+E5 Known-bads, on the demonstration split; each must fail:
+     - (a)-(e) are kept.
+     - KB-q95 is kept: q95 x 0.9 in the plateau-edge rows. It now touches q95 only, since the width is
+       no longer derived from it. It must fail through (ii) or (iii).
+     - KB-c is kept: the centre + 0.5 widths in those rows. It must fail through (i).
+     - KB-w is new (review R4-2): the width / 1.15 in those rows; centres and quantiles are untouched.
+       It must fail through (i), and its per-row power is reported. (ii) and (iii) cannot see it.
+   The plateau-edge rows are those whose |key| range overlaps [0.50, 0.67): both angles, both keys, all
+   surfaces, in every replica.
+   Also reported for each known-bad, not as a requirement: its E7 materiality verdict, i.e. whether the
+   gated run's rule would stop that defect.
+E6 spdefs.frame_sign (review R4-3) tests the per-cluster frame map instead of an after-table centre.
+     - Groups: each surface x orientation x table row with >= 200 class-T clusters.
+     - Statistic: the median of p_loc / map(p_glob) over the group's clusters with 1 < |p_glob| < 10.
+         - p_loc is the module-frame pull: the residual of atan(localCotBeta) / the published sigma.
+         - map is to_local, the local_beta_sign of the module.
+         - A group needs at least 50 such clusters to be judged. Groups with fewer are reported; this
+           minimum was chosen before the check was run.
+     - Rule: the median within [0.8, 1.2], with both orientations judged.
+     - Known-bad: the orientation ignored in the map (the global sign on reversed modules), which gives
+       about -1.
+     - Reported, not judged: the module-frame after-table trimmed-mean centre.
+     - On the 5-event known-good input:
+         - green: 197 groups judged (17 reported), median ratio 0.81-1.03;
+         - the lowest two are ID3/s+1/row151 (0.81, 87 clusters) and ID2/s+1/row128 (0.82, 51);
+         - the reported after-table centres are at most 0.20 widths.
+     - Known-bad: red, 98 of 197 groups outside, lowest -1.03.
+     - The window-mean constants of the 2026-10-09 design are removed.
+E7 MATERIAL or MINOR, for the gated run (the physicist's rule, pre-declared here).
+   MATERIAL:
+     - any pooled (iii) cell failing at 95, 97.5 or 99 %;
+     - per key and surface, judged bins failing (i) or (ii) that together hold > 2 % of that surface's
+       test clusters in that key. A bin counts if it fails (i) or (ii) for either angle and at any level,
+       and the share is over all the surface's test clusters;
+     - the (i) + (ii) false-veto rate on the gated run's own 250 re-splits above 5.7 %.
+   MINOR: anything else. By this rule, a chi2 failure of (ii), a (iii) cell failing at 99.7 % and a
+   (iii) pass probability below 0.8 are MINOR.
+     - A MINOR result ships the table, with the deviations listed in its header (test_result.verdict,
+       test_result.deviations) and in the registry (p03.table.v1a1e: status valid with a note).
+     - Only a MATERIAL failure goes back to the physicist.
+   table.py exits with 0 (pass), 5 (MINOR) or 4 (MATERIAL). The gated run refuses unless:
+     - the 1e known-good verdict is "pass";
+     - every 1e known-bad failed;
+     - amendment1e_approval.txt exists.
+E8 Definition sheet v2.7 (v2.6 was another package's census change) amends angle.error_table only:
+     - the centre and the width as E1 and E2;
+     - the width validated by the adequacy check.
+   The table schema is sp-angle-table/3; a /2 table (median, q95 / 1.96) does not load.
+E9 Seed and split as in 1b-1d: seed 20261014; fit files 7-8, test files 3-6 and 9-10; 250 bootstrap and
+   250 re-split replicas. The diagnosis split is not re-run. Files 1-2 are not read before the gated run.
+E10 Removed (no dead code):
+     - the median branch and the --centre switch;
+     - q95 / 1.96;
+     - frame_sign's window-mean statistic and its bootstrap constants;
+     - run_amend1d.sh, replaced by run_amend1e.sh.
+   The 1d outputs (p03_table_*_a1d*.json) stay as the record.
+Expected (not decisive):
+  - the demonstration passes, with a (i) + (ii) false veto at or below 5.7 %;
+  - the width check works now that the width estimator is continuous;
+  - KB-w fails (i), but with low per-row power: a 15 % width error is 0.05 beyond the 0.1 band, so a bin
+    needs a width sd below about 0.012 to fail;
+  - KB-q95 fails through (ii);
+  - KB-c fails through (i) in most perturbed bins.
+Outputs:
+  - $P03_OUT/p03_table_{known-good,known-bad}_a1e.json;
+  - the demonstration fit in $P03_OUT/amend1e/;
+  - registry p03.table.a1e.*.
