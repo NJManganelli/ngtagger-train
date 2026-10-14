@@ -26,7 +26,8 @@ COLS = ("surface", "detId", "tpEmuClass", "tpIdx", "hasAlpha", "hasBeta", "globa
         "tpGlobalClusterPhi", "tpGlobalClusterCotTheta", "localCotAlpha", "localCotBeta", "tpLocalCotAlpha",
         "tpLocalCotBeta", "tpPt")
 K_TESTED = (0.0, 0.05, 0.3, 0.67, 0.999)
-FRAME_RATIO_BAND = (0.8, 1.2)   # frame-sign check: median p_loc / map(p_glob) per group (P0.3 amendment 1e)
+FRAME_RATIO_BAND = (0.5, 1.5)   # frame-sign check: median p_loc / map(p_glob) per group (P0.3 amendment 1e; widened
+                                # from [0.8, 1.2] on 2026-10-14, statistics review 02 round 5 note 2: a sign flip gives -1)
 FRAME_PULL_RANGE = (1.0, 10.0)  # ... over the clusters with 1 < |p_glob| < 10
 FRAME_MIN_CLUSTERS = 50         # ... a group needs >= 50 of them to be judged
 
@@ -254,7 +255,8 @@ class FrameSign(Item):
                  f"[{FRAME_RATIO_BAND[0]:g}, {FRAME_RATIO_BAND[1]:g}], where p_loc is the module-frame pull (residual of "
                  "atan(localCotBeta) / published sigma), p_glob the global one and map = to_local (local_beta_sign); "
                  "both orientations judged. Reported, not judged: the module-frame after-table centre (the table's "
-                 "trimmed mean) per group. Redesigned 2026-10-14 (P0.3 amendment 1e, statistics review 02 R4-3): the "
+                 "trimmed mean) per group. Redesigned 2026-10-14 (P0.3 amendment 1e, statistics review 02 R4-3; band "
+                 "widened from [0.8, 1.2] after the 5-event known-good gave 0.81, round 5 note 2): the "
                  "after-table centre depends on the location estimator (the module-frame and global disc-beta pulls "
                  "agree cluster by cluster but not exactly: 90 % spread about 0.4 pull units), so the check tests the "
                  "frame map itself; a sign error gives a ratio of about -1")

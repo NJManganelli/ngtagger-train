@@ -680,3 +680,14 @@ Outputs:
   - $P03_OUT/p03_table_{known-good,known-bad}_a1e.json;
   - the demonstration fit in $P03_OUT/amend1e/;
   - registry p03.table.a1e.*.
+
+Note to amendment 1e (2026-10-14, after the demonstration and before the gated run). Both changes are
+outside the table test, so the gated rule is unchanged:
+  - spdefs.frame_sign: the band is widened from [0.8, 1.2] to [0.5, 1.5] (statistics review 02, round 5,
+    note 2). The 5-event known-good minimum was 0.81 (the population minimum at pT >= 1 is 0.92), and a
+    sign flip gives -1, so the wider band loses no discrimination.
+  - plots.py: a MINOR gated verdict is labelled "tested, minor deviations", consistent with the registry
+    (round 5, note 4).
+Demonstration (job 20261014T121732Z-p03-amend1e-49178): verdict pass; every known-bad fails.
+  - KB-w fails through (i) in 1 of 252 perturbed judged bin-angles, and that bin holds 1.18 % of emitted
+    ID1's test clusters, so it rates MINOR under E7.
