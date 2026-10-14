@@ -691,3 +691,109 @@ outside the table test, so the gated rule is unchanged:
 Demonstration (job 20261014T121732Z-p03-amend1e-49178): verdict pass; every known-bad fails.
   - KB-w fails through (i) in 1 of 252 perturbed judged bin-angles, and that bin holds 1.18 % of emitted
     ID1's test clusters, so it rates MINOR under E7.
+
+===================================================================================================
+Amendment 2 (2026-10-14). PROPOSED, for the statistics reviewer: module-frame disc rows of the angle table
+(the input of the replay's disc calibration C1b). Approved in scope by the physicist, 2026-10-14; this text
+is the plan, written before any code or run. The amendment-1e recipe and rule are used unchanged; v1a1e (the
+global-frame table) is not replaced.
+
+Why. A disc consumer in the module frame cannot use the global disc rows:
+  - global disc alpha is atan(cotAlpha / |cotBeta|) and does not transfer to the module frame: on
+    canon_v3 file 7 (class T, pT >= 1 GeV, 375k disc clusters), corr(module-frame alpha pull, global alpha
+    pull) = 0.00, and -0.37 with the orientation sign applied;
+  - global disc beta transfers only in its own sigma: corr = -0.80 with the sign.
+The CMSSW disc sense-rule fix (15c345f36da) changed only the disc GLOBAL columns; the module-frame angles,
+their sigmas and the positions are bit-identical, so canon_v3 serves as it is.
+
+M1 Surfaces and rows. Discs ID1-ID4 x module facing x signed local-incidence bin.
+     - Local incidence key (module frame, no orientation): k_loc = sign(cotBeta) x sqrt(cotAlpha^2 + cotBeta^2),
+       the tangent of the angle to the module normal, signed by cotBeta.
+     - It equals s x the global disc key (signed 1 / cot theta) for a module of facing s, exactly (file 7:
+       all clusters within 1e-3). So the rows are the global disc rows, mirrored for s = -1, with the same
+       |edges| (0, 0.1, ..., 0.8, inf) and the same merge rule (>= 200 fit clusters, away from the plateau
+       edges 0.50 / 0.67).
+     - Two keys, as the global table: emitted_local (the emitted local cots) and true_local (the TP's).
+M2 Pulls: module frame, COT units, with the published LOCAL sigma.
+     - pull = (localCot - tpLocalCot) / sigCot, with sigCot = sigAlpha / sigBeta.
+     - These are the local sigmas: the nano documents them as "angle-estimator resolution" of the
+       module-local cot angles, and sigGlobalClusterPhi / CotTheta as propagated FROM them through the
+       per-module rotation.
+     - Class-T disc width68 of this pull on 20 events of file 3: alpha 1.03, beta 1.06.
+     - Alternative, not proposed: the angle representation atan(localCot), with sigma sigCot / (1 + cot^2).
+       Its width68 is 1.04 / 1.18 on the same clusters. The replay works in cot units (angle_import.py:
+       "sigma_pub the published LOCAL uncertainty, cot units; never the angle-space centre converted by its
+       sign"). If the physicist wants atan angles instead, only M2 changes.
+M3 Facing: geometric, from positions.
+     - Per module, s_geo = -sign(det J), with J the 2 x 2 linear part of the least-squares map
+       (localX, localY) -> (global x, global y) of its clusters; it needs >= 3 non-collinear clusters.
+     - It agrees with canon_v3's rule, the majority of sign(localCotBeta x cotTheta), on all 864 disc modules
+       (20 events of file 3). It does not depend on the global angle columns the fix changed.
+     - It is computed from the fit files' nano: disc clusters only, 5 columns. The P0.3 cache has no localX /
+       localY.
+M4 Recipe (amendment 1e, unchanged):
+     - centre = the 25 %-trimmed mean;
+     - width = the mean of the smallest 95 % of |pull - centre| / 0.7168;
+     - quantiles at k = min(ceil(L (n + 1)), n) at 95 / 97.5 / 99 / 99.7 %;
+     - class T, TP pT >= 1 GeV (the P0.3 cache).
+M5 Test (amendment 1e, unchanged):
+     - (i): the after-table centre and width within 0 +- 0.25 and 1 +- 0.1, widened by W_i x max(bootstrap,
+       re-split) sd, with W_i = t1(N_i) and N_i = 2 x the judged bin-angles;
+     - (ii): per-bin coverage against the exact null, no |z| > t(N), chi2 per level x key;
+     - (iii): pooled coverage per key x angle x level against the nominal level, at 95 / 97.5 / 99 / 99.7 %
+       with margins 0.5 / 0.25 / 0.1 / 0.045 %. The only region is discs; the code skips the empty barrel
+       region instead of reading it as a failing cell.
+     - The bootstrap and re-split chains (250 each), the leave-one-out false veto and the missing-row rule are
+       as in 1c-1e.
+M6 MATERIAL / MINOR, for the gated run (amendment 1e E7, on the disc surfaces):
+     - MATERIAL: a (iii) cell failing at 95-99 %; or, per key and disc surface, judged bins failing (i) or (ii)
+       that together hold > 2 % of that surface's test clusters; or a (i) + (ii) false-veto rate above 5.7 %
+       on the gated run's own re-splits.
+     - MINOR: anything else (a chi2 failure, a 99.7 % cell, power < 0.8). The table ships with the deviations
+       in its header and the registry.
+     - Only a MATERIAL failure goes back to the physicist.
+M7 Files and splits:
+     - known-good demonstration: fit files 7-8, test files 3-6 and 9-10, seed 20261014 (as 1b-1e);
+     - gated run: fit files 1-2, test files 3-10, judged once, after the review and the physicist's go;
+     - files 1-2 are not read before the gated run.
+M8 Known-bads, on the demonstration split; each must fail:
+     - (a) the GLOBAL-key table read in the local frame: the amendment-1e global disc rows, fitted on the same
+       fit sample, looked up with the global key and facing and applied to the module-frame pulls;
+     - (b) facings pooled: REPORTED, not required to fail (see M11);
+     - (c) wrong key: emitted_local read with true_local, and vice versa;
+     - (d) folded |k_loc|: signs pooled;
+     - (e) test pulls x 1.05;
+     - KB-q95: q95 x 0.9 in the plateau-edge rows, through (ii) or (iii);
+     - KB-c: centre + 0.5 widths there, through (i);
+     - KB-w: width / 1.15 there, through (i), per-row power reported.
+   Each known-bad's E7 materiality verdict is reported. On the global table KB-w rated MINOR (1 failing bin).
+M9 Outputs:
+     - a NEW table, angle_table_v1a1e_disclocal_canon_v3.json, of schema sp-angle-table/3, with keys
+       emitted_local / true_local and disc rows only. Its orientation map is the geometric facing. Lookup:
+       AngleTable.rows_of(key, surface, k_loc, facing).
+     - registry p03.table.v1a1e-disclocal and p03.table.a2.* (v1a1e is unchanged);
+     - a new definition-sheet item angle.error_table_disc_local, in the next sheet version (add only).
+M10 Code:
+     - table.py gets --frame module (disc-only rows, module-frame cot pulls and key, geometric facing,
+       known-bad (a)), with separate output names; the rule code is shared and unchanged.
+     - spdefs, ADD only (the replay imports it; nothing existing changes):
+         - MODULE_KEYS = ("emitted_local", "true_local");
+         - local_incidence_key(cot_alpha, cot_beta);
+         - local_cot(angle, cols) / true_local_cot(angle, cols) / sigma_local(angle, cols);
+         - local_pull(angle, cols);
+         - facing_from_positions(det_id, local_x, local_y, global_r, global_phi) -> (detIds, s_geo).
+M11 Open question, before any code.
+   In the module frame the two facings agree, unlike in the global frame. Measured on fit files 7-8, class T,
+   pT >= 1 GeV, 50 disc fine bins with >= 300 clusters per facing:
+     - |centre(s = +1) - centre(s = -1)| / width has median 0.016 (alpha) and 0.023 (beta), max 0.10 / 0.12;
+     - the width ratio has 10/50/90 % of 0.98 / 1.00 / 1.03 (alpha) and 0.97 / 1.00 / 1.03 (beta).
+   So "facings pooled" is not a defect in this frame, and it would pass. Options:
+     - keep the facing split as specified; (b) is then reported, and the consumer needs the facing (M3);
+     - pool facings: rows per disc x k_loc bin, twice the clusters per row, no facing in the lookup;
+       (b) then disappears.
+   Proposed: keep the split, as specified, unless the physicist prefers pooling. The choice is fixed in
+   the final text of this amendment before the demonstration.
+Expected (not decisive):
+  - the demonstration passes;
+  - known-bad (a) fails strongly, through alpha above all;
+  - about 2 x 4 x 2 x ~19 rows per key, as in the global disc rows.
