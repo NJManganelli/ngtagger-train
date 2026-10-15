@@ -42,3 +42,13 @@ ntuples move to another geometry, re-dump.
 to load (`np.loadtxt(..., dtype=np.uint8)` for the 1-bit tables). `.tab` is a
 C-initialiser block: `{`, then decimal values comma-separated one per line,
 then `};`.
+
+## TrackletProcessor wiring (`TP_wiring_barrel.txt`)
+
+The inner allstub memories (phi region and memtype) and the outer VM memory of every barrel prompt
+TrackletProcessor (TP_L1L2A-L, TP_L2L3A-D, TP_L3L4A-D, TP_L5L6A-D), extracted in file order from the cms-data
+package `L1Trigger-TrackFindingTracklet` V00-06-00, `data/wires_hourglassExtendedAllCombined.dat`
+(sha256 18734bc9f63c5eac8e976de8aa48eab06d87a0619cfa55aee5fa82596f5353d6). In CMSSW_20_1_0_pre1 the prompt chain's
+wiring is generated in code by TrackletConfigBuilder; that its TrackletProcessor inputs equal this file's is
+ASSUMED (the tracklet-engine LUTs already confine the pairs to the wired combinations: adding the wiring changed no
+tracklet on the canon_v4 10-event test). It fixes the TP letter of each tracklet, i.e. its TCID order.

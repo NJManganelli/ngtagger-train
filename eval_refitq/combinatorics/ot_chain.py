@@ -40,6 +40,7 @@ the table. Not emulated: IR 156, VMR 108 / 128, VM bins of 15, projection pages 
 """
 from __future__ import annotations
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
@@ -63,6 +64,10 @@ RCRIT, DPHICRIT_MC = 55.0, 0.005
 VMR_ZMAX = 95.0
 VMR_ZMIN_L2 = 50.0
 ZCUT_L2L3_LUT = 52.0                                            # TrackletLUT zcutL2L3
+NBITS_ALLSTUBS = (3, 2, 2, 2, 2, 2)      # Settings nbitsallstubs_ (barrel)
+NBITS_VMME = (2, 3, 3, 3, 3, 3)          # Settings nbitsvmme_ (barrel)
+NFINEPHI, NFINERZ, ME_BINS_BITS = 3, 3, 3
+VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ (barrel)
 
 
 def _tab(name):
@@ -87,6 +92,45 @@ class Luts:
             nbd = int(round(math.log2(len(ti) >> NBEND[la])))
             self.te[sd] = (ti, to, nbd)
         self.tp_inner = {sd: _tab(f"TP_{nm}.tab") for sd, nm in SEED_NAME.items()}
+        self.tp = _tp_wiring()
+
+
+@dataclass
+class TP:
+    """One TrackletProcessor: its letter (iTC; TCIndex = (iSeed << 4) + iTC), the allstub phi region of its
+    outer VM memory, and its inner allstub memories as (phi region, memtype) in its reading order."""
+    seed: int
+    index: int
+    outer_region: int
+    inner: list = field(default_factory=list)
+
+
+def _tp_wiring():
+    """The barrel TrackletProcessors' inputs (luts/TP_wiring_barrel.txt), as TrackletProcessor::addInput
+    stores them: a third inner memory goes to the front (the "innerallstubs_.size() == 2" insert)."""
+    name_seed = {nm: sd for sd, nm in SEED_NAME.items()}
+    tps = {}
+    for line in (LUT_DIR / "TP_wiring_barrel.txt").read_text().splitlines():
+        if line.startswith("#"):
+            continue
+        mem, _, src, _, dst = line.split()
+        tp = re.fullmatch(r"TP_(L\dL\d)([A-L])\.(\w+)", dst)
+        sd, itc, port = name_seed[tp.group(1)], ord(tp.group(2)) - ord("A"), tp.group(3)
+        t = tps.setdefault((sd, itc), TP(sd, itc, -1))
+        if port == "outervmstubin":
+            t.outer_region = ord(re.fullmatch(r"VMR_L\dPHI([A-H])\.\w+", src).group(1)) - ord("A")
+        else:
+            m = re.fullmatch(r"AS_L\dPHI([A-H])_B([A-Z])", mem)
+            entry = (ord(m.group(1)) - ord("A"), m.group(2))
+            if len(t.inner) == 2:
+                t.inner.insert(0, entry)
+            else:
+                t.inner.append(entry)
+    out = {}
+    for (sd, itc), t in sorted(tps.items()):
+        assert t.outer_region >= 0 and t.inner, (sd, itc)
+        out.setdefault(sd, []).append(t)
+    return out
 
 
 _LUTS = None
@@ -320,48 +364,79 @@ def te_rz_window(cp, inn, out, seed):
     return (in_first | in_next) & (rz >= first[:, None]) & (rz - first[:, None] <= diffmax[:, None])
 
 
+def _phi_region(cp, idx, layer):
+    """(allstub phi region, the 3 bits below it) of copies `idx` from their corrected phi (VMRouterCM)."""
+    nb, nall = D.NPHIBITS_L[layer - 1], NBITS_ALLSTUBS[layer - 1]
+    pc = cp.phicorr[idx]
+    return pc >> (nb - nall), (pc >> (nb - nall - 3)) & 7
+
+
+def _in_memory(layer, iphipos, memtype):
+    """VMRouterCM's allinnerstubs memtype selection on the 3 phi bits below the allstub region."""
+    hi, lo = (4, 4) if layer == 1 else (6, 2)
+    ok = np.ones(len(iphipos), bool)
+    if memtype == "R":
+        ok &= iphipos >= hi
+    if memtype == "L":
+        ok &= iphipos < lo
+    if memtype in "ACE":
+        ok &= iphipos >= 4
+    if memtype in "BDF":
+        ok &= iphipos < 4
+    return ok
+
+
 def seed_sector(cp, sector, seed, k=KF.K):
-    """Tracklets of one barrel seed in one sector (TE LUT + TC gates; module docstring)."""
+    """Tracklets of one barrel seed in one sector: per TrackletProcessor (its inner memories against its outer
+    phi region), the tracklet-engine LUTs and the integer tracklet calculator (module docstring). The tcid
+    orders tracklets as TCID does: seed, TP letter, then the TP's reading order (inner memory, inner stub,
+    outer stub)."""
     la, lb = SEEDS[seed]
-    inn = np.nonzero((cp.region == sector) & (cp.layer == la))[0]
-    out = np.nonzero((cp.region == sector) & (cp.layer == lb))[0]
-    inn = inn[_inner_ok(cp, inn, seed)]
-    if len(inn) == 0 or len(out) == 0:
+    inn_all = np.nonzero((cp.region == sector) & (cp.layer == la))[0]
+    out_all = np.nonzero((cp.region == sector) & (cp.layer == lb))[0]
+    inn_all = inn_all[_inner_ok(cp, inn_all, seed)]
+    if len(inn_all) == 0 or len(out_all) == 0:
         return []
+    reg_in, pos_in = _phi_region(cp, inn_all, la)
+    reg_out, _ = _phi_region(cp, out_all, lb)
     ti, to, nbd = luts().te[seed]
-    rzok = te_rz_window(cp, inn, out, seed)
-    fa = cp.phicorr[inn] >> (D.NPHIBITS_L[la - 1] - 8)
-    fb = cp.phicorr[out] >> (D.NPHIBITS_L[lb - 1] - 8)
-    d = fb[None, :] - fa[:, None]
-    inr = (d < (1 << (nbd - 1))) & (d >= -(1 << (nbd - 1)))
-    dm = d & ((1 << nbd) - 1)
-    ii = (dm << NBEND[la]) + cp.bend[inn][:, None]
-    io = (dm << NBEND[lb]) + cp.bend[out][None, :]
-    ok = inr & (ii < len(ti)) & (io < len(to))
-    acc = np.zeros(d.shape, bool)
-    acc[ok] = (ti[ii[ok]] > 0) & (to[io[ok]] > 0)
-    acc &= rzok
     res = []
-    for a, b in zip(*np.nonzero(acc)):
-        i, j = int(inn[a]), int(out[b])
-        ipars = calc_pars(cp, i, j, seed, k)
-        if not tc_gates(*ipars[:3], seed, k):
+    for tp in luts().tp[seed]:
+        out = out_all[reg_out == tp.outer_region]
+        if len(out) == 0:
             continue
-        rinv, phi0, t, z0 = KF.exact_tracklet(*_float_geom(cp, i), *_float_geom(cp, j), sector, k)
-        tr = Tracklet(sector, seed, i, j, rinv, phi0, t, z0, ipars, tcid=(seed, int(cp.order[i]), int(cp.order[j])))
-        for L in TARGETS[seed]:
-            pj = proj_layer(ipars, L, k)
-            if pj is not None:
-                tr.projs[L] = pj
-        res.append(tr)
+        for mpos, (region, memtype) in enumerate(tp.inner):
+            inn = inn_all[(reg_in == region) & _in_memory(la, pos_in, memtype)]
+            if len(inn) == 0:
+                continue
+            fa = cp.phicorr[inn] >> (D.NPHIBITS_L[la - 1] - 8)
+            fb = cp.phicorr[out] >> (D.NPHIBITS_L[lb - 1] - 8)
+            d = fb[None, :] - fa[:, None]
+            inr = (d < (1 << (nbd - 1))) & (d >= -(1 << (nbd - 1)))
+            dm = d & ((1 << nbd) - 1)
+            ii = (dm << NBEND[la]) + cp.bend[inn][:, None]
+            io = (dm << NBEND[lb]) + cp.bend[out][None, :]
+            ok = inr & (ii < len(ti)) & (io < len(to))
+            acc = np.zeros(d.shape, bool)
+            acc[ok] = (ti[ii[ok]] > 0) & (to[io[ok]] > 0)
+            acc &= te_rz_window(cp, inn, out, seed)
+            for a, b in zip(*np.nonzero(acc)):
+                i, j = int(inn[a]), int(out[b])
+                ipars = calc_pars(cp, i, j, seed, k)
+                if not tc_gates(*ipars[:3], seed, k):
+                    continue
+                rinv, phi0, t, z0 = KF.exact_tracklet(*_float_geom(cp, i), *_float_geom(cp, j), sector, k)
+                tr = Tracklet(sector, seed, i, j, rinv, phi0, t, z0, ipars,
+                              tcid=(seed, tp.index, mpos, int(cp.order[i]), int(cp.order[j])))
+                for L in TARGETS[seed]:
+                    pj = proj_layer(ipars, L, k)
+                    if pj is not None:
+                        tr.projs[L] = pj
+                res.append(tr)
     return res
 
 
 # ---- projections and matching ------------------------------------------------
-NBITS_ALLSTUBS = (3, 2, 2, 2, 2, 2)      # Settings nbitsallstubs_ (barrel)
-NBITS_VMME = (2, 3, 3, 3, 3, 3)          # Settings nbitsvmme_ (barrel)
-NFINEPHI, NFINERZ, ME_BINS_BITS = 3, 3, 3
-VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ (barrel)
 
 
 def me_candidates(cp, cand, layer, iphiproj, izproj, ps_seed):
