@@ -56,7 +56,6 @@ import kf_emulation as KF           # noqa: E402
 import seed_arity as SA             # noqa: E402
 import census_angles as CA          # noqa: E402
 import ot_chain as OC               # noqa: E402
-import cmssw_kf as KF_CMS           # noqa: E402
 
 NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
         11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
@@ -821,51 +820,56 @@ def closed_entries(seeds, builds):
     return [seeds[i] for i in keep], {m: [new[i] for i in es if i in new] for m, es in builds.items()}
 
 
-# PER-TRACK RECORDS (shard keys hit_r<i>, hit_rm<i>; int64): what the closure (closure_vs_cmssw) compares
-# against CMSSW's tracks, which carry the same columns there: the event, the census entry, the seed's TP
-# (M.seed_tp's TP as M.tp_key; -1 none or a tie), seed-truthful (0 / 1), the KF eta region of the seed
-# (ot_chain.kf_region), the number of fitted stubs and the sector (-1 in the census chain)
-RECORD_COLS = ("event", "entry", "tp_key", "real", "kfreg", "nstub", "sector")
+# THE FINAL STUBS OF EVERY EXPORTED OT TRACK (shard keys hit_o<i>, and hit_om<i> for the closed arm's
+# merge-DR tracks; int32): the event, then the L1TOTStub row in that event of the track's fitted stub on each
+# OT barrel layer OL1-OL6 (-1 none). From these and the input's own L1TOTStub table the closure
+# (closure_vs_cmssw) builds both sides' per-track records with one function, the CMSSW tracks' from their
+# fitted stubs alike.
+OT_STUB_COLS = ("event",) + tuple(f"row_OL{L}" for L in range(1, 7))
 
 
-def _records(U, ev, entry, S, kfreg, nstub, sector):
-    """RECORD_COLS rows for tracks with seed stubs S (census table indices, n x 2 or n x 3)."""
-    n = len(S)
-    R = np.full((n, len(RECORD_COLS)), -1, np.int64)
-    R[:, 0], R[:, 1], R[:, 4], R[:, 5], R[:, 6] = ev, entry, kfreg, nstub, sector
-    ok = (S >= 0).all(axis=1)
-    if ok.any():
-        tp, real = M.seed_tp(U, *(S[ok, j] for j in range(S.shape[1])))
-        R[ok, 2] = np.where(tp >= 0, M.tp_key(R[ok, 0], np.maximum(tp, 0)), -1)
-        R[ok, 3] = real.astype(np.int64)
-    R[~ok, 3] = 0
-    return R
+def _ot_rows(U, G):
+    """OT_STUB_COLS rows of census tracks with hit rows G (census table indices in KF.LAYER_ORDER)."""
+    out = np.full((len(G), len(OT_STUB_COLS)), -1, np.int64)
+    if not len(G):
+        return out
+    first = np.where(G >= 0, G, np.iinfo(np.int64).max).min(axis=1)
+    out[:, 0] = np.where(first < len(U["event"]), U["event"][np.minimum(first, len(U["event"]) - 1)], -1)
+    for L in range(1, 7):
+        g = G[:, _OT_COL[L]]
+        out[:, L] = np.where(g >= 0, U["ot_row"][np.maximum(g, 0)], -1)
+    return out
 
 
 def _closed_rows(chain, ev, tracks, n_layers):
-    """(hit rows, seed stubs, stubs outside the census table) of closed-arm tracks: one row of census table
-    indices per track in KF.LAYER_ORDER (the fitted stubs), and the tracklet's two seed stubs."""
+    """(hit rows, seed stubs, final stubs, stubs outside the census table) of closed-arm tracks: one row of
+    census table indices per track in KF.LAYER_ORDER (the fitted stubs), the tracklet's two seed stubs, and
+    the fitted stubs as OT_STUB_COLS (L1TOTStub rows, whether or not the census table has them)."""
     G = np.full((len(tracks), n_layers), -1, np.int64)
     S = np.full((len(tracks), 2), -1, np.int64)
+    O = np.full((len(tracks), len(OT_STUB_COLS)), -1, np.int64)
+    O[:, 0] = ev
     lay = chain.stub["layer"][np.searchsorted(chain.ev, ev):]
     outside = 0
     for i, t in enumerate(tracks):
         u = chain.to_u(ev, t.rows)
         outside += int((u < 0).sum())
         for r, g in zip(t.rows, u):
-            c = _OT_COL[int(lay[r])]
-            if g >= 0 and G[i, c] < 0:
-                G[i, c] = g
+            L = int(lay[r])
+            if g >= 0 and G[i, _OT_COL[L]] < 0:
+                G[i, _OT_COL[L]] = g
+            if O[i, L] < 0:
+                O[i, L] = r
         S[i] = chain.to_u(ev, t.input_rows[:2])
-    return G, S, outside
+    return G, S, O, outside
 
 
 def process_chunk_closed(U, seeds, groups, export_tracks, ot_chain):
     """The closed OT arm on one chunk; the same outputs as process_chunk. found: TPs a seed's no-DR tracks
     recover (seed-truthful on the tracklet's two stubs, as the census), found_dr: those its merge-DR tracks
-    recover. Exported tracks (shard keys hit_<entry>, hit_m<entry>; hit_s<entry>, hit_sm<entry>; hit_r<entry>,
-    hit_rm<entry>): the no-DR and the merge-DR tracks' fitted stubs, their tracklets' seed stubs and their
-    records (RECORD_COLS). No track rows, resolution sample or angle rows (census chain only)."""
+    recover. Exported tracks (shard keys hit_<entry>, hit_m<entry>; hit_s<entry>, hit_sm<entry>; hit_o<entry>,
+    hit_om<entry>): the no-DR and the merge-DR tracks' fitted stubs, their tracklets' seed stubs and their
+    final stubs as OT_STUB_COLS. No track rows, resolution sample or angle rows (census chain only)."""
     cen = chunk_census(U["truth"])
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
     found = np.zeros((ntp, nw), np.uint64)
@@ -875,7 +879,7 @@ def process_chunk_closed(U, seeds, groups, export_tracks, ot_chain):
         U["_ot_chain"] = OC.ChunkChain(U["ot_in"], U["event"], U["ot_row"])
     chain = U["_ot_chain"]
     nl = len(KF.LAYER_ORDER)
-    acc = {i: {"G": [], "S": [], "Gm": [], "Sm": [], "R": [], "Rm": []} for i in range(len(seeds))}
+    acc = {i: {"G": [], "S": [], "Gm": [], "Sm": [], "O": [], "Om": []} for i in range(len(seeds))}
     # the census's counter names, with the closed arm's meaning: pairs = tracklets, cand = before_chi2 =
     # track-builder candidates (the KF input), fit = no-DR tracks the KF accepts, before_dr = the DR input
     # (capped), owned = merge-DR tracks; trip / trip_true = no-DR tracks with both seed stubs in the census
@@ -905,16 +909,13 @@ def process_chunk_closed(U, seeds, groups, export_tracks, ot_chain):
             eta = np.arcsinh(cp.z[tr.inner] / max(math.hypot(cp.x[tr.inner], cp.y[tr.inner]), 1e-6))
             es = int(np.clip(np.searchsorted(np.asarray(ETA_SECTOR_EDGES), eta), 0, N_ETA_SECTOR - 1))
             nonant[0, ((int(ev) - ev0) * N_NONANT + tr.sector) * N_ETA_SECTOR + es] += 1
-        for tracks, kg, ks, kr, kc in ((nodr, "G", "S", "R", "fit"), (dr, "Gm", "Sm", "Rm", "owned")):
+        for tracks, kg, ks, ko, kc in ((nodr, "G", "S", "O", "fit"), (dr, "Gm", "Sm", "Om", "owned")):
             for sd, i in entry.items():
                 mine = [t for t in tracks if t.seed == sd]
-                G, S, outside = _closed_rows(chain, ev, mine, nl)
+                G, S, O, outside = _closed_rows(chain, ev, mine, nl)
                 acc[i][kg].append(G)
                 acc[i][ks].append(S)
-                acc[i][kr].append(_records(
-                    U, int(ev), i, S,
-                    [OC.kf_region(t.tracklet.rinv, t.tracklet.phi0, t.tracklet.t, t.tracklet.z0) for t in mine],
-                    [len(t.rows) for t in mine], [t.sector for t in mine]))
+                acc[i][ko].append(O)
                 counters[i][kc] += len(mine)
                 if kc == "fit":
                     counters[i]["stubs_outside_census"] += outside
@@ -935,9 +936,9 @@ def process_chunk_closed(U, seeds, groups, export_tracks, ot_chain):
             if export_tracks:
                 hits[i if not tag else f"m{i}"] = G.astype(np.int32)
                 hits[f"s{i}" if not tag else f"sm{i}"] = S.astype(np.int32)
-                R = a["R" if not tag else "Rm"]
-                hits[f"r{i}" if not tag else f"rm{i}"] = (np.concatenate(R) if R else
-                                                          np.zeros((0, len(RECORD_COLS)), np.int64))
+                O = a["O" if not tag else "Om"]
+                hits[f"o{i}" if not tag else f"om{i}"] = (np.concatenate(O) if O else np.zeros(
+                    (0, len(OT_STUB_COLS)), np.int64)).astype(np.int32)
         counters[i]["found_standalone"] = float(((found[:, i >> 6] >> np.uint64(i & 63)) & np.uint64(1)).sum())
     return cen, found, found_dr, counters, {}, {}, hits, {}, nonant, seed_eta
 
@@ -1155,14 +1156,8 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
             # affordable, and it keeps min_shared (and the criterion itself)
             # changeable without re-running the seeding.
             hits[s_i] = gk[ks].astype(np.int32)
-            # the closure's per-track records (RECORD_COLS), the seed's KF eta region from its hits
-            sk = np.stack([x[ks] for x in tripk], axis=1)
-            ga_, gb_ = sk[:, 0], sk[:, 1]
-            kreg = [OC.kf_region(*KF_CMS.exact_tracklet(U["globalR"][a_], U["globalZ"][a_], U["globalPhi"][a_],
-                                                       U["globalR"][b_], U["globalZ"][b_], U["globalPhi"][b_], 0))
-                    for a_, b_ in zip(ga_, gb_)]
-            hits[f"r{s_i}"] = _records(U, U["event"][ga_], s_i, sk if sd.arity == 3 else sk[:, :2], kreg,
-                                       (gk[ks] >= 0).sum(axis=1), -1)
+            # the final stubs as L1TOTStub rows (OT_STUB_COLS), for the closure
+            hits[f"o{s_i}"] = _ot_rows(U, gk[ks]).astype(np.int32)
             # PER-CLUSTER ANGLE RESIDUALS, on a sample. Four IT hits per track
             # over 12.5M tracks would be a 50M-row table; one track in
             # ANGLE_SAMPLE keeps it to ~100 MB, which is ample for a residual
@@ -1558,13 +1553,13 @@ def load(d, nev=None, verbose=True, with_tracks=False):
             elif with_tracks and f.startswith("ang_"):
                 ags.setdefault(int(f[4:]), []).append(z[f])
             elif with_tracks and f.startswith("hit_"):
-                # hit_<i>: hit rows; hit_dr<i>: census-chain DR survivor flags; hit_r<i>: per-track
-                # records (RECORD_COLS); closed arm: hit_m<i> the merge-DR tracks' rows, hit_s<i> / hit_sm<i>
-                # the seed stubs (index arrays offset globally), hit_rm<i> the merge-DR records
-                kind, num = f[4:].rstrip("0123456789"), int(f[4:].lstrip("dmrs"))
+                # hit_<i>: hit rows; hit_dr<i>: census-chain DR survivor flags; hit_o<i>: the final stubs
+                # (OT_STUB_COLS); closed arm: hit_m<i> the merge-DR tracks' rows, hit_s<i> / hit_sm<i> the seed
+                # stubs (census table indices, offset globally), hit_om<i> the merge-DR final stubs
+                kind, num = f[4:].rstrip("0123456789"), int(f[4:].lstrip("dmos"))
                 h = z[f]
                 hts.setdefault(kind, {}).setdefault(num, []).append(
-                    h.astype(bool) if kind == "dr" else h.astype(np.int64) if kind in ("r", "rm")
+                    h.astype(bool) if kind == "dr" else h.astype(np.int64) if kind in ("o", "om")
                     else np.where(h >= 0, h + cl_off, -1).astype(np.int64))
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
@@ -1627,7 +1622,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
                 f"by a different version; rebuild it or check out the matching "
                 f"code.")
     hk = {"": "hits", "dr": "hits_dr", "m": "hits_merged", "s": "hits_seed", "sm": "hits_seed_merged",
-          "r": "track_records", "rm": "track_records_merged"}
+          "o": "track_stubs", "om": "track_stubs_merged"}
     for kind, name in hk.items():
         C[name] = {i: np.concatenate(v) for i, v in hts.get(kind, {}).items()}
     C["angles"] = {i: np.concatenate(v) for i, v in ags.items()}

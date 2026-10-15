@@ -476,7 +476,7 @@ def _census_run(ctx, tag, args):
 
 def _fingerprint(d, entries=None):
     """(sha256 of the census's outputs, tracks, TPs found) for `entries` (None: all): the found and found_dr
-    bitmap columns, the counters and every exported track record, chunk by chunk."""
+    bitmap columns, the counters and every exported track's final stubs, chunk by chunk."""
     import hashlib
 
     man = json.load(open(os.path.join(d, "manifest.json")))
@@ -492,10 +492,10 @@ def _fingerprint(d, entries=None):
             n_found += int(f.sum())
             h.update(f.tobytes()); h.update(fd.tobytes())
             h.update(json.dumps(cnt.get(str(e), {}), sort_keys=True).encode())
-            for k in (f"hit_r{e}", f"hit_rm{e}"):
+            for k in (f"hit_o{e}", f"hit_om{e}"):
                 if k in z.files:
                     h.update(z[k].tobytes())
-                    n_tracks += len(z[k]) if k == f"hit_r{e}" else 0
+                    n_tracks += len(z[k]) if k == f"hit_o{e}" else 0
     return h.hexdigest(), n_tracks, n_found
 
 
@@ -507,7 +507,7 @@ class OtAngleInert(Item):
                       "change of the arm's output, which the identity must see")
     rule_desc = ("two fresh 4-event closed-arm censuses of the gate input (--ot-chain closed, --masks IIII, OT "
                  "targets), one with --angle-stages none and one with every stage on, cuts open (--calibrate) and "
-                 "k = 0.5 for both angles: their found and found_dr bitmaps, counters and track records are "
+                 "k = 0.5 for both angles: their found and found_dr bitmaps, counters and tracks' final stubs are "
                  "identical; identity of the track and found counts with the reference")
     trees = (CENSUS_DIR,)
     BASE = ["--ot-chain", "closed", "--masks", "IIII", "--targets", OT_TARGETS]
@@ -545,7 +545,7 @@ class SpItOffIsOt(Item):
     known_bad_desc = "the same comparison with IL1 left on (--masks AIII): the OT seeds then follow into IL1"
     rule_desc = ("two fresh 4-event censuses of the gate input with the census chain, cuts open (--calibrate): "
                  "--masks IIII with the default targets (every surface) and --masks IIII with the OT targets only: "
-                 "the prompt OT doublets' found and found_dr bitmaps, counters and track records are identical; "
+                 "the prompt OT doublets' found and found_dr bitmaps, counters and tracks' final stubs are identical; "
                  "identity of the track and found counts with the reference")
     trees = (CENSUS_DIR,)
 
