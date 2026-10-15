@@ -162,14 +162,27 @@ def twice(f1, f2, nev=None):
             "gates": {"determinism": ok}}, ok
 
 
-def _cmssw_tracks(path, nev=None, collection="L1TTrack"):
+def _cmssw_tracks(spec, nev=None, collection="L1TTrack"):
     """The records (tp_findability RECORD_COLS, the entry column holding the seed type) of a CMSSW track
-    collection's barrel-seeded tracks, all events. Event index = entry in the file (the census's numbering of
-    a one-file input)."""
-    A = _events(path, (f"{collection}_", f"{collection}Stub_", "L1TOTStub_"), nev)
+    collection's barrel-seeded tracks. `spec`: one file or several (comma-separated, as the census takes
+    them), read in order up to nev events; the event index runs over the files as the census numbers them."""
     recs = []
-    for e in range(len(A)):
-        T, S, L = _table(A, e, f"{collection}_"), _table(A, e, f"{collection}Stub_"), _table(A, e, "L1TOTStub_")
+    off = 0
+    for path in M.expand_inputs(spec):
+        left = None if nev is None else nev - off
+        if left is not None and left <= 0:
+            break
+        A = _events(path, (f"{collection}_", f"{collection}Stub_", "L1TOTStub_"), left)
+        recs += _file_records(A, off, collection)
+        off += len(A)
+    return np.array(recs, np.int64).reshape(-1, len(TF.RECORD_COLS))
+
+
+def _file_records(A, off, collection):
+    recs = []
+    for k in range(len(A)):
+        e = off + k
+        T, S, L = _table(A, k, f"{collection}_"), _table(A, k, f"{collection}Stub_"), _table(A, k, "L1TOTStub_")
         L["event"] = np.full(len(L["layer"]), e, np.int64)
         for j in range(len(T["rInv"])):
             sd = int(T["seedType"][j])
@@ -188,7 +201,7 @@ def _cmssw_tracks(path, nev=None, collection="L1TTrack"):
             tp, real = M.seed_tp(L, np.array([a]), np.array([b]))
             key = int(M.tp_key(np.array([e]), np.array([max(int(tp[0]), 0)]))[0]) if tp[0] >= 0 else -1
             recs.append((e, sd, key, int(real[0]), kreg, len(r), int(T["phiSector"][j])))
-    return np.array(recs, np.int64).reshape(-1, len(TF.RECORD_COLS))
+    return recs
 
 
 def _judged(R):
@@ -618,8 +631,8 @@ def main():
     p = sub.add_parser("c1"); p.add_argument("nodr")
     p = sub.add_parser("c1b"); p.add_argument("fakefit"); p.add_argument("--nodr", default=None)
     p = sub.add_parser("c23"); p.add_argument("census")
-    p.add_argument("--nodr", default=None, help="CMSSW no-DR production (C2)")
-    p.add_argument("--merge", default=None, help="CMSSW merge-DR production (C3)")
+    p.add_argument("--nodr", default=None, help="CMSSW no-DR production(s), comma-separated as the census (C2)")
+    p.add_argument("--merge", default=None, help="CMSSW merge-DR production(s), comma-separated as the census (C3)")
     p = sub.add_parser("floor"); p.add_argument("dtc"); p.add_argument("random", nargs="+")
     p.add_argument("--nodr", default=None); p.add_argument("--merge", default=None)
     for p in sub.choices.values():
