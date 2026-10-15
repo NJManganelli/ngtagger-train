@@ -34,9 +34,12 @@ THE CHAIN, as CMSSW_20_1_0_pre1 runs it for L1TTrack, stage by stage, and what i
              candidate takes the rejected one's new stubs; each survivor is fitted once on its merged
              list with its own tracklet.
 
-CAPS: TB 108, DR-input 108 and the 32 comparators are emulated here (switch `caps`). The DTC's are in
-the table. Not emulated: IR 156, VMR 108 / 128, VM bins of 15, projection pages of 63, TP 108 steps /
-127 tracklets, PC 108, MP 108 steps; the no-truncation sibling production measures them.
+CAPS (input_caps, projection_pages, build_candidates, merge_dr), each in the finder's reading order (the
+VMRouter's: vmr_order). The step caps, switch `caps`: IR 156 per DTC link, VMR 108, TB 108, DR-input 108 and
+the 32 comparators. The memory sizes, always: 128 per VMRouter, 15 per VM bin of the tracklet-engine and
+match-engine memories, 63 projections per page. The DTC's own truncation is in the table. Not emulated:
+TP 108 steps / 127 tracklets, PC 108 and MP 108 steps (clock-level scheduling); the no-truncation sibling
+production measures them.
 """
 from __future__ import annotations
 import hashlib
@@ -212,6 +215,24 @@ class Copies:
     x: np.ndarray            # float stub position (the KF's input)
     y: np.ndarray
     z: np.ndarray
+    link: np.ndarray = None  # the DTC link (region * 48 + channel) and the stub's place in its stream
+    stream_index: np.ndarray = None
+    # what survives the finder's input memories (input_caps): None = everything
+    alive: np.ndarray = None
+    te_ok: np.ndarray = None
+    me_ok: np.ndarray = None
+
+
+def vmr_order(region, channel, index):
+    """The VMRouter's reading order of the stubs, as a rank: per region, the InputLink memories in
+    TrackletConfigBuilder's wiring order (the DTCs PS first, then 2S; +z before -z; by ATCA slot; side A then
+    B; L1FPGATrackProducer's channel = slot + 12 (-z) + 24 (B)), then each link's stream order."""
+    channel = np.asarray(channel, np.int64)
+    slot, neg, side = channel % 12, (channel % 24) >= 12, channel >= 24
+    key = np.lexsort((np.asarray(index), side, slot, neg, slot >= 6, np.asarray(region)))
+    rank = np.empty(len(key), np.int64)
+    rank[key] = np.arange(len(key))
+    return rank
 
 
 def event_copies(stub, dtc):
@@ -221,7 +242,9 @@ def event_copies(stub, dtc):
     keep = bar
     row = row[keep]
     region = np.asarray(dtc["region"], np.int64)[keep]
-    order = np.arange(len(keep))[keep]
+    channel = np.asarray(dtc["channel"], np.int64)[keep]
+    index = np.asarray(dtc["index"], np.int64)[keep]
+    order = vmr_order(region, channel, index)
     layer = np.asarray(stub["layer"], np.int64)[row]
     ps = np.asarray(stub["isPS"], bool)[row]
     mt = D.module_type(np.ones(len(row), bool), ps)
@@ -235,7 +258,61 @@ def event_copies(stub, dtc):
     return Copies(row, region, order, layer, ps, np.asarray(stub["isTilted"], bool)[row], iphi, iz, ir, bend,
                   phicorr, rm + ir * D.kr_barrel(),
                   np.asarray(stub["x"], np.float64)[row], np.asarray(stub["y"], np.float64)[row],
-                  np.asarray(stub["z"], np.float64)[row])
+                  np.asarray(stub["z"], np.float64)[row], region * 48 + channel, index)
+
+
+# ---- the finder's input memories ---------------------------------------------------------------
+IR_MAX = 156             # DTCLinkMemory: maxStep("IR")
+VMR_MAX = 108            # VMRouterCM: maxStep("VMR")
+MEM_MAX = 1 << 7         # VMRouterCM / VMStubMERouter: 1 << N_BITSMEMADDRESS
+VMBIN_MAX = 15           # VMStubsTEMemory N_VMSTUBSMAX, VMStubsMEMemory maxStubsPerBin_
+PROJ_PAGE_MAX = (1 << 6) - 1   # TrackletProjectionsMemory: (1 << (N_BITSMEMADDRESS - 1)) - 1 per page
+OUTER_LAYER_SEED = {lb: sd for sd, (la, lb) in SEEDS.items()}
+
+
+def _first_n(group, order, n):
+    """Mask of the elements that are among the first n of their group in `order`."""
+    idx = np.lexsort((order, group))
+    g = group[idx]
+    start = np.r_[0, np.flatnonzero(g[1:] != g[:-1]) + 1]
+    pos = np.arange(len(g)) - np.repeat(start, np.diff(np.r_[start, len(g)]))
+    keep = np.zeros(len(group), bool)
+    keep[idx[pos < n]] = True
+    return keep
+
+
+def input_caps(cp, caps=True):
+    """Set cp.alive / te_ok / me_ok: the copies the finder keeps through its input memories, in their reading
+    order (cp.order). The step caps (caps on): the first 156 stubs of a DTC link (IR) and 108 per VMRouter.
+    The memory sizes (always): 128 per VMRouter, 15 per VM bin of the tracklet-engine memories (outer stubs:
+    phi region, ivmte, z bin) and of the match-engine memories (phi region, VM bin, z bin)."""
+    n = len(cp.row)
+    alive = np.ones(n, bool)
+    if caps:
+        alive &= _first_n(cp.link, cp.stream_index, IR_MAX)
+    layers = np.unique(cp.layer)
+    preg, sub3 = np.zeros(n, np.int64), np.zeros(n, np.int64)
+    for L in layers:
+        m = cp.layer == L
+        preg[m], sub3[m] = _phi_region(cp, np.flatnonzero(m), int(L))
+    vmr = (cp.region * 8 + cp.layer) * 8 + preg
+    a = np.flatnonzero(alive)
+    keep = _first_n(vmr[a], cp.order[a], min(VMR_MAX, MEM_MAX) if caps else MEM_MAX)
+    alive[a[~keep]] = False
+    zbin = np.zeros(n, np.int64)
+    vm = np.zeros(n, np.int64)
+    for L in layers:
+        m = np.flatnonzero(cp.layer == L)
+        zbin[m] = luts().vmrme[int(L)][_vmr_lut_index(cp, m, int(L))] >> NFINERZ
+        nb, nall, nvm = D.NPHIBITS_L[L - 1], NBITS_ALLSTUBS[L - 1], NBITS_VMME[L - 1]
+        vm[m] = (cp.phicorr[m] >> (nb - nall - nvm)) & ((1 << nvm) - 1)
+    a = np.flatnonzero(alive)
+    me = np.zeros(n, bool)
+    me[a] = _first_n(((vmr[a] * 8 + vm[a]) * 8) + zbin[a], cp.order[a], VMBIN_MAX)
+    te = np.zeros(n, bool)
+    outer = a[np.isin(cp.layer[a], list(OUTER_LAYER_SEED))]
+    te[outer] = _first_n(((vmr[outer] * 8 + sub3[outer]) * 8) + zbin[outer], cp.order[outer], VMBIN_MAX)
+    cp.alive, cp.te_ok, cp.me_ok = alive, te, me
 
 
 # ---- the tracklet calculator and the projection calculator, in integers ---------------
@@ -467,8 +544,12 @@ def seed_sector(cp, sector, seed, k=KF.K, work=None):
     outer stub). `work` (a dict) accumulates the pairs in the engines' r-z windows ("te_pairs") and those
     the stub-pT LUTs pass ("lut_pairs")."""
     la, lb = SEEDS[seed]
-    inn_all = np.nonzero((cp.region == sector) & (cp.layer == la))[0]
-    out_all = np.nonzero((cp.region == sector) & (cp.layer == lb))[0]
+    inn_m = (cp.region == sector) & (cp.layer == la)
+    out_m = (cp.region == sector) & (cp.layer == lb)
+    if cp.alive is not None:
+        inn_m &= cp.alive
+        out_m &= cp.te_ok
+    inn_all, out_all = np.nonzero(inn_m)[0], np.nonzero(out_m)[0]
     inn_all = inn_all[_inner_ok(cp, inn_all, seed)]
     if len(inn_all) == 0 or len(out_all) == 0:
         return []
@@ -732,6 +813,19 @@ def merge_dr(cp, cands, caps=True, k=KF.K):
     return [(srt[i].tracklet, lists[i]) for i in range(n) if not rejected[i]]
 
 
+def projection_pages(tracklets):
+    """TrackletProjectionsMemory's page size: a TrackletProcessor's tracklets (its page of each merged memory)
+    project into one (layer, phi region) at most 63 times, in its tracklet order; later projections are lost."""
+    count = {}
+    for tr in sorted(tracklets, key=lambda q: q.tcid):
+        for L in list(tr.projs):
+            reg = tr.projs[L][0] >> (D.NPHIBITS_L[L - 1] - NBITS_ALLSTUBS[L - 1])
+            key = (tr.seed, tr.tcid[1], L, reg)
+            count[key] = count.get(key, 0) + 1
+            if count[key] > PROJ_PAGE_MAX:
+                del tr.projs[L]
+
+
 def run_event(stub, dtc, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, collect=None):
     """The chain on one event from its L1TOTStub and L1TOTStubDTC columns (run_copies)."""
     return run_copies(event_copies(stub, dtc), caps, order, seed, k, do_dr, collect)
@@ -744,15 +838,17 @@ def run_copies(cp, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, collect=N
     track-builder candidates ("candidates") and the duplicate-removal input ("dr_input")."""
     if collect is not None:
         collect["copies"] = cp
+    input_caps(cp, caps)
     rng = None if order == "dtc" else np.random.default_rng(seed)
     nodr, dr = [], []
     for sector in range(KF.N_SECTOR):
         trs = []
         for sd in SEEDS:
             trs += seed_sector(cp, sector, sd, k)
+        projection_pages(trs)
         for tr in trs:
             for L in TARGETS[tr.seed]:
-                cand = np.nonzero((cp.region == sector) & (cp.layer == L))[0]
+                cand = np.nonzero((cp.region == sector) & (cp.layer == L) & cp.alive & cp.me_ok)[0]
                 kept = match_tracklet(cp, tr, L, cand, k, rng)
                 if kept:
                     tr.matches[L] = kept
