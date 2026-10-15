@@ -99,6 +99,7 @@ class Arm:
     rtable_swap: bool = False       # E2 known-bad: the R-table lookup with |cotA| and |cotB| swapped
     loo_pred: str = "smoothed"      # the leave-one-out prediction (PD17): "smoothed" (two-sided) | "final" (the
                                     # final refit state, the PD17 known-bad)
+    disc_model: bool = False        # C1b: disc-going tracks get the path-ordered material and the disc rows
 
     @property
     def cov_model(self) -> str:
@@ -127,6 +128,14 @@ def inn(cfg, **kw):
                 use=use_set(("rank", "update"), ANGLE_NAMES, ("barrel",)), discs=False)
     base.update(kw)
     return Arm(base.pop("name", "INN"), **base)
+
+
+def inn_disc(cfg, **kw):
+    """C1b's calibrated arm with discs (c1b/PLAN.md rev 4): INN plus, for disc-going tracks, the path-ordered
+    extent-aware material (disc_material), the disc angle rows (disc_angles) and the disc position errors."""
+    base = dict(name="INN-D", discs=True, disc_model=True, use=use_set(("rank", "update"), ANGLE_NAMES, REGIONS))
+    base.update(kw)
+    return inn(cfg, **base)
 
 
 def orp_cal(cfg, **kw):
@@ -176,11 +185,12 @@ class Tools:
     """What the arms read besides the event: the producer configuration, the refit calibration (seed,
     material, R tables), the angle table and the cut file (cuts.Cuts)."""
 
-    def __init__(self, cfg, calibration=CALIBRATION, angle_table=AI.TABLE, cuts=None):
+    def __init__(self, cfg, calibration=CALIBRATION, angle_table=AI.TABLE, cuts=None, disc=None):
         self.cfg = cfg
         self.cal = ORP.load_calibration(calibration) if calibration else None
         self.angles = AI.AngleImport(angle_table) if angle_table else None
         self.cuts = cuts
+        self.disc = disc                 # C1b's DiscTools (the disc_model arms)
         self._folded = None
 
     def folded(self):
@@ -193,13 +203,38 @@ class Tools:
 REC_KEYS = {"mi": -1, "ci": -1}
 
 
+class DiscTools:
+    """C1b: what the disc_model arms read for disc-going tracks: the disc angle rows, the material planes (with
+    the disc material scale) and, if C1b built them, the disc position-error tables (else v3's apply)."""
+
+    def __init__(self, table=None, material=None, disc_scale=1.0, R_tables=None):
+        import disc_angles as DA
+        import disc_material as DM
+        self.imp = DA.DiscImport(table or DA.DISC_TABLE)
+        import json
+        with open(material or DM.TABLE) as fh:
+            self.material = json.load(fh)
+        self.planes = self.material["planes"]
+        self.disc_scale = disc_scale
+        self.R_tables = R_tables
+
+
+def disc_going(path):
+    """C1b's population: the arm's own path (the producer's drPath: a disc within its radial extent +- 1 cm,
+    before the scenario mask) contains a disc."""
+    cols = [j for j, S in enumerate(path["surfaces"]) if SPN.is_disc_surface(S)]
+    return path["in_path"][:, cols].any(1) if cols else np.zeros(len(path["in_path"]), bool)
+
+
 class State:
     """Virtual tracks: o[v] the original track; per v the helix state, the visit bookkeeping and the
-    per-step record (module, cluster, accepted, chi2 per scalar, the gate statistic, window size)."""
+    per-step record (module, cluster, accepted, chi2 per scalar, the gate statistic, window size).
+    dg: disc-going (C1b's disc_model arms; False otherwise)."""
 
-    def __init__(self, a, C, o, seq):
+    def __init__(self, a, C, o, seq, dg=None):
         n, ns = len(o), seq.shape[1]
         self.o, self.a, self.C, self.seq = o, a, C, seq
+        self.dg = np.zeros(n, bool) if dg is None else np.asarray(dg, bool)
         self.nUpd = np.zeros(n, np.int64)
         self.prevR = np.full(n, -1.0)
         self.prevNT = np.zeros(n, np.int64)
@@ -211,7 +246,7 @@ class State:
                     "ncand": np.zeros((n, ns), np.int16), "trunc": np.zeros((n, ns), bool),
                     "gated": np.zeros((n, ns), bool), "surface": np.full((n, ns), -1, np.int64)}
 
-    ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch")
+    ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch", "dg")
 
     def take(self, idx):
         s = State.__new__(State)
@@ -296,7 +331,36 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
         disc = SPN.is_disc_surface(surface)
         for i, k in ((2, arm.k_alpha), (3, arm.k_beta)):
             sig[:, i] = np.where(disc, sig[:, i], SA.sigma_k(sig[:, i], k, arm.k_mode))
+    if arm.disc_model:
+        _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig)
     return meas, sig, has
+
+
+def _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig):
+    """C1b (c1b/PLAN.md rev 4 §1 items 1-2), in place on the disc clusters: the disc position-error tables if C1b
+    built them; the cot-linear knob on the local columns and the disc rows (the barrel import refuses discs)."""
+    import disc_angles as DA
+    d = SPN.is_disc_surface(surface)
+    if not d.any():
+        return
+    K, dk = ctx["K"], tools.disc
+    cd = ci[d]
+    if dk.R_tables is not None and arm.pos_err == "rtables":
+        import refit_calibration_fit as RCF
+        sig[d, :2] = RCF.apply_R(dk.R_tables, K["sizeX"][cd], K["sizeY"][cd], cot_a_pred[d], cot_b_pred[d], pub[d])[:, :2]
+    T = SA.class_T(K["tpEmuClass"][cd])
+    rows = dk.imp.rows(surface[d], cot_a_pred[d], cot_b_pred[d]) if arm.ang_err == "table" else None
+    for i, ang, k in ((2, "alpha", arm.k_alpha), (3, "beta", arm.k_beta)):
+        raw, tp = SA.LOCAL_COLS[ang][0], SA.LOCAL_COLS[ang][1]
+        m = DA.knob(K[raw][cd], K[tp][cd], k, T)
+        if rows is not None:
+            mm, ss = dk.imp.calibrate(ang, m, pub[d, i], rows, k=k, mode=arm.k_mode)
+            ok = rows >= 0
+            meas[d, i] = np.where(ok, mm, m)
+            sig[d, i] = np.where(ok, ss, SA.sigma_k(pub[d, i], k, arm.k_mode))
+        else:
+            meas[d, i] = m
+            sig[d, i] = SA.sigma_k(pub[d, i], k, arm.k_mode)
 
 
 def innovation_chi2(r, Sm, sig, dims):
@@ -401,7 +465,17 @@ def _q_step(arm, st, t, S, path, geo, tools, kpt, cfg):
     if arm.scattering == "highland":
         cal = tools.cal if arm.material_scale == 1.0 else dict(tools.cal, material_scale=tools.cal["material_scale"]
                                                                 * arm.material_scale)
-        ORP.add_material(st.a, st.C, t, S, st.Lv, geo, cal, kpt)
+        dgt = t[st.dg[t]] if arm.disc_model else t[:0]
+        ORP.add_material(st.a, st.C, t[~np.isin(t, dgt)], S, st.Lv, geo, cal, kpt)
+        if len(dgt):                                   # C1b: path-ordered, extent-aware, each plane's path factor
+            import disc_material as DM
+            s_cur = OP.surface_s(st.a[dgt], geo, S)
+            s_prev = np.full(len(dgt), np.inf)
+            for L in np.unique(st.Lv[dgt]):
+                if L != 5:
+                    k = st.Lv[dgt] == L
+                    s_prev[k] = OP.surface_s(st.a[dgt[k]], geo, int(L))
+            DM.charge(st.a, st.C, dgt, s_cur, s_prev, tools.disc.planes, tools.disc.disc_scale, cal["material_scale"], kpt)
         st.Lv[t] = S
     elif cfg["applyProcessNoise"]:
         q = t[(st.nUpd[t] > 0) & (st.prevR[t] > 0)]
@@ -624,7 +698,7 @@ def run_arm(ctx, geo, cfg, mask, arm, tools, tracks=None, own=False, loo=False):
     kpt = ORP.pt_constant(ctx["T"])
     path, seq = visit_plan(ctx, geo, cfg, mask, arm)
     a, C = seed(ctx, cfg, arm, tools, o)
-    st = State(a, C, o.copy(), seq[o])
+    st = State(a, C, o.copy(), seq[o], dg=disc_going(path)[o] if arm.disc_model else None)
     own_rows = [] if own else None
     for j in range(seq.shape[1]):
         for S in np.unique(st.seq[:, j][st.seq[:, j] >= 0]):
@@ -641,7 +715,7 @@ def refit_forced(arm, ctx, geo, cfg, tools, o, seq, sel_mi, sel_ci, path, kpt, h
     State.hist holds per step the predicted (after Q, before the update) and the filtered state
     ("pa", "pC", "fa", "fC"), for smooth_back. A step a track does not visit keeps its previous state."""
     a, C = seed(ctx, cfg, arm, tools, o)
-    st = State(a, C, np.asarray(o).copy(), seq)
+    st = State(a, C, np.asarray(o).copy(), seq, dg=disc_going(path)[np.asarray(o)] if arm.disc_model else None)
     if history:
         n, ns = len(st.o), seq.shape[1]
         st.hist = {k: np.zeros((n, ns) + sh) for k, sh in (("pa", (5,)), ("pC", (5, 5)), ("fa", (5,)), ("fC", (5, 5)))}
