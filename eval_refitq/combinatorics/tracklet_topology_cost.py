@@ -1246,12 +1246,15 @@ ANGLE_STAGES = {
     "dr": ("S7", "duplicate-removal ranking: angle chi2 weight"),
     "mva": ("S8", "quality-MVA angle features"),
 }
-# THE DEFAULT: every stage but S5 (physicist, 2026-10-15). In the fit the angles "add far too
-# little" (measured on CAL: switching S5 moves the final state by ~1e-6 and the angle chi2 by a
+# THE DEFAULT: every stage but S5 and S6 (physicist, 2026-10-15). In the fit the angles "add far
+# too little" (measured on CAL: switching S5 moves the final state by ~1e-6 and the angle chi2 by a
 # median relative 4e-5), "while they have good value in MVAs afterwards as signs of
-# contamination/compatibility" -- S6, S7 and S8 read them against the position-only track. S5
-# stays a switch ('all' or --angle-stages ...,kf turns it on).
-DEFAULT_STAGES = frozenset(ANGLE_STAGES) - {"kf"}
+# contamination/compatibility"; and S6 is a feature, not a cut ("step 5 just pass to MVAs since it
+# would only clean 1% of tracks, we'll figure out tuning for physics based on the MVA values"):
+# with S6 off the final-state angle chi2 against the position-only track is still computed and
+# exported (n_angle_meas, chi2_angle_per_meas) and read by S7 and S8. Both stay switches ('all',
+# or naming kf / accept).
+DEFAULT_STAGES = frozenset(ANGLE_STAGES) - {"kf", "accept"}
 # what use_angles=True meant before the stages existed: the seeding gates only
 LEGACY_ANGLE_STAGES = ("veto", "pair_alpha", "pair_z0", "pair_joint")
 # THE STAGES THAT READ BOTH ANGLES, each switchable per angle (WP-D0b): what

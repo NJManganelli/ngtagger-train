@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval_refitq" / "co
 import census_angles as CA          # noqa: E402
 import angle_cuts as AC             # noqa: E402
 import tracklet_topology_cost as M  # noqa: E402
+import kf_emulation as KF         # noqa: E402
 from ngtagger.spdefs import angles as SD  # noqa: E402
 
 RNG = np.random.default_rng(20261014)
@@ -131,18 +132,25 @@ def test_census_identity_is_accepted_by_its_cut_file():
     C = CA.CutSet(_doc())
     C.check(_Model(), run)
     with pytest.raises(SystemExit):
-        C.check(_Model(), TF.cut_identity(M.AngleUse.parse(off="kf"), None, None, 2.0, None, ["AAAA"]))
+        C.check(_Model(), TF.cut_identity(M.AngleUse.parse("all", off="kf"), None, None, 2.0, None, ["AAAA"]))
 
-def test_s5_is_off_by_default_and_a_switch():
-    """Physicist, 2026-10-15: every stage but S5 by default; 'all' or naming kf turns it on."""
+
+def test_s5_and_s6_are_off_by_default_and_switches():
+    """Physicist, 2026-10-15: every stage but S5 (angles in the fit) and S6 (the angle cut; a
+    feature only, its statistic still exported) by default; 'all' or naming kf / accept turns them on."""
     import tp_findability as TF
-    assert M.DEFAULT_STAGES == frozenset(M.ANGLE_STAGES) - {"kf"}
-    assert M.AngleUse.parse().on == M.DEFAULT_STAGES
-    assert not M.AngleUse.parse()("kf") and M.AngleUse.parse("all")("kf")
-    assert M.AngleUse.parse("default,kf").on == frozenset(M.ANGLE_STAGES)
+    assert M.DEFAULT_STAGES == frozenset(M.ANGLE_STAGES) - {"kf", "accept"}
+    ang = M.AngleUse.parse()
+    assert ang.on == M.DEFAULT_STAGES and not ang("kf") and not ang("accept")
+    assert ang("dr") and ang("mva")                    # S7 and S8 read the S6 statistic
+    assert M.AngleUse.parse("all")("kf") and M.AngleUse.parse("all")("accept")
+    assert M.AngleUse.parse("default,kf,accept").on == frozenset(M.ANGLE_STAGES)
     assert M.AngleUse.parse(off="dr").on == M.DEFAULT_STAGES - {"dr"}
-    run = TF.cut_identity(M.AngleUse.parse(), None, None, 2.0, None, ["AAAA"])
+    assert TF.cut_identity(ang, None, None, 2.0, None, ["AAAA"])["s6"] is None   # no S6 thresholds read
+    run = TF.cut_identity(M.AngleUse.parse("default,accept"), None, None, 2.0, None, ["AAAA"])
     assert run["s6"] == ("off", "emitted", "ab")
+    assert {"n_angle_meas", "chi2_angle_per_meas"} <= set(KF.TRACK_COLS)
+    assert not {"n_angle_meas", "chi2_angle_per_meas"} & set(KF.MVA_FEATURES)
 
 def test_s6_per_n_keeps_99_percent_per_populated_n():
     n = np.repeat([2, 4, 6, 8], 4000)
