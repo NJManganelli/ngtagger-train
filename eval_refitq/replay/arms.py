@@ -205,7 +205,8 @@ REC_KEYS = {"mi": -1, "ci": -1}
 
 class DiscTools:
     """C1b: what the disc_model arms read for disc-going tracks: the disc angle rows, the material planes (with
-    the disc material scale) and, if C1b built them, the disc position-error tables (else v3's apply)."""
+    the disc material scale) and, if C1b built them, the disc position-error tables per disc surface (else v3's
+    apply)."""
 
     def __init__(self, table=None, material=None, disc_scale=1.0, R_tables=None):
         import disc_angles as DA
@@ -345,9 +346,15 @@ def _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub
         return
     K, dk = ctx["K"], tools.disc
     cd = ci[d]
-    if dk.R_tables is not None and arm.pos_err == "rtables":
+    if dk.R_tables is not None and arm.pos_err == "rtables":       # per disc surface (J1's D2 tables)
         import refit_calibration_fit as RCF
-        sig[d, :2] = RCF.apply_R(dk.R_tables, K["sizeX"][cd], K["sizeY"][cd], cot_a_pred[d], cot_b_pred[d], pub[d])[:, :2]
+        idx = np.flatnonzero(d)
+        for s_, tab in dk.R_tables.items():
+            k = surface[idx] == s_
+            if k.any():
+                j = idx[k]
+                sig[j, :2] = RCF.apply_R(tab, K["sizeX"][ci[j]], K["sizeY"][ci[j]], cot_a_pred[j], cot_b_pred[j],
+                                         pub[j])[:, :2]
     T = SA.class_T(K["tpEmuClass"][cd])
     rows = dk.imp.rows(surface[d], cot_a_pred[d], cot_b_pred[d]) if arm.ang_err == "table" else None
     for i, ang, k in ((2, "alpha", arm.k_alpha), (3, "beta", arm.k_beta)):

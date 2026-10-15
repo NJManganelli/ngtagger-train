@@ -170,14 +170,171 @@ def overlap(a):
     return 0
 
 
+PT_BINS = (2.0, 3.0, 5.0, 10.0, 20.0, np.inf)          # v3's seed pT bins
+D3_TOL = 0.10
+
+
+def first_met_disc(a, planes, path):
+    """Per track: the first disc the OT helix meets along the outside-in path, i.e. the outermost (largest
+    |z|) TFPX disc (1-6) it crosses within its radial coverage; else (crossed only within the drPath margin)
+    the outermost disc in the arm's path; 0 for none."""
+    import disc_material as DM
+    dp = [p for p in planes if p["kind"] == "disc"]
+    _, _, on = DM.crossings(a, dp)
+    disk = np.array([p["disk"] for p in dp])
+    z = np.array([p["z"] for p in dp])
+    out = np.where(on.any(1), disk[np.argmax(np.where(on, z[None, :], -1.0), 1)], 0)
+    cols = [(j, S) for j, S in enumerate(path["surfaces"]) if OP.SPN.is_disc_surface(S)]
+    for j, S in sorted(cols, key=lambda x: -x[1]):             # outermost first
+        out = np.where((out == 0) & path["in_path"][:, j], S - 10, out)
+    return out
+
+
+def core_width(x):
+    x = x[np.isfinite(x)]
+    if len(x) < 2:
+        return np.nan
+    return float(np.median(np.abs(x - np.median(x))) / 0.6745)
+
+
+def width_table(rows, keys, reps, min_n=200):
+    """Per bin (the tuple of keys): n, the core widths of pu and pv and their event-bootstrap sd."""
+    out = {}
+    combo = np.stack([rows[k] for k in keys], 1)
+    uniq = np.unique(combo, axis=0)
+    ev = rows["ev"].astype(np.int64)
+    for u in uniq:
+        m = np.all(combo == u, axis=1)
+        n = int(m.sum())
+        e = {"n": n}
+        for ax in ("pu", "pv"):
+            x = rows[ax][m]
+            e[ax] = core_width(x)
+            if n >= min_n:
+                idx = np.flatnonzero(m)
+                bs = [core_width(rows[ax][np.repeat(idx, w[ev[idx]])]) for w in reps]
+                e[ax + "_sd"] = float(np.nanstd(bs))
+        out["|".join(str(int(x)) if np.isfinite(x) else str(x) for x in u)] = e
+    return out
+
+
+def judge(table, label, min_n=200):
+    """D3's rule: |core width - 1| <= 0.1 + t1(N) x the bootstrap sd, N = the judged (bin, axis) count."""
+    jb = [(k, ax) for k, e in table.items() for ax in ("pu", "pv") if e["n"] >= min_n and np.isfinite(e[ax])]
+    W = G.t_one(max(len(jb), 1))
+    fails = [f"{label} {k} {ax}: core width {table[k][ax]:.3f} (sd {table[k][ax + '_sd']:.3f}, n {table[k]['n']})"
+             for k, ax in jb if abs(table[k][ax] - 1) > D3_TOL + W * table[k][ax + "_sd"]]
+    return fails, W, len(jb)
+
+
+def seedtest(a):
+    """§1 items 3 and the barrel visits (D3a decision, its stub-count test, D3c), files 1-2 x 3 scenarios: the
+    disc arm with the seed as is (each disc-going track's own v3 deficit), the disc material at scale 1, the
+    disc R chosen by J1, the adopted window. Writes c1b/seed/seedtest_summary.json and the rows."""
+    import cuts as CU
+    import diagnostics as DG
+    t0 = time.time()
+    geo = OP.load_geometry(CM.GEOMETRY)
+    cuts = CU.Cuts.load(a.cuts)
+    disc = AR.DiscTools(R_tables=load_disc_R(a.disc_r) if a.disc_r else None)
+    parts = []
+    for scen in a.scen:
+        for fi, f in enumerate(CM.FIT_FILES):
+            path_f = CM.input_path(scen, f)
+            cfg = CM.producer_config(path_f)
+            assert CM.mask_of(cfg) == scen
+            tools = AR.Tools(cfg, cuts=cuts, disc=disc)
+            arm = AR.inn_disc(cfg)
+            for start, A in CM.iterate(path_f, AR.branches(path_f), chunk=a.chunk, nev=a.nev):
+                ctx = AR.prepare(A, geo)
+                path, _ = AR.visit_plan(ctx, geo, cfg, scen, arm)
+                dg = AR.disc_going(path)
+                fmd = first_met_disc(ctx["a"], disc.planes, path)
+                out = AR.run_arm(ctx, geo, cfg, scen, arm, tools, own=True)
+                R = DG.mark_primary(out["own"])
+                m = R["primary"] & R["clean"]
+                o = R["o"][m]
+                pt = ctx["T"]["pt"][o]
+                parts.append({"scen": np.full(m.sum(), CM.SCENARIOS.index(scen)), "ev": R["ev"][m] + fi * NEV_FILE + start,
+                              "surface": R["surface"][m], "step": R["step"][m], "first": R["first"][m],
+                              "pu": R["pu"][m], "pv": R["pv"][m], "dg": dg[o], "group": np.minimum(fmd[o], 5),
+                              "ptbin": np.clip(np.searchsorted(PT_BINS, pt, side="right") - 1, 0, len(PT_BINS) - 2),
+                              "stubs": ctx["T"]["nStubs"][o]})
+            print(f"[{time.time() - t0:7.1f}s] {scen} f{f:02d}", flush=True)
+    rows = _concat(parts)
+    reps = G.replicas(nev=NEV_FILE * len(CM.FIT_FILES))
+    res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §3 D3a D3c", "cuts": a.cuts, "disc_r": a.disc_r, "material": [], "minor": []}
+    first = rows["dg"] & (rows["step"] == 0)
+    d3a = {k: v[first] for k, v in rows.items()}
+    res["D3a"] = width_table(d3a, ("group", "ptbin"), reps)
+    res["D3a_fail"], res["D3a_W"], res["D3a_N"] = judge(res["D3a"], "D3a")
+    res["D3a_masked_only"] = width_table({k: v[d3a["surface"] <= 4] for k, v in d3a.items()}, ("group",), reps)
+    res["D3a_stubs"] = width_table(d3a, ("group", "ptbin", "stubs"), reps)
+    sf, _, _ = judge(res["D3a_stubs"], "D3a stub-count sub-bin")
+    group_ok = {k for k in res["D3a"] if not any(f.startswith(f"D3a {k} ") for f in res["D3a_fail"])}
+    res["stub_split"] = sorted({f.split()[3].rsplit("|", 1)[0] for f in sf} & group_ok)
+    bar = rows["dg"] & (rows["surface"] <= 4)
+    res["D3c"] = width_table({k: v[bar] for k, v in rows.items()}, ("surface", "first", "ptbin"), reps)
+    res["D3c_fail"], res["D3c_W"], res["D3c_N"] = judge(res["D3c"], "D3c")
+    res["material"] += [f"{x} (files 1-2: a D3c failure stops the package)" for x in res["D3c_fail"]]
+    ref = ~rows["dg"] & (rows["surface"] <= 4)
+    res["reference_barrel_only"] = width_table({k: v[ref] for k, v in rows.items()}, ("surface", "first", "ptbin"), reps)
+    res["decision"] = "refit the disc seed groups" if res["D3a_fail"] else "keep the seed (each track's v3 deficit)"
+    res["seconds"] = round(time.time() - t0, 1)
+    out_dir = os.path.join(a.out, "seed")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez_compressed(os.path.join(out_dir, "seedtest_rows.npz"), **rows)
+    with open(os.path.join(out_dir, "seedtest_summary.json"), "w") as fh:
+        json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
+    print(json.dumps({k: res[k] for k in ("material", "D3a_fail", "decision")}, indent=1, default=str))
+    return 0
+
+
+def disc_r_tables(a):
+    """Light, after J1: when D2 decided to build disc tables, write them from J1's overlap R in v3's layout
+    (size x |cot| widths; the overlap R per size bin over every |cot| cell; a bin J1 left unconstrained keeps
+    v3's width), per disc surface: c1b/overlap/disc_R_tables.json. Nothing to do when D2 kept v3's R."""
+    src = os.path.join(a.out, "overlap", "overlap_summary.json")
+    with open(src) as fh:
+        S = json.load(fh)
+    if S["D2_decision"] != "build disc R tables from the overlap R":
+        print("D2 kept v3's R: no disc tables")
+        return 0
+    tables = AR.Tools(None, calibration=AR.CALIBRATION, angle_table=None).cal["R_tables"]
+    out = {}
+    for s, e in S["D2"].items():
+        t = json.loads(json.dumps(tables))
+        for ax in ("u", "v"):
+            W = np.asarray(t[ax]["width_cm"], np.float64)
+            R = np.asarray(e[ax]["R"], np.float64)
+            for b in range(len(R)):
+                if np.isfinite(R[b]) and e[ax]["n_clusters"][b] >= 400:
+                    W[b, :] = R[b]
+            t[ax]["width_cm"] = W.tolist()
+        t["built_from"] = f"C1b overlap R, surface {s} (J1: {src})"
+        out[s] = t
+    with open(os.path.join(a.out, "overlap", "disc_R_tables.json"), "w") as fh:
+        json.dump({"source": src, "tables": out}, fh, indent=1)
+    return 0
+
+
+def load_disc_R(path):
+    """C1b's disc position-error tables (J1's D2 decision), per disc surface, in v3's table layout."""
+    with open(path) as fh:
+        return {int(k): v for k, v in json.load(fh)["tables"].items()}
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("overlap",))
+    ap.add_argument("job", choices=("overlap", "discR", "seedtest"))
+    ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
+    ap.add_argument("--cuts", default=str(CM.CUTS), help="the cut file in use (the window)")
+    ap.add_argument("--disc-r", default=None, help="J1's disc position-error tables, if D2 built them")
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--chunk", type=int, default=10)
     ap.add_argument("--out", default=str(C1B_OUT))
     a = ap.parse_args(argv)
-    return {"overlap": overlap}[a.job](a)
+    return {"overlap": overlap, "discR": disc_r_tables, "seedtest": seedtest}[a.job](a)
 
 
 if __name__ == "__main__":

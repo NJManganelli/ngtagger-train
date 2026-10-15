@@ -90,6 +90,10 @@ def own_rows(arm, st, j, t, S, ctx, geo, tools, kpt):
     kb = SA.fine_bin(np.full(len(v), S), key)
     out["keybin"] = np.stack([kb, kb], 1)
     out["orient"] = orient
+    # C1b: the disc rows' module-frame key bin and the module's facing (barrel rows: -1 / 0)
+    out["dkeybin"] = SA.fine_bin(np.full(len(v), S), SA.local_incidence_key(h0[:, 2], h0[:, 3])) \
+        if OP.SPN.is_disc_surface(S) else np.full(len(v), -1)
+    out["facing"] = np.sign(geo["ez"][mi][:, 2]).astype(np.int8)
     # the TP's truth helix on the cluster's module (TTTrack conventions: rInv = q kpt / pT)
     TP = ctx["TP"]
     at = np.stack([TP["charge"][tpr] * kpt / np.maximum(TP["pt"][tpr], 1e-9), TP["phi0"][tpr],
