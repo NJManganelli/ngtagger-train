@@ -404,6 +404,116 @@ def scalefit(a):
     return 0
 
 
+C1B_CUTS = "wpc_cuts_c1b_v1.json"
+
+
+def cut_pass(a, scale, cuts, disc_R):
+    """One pass of the disc arm (own and leave-one-out rows) over files 1-2 x the scenarios, with the barrel
+    arm beside it for D5 (barrel-only tracks bit-identical, discs on vs off, under the same cuts). The rows are
+    returned with surface = the cut-bin code (disc-going barrel visits + 100)."""
+    import diagnostics as DG
+    geo = OP.load_geometry(CM.GEOMETRY)
+    disc = AR.DiscTools(disc_scale=scale, R_tables=disc_R)
+    own, loo, d5 = [], [], {"tracks": 0, "different": 0}
+    for scen in a.scen:
+        for fi, f in enumerate(CM.FIT_FILES):
+            path_f = CM.input_path(scen, f)
+            cfg = CM.producer_config(path_f)
+            assert CM.mask_of(cfg) == scen
+            tools = AR.Tools(cfg, cuts=cuts, disc=disc)
+            arm = AR.inn_disc(cfg)
+            for start, A in CM.iterate(path_f, AR.branches(path_f), chunk=a.chunk, nev=a.nev):
+                ctx = AR.prepare(A, geo)
+                path, _ = AR.visit_plan(ctx, geo, cfg, scen, arm)
+                dg = AR.disc_going(path)
+                out = AR.run_arm(ctx, geo, cfg, scen, arm, tools, own=True, loo=True)
+                off = AR.run_arm(ctx, geo, cfg, scen, AR.inn(cfg), tools)
+                bo = np.flatnonzero(~dg & out["refit"])
+                k = off["rec"]["acc"].shape[1]                  # barrel-only tracks visit the same barrel steps
+                sel = lambda r: np.where(r["rec"]["acc"][bo, :k], r["rec"]["ci"][bo, :k], -1)
+                diff = ~(np.all(out["a"][bo] == off["a"][bo], 1) & np.all(out["C"][bo] == off["C"][bo], (1, 2))
+                         & np.all(sel(out) == sel(off), 1) & ~out["rec"]["acc"][bo, k:].any(1))
+                d5["tracks"] += len(bo)
+                d5["different"] += int(diff.sum())
+                R = DG.mark_primary(out["own"])
+                R = {k: (R["csurface"] if k == "surface" else v) for k, v in R.items()}
+                R["ev"] = R["ev"] + fi * NEV_FILE + start
+                own.append({k: R[k] for k in RUN_OWN_KEEP})
+                L = out["loo"]
+                import run_entry as RE
+                prim, clean_track = RE.loo_flags(out, DG.mark_primary(out["own"]), ctx)
+                loo.append({"surface": L["csurface"], "first": L["first"], "own_primary": prim, "clean_track": clean_track,
+                            "scen": np.full(len(prim), scen), "n_inner": L["n_inner"], "n_acc": L["n_acc"],
+                            "ev": ctx["tev"][L["o"]] + fi * NEV_FILE + start, **{f"d_{k}": v for k, v in L["dims"].items()}})
+    return _concat(own), _concat(loo), d5
+
+
+RUN_OWN_KEEP = ("o", "ev", "step", "first", "surface", "ci", "mi", "clean", "e1", "t1", "z", "has", "g_xy", "g_xya",
+                "g_xyb", "g_xyab", "classT", "table_pop", "keybin", "dkeybin", "facing", "primary", "pu", "pv")
+
+
+def c1b_cutfit(a):
+    """§1 item 6: the cut fit with the disc bins, the barrel-visit bins and the barrel-only bins, files 1-2 x the
+    scenarios, the disc arm with the fitted scale (J3) and the decided seed; the disc window starts from the
+    provisional cut and the fit is repeated once if the fitted cuts move the populations (PD18's rule); D5 on the
+    way. Writes c1b/cuts/wpc_cuts_c1b_v1.json (+ unconditioned), the rows and cutfit_summary.json."""
+    import cuts as CU
+    t0 = time.time()
+    with open(os.path.join(a.out, "scale", "scalefit_summary.json")) as fh:
+        scale = float(json.load(fh)["scale"])
+    disc_R = load_disc_R(a.disc_r) if a.disc_r else None
+    out_dir = os.path.join(a.out, "cuts")
+    os.makedirs(out_dir, exist_ok=True)
+    window = CU.Cuts.load(a.cuts)
+    res = {"plan": "c1b/PLAN.md rev 4 §1 item 6, §3 D5", "disc_scale": scale, "window_cuts": a.cuts, "material": [],
+           "minor": [], "passes": []}
+    fits = []
+    for it in range(2):
+        own, loo, d5 = cut_pass(a, scale, window, disc_R)
+        res["passes"].append({"window": window.doc.get("created", a.cuts), "D5": d5})
+        if d5["different"]:
+            res["material"].append(f"D5 (files 1-2, pass {it + 1}): {d5['different']} of {d5['tracks']} barrel-only tracks "
+                                   "differ with the discs on")
+        loo_f = dict(loo)
+        loo_f["dims"] = {dm: loo_f.pop(f"d_{dm}") for dm in AR.DIMS}
+        prov = {"files": [str(CM.input_path(s, f)) for s in a.scen for f in CM.FIT_FILES], "disc_scale": scale,
+                "disc_R": a.disc_r, "window": a.cuts if it == 0 else "the pass-1 fit", "plan": res["plan"]}
+        fit = CU.fit({"calibrated": own}, {"calibrated": loo_f}, prov, "smoothed", clean=True)
+        fits.append((fit, own, loo_f))
+        print(f"[{time.time() - t0:7.1f}s] cut pass {it + 1}", flush=True)
+        if it == 0:
+            iv = CU.intervals({"calibrated": own}, {"calibrated": loo_f})
+            window = fit
+            continue
+        # PD18's rule: the pass-2 values against pass 1's 95 % intervals
+        from scipy import stats
+        n_b, out_ = 0, []
+        for tk, tab in iv.items():
+            for b, e in tab.items():
+                ne = fit.doc["cuts"].get(tk, {}).get(b)
+                if e["value"] is None or e["n"] < CU.MIN_N or ne is None or ne["value"] is None or ne["n"] < CU.MIN_N:
+                    continue
+                n_b += 1
+                if not e["value"][0] <= ne["value"] <= e["value"][1]:
+                    out_.append(f"{tk} {b}")
+        bound = float(stats.binom.ppf(0.99, n_b, 0.05))
+        res["window_refit"] = {"bins": n_b, "outside": len(out_), "bound": bound, "changed": len(out_) > bound}
+    final = fits[1][0] if res["window_refit"]["changed"] else fits[0][0]
+    res["adopted"] = "pass 2" if res["window_refit"]["changed"] else "pass 1"
+    final.save(os.path.join(out_dir, C1B_CUTS))
+    own, loo_f = (fits[1] if res["window_refit"]["changed"] else fits[0])[1:]
+    CU.fit({"calibrated": own}, {"calibrated": loo_f}, final.doc["provenance"], "smoothed", clean=False).save(
+        os.path.join(out_dir, C1B_CUTS.replace(".json", "_unconditioned.json")))
+    np.savez_compressed(os.path.join(out_dir, "c1b_cut_rows.npz"), **{f"own__{k}": v for k, v in own.items()},
+                        **{f"loo__{k}": v for k, v in loo_f.items() if k != "dims"},
+                        **{f"loo__d_{k}": v for k, v in loo_f["dims"].items()})
+    res["seconds"] = round(time.time() - t0, 1)
+    with open(os.path.join(out_dir, "cutfit_summary.json"), "w") as fh:
+        json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
+    print(json.dumps({k: res[k] for k in ("material", "adopted")}, indent=1, default=str))
+    return 0
+
+
 def disc_r_tables(a):
     """Light, after J1: when D2 decided to build disc tables, write them from J1's overlap R in v3's layout
     (size x |cot| widths; the overlap R per size bin over every |cot| cell; a bin J1 left unconstrained keeps
@@ -440,7 +550,7 @@ def load_disc_R(path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("overlap", "discR", "seedtest", "scalefit"))
+    ap.add_argument("job", choices=("overlap", "discR", "seedtest", "scalefit", "cutfit"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--cuts", default=str(CM.CUTS), help="the cut file in use (the window)")
     ap.add_argument("--disc-r", default=None, help="J1's disc position-error tables, if D2 built them")
@@ -448,7 +558,8 @@ def main(argv=None):
     ap.add_argument("--chunk", type=int, default=10)
     ap.add_argument("--out", default=str(C1B_OUT))
     a = ap.parse_args(argv)
-    return {"overlap": overlap, "discR": disc_r_tables, "seedtest": seedtest, "scalefit": scalefit}[a.job](a)
+    return {"overlap": overlap, "discR": disc_r_tables, "seedtest": seedtest, "scalefit": scalefit,
+            "cutfit": c1b_cutfit}[a.job](a)
 
 
 if __name__ == "__main__":
