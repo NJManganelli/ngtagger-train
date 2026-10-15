@@ -15,12 +15,12 @@
 
 Every stage prints its summary, writes its JSON report (-o) and exits 2 when one of its gates fails.
 
-THE TRUTH IS THE CENSUS'S on both sides (plan sec. 2): a track recovers every TP credited by both of its
-seed stubs (tracklet_topology_cost.recovered_keys; an OT stub credits its tpIdx and its clusters' owners),
-its TP is the single such TP (seed_tp; none on a tie) and it is a fake when it has none. The efficiency
-denominator is the census's: findable (>= 4 credited modules, charged) with |eta| < 0.9 and pT >= 2 GeV.
-Tracks are judged in KF eta regions 0-3 (the seed's z0 + 50 t inside |eta| 0.9, ot_chain.kf_region),
-barrel seeds only (L1L2, L2L3, L3L4, L5L6).
+THE TRUTH IS THE CENSUS'S on both sides (plan sec. 2), from the same per-track records (tp_findability
+RECORD_COLS): a track's TP is the single TP credited by both of its seed stubs (tracklet_topology_cost.seed_tp;
+an OT stub credits its tpIdx and its clusters' owners; none on a tie) and it is a fake when it has none.
+Tracks are judged in KF eta regions 0-3 (the seed's z0 + 50 t inside |eta| 0.9, ot_chain.kf_region), barrel
+seeds only (L1L2, L2L3, L3L4, L5L6), and a TP is found by a side when one of its judged tracks has it. The
+efficiency denominator is the census's: findable (>= 4 credited modules, charged), |eta| < 0.9, pT >= 2 GeV.
 """
 from __future__ import annotations
 import argparse
@@ -149,19 +149,17 @@ def twice(f1, f2, nev=None):
 
 
 def _cmssw_tracks(path, nev=None, collection="L1TTrack"):
-    """Per event: the L1TTrack records (RECORD_COLS) of barrel-seeded tracks, the seed-truthful TP keys per
-    seed type, and the tracks' stub rows. Event index = entry in the file (the census's numbering of a
-    one-file input)."""
+    """The records (tp_findability RECORD_COLS, the entry column holding the seed type) of a CMSSW track
+    collection's barrel-seeded tracks, all events. Event index = entry in the file (the census's numbering of
+    a one-file input)."""
     A = _events(path, (f"{collection}_", f"{collection}Stub_", "L1TOTStub_"), nev)
-    out = []
+    recs = []
     for e in range(len(A)):
         T, S, L = _table(A, e, f"{collection}_"), _table(A, e, f"{collection}Stub_"), _table(A, e, "L1TOTStub_")
         L["event"] = np.full(len(L["layer"]), e, np.int64)
-        recs, keys, rows = [], {}, []
         for j in range(len(T["rInv"])):
             sd = int(T["seedType"][j])
             r = S["otStubIdx"][S["trackIdx"] == j].astype(np.int64)
-            rows.append(r)
             if sd not in SEED_LAYERS:
                 continue
             by = {int(L["layer"][x]): x for x in r if L["isBarrel"][x]}
@@ -176,20 +174,23 @@ def _cmssw_tracks(path, nev=None, collection="L1TTrack"):
             tp, real = M.seed_tp(L, np.array([a]), np.array([b]))
             key = int(M.tp_key(np.array([e]), np.array([max(int(tp[0]), 0)]))[0]) if tp[0] >= 0 else -1
             recs.append((e, sd, key, int(real[0]), kreg, len(r), int(T["phiSector"][j])))
-            if kreg <= MAX_KF_REGION:
-                keys.setdefault(sd, []).append(M.recovered_keys(L, np.array([a]), np.array([b])))
-        out.append({"records": np.array(recs, np.int64).reshape(-1, 7),
-                    "found": {sd: (np.unique(np.concatenate(v)) if v else np.zeros(0, np.int64))
-                              for sd, v in keys.items()},
-                    "rows": rows})
-    return out
+    return np.array(recs, np.int64).reshape(-1, len(TF.RECORD_COLS))
+
+
+def _judged(R):
+    return R[(R[:, 4] >= 0) & (R[:, 4] <= MAX_KF_REGION)]
+
+
+def _found(R, key):
+    """Boolean over the census TP keys: found by a judged track of the records R."""
+    J = _judged(R)
+    return np.isin(key, J[J[:, 2] >= 0, 2])
 
 
 def l2l3(census_dir, cmssw, nev=None):
     """L2L3 tracks in KF regions 0-3 (plan sec. 2): none in CMSSW, none in the closed arm."""
-    ev = _cmssw_tracks(cmssw, nev)
-    n_cms = int(sum(((e["records"][:, 1] == 1) & (e["records"][:, 4] >= 0)
-                     & (e["records"][:, 4] <= MAX_KF_REGION)).sum() for e in ev))
+    R = _judged(_cmssw_tracks(cmssw, nev))
+    n_cms = int((R[:, 1] == 1).sum())
     C = TF.load(TF.census_dir(census_dir), nev=nev, with_tracks=True, verbose=False)
     n_cen = 0
     for name in ("track_records", "track_records_merged"):
@@ -452,10 +453,9 @@ def _per_event(nev, ev, w=None):
     return np.bincount(ev, weights=w, minlength=nev).astype(np.float64)
 
 
-def _track_counts(R, nev, regions=True):
+def _track_counts(R, nev):
     """Per event: judged tracks, fakes, duplicate excess (sum over TPs of n - 1) and distinct TPs."""
-    if regions:
-        R = R[(R[:, 4] >= 0) & (R[:, 4] <= MAX_KF_REGION)]
+    R = _judged(R)
     ev = R[:, 0]
     n = _per_event(nev, ev)
     fake = _per_event(nev, ev, (R[:, 3] == 0).astype(float))
@@ -474,17 +474,14 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None):
     entry = {SA.OT_CHAIN_SEED[sd.layers]: i for i, sd in enumerate(C["seeds"]) if sd.layers in SA.OT_CHAIN_SEED}
     den = _denominator(C)
     key, tev = C["key"], M.tp_key_parts(C["key"])[0].astype(np.int64)
-    cms_nodr = _cmssw_tracks(cmssw_nodr, nevc) if cmssw_nodr else None
-    cms_merge = _cmssw_tracks(cmssw_merge, nevc) if cmssw_merge else None
     parts = {}
     # C2: per seed
-    if cms_nodr is not None:
-        R_cms = np.concatenate([e["records"] for e in cms_nodr])
+    if cmssw_nodr:
+        R_cms = _cmssw_tracks(cmssw_nodr, nevc)
         for sd in JUDGED_SEEDS:
             i = entry[sd]
-            f_cen = TF.seed_mask(C, i) & den
-            kc = np.concatenate([e["found"].get(sd, np.zeros(0, np.int64)) for e in cms_nodr])
-            f_cms = np.isin(key, kc) & den
+            f_cen = _found(C["track_records"][i], key) & den
+            f_cms = _found(R_cms[R_cms[:, 1] == sd], key) & den
             nc, _, _, _ = _track_counts(C["track_records"][i], nevc)
             nm, _, _, _ = _track_counts(R_cms[R_cms[:, 1] == sd], nevc)
             parts[f"C2 {OC.SEED_NAME[sd]}"] = {
@@ -492,16 +489,11 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None):
                 "cms": _per_event(nevc, tev[f_cms]), "disc": _per_event(nevc, tev[f_cen ^ f_cms]),
                 "ncen": nc, "ncms": nm}
     # C3: delivered
-    if cms_merge is not None:
-        f_cen = np.zeros(len(key), bool)
-        for sd, i in entry.items():
-            f_cen |= TF.seed_mask(C, i, after_dr=True)
-        f_cen &= den
-        kc = np.concatenate([np.concatenate(list(e["found"].values())) if e["found"] else np.zeros(0, np.int64)
-                             for e in cms_merge])
-        f_cms = np.isin(key, kc) & den
+    if cmssw_merge:
         R_cen = np.concatenate([C["track_records_merged"][i] for i in entry.values()])
-        R_cms = np.concatenate([e["records"] for e in cms_merge])
+        R_cms = _cmssw_tracks(cmssw_merge, nevc)
+        f_cen = _found(R_cen, key) & den
+        f_cms = _found(R_cms, key) & den
         nc, fc, dc, tc = _track_counts(R_cen, nevc)
         nm, fm, dm, tm = _track_counts(R_cms, nevc)
         parts["C3 delivered"] = {"den": _per_event(nevc, tev[den]), "cen": _per_event(nevc, tev[f_cen]),
