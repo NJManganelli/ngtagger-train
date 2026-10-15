@@ -9,7 +9,8 @@ divided out; bins also separate the first-visited surface from the later ones):
                 per-empty-surface penalty (PD2)
   rr|<dims>|<cov>|<scen>
                 reject-and-refit: the leave-one-out chi2 of an accepted own-primary hit, per scenario
-                (PLAN PD15: the pooled cut biased AAAA against IAAA)
+                (PLAN PD15: the pooled cut biased AAAA against IAAA); the file records which leave-one-out
+                prediction it was fitted on (rr_statistic: "smoothed", PD17; files without it: "final")
   window        the angle window cut: |angle innovation pull| per angle, population: every own class-T
                 cluster (an angle-only cut, PD1), bins also by the signed predicted-key bin
 
@@ -70,6 +71,11 @@ class Cuts:
             raise ValueError(f"not a WP-C cut file ({doc.get('schema')!r})")
         self.doc = doc
 
+    @property
+    def rr_statistic(self) -> str:
+        """The leave-one-out prediction the rr cuts were fitted on (arms.Arm.loo_pred)."""
+        return self.doc.get("rr_statistic", "final")
+
     @classmethod
     def load(cls, path):
         with open(path) as fh:
@@ -126,7 +132,7 @@ def populations(R, L, clean=True):
     return gate, window, rr
 
 
-def fit(own_by_cov: dict, loo_by_cov: dict, provenance: dict, clean: bool = True) -> Cuts:
+def fit(own_by_cov: dict, loo_by_cov: dict, provenance: dict, rr_statistic: str, clean: bool = True) -> Cuts:
     """own_by_cov[cov] = concatenated own-cluster rows (diagnostics.own_rows + mark_primary);
     loo_by_cov[cov] = {"dims": {dims: stat}, "surface", "first", "own_primary", "clean_track", "scen"}."""
     cuts = {}
@@ -144,6 +150,6 @@ def fit(own_by_cov: dict, loo_by_cov: dict, provenance: dict, clean: bool = True
                                                      R["keybin"][window, i])
     doc = {"schema": SCHEMA, "level": LEVEL, "rank": "k = min(ceil(L (n + 1)), n) (spdefs.consumer_quantile)",
            "population": "PD1 + PD8: own primaries / own class T with a clean history" if clean else "no history condition",
-           "min_n": MIN_N, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "min_n": MIN_N, "rr_statistic": rr_statistic, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "provenance": provenance, "cuts": cuts}
     return Cuts(doc)

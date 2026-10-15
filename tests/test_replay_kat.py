@@ -29,6 +29,8 @@ pytestmark = pytest.mark.skipif(not CM.input_path("AAAA", 4).exists(), reason="c
 class ConstCuts:
     """A cut-file stand-in: every chi2 cut and window cut equal to `v`."""
 
+    rr_statistic = "smoothed"
+
     def __init__(self, v):
         self.v = v
 
@@ -186,6 +188,31 @@ def test_reject_and_refit_identities(data):
     st = AR.refit_forced(arm, ctx, geo, cfg, data["tools"], t, seq[t], on0["rec"]["mi"][t], ci, path,
                          ORP.pt_constant(ctx["T"]))
     assert np.array_equal(st.a, on0["a"][t])          # material changes C only, so a compares directly
+
+
+def test_loo_smoothed_known_answers(data):
+    """PD17: without material the smoothed leave-one-out equals the final-state one (no process noise:
+    every step carries the same helix); with material they differ, and the smoother leaves a hit with no
+    inner hits at its forward prediction."""
+    cfg, geo, ctx = data["cfg"], data["geo"], data["ctx"]
+    st = {}
+    for mode in ("smoothed", "final"):
+        for scale in (0.0, 1.0):
+            out = run(data, AR.inn(cfg, name=f"loo-{mode}-{scale}", loo_pred=mode, material_scale=scale), loo=True)
+            st[mode, scale] = out["loo"]
+    for k in AR.DIMS:
+        a, b = st["smoothed", 0.0]["dims"][k], st["final", 0.0]["dims"][k]
+        ok = np.isfinite(a) & np.isfinite(b)
+        assert ok.mean() > 0.99 and np.allclose(a[ok], b[ok], rtol=1e-6, atol=1e-9)
+    a, b = st["smoothed", 1.0]["dims"]["xy"], st["final", 1.0]["dims"]["xy"]
+    outer = st["smoothed", 1.0]["n_inner"] >= 2
+    assert np.median(a[outer] / b[outer]) < 0.8          # the final state misses the scattering to the inner hits
+    # the smoother's algebra: a hit with no inner hits keeps the forward prediction (smoothed = filtered there)
+    hist = {"fa": np.zeros((1, 3, 5)), "pa": np.zeros((1, 3, 5)), "fC": np.tile(np.eye(5), (1, 3, 1, 1)),
+            "pC": np.tile(2 * np.eye(5), (1, 3, 1, 1))}
+    hist["fa"][0, 2] = 1.0
+    aS, CS = AR.smooth_back(hist, np.array([2]))
+    assert np.array_equal(aS, hist["fa"][:, 2]) and np.array_equal(CS, hist["fC"][:, 2])
 
 
 def test_inner_material_changes_covariance_only(data):

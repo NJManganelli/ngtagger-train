@@ -89,6 +89,8 @@ class Arm:
     table_variant: str = ""         # E1(a) known-bads: "global_sign" | "angle_units" | "folded"
     material_scale: float = 1.0     # E3 known-bad: 0.5 (half-strength calibrated material)
     rtable_swap: bool = False       # E2 known-bad: the R-table lookup with |cotA| and |cotB| swapped
+    loo_pred: str = "smoothed"      # the leave-one-out prediction (PD17): "smoothed" (two-sided) | "final" (the
+                                    # final refit state, the PD17 known-bad)
 
     @property
     def cov_model(self) -> str:
@@ -616,18 +618,27 @@ def run_arm(ctx, geo, cfg, mask, arm, tools, tracks=None, own=False, loo=False):
     return finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo)
 
 
-def refit_forced(arm, ctx, geo, cfg, tools, o, seq, sel_mi, sel_ci, path, kpt):
+def refit_forced(arm, ctx, geo, cfg, tools, o, seq, sel_mi, sel_ci, path, kpt, history=False):
     """Refit tracks o (may repeat) from their seeds on the given (module, cluster) per visit step
-    (-1: no hit), with the arm's Q, projection and update; no gate. Returns the State."""
+    (-1: no hit), with the arm's Q, projection and update; no gate. Returns the State; with history,
+    State.hist holds per step the predicted (after Q, before the update) and the filtered state
+    ("pa", "pC", "fa", "fC"), for smooth_back. A step a track does not visit keeps its previous state."""
     a, C = seed(ctx, cfg, arm, tools, o)
     st = State(a, C, np.asarray(o).copy(), seq)
+    if history:
+        n, ns = len(st.o), seq.shape[1]
+        st.hist = {k: np.zeros((n, ns) + sh) for k, sh in (("pa", (5,)), ("pC", (5, 5)), ("fa", (5,)), ("fC", (5, 5)))}
     for j in range(seq.shape[1]):
+        if history:
+            st.hist["pa"][:, j], st.hist["pC"][:, j] = st.a, st.C
         for S in np.unique(seq[:, j][seq[:, j] >= 0]):
             S = int(S)
             t = np.flatnonzero((seq[:, j] == S) & (st.nUpd < cfg["maxKFUpdates"]))
             if not len(t):
                 continue
             _q_step(arm, st, t, S, path, geo, tools, kpt, cfg)
+            if history:
+                st.hist["pC"][t, j] = st.C[t]
             st.rec["visited"][t, j] = True
             st.rec["surface"][t, j] = S
             u = t[sel_ci[t, j] >= 0]
@@ -640,17 +651,38 @@ def refit_forced(arm, ctx, geo, cfg, tools, o, seq, sel_mi, sel_ci, path, kpt):
             h0 = np.stack([pj["u"][fin], pj["v"][fin], pj["cotA"][fin], pj["cotB"][fin]], 1)
             gr = pj["gr"][fin] if pj.get("gr") is not None else None
             _apply(arm, st, j, u, mi, sel_ci[u, j], h0, pj["J"][fin], gr, ctx, geo, tools, path, S)
+        if history:
+            st.hist["fa"][:, j], st.hist["fC"][:, j] = st.a, st.C
     return st
+
+
+def smooth_back(hist, steps):
+    """Rauch-Tung-Striebel smoothing of a refit (refit_forced with history) back to the visit step
+    steps[i] of each row: the two-sided state there, combining the steps before it (the forward
+    prediction) with the steps after it (the inner hits), the process noise between them included
+    (PD17). The helix parameters carry over between steps unchanged (F = I; the material adds to C)."""
+    ns = hist["fa"].shape[1]
+    aS, CS = hist["fa"][:, ns - 1].copy(), hist["fC"][:, ns - 1].copy()
+    for k in range(ns - 2, -1, -1):
+        m = np.flatnonzero(steps <= k)
+        if not len(m):
+            continue
+        Cf, af, Cp, ap = hist["fC"][m, k], hist["fa"][m, k], hist["pC"][m, k + 1], hist["pa"][m, k + 1]
+        A = np.transpose(np.linalg.solve(Cp, Cf), (0, 2, 1))          # Cf Cp^-1 (both symmetric)
+        aS[m] = af + np.einsum("nij,nj->ni", A, aS[m] - ap)
+        CS[m] = Cf + np.einsum("nij,njk,nlk->nil", A, CS[m] - Cp, A)
+    return aS, CS
 
 
 DIMS = {"xy": (False, False), "xya": (True, False), "xyb": (False, True), "xyab": (True, True)}
 
 
 def loo_stats(arm, ctx, geo, cfg, tools, st, v, path, kpt, all_dims=False):
-    """Leave-one-out chi2 of every accepted hit of virtual tracks v (PD4 (c)): the full refit from the OT
-    seed without the hit, its final state projected onto the hit's module, the innovation chi2 over
-    positions and the rr angle dims (all_dims: a dict over DIMS, for the cut fit). Returns
-    (owner virtual track, step, stat)."""
+    """Leave-one-out chi2 of every accepted hit of virtual tracks v (PD4 (c), PD17): the full refit from
+    the OT seed without the hit; with arm.loo_pred "smoothed", its state smoothed back to the hit's visit
+    step (two-sided: the outer hits forward, the inner hits backward), with "final" (the known-bad) its
+    final state; projected onto the hit's module; the innovation chi2 over positions and the rr angle
+    dims (all_dims: a dict over DIMS, for the cut fit). Returns (owner virtual track, step, stat)."""
     vv, jj = np.nonzero(st.rec["acc"][v])
     if not len(vv):
         return np.zeros(0, np.int64), np.zeros(0, np.int64), ({k: np.zeros(0) for k in DIMS} if all_dims else np.zeros(0))
@@ -658,17 +690,19 @@ def loo_stats(arm, ctx, geo, cfg, tools, st, v, path, kpt, all_dims=False):
     sel_mi = st.rec["mi"][owner].copy()
     sel_ci = np.where(st.rec["acc"][owner], st.rec["ci"][owner], -1)
     sel_ci[np.arange(len(vv)), jj] = -1
-    R = refit_forced(arm, ctx, geo, cfg, tools, st.o[owner], st.seq[owner], sel_mi, sel_ci, path, kpt)
+    smoothed = {"smoothed": True, "final": False}[arm.loo_pred]
+    R = refit_forced(arm, ctx, geo, cfg, tools, st.o[owner], st.seq[owner], sel_mi, sel_ci, path, kpt, history=smoothed)
+    aL, CL = smooth_back(R.hist, jj) if smoothed else (R.a, R.C)
     mi = st.rec["mi"][owner, jj]
     ci = st.rec["ci"][owner, jj]
     keys = list(DIMS) if all_dims else [arm.dims_key("rr")]
     stat = {k: np.full(len(vv), np.nan) for k in keys}
     for S in np.unique(geo["surface"][mi]):
         m = np.flatnonzero(geo["surface"][mi] == S)
-        pj = project(arm, R.a[m], R.C[m], int(S), geo, mi[m], kpt)
+        pj = project(arm, aL[m], CL[m], int(S), geo, mi[m], kpt)
         h0 = np.stack([pj["u"], pj["v"], pj["cotA"], pj["cotB"]], 1)
         Jz = E.guard_zeroed(pj["J"])
-        Sz = np.einsum("nij,njk,nlk->nil", Jz, R.C[m], Jz)
+        Sz = np.einsum("nij,njk,nlk->nil", Jz, CL[m], Jz)
         meas, sig, has = measurements(ctx, geo, ci[m], mi[m], h0[:, 2], h0[:, 3], arm, tools)
         for k in keys:
             if all_dims:
@@ -688,9 +722,12 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     loo_out = None
     if loo:
         owner, jj, stat = loo_stats(arm, ctx, geo, cfg, tools, st, np.arange(len(st.o)), path, kpt, all_dims=True)
+        inner = st.rec["acc"][owner] & (np.arange(seq.shape[1])[None, :] > jj[:, None])
         loo_out = {"o": st.o[owner], "step": jj, "ci": st.rec["ci"][owner, jj], "mi": st.rec["mi"][owner, jj],
-                   "surface": st.rec["surface"][owner, jj], "first": jj == 0, "dims": stat}
+                   "surface": st.rec["surface"][owner, jj], "first": jj == 0, "n_inner": inner.sum(1), "dims": stat}
     removed = np.zeros((len(st.o), seq.shape[1]), bool)
+    if arm.rr and tools.cuts.rr_statistic != arm.loo_pred:
+        raise ValueError(f"the cut file's rr statistic is {tools.cuts.rr_statistic!r}, the arm's {arm.loo_pred!r} (PD17)")
     if arm.rr:
         for _ in range(arm.rr_max_iter):
             owner, jj, stat = loo_stats(arm, ctx, geo, cfg, tools, st, np.arange(len(st.o)), path, kpt)
@@ -713,6 +750,8 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
             sel_ci[np.arange(len(hit)), worst[hit]] = -1
             removed[hit, worst[hit]] = True
             R = refit_forced(arm, ctx, geo, cfg, tools, st.o[hit], st.seq[hit], sel_mi, sel_ci, path, kpt)
+            # the refit replaces the state and the accepted hits only; prevR, prevNT, Lv and gstat keep the
+            # forward pass's values (nothing after this point reads them)
             for k in ("a", "C", "nUpd"):
                 getattr(st, k)[hit] = getattr(R, k)
             for k in ("acc", "chi2"):

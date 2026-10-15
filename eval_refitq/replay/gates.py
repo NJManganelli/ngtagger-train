@@ -194,10 +194,11 @@ def _lookup_n(cuts, tab_key, keys_chain):
     return e["value"], e["n"], "*"
 
 
-def e1b_consumer(cuts, consumer, key, stat, surface, first, ev, keybin=None, nev=NEV):
-    """Coverage of one consumer's cut on its population: per lookup bin the exceedances, the exact
-    order-statistic null with variance max(event bootstrap, exchangeable); pooled the one-sided 95 %
-    shortfall bound against the 0.5 % margin (PD4 (h))."""
+def e1b_consumer(cuts, consumer, key, stat, surface, first, ev, keybin=None, nev=NEV, cls=None):
+    """Coverage of one consumer's cut on its population: per lookup bin (x class cls, e.g. the number
+    of remaining inner hits, PD17) the exceedances, the exact order-statistic null with variance
+    max(event bootstrap, exchangeable); pooled the one-sided 95 % shortfall bound against the 0.5 %
+    margin (PD4 (h)), its sd the event bootstrap plus the cuts' fit variance per shared cut (PD17)."""
     kb = np.zeros(len(stat), np.int64) if keybin is None else np.asarray(keybin, np.int64)
     combos = np.stack([np.asarray(surface, np.int64), np.asarray(first, np.int64), kb], 1)
     uniq, inv = np.unique(combos, axis=0, return_inverse=True)
@@ -209,6 +210,9 @@ def e1b_consumer(cuts, consumer, key, stat, surface, first, ev, keybin=None, nev
     nfit = np.array([x[1] for x in looked])[inv.ravel()]
     bkey = np.array([x[2] for x in looked])[inv.ravel()]
     beyond = stat > vals
+    lkey = bkey.copy()
+    if cls is not None:
+        bkey = np.char.add(np.char.add(bkey.astype(str), "|n"), np.asarray(cls).astype(str))
     rep = replicas(nev)
     out = {"bins": [], "consumer": consumer, "key": key}
     for k in np.unique(bkey):
@@ -227,7 +231,12 @@ def e1b_consumer(cuts, consumer, key, stat, surface, first, ev, keybin=None, nev
     out["chi2_p"] = float(stats.chi2.sf(np.sum(zs ** 2), len(zs))) if len(zs) else None
     C = 1 - beyond.mean()
     Cb = np.array([1 - np.sum(beyond * rep[r][ev]) / max(np.sum(rep[r][ev]), 1) for r in range(N_REP)])
-    sd = float(np.std(Cb))
+    fit_var = 0.0
+    for k in np.unique(lkey):
+        m = lkey == k
+        e0 = float(SA.expected_coverage(nfit[m][0], CU.LEVEL))
+        fit_var += (m.mean()) ** 2 * e0 * (1 - e0) / (nfit[m][0] + 2)
+    sd = float(np.sqrt(np.var(Cb) + fit_var))
     out["pooled"] = {"n": int(len(stat)), "coverage": float(C), "sd": sd,
                      "shortfall_bound95": float(CU.LEVEL - C + 1.645 * sd), "margin": 0.005}
     out["pooled"]["pass"] = out["pooled"]["shortfall_bound95"] <= 0.005
@@ -268,6 +277,21 @@ def e1b_verdict(scen, k, r, safe_direction_minor):
         big = [b for b in unsafe if b["n_test"] > 0.02 * r["pooled"]["n"]]
         (mat if big else minor).append(f"E1(b) {scen} {k}: {len(unsafe)} bins beyond t(N)")
     return mat, minor
+
+
+def e1b_class_verdict(scen, k, r, min_n=CU.MIN_N):
+    """PD17's per-class rule on an e1b_consumer result with classes: the class-bins with n >= min_n are
+    judged at t(N) over them; under-coverage beyond t is MATERIAL, over-coverage MINOR; a failing
+    pooled bound is MATERIAL. Returns (MATERIAL lines, MINOR lines, t)."""
+    judged = [b for b in r["bins"] if b["n_test"] >= min_n and np.isfinite(b["z"])]
+    t = t_two(len(judged)) if judged else 0.0
+    mat = [f"rr per class {scen} {k}: {b['bin']} {b['coverage']:.4f} (z {b['z']:+.1f}, n {b['n_test']})"
+           for b in judged if b["z"] < -t]
+    minor = [f"rr per class {scen} {k}: {b['bin']} over-covered {b['coverage']:.4f} (z {b['z']:+.1f}, n {b['n_test']})"
+             for b in judged if b["z"] > t]
+    if not r["pooled"]["pass"]:
+        mat.append(f"rr per class {scen} {k}: pooled shortfall bound {r['pooled']['shortfall_bound95']:.4f} > 0.005")
+    return mat, minor, t
 
 
 # ---------------------------------------------------------------- E2 / E3

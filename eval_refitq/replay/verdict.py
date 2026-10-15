@@ -7,7 +7,7 @@ run_entry.py rrcheck) and the physicist's closing decisions (PD16); writes entry
                 known-good, file 5 gated); over-coverage bins are MINOR (the safe direction, PD16)
   E2/E3, E4, E5 file 3, as reported
   E7            not part of the verdict: K is set aside (K = 1); its file-4 result is the reason (PD16)
-  known-bads    PM-nocap, PM-notrunc and INN-kb-angleunits accepted with the power statement (PD16);
+  known-bads    PM-nocap, PM-notrunc and INN-kb-angleunits accepted with their power statements (PD16);
                 E7's is not judged (blinded, PD13)
 """
 from __future__ import annotations
@@ -22,9 +22,12 @@ import common as CM
 import gates as G
 
 GATE_PREFIX = {"E1a": "E1(a)", "E1b": "E1(b)", "E23": "E2/E3", "E4": "E4 ", "E5": "E5"}
-WEAK_KNOWN_BADS = ("E1a/INN-kb-angleunits", "E5/PM-nocap", "E5/PM-notrunc")
 POWER = ("the planted errors change ≤ 0.06 % of tracks; the gate cannot verify these features at 100 events, and they "
          "cannot move H or P measurably")
+WEAK_KNOWN_BADS = {"E5/PM-nocap": POWER, "E5/PM-notrunc": POWER,
+                   "E1a/INN-kb-angleunits": "the planted error moves the own angle pulls by a median of 0.0005 (alpha) "
+                                            "and 0.05 (beta), below E1(a)'s band of 0.25; the gate cannot verify it at "
+                                            "100 events"}
 K_SET_ASIDE = ("K is set aside (entry configuration K = 1, PD16): K = 2 + skip failed its file-4 known-good; "
                "its file-3 part stays blinded (PD13)")
 FALSE_VETO_MAX = 0.057
@@ -44,15 +47,17 @@ def main(argv=None):
         if m.startswith("E7"):
             V["not_in_verdict"].append(f"{m}. {K_SET_ASIDE}")
         elif m.startswith("known-bad") and any(k in m for k in WEAK_KNOWN_BADS):
-            V["accepted"].append(f"{m}: {POWER} (PD16)")
+            why, = [w for k, w in WEAK_KNOWN_BADS.items() if k in m]
+            V["accepted"].append(f"{m}: {why} (PD16)")
         else:
             V["material" if m in S["material"] else "minor"].append(m)
     for scen, e in S["E1a"].items():
         fv = e["false_veto"]
         if fv["rate"] > FALSE_VETO_MAX:
-            p = float(stats.binom.sf(fv["vetoed"] - 1, fv["resamples"], 0.05))
+            p = float(stats.binom.sf(fv["vetoed"] - 1, fv["resamples"], FALSE_VETO_MAX))
             V["accepted"].append(f"E1(a) {scen}: false-veto rate {fv['rate']:.3f} > 5.7 % ({fv['vetoed']} / "
-                                 f"{fv['resamples']}), accepted as statistical, P(X >= {fv['vetoed']} | 5 %) = {p:.2f} (PD16)")
+                                 f"{fv['resamples']}), accepted as statistical, P(X >= {fv['vetoed']} | 5.7 %) = {p:.2f}; "
+                                 "the scenarios share the resample weights, so their rates are not pooled (PD16)")
     for scen, e in S["E1b"].items():
         for k, r in e["file3"].items():
             if k.startswith("rr|"):

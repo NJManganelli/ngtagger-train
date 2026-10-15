@@ -211,6 +211,7 @@ def kf_update(a, C, t, J, h0, meas, sig, use_dim, relin=True, gate=ORP.CHI2_UPDA
     """Sequential scalar updates (x, y, cotAlpha, cotBeta), ORP.kalman_update's arithmetic,
     returning per scalar the pull r / sqrt(S), r^2 / S and whether it was applied. relin=False
     drops the relinearisation term (the planted known-bad)."""
+    assert len(np.unique(t)) == len(t), "kf_update: repeated tracks (fancy-index += would drop updates)"
     J = J.copy()
     bad = ~np.isfinite(J).all(1) | (np.abs(np.nan_to_num(J, nan=np.inf)) > ORP.JACOBIAN_MAX_ABS).any(1)
     J[np.repeat(bad[:, None, :], 4, 1)] = 0.0
