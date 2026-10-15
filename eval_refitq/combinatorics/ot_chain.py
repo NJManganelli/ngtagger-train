@@ -6,22 +6,21 @@ THE CHAIN, as CMSSW_20_1_0_pre1 runs it for L1TTrack, stage by stage, and what i
              order, with its integer phi / z / r and bend code. A stub in no stream was dropped by the
              DTC. The phi correction (Sector.cc:60-78, VMPhiCorrL<n>) is applied exactly.
   seeding    per sector and barrel seed (L1L2, L2L3, L3L4, L5L6): the VMRouter cuts on the inner stub
-             (VMRouterCM.cc, integer |z|), the tracklet-engine stub-pT LUTs on the pair (TP_<seed>
-             stubpt inner / outer tables, indexed by the fine-phi difference and the bend code), and the
-             tracklet-calculator gates: |rinv| below the 1.91 GeV cut, |z0| < 15 cm (L1L2) or 22.5 cm,
-             and inSector (the phicrit window at rcrit = 55 cm). EMULATED IN FLOAT: the gates use the
-             exact two-stub helix (exacttracklet, the KF prior) instead of the integer calcPars; the
-             VM r/z bin windows of the tracklet engine are not emulated (the z0 gate is their tighter
-             successor).
-  matching   per tracklet and target layer: the exact projection (phiproj, zproj and derivatives at the
-             layer's rmean), the match engine's bend LUT (METable_L<n>, indexed by the projection's
-             5-bit rinv and the stub bend code) and the match processor's integer residual cut
-             (MP_L<n>PHIA phicut / zcut by seed) with its IMPROVING CHAIN (MatchProcessor.cc:684-714):
-             a candidate is kept iff |dphi| <= best and -best <= dz < best, and then becomes the best.
-             EMULATED: the projection is the float one floored to the stub's integer units (CMSSW's
-             IMATH projection can differ by an LSB); the match engine's fine-bin windows are not
-             emulated; candidates arrive in stream order (the `dtc` order mode) or in a seeded random
-             order (`random`), where CMSSW orders them by VM bin and then memory order.
+             (VMRouterCM.cc, integer |z|), the tracklet engine's r-z window (TP_<seed> tables, VMRME) and
+             stub-pT LUTs (TP_<seed> stubpt inner / outer tables, indexed by the fine-phi difference and the
+             bend code), and the tracklet calculator IN INTEGERS (TrackletCalculatorBase calcPars from the
+             DTC words, then barrelSeeding's gates: |irinv| below the 1.91 GeV cut, |iz0| < 15 cm (L1L2) or
+             22.5 cm, and the integer inSector window at rcrit = 55 cm). The float exact two-stub helix
+             (exacttracklet) is kept beside the integers: it is the KF prior, as in CMSSW.
+  matching   per tracklet and target layer: the integer projection (ProjectionCalculator::projLayer from the
+             tracklet's integer parameters, at the layer's rmean, with its validity and edge cuts), the
+             match engine's selection (allstub region, VM bin and the neighbour near an edge, fine phi,
+             z slots and fine z, the bend LUT METable_L<n> indexed by the projection's 5-bit rinv) and the
+             match processor's integer residual with its r corrections (MatchProcessor::matchCalculator),
+             cut by MP_L<n>PHIA phicut / zcut by seed in the IMPROVING CHAIN (:684-714): a candidate is
+             kept iff |dphi| <= best and -best <= dz < best, and then becomes the best. Candidates arrive
+             in the engine's order over the stream (the `dtc` order mode) or in a seeded random order
+             (`random`).
   builder    a tracklet with matches in >= 2 layers becomes a candidate; its stub list is the two seed
              stubs, then the matches by layer (FitTrack.cc:67-89). Two track builders per sector, seeds
              {L1L2, L2L3, L5L6, L2D1} and {L3L4, D1D2, D3D4, L1D1}, each processing tracklets in TCID
@@ -145,6 +144,125 @@ def event_copies(stub, dtc):
                   np.asarray(stub["z"], np.float64)[row])
 
 
+# ---- the tracklet calculator and the projection calculator, in integers ---------------
+# TrackletCalculatorBase::init (barrel seeds): the widths of the tracklet parameters (Settings nbitsrinv 14,
+# nbitsphi0 18, nbitst 15, nbitsz0 11; nphibitsstub(L6) 17, nrbitsstub(D1) + 1 = 12, nzbitsstub(L1) - 1 = 11)
+# and of the intermediate products.
+N_PHI, N_R, N_Z, N_Z0, N_PHI0, N_RINV, N_T = 17, 12, 11, 12, 16, 13, 10
+N_DELTA0, N_DELTAZ, N_DELTA1, N_DELTA2, N_DELTA12, N_A = 9, 9, 10, 12, 13, 15
+N_R6, N_IFACT, N_DELTA02, N_X6, N_IT1, N_HG, N_DELTAR = 6, 12, 12, 16, 5, 15, 24
+# ProjectionCalculator's own copy of the widths: its n_t_ is still 9 (nbitst 14), not the calculator's 10
+PC_N_PHI, PC_N_R, PC_N_Z, PC_N_PHI0, PC_N_RINV, PC_N_T = 17, 12, 11, 16, 13, 9
+PC_N_S, PC_N_S6, PC_N_IV = 12, 14, 4
+KR = D.RMAXDISK / (1 << 12)                     # Settings::kr(): rmaxdisk / 2^(nrbitsstub(D1) + 1)
+
+
+def _idrinv(seed, cache={}):
+    """LUT_idrinv_ (TrackletCalculatorBase::init): 0.5 + float(2^24) / idrabs, the division in float."""
+    if seed not in cache:
+        la, lb = SEEDS[seed]
+        lut = np.zeros(512, np.int64)
+        for idr in range(-256, 256):
+            idrabs = idr + D.IRMEAN[lb - 1] - D.IRMEAN[la - 1]
+            lut[idr % 512] = int(0.5 + float(np.float32(1 << N_DELTAR) / np.float32(idrabs)))
+        cache[seed] = lut
+    return cache[seed]
+
+
+def calc_pars(cp, i, j, seed, k=KF.K):
+    """(irinv, iphi0, iz0, it) of the pair (i inner, j outer): barrelSeeding's integer inputs (the raw
+    DTC phi, r and z, aligned to the L6 / 8-bit r / L1 widths) and calcPars, line for line."""
+    la, lb = SEEDS[seed]
+    ir1 = int(cp.ir[i]) << (8 - D.NRBITS_L[la - 1])
+    ir2 = int(cp.ir[j]) << (8 - D.NRBITS_L[lb - 1])
+    iphi1 = int(cp.iphi[i]) << (N_PHI - D.NPHIBITS_L[la - 1])
+    iphi2 = int(cp.iphi[j]) << (N_PHI - D.NPHIBITS_L[lb - 1])
+    iz1 = int(cp.iz[i]) << (D.NZBITS_L[0] - D.NZBITS_L[la - 1])
+    iz2 = int(cp.iz[j]) << (D.NZBITS_L[0] - D.NZBITS_L[lb - 1])
+    idr = ir2 - ir1
+    if idr < 0:
+        idr += 512
+    r1, r2 = ir1 + D.IRMEAN[la - 1], ir2 + D.IRMEAN[lb - 1]
+    hg = k.dphisector_hg
+    invdr = int(_idrinv(seed)[idr])
+    idelta0 = ((iphi2 - iphi1) * invdr) >> N_DELTA0
+    ideltaz = ((iz2 - iz1) * invdr) >> N_DELTAZ
+    idelta1 = (r1 * idelta0) >> N_DELTA1
+    idelta2 = (r2 * idelta0) >> N_DELTA2
+    idelta12 = (idelta1 * idelta2) >> N_DELTA12
+    ihg = int(hg * hg * (1 << N_HG))
+    ia = (1 << N_A) - ((idelta12 * ihg) >> (2 * N_DELTAR + 2 * N_PHI + N_HG - 2 * N_DELTA0 - N_DELTA1 - N_DELTA2
+                                            - N_DELTA12 + 1 - N_A))
+    ifact = int((1 << N_IFACT) * hg * hg / 6.0)
+    ir6 = ((r1 + r2) * ifact) >> (N_IFACT - N_R6)
+    idelta02 = (idelta0 * idelta2) >> N_DELTA02
+    ix6 = -(1 << N_X6) + ((ir6 * idelta02) >> (N_R6 + 2 * N_DELTAR + 2 * N_PHI - N_X6 - N_DELTA2 - N_DELTA02
+                                                - 2 * N_DELTA0))
+    it1 = (r1 * ideltaz) >> (N_DELTAR - N_DELTAZ - N_IT1)
+    irinv = (((-idelta0 * ia) >> (N_PHI + N_A - N_RINV + N_DELTAR - N_DELTA0 - N_R - 1 - 1)) + 1) >> 1
+    iphi0 = (((iphi1 + ((idelta1 * ix6) >> (N_DELTAR + N_X6 - N_DELTA0 - N_DELTA1))) >> (N_PHI - N_PHI0 - 1))
+             + 1) >> 1
+    it = (((ideltaz * ia) >> (N_DELTAR + N_A + N_Z - N_T - N_DELTAZ - N_R - 1)) + 1) >> 1
+    iz0 = (iz1 << 1) + ((((it1 * ix6) >> (N_X6 + N_IT1 - 2)) + 1) >> 1)
+    return irinv, iphi0, iz0, it
+
+
+def tc_gates(irinv, iphi0, iz0, seed, k=KF.K):
+    """barrelSeeding's rinv and z0 cuts and inSector with usephicritapprox_ false, in integers."""
+    hg = k.dphisector_hg
+    rinvcut = 0.01 * KF.C_TRK * k.b / RINVCUT_PT
+    if not abs(irinv) < rinvcut * (120.0 * (1 << N_RINV)) / hg:
+        return False
+    z0lim = (Z0CUT * (1 << N_Z0) / 120.0 if seed == 0 else 1.5 * Z0CUT * (1 << N_Z0) / 120.0)
+    if not abs(iz0) < z0lim:
+        return False
+    ifactor = int(0.5 * RCRIT * k.krinvpars / k.kphi0pars * (1 << 8))
+    iphicrit = iphi0 - (irinv >> 8) * ifactor
+    phicritminmc = (0.5 * hg - math.pi / KF.N_SECTOR) - DPHICRIT_MC
+    phicritmaxmc = (hg - 0.5 * hg + math.pi / KF.N_SECTOR) + DPHICRIT_MC
+    return iphi0 >= 0 and int(phicritminmc / k.kphi0pars) < iphicrit < int(phicritmaxmc / k.kphi0pars)
+
+
+def proj_layer(ipars, layer, k=KF.K):
+    """ProjectionCalculator for one barrel layer: (iphi, iz, iphider, izder) in the layer's stub units,
+    or None where the calculator drops the projection (outside the z / phi range, or at an extreme z)."""
+    irinv, iphi0, iz0, it = ipars
+    ir = D.IRMEAN[layer - 1]
+    irtilde = int(ir * k.dphisector_hg / math.sqrt(6.0) + 0.5)
+    is_ = (irtilde * irinv) >> PC_N_S
+    is6 = (1 << PC_N_S6) + ((is_ * is_) >> (2 + 2 * PC_N_R + 2 * PC_N_RINV - 2 * PC_N_S - PC_N_S6))
+    iu = (ir * irinv) >> (PC_N_R + PC_N_RINV + 1 - PC_N_PHI)
+    iphi = (iphi0 << (PC_N_PHI - PC_N_PHI0)) - ((iu * is6) >> PC_N_S6)
+    iv = (it * ir) >> (1 + PC_N_R + PC_N_T - PC_N_Z - PC_N_IV)
+    iz = (iz0 + ((iv * is6) >> (PC_N_IV + PC_N_S6 - 1)) + 1) >> 1
+    if not (-(1 << (D.NZBITS_L[0] - 1)) <= iz < (1 << (D.NZBITS_L[0] - 1)) and 0 < iphi < (1 << 17) - 1):
+        return None
+    if layer <= 3:
+        iphi >>= 3
+    else:
+        iz >>= 4
+    nz = D.NZBITS_L[layer - 1]
+    if iz == -(1 << (nz - 1)) or iz == (1 << (nz - 1)) - 1:
+        return None
+    return iphi, iz, -(irinv >> 4), it >> 4
+
+
+def _ilog2(x):
+    """trklet::ilog2: the rounded log2 of an exact power of two."""
+    p = math.log(x) / math.log(2)
+    assert abs(p - round(p)) < 0.1
+    return int(round(p))
+
+
+def mp_shifts(layer, k=KF.K):
+    """MatchProcessor's barrel shifts: (phishift, dzshift, icorrshift, icorzshift)."""
+    kphi0 = k.dphisector_hg / (1 << D.NPHIBITS_L[0])                # Settings::kphi()
+    kphider = kphi0 / KR / 256
+    kzder = 1.0 / 64
+    return (KF.NPHIBITS_L6 - D.NPHIBITS_L[layer - 1], D.NZBITS_L[0] - D.NZBITS_L[layer - 1],
+            _ilog2(D.kphi(layer, k) / (D.kr_barrel() * kphider)), _ilog2(D.kz(layer) / (D.kr_barrel() * kzder)))
+
+
 # ---- tracklets -----------------------------------------------------------------
 @dataclass
 class Tracklet:
@@ -152,12 +270,14 @@ class Tracklet:
     seed: int
     inner: int               # index into Copies
     outer: int
-    rinv: float
+    rinv: float              # exacttracklet on the float stubs: the KF prior
     phi0: float              # relative to the sector's phimin
     t: float
     z0: float
+    ipars: tuple = ()        # (irinv, iphi0, iz0, it): calcPars, which the gates and projections use
     tcid: tuple = ()
     matches: dict = field(default_factory=dict)   # layer -> list of Copies indices (improving-chain order)
+    projs: dict = field(default_factory=dict)     # layer -> proj_layer(), the valid projections
 
 
 def _inner_ok(cp, idx, seed):
@@ -221,39 +341,23 @@ def seed_sector(cp, sector, seed, k=KF.K):
     acc = np.zeros(d.shape, bool)
     acc[ok] = (ti[ii[ok]] > 0) & (to[io[ok]] > 0)
     acc &= rzok
-    rinvcut = 0.01 * KF.C_TRK * k.b / RINVCUT_PT
-    z0cut = Z0CUT if seed == 0 else 1.5 * Z0CUT
-    phicrit_min = 0.5 * k.dphisector_hg - math.pi / KF.N_SECTOR - DPHICRIT_MC
-    phicrit_max = 0.5 * k.dphisector_hg + math.pi / KF.N_SECTOR + DPHICRIT_MC
     res = []
     for a, b in zip(*np.nonzero(acc)):
         i, j = int(inn[a]), int(out[b])
-        r1, z1, p1 = _float_geom(cp, i)
-        r2, z2, p2 = _float_geom(cp, j)
-        rinv, phi0, t, z0 = KF.exact_tracklet(r1, z1, p1, r2, z2, p2, sector, k)
-        if not (abs(rinv) < rinvcut and abs(z0) < z0cut):
+        ipars = calc_pars(cp, i, j, seed, k)
+        if not tc_gates(*ipars[:3], seed, k):
             continue
-        phicrit = phi0 - math.asin(0.5 * RCRIT * rinv)
-        if not (phi0 >= 0 and phicrit_min < phicrit < phicrit_max):
-            continue
-        res.append(Tracklet(sector, seed, i, j, rinv, phi0, t, z0,
-                            tcid=(seed, int(cp.order[i]), int(cp.order[j]))))
+        rinv, phi0, t, z0 = KF.exact_tracklet(*_float_geom(cp, i), *_float_geom(cp, j), sector, k)
+        tr = Tracklet(sector, seed, i, j, rinv, phi0, t, z0, ipars, tcid=(seed, int(cp.order[i]), int(cp.order[j])))
+        for L in TARGETS[seed]:
+            pj = proj_layer(ipars, L, k)
+            if pj is not None:
+                tr.projs[L] = pj
+        res.append(tr)
     return res
 
 
 # ---- projections and matching ------------------------------------------------
-def projection(tr, layer):
-    """Exact projection to the layer's rmean: (phiproj rel. phimin, zproj, phider, zder) or None."""
-    rp = D.rmean(layer)
-    s = 0.5 * rp * tr.rinv
-    if abs(s) >= 1:
-        return None
-    root = math.sqrt(1 - s * s)
-    phiproj = tr.phi0 - math.asin(s)
-    zproj = tr.z0 + tr.t * 2 * math.asin(s) / tr.rinv
-    return phiproj, zproj, -0.5 * tr.rinv / root, tr.t / root
-
-
 NBITS_ALLSTUBS = (3, 2, 2, 2, 2, 2)      # Settings nbitsallstubs_ (barrel)
 NBITS_VMME = (2, 3, 3, 3, 3, 3)          # Settings nbitsvmme_ (barrel)
 NFINEPHI, NFINERZ, ME_BINS_BITS = 3, 3, 3
@@ -263,8 +367,9 @@ VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ 
 def me_candidates(cp, cand, layer, iphiproj, izproj, ps_seed):
     """The match engine's view (MatchProcessor.cc:436-545, MatchEngineUnit.cc:100-200): only stubs of the
     projection's allstub phi region, in the projection's VM bin or the neighbour it looks into near a
-    bin edge, within 3 fine-phi units and the fine-z window (1 for a PS seed, 5 otherwise), in the order
-    the engine reads them: VM bin (minus, then plus), z slot (first, then second), then memory order."""
+    bin edge, within 3 fine-phi units as the engine computes them (a neighbour-bin stub never passes; see
+    dphi below) and the fine-z window (1 for a PS seed, 5 otherwise), in the order the engine reads them:
+    VM bin (minus, then plus), z slot (first, then second), then memory order."""
     nb, nz = D.NPHIBITS_L[layer - 1], D.NZBITS_L[layer - 1]
     nall, nvm = NBITS_ALLSTUBS[layer - 1], NBITS_VMME[layer - 1]
     nvmtot = nall + nvm
@@ -296,7 +401,11 @@ def me_candidates(cp, cand, layer, iphiproj, izproj, ps_seed):
     indexr = (cp.ir[cand] >> (nr - VMR_LUT_RBITS)) & ((1 << VMR_LUT_RBITS) - 1)
     melut = luts().vmrme[layer][(indexz << VMR_LUT_RBITS) + indexr]
     zbin_s, finez_s = melut >> NFINERZ, melut & ((1 << NFINERZ) - 1)
-    dphi = (vm_s * (1 << NFINEPHI) + fine_s) - (vm_p * (1 << NFINEPHI) + fine_p)
+    # MatchEngineUnit::step moves the projection's fine phi by one VM bin for a neighbour-bin stub, with the
+    # OPPOSITE sign to the geometry (-8 for the lower neighbour, +8 for the upper): CMSSW's dphi there is
+    # fine_s - fine_p + 8 (lower) or - 8 (upper), so |dphi| < 3 never holds and neighbour-bin stubs never match.
+    # Reproduced as CMSSW runs it.
+    dphi = fine_s - fine_p - (vm_s - vm_p) * (1 << NFINEPHI)
     slot = np.where(zbin_s == zbin1, 0, np.where((zbin_s == zbin1 + 1) & (zbin2 != zbin1), 1, -1))
     drz = finez_s + slot * (1 << NFINERZ) - finez_p
     drz_cut = 1 if ps_seed else 5
@@ -308,29 +417,20 @@ def me_candidates(cp, cand, layer, iphiproj, izproj, ps_seed):
 
 def match_tracklet(cp, tr, layer, cand, k=KF.K, rng=None):
     """The improving chain of one (tracklet, layer) over the candidate copies `cand` (array of indices,
-    memory order), after the match engine's selection (me_candidates)."""
-    pj = projection(tr, layer)
-    if pj is None:
+    memory order), after the match engine's selection (me_candidates): MatchProcessor::matchCalculator."""
+    if layer not in tr.projs:
         return []
-    phiproj, zproj, phider, zder = pj
-    if not (abs(zproj) < D.ZLENGTH and 0 <= phiproj < k.dphisector_hg):
-        return []
-    L = luts()
-    kp, kzl = D.kphi(layer, k), D.kz(layer)
-    iphiproj = min(math.floor(phiproj / kp), (1 << D.NPHIBITS_L[layer - 1]) - 1)
-    izproj = math.floor(zproj / kzl)
+    iphiproj, izproj, iphider, izder = tr.projs[layer]
     cand = np.asarray(cand)
     if rng is not None:
         cand = rng.permutation(cand)
     cand = me_candidates(cp, cand, layer, iphiproj, izproj, ps_seed=tr.seed in (0, 1))   # Tracklet::PSseed: inner L1 or L2
-    phishift = KF.NPHIBITS_L6 - D.NPHIBITS_L[layer - 1]
-    dzshift = D.NZBITS_L[0] - D.NZBITS_L[layer - 1]
+    L = luts()
     cut_phi = int(L.phicut[layer][tr.seed])
     cut_z = int(L.zcut[layer][tr.seed])
     if cut_phi <= 0 or cut_z <= 0:
         return []
-    kphider = k.dphisector_hg / (1 << D.NPHIBITS_L[0]) / (D.RMAXDISK / (1 << 12)) / 256
-    iphider = int(np.clip(math.floor(phider / kphider), -(1 << (NBITS_PHIDER - 1)), (1 << (NBITS_PHIDER - 1)) - 1))
+    phishift, dzshift, icorrshift, icorzshift = mp_shifts(layer, k)
     projrinv = (1 << (NRINV - 1)) - 1 - (iphider >> (NBITS_PHIDER - NRINV))
     me = L.me[layer]
     best_phi, best_z = cut_phi, cut_z
@@ -338,11 +438,11 @@ def match_tracklet(cp, tr, layer, cand, k=KF.K, rng=None):
     for c in cand:
         if not me[(projrinv << NBEND[layer]) + int(cp.bend[c])]:
             continue
-        dr = cp.r[c] - D.rmean(layer)
-        iphi_proj = math.floor((phiproj + dr * phider) / kp)
-        iz_proj = math.floor((zproj + dr * zder) / kzl + 0.5)
-        dphi = (int(cp.iphi[c]) - iphi_proj) << phishift
-        dz = (int(cp.iz[c]) - iz_proj) << dzshift
+        ir = int(cp.ir[c])
+        iphi = iphiproj + ((ir * iphider) >> icorrshift)
+        iz = izproj + ((ir * izder + (1 << (icorzshift - 1))) >> icorzshift)
+        dphi = (int(cp.iphi[c]) - iphi) << phishift
+        dz = (int(cp.iz[c]) - iz) << dzshift
         if abs(dphi) <= best_phi and -best_z <= dz < best_z:
             best_phi, best_z = abs(dphi), abs(dz)
             kept.append(int(c))
@@ -398,12 +498,12 @@ def build_candidates(cp, sector, tracklets, caps=True):
 
 
 def phi_res(cp, tr, c, k=KF.K):
-    """PurgeDuplicate::getPhiRes: 0 for a seed-layer stub, else |deltaPhi(stub phi, phiproj + phimin)|."""
+    """PurgeDuplicate::getPhiRes: 0 for a seed-layer stub, else |deltaPhi(stub phi, phiproj + phimin)|, with
+    phiproj the integer projection times kphi (ProjectionCalculator)."""
     L = int(cp.layer[c])
     if L in SEEDS[tr.seed]:
         return 0.0
-    pj = projection(tr, L)
-    phiproj = pj[0] + (tr.sector * k.dphisector - 0.5 * k.dphisector_hg)
+    phiproj = tr.projs[L][0] * D.kphi(L, k) + (tr.sector * k.dphisector - 0.5 * k.dphisector_hg)
     return abs(KF.delta_phi(math.atan2(cp.y[c], cp.x[c]), phiproj))
 
 
