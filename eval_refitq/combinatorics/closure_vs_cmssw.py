@@ -94,12 +94,21 @@ def _table(A, e, prefix):
 
 # ---- C0 -------------------------------------------------------------------------------------------
 def _round_mantissa(x, bits):
-    m, ex = np.frexp(np.asarray(x, np.float64))
-    return np.ldexp(np.round(m * (1 << bits)) / (1 << bits), ex)
+    """MiniFloatConverter::reduceMantissaToNbitsRounding (DataFormats/Math/interface/libminifloat.h), the
+    NanoAOD storage of a float column at `bits` mantissa bits."""
+    shift = 23 - bits
+    i = np.asarray(x, np.float32).view(np.uint32).copy()
+    up = (i & np.uint32(1 << (shift - 1))) != 0
+    mant = (i & np.uint32(0x007FFFFF)) >> np.uint32(shift)
+    mant = np.where(up & (mant < np.uint32((1 << bits) - 2)), mant + np.uint32(1), mant)
+    i = np.where(up, (i & np.uint32(0xFF800000)) | (mant << np.uint32(shift)),
+                 i & np.uint32(((0xFFFFFFFF >> shift) << shift) & 0xFFFFFFFF))
+    return i.astype(np.uint32).view(np.float32)
 
 
-def bridge(v4, v3, nev=None):
-    """Every branch of canon_v3 equal in canon_v4 except the declared ones; new branches only the declared."""
+def bridge(v4, v3, nev=None, stub_shift=False):
+    """Every branch of canon_v3 equal in canon_v4 except the declared ones; new branches only the declared.
+    stub_shift (the bridge's known-bad): canon_v4's L1TOTStub columns moved by one event."""
     t4, t3 = uproot.open(f"{v4}:Events"), uproot.open(f"{v3}:Events")
     k4, k3 = set(t4.keys()), set(t3.keys())
     missing = sorted(k3 - k4)
@@ -108,33 +117,38 @@ def bridge(v4, v3, nev=None):
     for k in sorted(k3 & k4):
         a = t4[k].array(library="ak", entry_stop=nev)
         b = t3[k].array(library="ak", entry_stop=nev)
-        if ak.all(ak.num(a, axis=0) == ak.num(b, axis=0)) and _same(a, b):
+        if stub_shift and k.startswith("L1TOTStub_"):
+            a = ak.concatenate([a[1:], a[:1]])
+        if _same(a, b):
             continue
         if k in BRIDGE_DISC:
             declared.append(k)
         elif k in BRIDGE_ROUNDED:
             fa = ak.to_numpy(ak.flatten(a, axis=None))
             fb = ak.to_numpy(ak.flatten(b, axis=None))
-            ok = len(fa) == len(fb) and np.array_equal(
-                _round_mantissa(fa, BRIDGE_ROUNDED[k]).astype(np.float32), fb.astype(np.float32))
+            ok = len(fa) == len(fb) and np.array_equal(_round_mantissa(fa, BRIDGE_ROUNDED[k]),
+                                                       fb.astype(np.float32), equal_nan=True)
             (declared if ok else rounded_bad).append(k)
         else:
             diff.append(k)
     ok = not (missing or new or diff or rounded_bad)
-    return {"stage": "C0 bridge", "v4": v4, "v3": v3, "branches_common": len(k3 & k4),
+    tables = sorted({k.split("_")[0].lstrip("n") for k in diff + rounded_bad})
+    return {"stage": "C0 bridge", "v4": v4, "v3": v3, "stub_shift": stub_shift, "branches_common": len(k3 & k4),
             "missing_in_v4": missing, "undeclared_new": new, "undeclared_differences": diff,
-            "declared_differences": declared, "rounded_columns_not_equal": rounded_bad,
-            "gates": {"bridge": ok}}, ok
+            "tables_differing": tables, "declared_differences": declared,
+            "rounded_columns_not_equal": rounded_bad, "gates": {"bridge": ok}}, ok
 
 
 def _same(a, b):
-    try:
-        fa, fb = ak.to_numpy(ak.flatten(a, axis=None)), ak.to_numpy(ak.flatten(b, axis=None))
-    except ValueError:
-        return ak.to_list(a) == ak.to_list(b)
-    if ak.to_list(ak.num(a, axis=-1) if a.ndim > 1 else []) != ak.to_list(ak.num(b, axis=-1) if b.ndim > 1 else []):
+    """Two branches bit identical (NaN equal to NaN): the same events, counts and values."""
+    if len(a) != len(b):
         return False
-    return len(fa) == len(fb) and np.array_equal(fa, fb, equal_nan=fa.dtype.kind == "f")
+    if a.ndim > 1:
+        if b.ndim != a.ndim or not np.array_equal(ak.to_numpy(ak.num(a, axis=1)), ak.to_numpy(ak.num(b, axis=1))):
+            return False
+        a, b = ak.flatten(a), ak.flatten(b)
+    fa, fb = ak.to_numpy(a), ak.to_numpy(b)
+    return fa.dtype == fb.dtype and np.array_equal(fa, fb, equal_nan=fa.dtype.kind == "f")
 
 
 def twice(f1, f2, nev=None):
@@ -598,6 +612,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="stage", required=True)
     p = sub.add_parser("bridge"); p.add_argument("v4"); p.add_argument("v3")
+    p.add_argument("--stub-shift", action="store_true", help="the known-bad: canon_v4's stubs moved by an event")
     p = sub.add_parser("twice"); p.add_argument("first"); p.add_argument("second")
     p = sub.add_parser("l2l3"); p.add_argument("census"); p.add_argument("cmssw")
     p = sub.add_parser("c1"); p.add_argument("nodr")
@@ -616,7 +631,7 @@ def main():
     a = ap.parse_args()
     OC.set_known_bad(a.known_bad)
     if a.stage == "bridge":
-        rep, ok = bridge(a.v4, a.v3, a.nev)
+        rep, ok = bridge(a.v4, a.v3, a.nev, a.stub_shift)
     elif a.stage == "twice":
         rep, ok = twice(a.first, a.second, a.nev)
     elif a.stage == "l2l3":
