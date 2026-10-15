@@ -32,7 +32,36 @@ import math
 from dataclasses import dataclass, field
 import numpy as np
 
-f32 = np.float32
+# KNOWN-BAD VARIANTS (WP-D plan sec. 3): each departs from CMSSW at one point, so that the closure can show
+# its gates see the departure. KNOWN_BAD is None in every real run; set_known_bad() switches one on, for a
+# known-bad run only (the census keeps it in its cache identity).
+KF_KNOWN_BADS = {
+    "no_quantisation": "the fitted parameters without HybridFit's floor and Track's bin centres",
+    "no_float32": "every float32 cast of CMSSW skipped (double throughout)",
+    "phi0_bin_centre": "phi0 at a +0.5 bin centre",
+    "no_ho_terms": "residual() without the higher-order helix terms",
+    "no_approxb": "matrixV without approxB^2 on tilted modules",
+    "ms_fitted_pt": "the scattering term with the state's fitted pT instead of the seed's",
+    "phi_12bit": "the stub azimuth at 12 mantissa bits (canon_v3's L1TOTStub_phi)",
+    "z0_gate_15": "the state z0 gate at 15 cm",
+    "no_skips": "doKF with no layer skips",
+    "hard_budget_2": "a skip budget of 2 for hard tracks",
+    "keep_first_overflow": "the per-layer cap keeps the first stubs instead of replacing the last",
+}
+KNOWN_BAD = None
+
+
+def set_known_bad(name):
+    """Switch on one of KF_KNOWN_BADS (None: CMSSW)."""
+    global KNOWN_BAD
+    if name is not None and name not in KF_KNOWN_BADS:
+        raise ValueError(f"unknown KF known-bad {name!r}; known: {', '.join(KF_KNOWN_BADS)}")
+    KNOWN_BAD = name
+
+
+def f32(x):
+    """np.float32, CMSSW's cast (no cast under the no_float32 known-bad)."""
+    return np.float64(x) if KNOWN_BAD == "no_float32" else np.float32(x)
 
 # ---- constants -------------------------------------------------------------
 # B: the float32 value of the field at the origin that L1FPGATrackProducer reads
@@ -233,7 +262,11 @@ def make_stub(idx, x, y, z, layer, ps, tilted, barrel=True, strip=None, flipped=
     xd, yd, zd = float(f32(x)), float(f32(y)), float(f32(z))
     lid = int(layer) if barrel else abs(int(layer)) + (10 if zd > 0 else 20)
     alpha = 0.0 if strip is None else l1tstub_alpha(strip, flipped, xd, yd, zd, bool(ps))
-    return KFStub(int(idx), f32(math.atan2(yd, xd)), f32(math.hypot(xd, yd)), f32(zd), lid,
+    phi = math.atan2(yd, xd)
+    if KNOWN_BAD == "phi_12bit":
+        m, e = math.frexp(phi)
+        phi = math.ldexp(round(m * 4096) / 4096, e)
+    return KFStub(int(idx), f32(phi), f32(math.hypot(xd, yd)), f32(zd), lid,
                   bool(ps), bool(tilted), bool(barrel), f32(-alpha))
 
 
@@ -387,12 +420,13 @@ def matrix_v(stub, state, seed):
     b = float(f32(stub.sigma_par * stub.sigma_par))
     r2 = float(f32(stub.r * stub.r))
     invr2 = 1.0 / r2
-    sigma_scat = KF_MULT_SCATT / float(seed.pt)
+    pt = seed.pt if KNOWN_BAD != "ms_fitted_pt" else abs(1.0 / track_params(state, seed)[0])
+    sigma_scat = KF_MULT_SCATT / float(pt)
     vphi = a * invr2 + sigma_scat * sigma_scat
     if not stub.barrel:
         tanl = state.x[T]
         vz = b * (tanl * tanl)
-    elif stub.tilted:
+    elif stub.tilted and KNOWN_BAD != "no_approxb":
         scale = approx_b(stub.z, stub.r)
         vz = b * float(f32(scale * scale))
     else:
@@ -406,6 +440,9 @@ def residual(stub, x, seed):
     """KFbase::residual with kalmanHOhelixExp (barrel; 5 parameters)."""
     vd = np.array([delta_phi(float(stub.phi), sector_phi(seed.isector)), float(stub.z)])
     delta = vd - matrix_h(stub) @ x
+    if KNOWN_BAD == "no_ho_terms":
+        delta[0] = delta_phi(delta[0], 0.0)
+        return delta
     inv2r = f32(K.inv_pt_to_inv_r * 0.5 * float(seed.q_over_pt))
     tanl = f32(x[T])
     corr = float(f32(stub.r * inv2r))
@@ -455,7 +492,7 @@ def is_good_state(state, seed):
     q, _, z0, _, _ = track_params(state, seed)
     pt = abs(1.0 / q)
     good = True
-    if abs(z0) > KF_Z0_CUT5[n]:
+    if abs(z0) > (min(KF_Z0_CUT5[n], 15.0) if KNOWN_BAD == "z0_gate_15" else KF_Z0_CUT5[n]):
         good = False
     if pt < HOUGH_MIN_PT - KF_PT_TOLER[n]:
         good = False
@@ -483,13 +520,17 @@ def do_kf(seed, stubs):
         lst = layer_stubs.setdefault(kl, [])
         if len(lst) < KF_MAX_STUBS_PER_LAYER:
             lst.append(s)
-        else:
+        elif KNOWN_BAD != "keep_first_overflow":
             lst[-1] = s                                       # "FW keeps the last stub"
     best_by_n = {}
     prev = [initial_state(seed)]
     max_iter = max(6, KF_MAX_STUBS)
     easy = seed.n_input < KF_MAX_STUBS_EASY
     max_skip = KF_MAX_SKIP_EASY if easy else KF_MAX_SKIP_HARD
+    if KNOWN_BAD == "no_skips":
+        max_skip = 0
+    elif KNOWN_BAD == "hard_budget_2":
+        max_skip = KF_MAX_SKIP_EASY
     for iteration in range(max_iter):
         new_states = []
         for st in prev:
@@ -604,6 +645,9 @@ def fitted_output(state, seed, k=K):
     # HybridFit.cc:198-221
     phi0fit = reduce_phi(float(phi0) - seed.isector * 2 * math.pi / N_SECTOR + 0.5 * k.dphisector_hg)
     rinvfit = 0.01 * C_TRK * k.b * float(q)
+    if KNOWN_BAD == "no_quantisation":
+        out.track = (rinvfit, reduce_phi(phi0fit + sector_phimin(seed.isector, k)), float(tanl), float(z0), float(d0))
+        return out
     out.ipars, out.track = track_from_ipars(math.floor(rinvfit / k.krinvpars), math.floor(phi0fit / k.kphi0pars),
                                             math.floor(float(d0) / k.kd0pars), math.floor(float(tanl) / k.ktpars),
                                             math.floor(float(z0) / k.kz0pars), seed.isector, k)
@@ -623,5 +667,7 @@ def track_from_ipars(irinv, iphi0, id0, it, iz0, isector, k=K):
     if iz0 <= -half_z0:
         iz0 = 1 - half_z0
     return ((irinv, iphi0, id0, it, iz0),
-            ((irinv + 0.5) * k.krinvpars, reduce_phi(iphi0 * k.kphi0pars + sector_phimin(isector, k)),
+            ((irinv + 0.5) * k.krinvpars,
+             reduce_phi((iphi0 + (0.5 if KNOWN_BAD == "phi0_bin_centre" else 0.0)) * k.kphi0pars
+                        + sector_phimin(isector, k)),
              (it + 0.5) * k.ktpars, (iz0 + 0.5) * k.kz0pars, (id0 + 0.5) * k.kd0pars))

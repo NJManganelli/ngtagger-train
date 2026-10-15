@@ -74,6 +74,33 @@ VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ 
 
 # the emulated logic's version: bump it when a stage changes (a hash of the tables cannot see that)
 CHAIN_VERSION = 1
+# KNOWN-BAD VARIANTS of the chain (WP-D plan sec. 3), like cmssw_kf.KF_KNOWN_BADS: None in every real run;
+# set_known_bad() switches one on (a chain variant here, a fit variant in cmssw_kf) for a known-bad run.
+CHAIN_KNOWN_BADS = {
+    "a0_off": "the tracklet calculator's rinv, z0 and inSector gates off",
+    "gates_float": "the tracklet gates on the float exact helix instead of calcPars' integers",
+    "insector_off": "the inSector gate off",
+    "mp_first_in_window": "the match processor keeps the first candidate inside the cuts, no improving chain",
+    "nshare_2": "duplicate removal at 2 shared layers instead of 3",
+    "comparators_unlimited": "duplicate removal without the 32-comparator limit",
+    "dr_cap_off": "duplicate removal without the 108-candidate input cap",
+    "kf_preferred_only": "a merged track fitted on its preferred candidate's stubs only",
+    "comparebest_stub_r": "the duplicate-removal residual at the stub's radius instead of the layer's",
+    "score_dr": "the census's score DR on the fitted no-DR tracks instead of merge DR",
+    "l2l3_no_z52": "the L2L3 seed without its |z| >= 50 / 52 cm inner-stub cuts",
+    "dtc_acceptance_ignored": "the census table keeps the stubs the DTC dropped (census chain only)",
+}
+KNOWN_BAD = None
+
+
+def set_known_bad(name):
+    """Switch on one known-bad variant, of the chain (CHAIN_KNOWN_BADS) or of the fit (cmssw_kf); None: none."""
+    global KNOWN_BAD
+    if name is not None and name not in CHAIN_KNOWN_BADS and name not in KF.KF_KNOWN_BADS:
+        raise ValueError(f"unknown known-bad {name!r}; known: "
+                         f"{', '.join(list(CHAIN_KNOWN_BADS) + list(KF.KF_KNOWN_BADS))}")
+    KNOWN_BAD = name if name in CHAIN_KNOWN_BADS else None
+    KF.set_known_bad(name if name in KF.KF_KNOWN_BADS else None)
 _TABLE_SHA = {}
 
 
@@ -274,8 +301,8 @@ def calc_pars(cp, i, j, seed, k=KF.K):
     return irinv, iphi0, iz0, it
 
 
-def tc_gates(irinv, iphi0, iz0, seed, k=KF.K):
-    """barrelSeeding's rinv and z0 cuts and inSector with usephicritapprox_ false, in integers."""
+def tc_gates(irinv, iphi0, iz0, seed, k=KF.K, in_sector=True):
+    """barrelSeeding's rinv and z0 cuts and (in_sector) inSector with usephicritapprox_ false, in integers."""
     hg = k.dphisector_hg
     rinvcut = 0.01 * KF.C_TRK * k.b / RINVCUT_PT
     if not abs(irinv) < rinvcut * (120.0 * (1 << N_RINV)) / hg:
@@ -283,11 +310,27 @@ def tc_gates(irinv, iphi0, iz0, seed, k=KF.K):
     z0lim = (Z0CUT * (1 << N_Z0) / 120.0 if seed == 0 else 1.5 * Z0CUT * (1 << N_Z0) / 120.0)
     if not abs(iz0) < z0lim:
         return False
+    if not in_sector:
+        return True
     ifactor = int(0.5 * RCRIT * k.krinvpars / k.kphi0pars * (1 << 8))
     iphicrit = iphi0 - (irinv >> 8) * ifactor
     phicritminmc = (0.5 * hg - math.pi / KF.N_SECTOR) - DPHICRIT_MC
     phicritmaxmc = (hg - 0.5 * hg + math.pi / KF.N_SECTOR) + DPHICRIT_MC
     return iphi0 >= 0 and int(phicritminmc / k.kphi0pars) < iphicrit < int(phicritmaxmc / k.kphi0pars)
+
+
+def _gates(ipars, floats, seed, k=KF.K):
+    """The tracklet calculator's gates: tc_gates, or a known-bad variant of them."""
+    if KNOWN_BAD == "a0_off":
+        return True
+    if KNOWN_BAD == "gates_float":
+        rinv, phi0, z0 = floats
+        hg = k.dphisector_hg
+        phicrit = phi0 - math.asin(0.5 * RCRIT * rinv)
+        return (abs(rinv) < 0.01 * KF.C_TRK * k.b / RINVCUT_PT and abs(z0) < Z0CUT * (1.0 if seed == 0 else 1.5)
+                and phi0 >= 0 and (0.5 * hg - math.pi / KF.N_SECTOR) - DPHICRIT_MC < phicrit
+                < (hg - 0.5 * hg + math.pi / KF.N_SECTOR) + DPHICRIT_MC)
+    return tc_gates(*ipars[:3], seed, k, in_sector=KNOWN_BAD != "insector_off")
 
 
 def proj_layer(ipars, layer, k=KF.K):
@@ -311,7 +354,10 @@ def proj_layer(ipars, layer, k=KF.K):
     nz = D.NZBITS_L[layer - 1]
     if iz == -(1 << (nz - 1)) or iz == (1 << (nz - 1)) - 1:
         return None
-    return iphi, iz, -(irinv >> 4), it >> 4
+    iphider, izder = -(irinv >> 4), it >> 4
+    if not -(1 << (NBITS_PHIDER - 1)) <= iphider < (1 << (NBITS_PHIDER - 1)):
+        return None        # beyond the 10-bit derivative word: only a tracklet past the rinv gate (a0_off)
+    return iphi, iz, iphider, izder
 
 
 def _ilog2(x):
@@ -354,6 +400,8 @@ def _inner_ok(cp, idx, seed):
     ok = absz <= VMR_ZMAX / kzl
     if L == 2:
         ok = (absz >= VMR_ZMIN_L2 / kzl) & (np.abs(cp.z[idx]) >= ZCUT_L2L3_LUT)
+        if KNOWN_BAD == "l2l3_no_z52":
+            ok = np.ones(len(idx), bool)
     return ok
 
 
@@ -384,7 +432,10 @@ def te_rz_window(cp, inn, out, seed):
     in_first = obin[None, :] == start[:, None]
     in_next = (nxt[:, None] == 1) & (obin[None, :] == start[:, None] + 1)
     rz = np.where(in_next, ofine[None, :] + (1 << NFINERZ), ofine[None, :])
-    return (in_first | in_next) & (rz >= first[:, None]) & (rz - first[:, None] <= diffmax[:, None])
+    win = (in_first | in_next) & (rz >= first[:, None]) & (rz - first[:, None] <= diffmax[:, None])
+    if KNOWN_BAD == "l2l3_no_z52":
+        win |= (lut < 0)[:, None]          # the table's cut entries: no r-z restriction
+    return win
 
 
 def _phi_region(cp, idx, layer):
@@ -451,9 +502,9 @@ def seed_sector(cp, sector, seed, k=KF.K, work=None):
             for a, b in zip(*np.nonzero(acc)):
                 i, j = int(inn[a]), int(out[b])
                 ipars = calc_pars(cp, i, j, seed, k)
-                if not tc_gates(*ipars[:3], seed, k):
-                    continue
                 rinv, phi0, t, z0 = KF.exact_tracklet(*_float_geom(cp, i), *_float_geom(cp, j), sector, k)
+                if not _gates(ipars, (rinv, phi0, z0), seed, k):
+                    continue
                 tr = Tracklet(sector, seed, i, j, rinv, phi0, t, z0, ipars,
                               tcid=(seed, tp.index, mpos, int(cp.order[i]), int(cp.order[j])))
                 for L in TARGETS[seed]:
@@ -544,6 +595,9 @@ def match_tracklet(cp, tr, layer, cand, k=KF.K, rng=None):
         iz = izproj + ((ir * izder + (1 << (icorzshift - 1))) >> icorzshift)
         dphi.append((int(cp.iphi[c]) - iphi) << phishift)
         dz.append((int(cp.iz[c]) - iz) << dzshift)
+    if KNOWN_BAD == "mp_first_in_window":
+        inside = [i for i, (p, z) in enumerate(zip(dphi, dz)) if abs(p) <= cut_phi and -cut_z <= z < cut_z]
+        return [cand[i] for i in inside[:1]]
     return [cand[i] for i in improving_chain(dphi, dz, cut_phi, cut_z)]
 
 
@@ -622,13 +676,15 @@ def phi_res(cp, tr, c, k=KF.K):
     if L in SEEDS[tr.seed]:
         return 0.0
     phiproj = tr.projs[L][0] * D.kphi(L, k) + (tr.sector * k.dphisector - 0.5 * k.dphisector_hg)
+    if KNOWN_BAD == "comparebest_stub_r":
+        phiproj -= (math.hypot(cp.x[c], cp.y[c]) - D.rmean(L)) * 0.5 * tr.rinv
     return abs(KF.delta_phi(math.atan2(cp.y[c], cp.x[c]), phiproj))
 
 
 def dr_input(cands, caps=True):
     """PurgeDuplicate's input in one sector: the candidates of builder 0, then builder 1, up to 108 (caps)."""
     inp = [c for tb in (0, 1) for c in cands if c.tb == tb]
-    return inp[:DR_MAX] if caps else inp
+    return inp[:DR_MAX] if caps and KNOWN_BAD != "dr_cap_off" else inp
 
 
 def merge_dr(cp, cands, caps=True, k=KF.K):
@@ -658,11 +714,11 @@ def merge_dr(cp, cands, caps=True, k=KF.K):
         if merged[i]:
             continue
         cm += 1
-        if caps and cm > DR_COMPARED:
+        if caps and cm > DR_COMPARED and KNOWN_BAD != "comparators_unlimited":
             continue
         for j in range(i + 1, n):
             share = sum(1 for L, pi in best[i].items() if L in best[j] and ids[i][pi] == ids[j][best[j][L]])
-            if share >= MIN_SHARE:
+            if share >= (2 if KNOWN_BAD == "nshare_2" else MIN_SHARE):
                 dup[i, j] = dup[j, i] = True
                 merged[j] = True
     rejected = np.zeros(n, bool)
@@ -670,7 +726,8 @@ def merge_dr(cp, cands, caps=True, k=KF.K):
         for j in range(i + 1, n):
             if dup[i, j]:
                 have = {(int(cp.layer[c]), int(cp.row[c])) for c in lists[i]}
-                lists[i] = lists[i] + [c for c in lists[j] if (int(cp.layer[c]), int(cp.row[c])) not in have]
+                if KNOWN_BAD != "kf_preferred_only":
+                    lists[i] = lists[i] + [c for c in lists[j] if (int(cp.layer[c]), int(cp.row[c])) not in have]
                 rejected[j] = True
     return [(srt[i].tracklet, lists[i]) for i in range(n) if not rejected[i]]
 
@@ -709,13 +766,36 @@ def run_copies(cp, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, collect=N
             if out.accepted and out.consistent_sector:
                 nodr.append(Track(sector, c.tracklet.seed, tuple(s.idx for s in out.stubs), out,
                                   tuple(int(cp.row[x]) for x in c.stubs), c.tracklet))
-        if do_dr:
+        if do_dr and KNOWN_BAD == "score_dr":
+            dr += score_dr([t for t in nodr if t.sector == sector])
+        elif do_dr:
             for tr, lst in merge_dr(cp, cands, caps, k):
                 out = fit(cp, tr, lst, k)
                 if out.accepted and out.consistent_sector:
                     dr.append(Track(sector, tr.seed, tuple(s.idx for s in out.stubs), out,
                                     tuple(int(cp.row[x]) for x in lst), tr))
     return nodr, dr
+
+
+def score_dr(tracks):
+    """The census's score DR (seed_arity.duplicate_removal with kf_emulation.rank_score) on fitted tracks, for
+    the score_dr known-bad: best score first (stubs, then chi2 per stub), a track sharing >= 3 stubs with a
+    kept one is dropped."""
+    def score(t):
+        n = len(t.rows)
+        return n - 0.02 * (float(t.out.chi2rphi) + float(t.out.chi2rz)) / max(n, 1)
+    kept, owners = [], {}
+    for t in sorted(tracks, key=score, reverse=True):
+        shared = {}
+        for r in t.rows:
+            for o in owners.get(r, ()):
+                shared[o] = shared.get(o, 0) + 1
+        if shared and max(shared.values()) >= MIN_SHARE:
+            continue
+        for r in t.rows:
+            owners.setdefault(r, []).append(len(kept))
+        kept.append(t)
+    return kept
 
 
 # ---- the census's view: the chain on one census chunk ---------------------------------

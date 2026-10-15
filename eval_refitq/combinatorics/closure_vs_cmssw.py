@@ -618,7 +618,11 @@ def main():
     for p in sub.choices.values():
         p.add_argument("-n", "--nev", type=int, default=None)
         p.add_argument("-o", "--out", default=None)
+        p.add_argument("--known-bad", default=None,
+                       help="run the stage with a known-bad variant of the chain or the fit switched on "
+                            "(c1, c1b; the censuses of c23 / floor carry their own)")
     a = ap.parse_args()
+    OC.set_known_bad(a.known_bad)
     if a.stage == "bridge":
         rep, ok = bridge(a.v4, a.v3, a.nev)
     elif a.stage == "twice":

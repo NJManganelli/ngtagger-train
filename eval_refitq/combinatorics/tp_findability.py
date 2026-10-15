@@ -610,6 +610,8 @@ def _unify(I, O, Dt, sigz_ot, bench=None, model=None):
     pop = (O["isBarrel"] > 0) & (eta <= M.ETA_MATCHED)
     dtc_ok = np.zeros(len(eta), bool)
     dtc_ok[Dt["stub"]] = True
+    if OC.KNOWN_BAD == "dtc_acceptance_ignored":
+        dtc_ok[:] = True
     bar = pop & dtc_ok
     n = int(bar.sum())
     phi = np.arctan2(O["y"], O["x"])
@@ -790,19 +792,21 @@ OT_CHAIN_MODES = ("census", "closed")
 _OT_COL = {L: KF.LAYER_ORDER.index(L + 10) for L in range(1, 7)}
 
 
-def ot_chain_config(mode="census", caps=True, order="dtc"):
+def ot_chain_config(mode="census", caps=True, order="dtc", known_bad=None):
     """The census's OT chain configuration (cache identity): mode census or closed; for closed, the caps
-    (on / off) and the match order ("dtc" or "random:<seed>")."""
+    (on / off) and the match order ("dtc" or "random:<seed>"); a known-bad variant (ot_chain.set_known_bad,
+    the WP-D closure's known-bad runs only) in either mode."""
     if mode not in OT_CHAIN_MODES:
         raise SystemExit(f"--ot-chain {mode!r}: one of {', '.join(OT_CHAIN_MODES)}")
+    kb = {} if known_bad is None else {"known_bad": known_bad}
     if mode == "census":
-        return dict(OT_CHAIN_DEFAULT)
+        return {**OT_CHAIN_DEFAULT, **kb}
     if order == "dtc":
-        return {"mode": "closed", "caps": bool(caps), "order": "dtc", "order_seed": 0}
+        return {"mode": "closed", "caps": bool(caps), "order": "dtc", "order_seed": 0, **kb}
     kind, _, sd = order.partition(":")
     if kind != "random" or not sd.isdigit():
         raise SystemExit(f"--ot-order {order!r}: 'dtc' or 'random:<seed>'")
-    return {"mode": "closed", "caps": bool(caps), "order": "random", "order_seed": int(sd)}
+    return {"mode": "closed", "caps": bool(caps), "order": "random", "order_seed": int(sd), **kb}
 
 
 def closed_entries(seeds, builds):
@@ -1303,6 +1307,11 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     pos_arb = POS_ARB_DEFAULT if pos_arb is None else pos_arb
     model = CA.Model() if model is None else model
     ot_chain = dict(OT_CHAIN_DEFAULT) if ot_chain is None else ot_chain
+    # a known-bad census (WP-D closure) runs with its variant switched on, before the cache is read or built
+    try:
+        OC.set_known_bad(ot_chain.get("known_bad"))
+    except ValueError as e:
+        raise SystemExit(str(e)) from None
     if bench is not None and "prediction" in ang.keys.values():
         raise SystemExit("the prediction table key reads unquantised angles: not with --alpha-bits")
     cut_stages = [s for s in ("veto", "pair_alpha", "pair_z0", "pair_joint", "attach",
@@ -1861,6 +1870,9 @@ def main():
                     help="closed arm: the track builder, DR input and comparator caps")
     ap.add_argument("--ot-order", default="dtc",
                     help="closed arm: the match order, 'dtc' or 'random:<seed>'")
+    ap.add_argument("--ot-known-bad", default=None,
+                    help="a known-bad variant of the OT chain or fit (ot_chain.CHAIN_KNOWN_BADS, "
+                         "cmssw_kf.KF_KNOWN_BADS), for the WP-D closure's known-bad runs only")
     ap.add_argument("-o", "--out", default=None, help="write the seed table as JSON")
     a = ap.parse_args()
     if (a.alpha_bits is None) != (a.beta_bits is None):
@@ -1895,7 +1907,7 @@ def main():
               bench=((a.alpha_bits, a.beta_bits)
                      if a.alpha_bits and a.beta_bits else None),
               d0_window_cm=a.d0_window_cm, it_ptmin=a.it_ptmin,
-              ot_chain=ot_chain_config(a.ot_chain, a.ot_caps == "on", a.ot_order))
+              ot_chain=ot_chain_config(a.ot_chain, a.ot_caps == "on", a.ot_order, a.ot_known_bad))
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "
