@@ -567,6 +567,13 @@ class Track:
     rows: tuple              # L1TOTStub rows of the fitted stubs
     out: object              # cmssw_kf.FitOutput
     input_rows: tuple        # the candidate's input stub rows
+    tracklet: object = None  # the (preferred) Tracklet
+
+
+def kf_region(rinv, phi0, t, z0, k=KF.K):
+    """The KF eta region (KFbase::kalmanLayer's, from HybridFit's seed) of a tracklet's float parameters:
+    0-3 is the barrel the closure judges (z0 + 50 t inside |eta| 0.9)."""
+    return KF.kf_eta_region(KF.make_seed(rinv, phi0, t, z0, 0, 0, k).eta_reg)
 
 
 def kf_stub(cp, c):
@@ -693,13 +700,13 @@ def run_copies(cp, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, collect=N
             out = fit(cp, c.tracklet, c.stubs, k)
             if out.accepted and out.consistent_sector:
                 nodr.append(Track(sector, c.tracklet.seed, tuple(s.idx for s in out.stubs), out,
-                                  tuple(int(cp.row[x]) for x in c.stubs)))
+                                  tuple(int(cp.row[x]) for x in c.stubs), c.tracklet))
         if do_dr:
             for tr, lst in merge_dr(cp, cands, caps, k):
                 out = fit(cp, tr, lst, k)
                 if out.accepted and out.consistent_sector:
                     dr.append(Track(sector, tr.seed, tuple(s.idx for s in out.stubs), out,
-                                    tuple(int(cp.row[x]) for x in lst)))
+                                    tuple(int(cp.row[x]) for x in lst), tr))
     return nodr, dr
 
 
