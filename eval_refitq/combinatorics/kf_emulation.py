@@ -1119,6 +1119,11 @@ TRACK_COLS = (
     # --- truth diagnostic (format >= 32): how many TPs share the largest credit
     # count; >= 2 is a tie, which gives no owner (majority_owner, as CMSSW)
     "n_tp_top",
+    # --- the angles' compatibility with the track (format >= 34), exported for
+    # later MVAs: S6's statistic over both angles, the final-state angle chi2 per
+    # angle measurement, and the number of measurements (n_alpha + n_beta; not
+    # 2 x n_angle, which counts clusters, when an angle word overflowed)
+    "n_angle_meas", "chi2_angle_per_meas",
 )
 N_TRACK_COLS = len(TRACK_COLS)
 # columns the quality MVA trains on; the rest are identity, fitted kinematics or
@@ -1131,7 +1136,10 @@ MVA_FEATURES = tuple(c for c in TRACK_COLS if c not in (
     "tp_d0",
     "tp_z0", "tp_phi0",
     "d_kappa", "d_phi0", "d_d0", "d_cot", "d_z0",
-    "n_tp_majority", "n_tp_top"))
+    "n_tp_majority", "n_tp_top",
+    # exported for later MVAs, not fed to this one (whose angle features stay
+    # n_angle, chi2_angle_per_cl and the pulls)
+    "n_angle_meas", "chi2_angle_per_meas"))
 SYS_IT, SYS_OT, SYS_MIX = 0, 1, 2
 # the MVA features that carry SmartPixels angle information: withheld when a
 # census runs without S8. rank_score EMBEDS the angle chi2 whenever the DR rank
@@ -1259,6 +1267,8 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank):
         "n_ot": is_ot.sum(axis=1).astype(np.float64),
         "n_angle": nang.astype(np.float64),
         "chi2_angle_per_cl": c2a / np.maximum(nang, 1),
+        "n_angle_meas": fit["n_angle_meas"].astype(np.float64),
+        "chi2_angle_per_meas": c2a / np.maximum(fit["n_angle_meas"], 1),
         "max_angle_pull": srt[:, 0],
         "second_angle_pull": srt[:, 1] if srt.shape[1] > 1 else srt[:, 0],
         "max_pos_pull": ppos.max(axis=1),

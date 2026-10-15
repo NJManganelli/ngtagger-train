@@ -125,7 +125,8 @@ class AngleImport(Item):
                "s2z": {"bins": [], "thr": []}, "win": {"bins": [[0, 10203, 3, 1, 2.0]], "thr": {"ab": [[3.0, 4.0]]}},
                "s6": {"bins": [["AAAA", "ab", "emitted", "ab", 4]], "thr": [20.0]}}
         TF = ctx.script_module(CENSUS_DIR, "tp_findability")
-        ang = M.AngleUse.parse(off="kf" if variant == "cutfile" else "")
+        # S5 stated explicitly: the synthetic file's S6 entry was made with S5 on
+        ang = M.AngleUse.parse("all", off="kf" if variant == "cutfile" else "")
         run = TF.cut_identity(ang, None, None, 2.0, None, ["AAAA", "AAAI", "IAAA"])   # the census's own identity
         try:
             CA.CutSet(doc).check(model, run)

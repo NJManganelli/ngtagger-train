@@ -1246,6 +1246,12 @@ ANGLE_STAGES = {
     "dr": ("S7", "duplicate-removal ranking: angle chi2 weight"),
     "mva": ("S8", "quality-MVA angle features"),
 }
+# THE DEFAULT: every stage but S5 (physicist, 2026-10-15). In the fit the angles "add far too
+# little" (measured on CAL: switching S5 moves the final state by ~1e-6 and the angle chi2 by a
+# median relative 4e-5), "while they have good value in MVAs afterwards as signs of
+# contamination/compatibility" -- S6, S7 and S8 read them against the position-only track. S5
+# stays a switch ('all' or --angle-stages ...,kf turns it on).
+DEFAULT_STAGES = frozenset(ANGLE_STAGES) - {"kf"}
 # what use_angles=True meant before the stages existed: the seeding gates only
 LEGACY_ANGLE_STAGES = ("veto", "pair_alpha", "pair_z0", "pair_joint")
 # THE STAGES THAT READ BOTH ANGLES, each switchable per angle (WP-D0b): what
@@ -1338,8 +1344,9 @@ class AngleUse:
         return cls(LEGACY_ANGLE_STAGES if x else ())
 
     @classmethod
-    def parse(cls, on="all", off="", sets="", keys="", **params):
-        """From CLI lists: stage names or their S-labels, 'all' or 'none'; per-angle
+    def parse(cls, on="default", off="", sets="", keys="", **params):
+        """From CLI lists: stage names or their S-labels, 'default' (DEFAULT_STAGES),
+        'all' or 'none'; per-angle
         sets as 'S3=alpha,S5=beta,S6=' (stage=angles separated by '+', empty =
         none); keys as 'S4a=emitted,S5=prediction'."""
         alias = {v[0].lower(): k for k, v in ANGLE_STAGES.items()}
@@ -1360,6 +1367,8 @@ class AngleUse:
                     continue
                 if t == "all":
                     out |= set(ANGLE_STAGES)
+                elif t == "default":
+                    out |= DEFAULT_STAGES
                 elif t in ("s2", "s4"):        # a whole family
                     out |= {k for k, v in ANGLE_STAGES.items()
                             if v[0].lower().startswith(t)}

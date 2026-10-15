@@ -124,7 +124,7 @@ def test_census_identity_is_accepted_by_its_cut_file():
     """The census's own run identity (tp_findability.cut_identity), not a hand-made one: the S6 build
     keys are the fit's (one mask -> its name; was 'A+A+A+A', which refused every cut file)."""
     import tp_findability as TF
-    ang = M.AngleUse.parse()
+    ang = M.AngleUse.parse("all")
     run = TF.cut_identity(ang, None, None, 2.0, None, ["AAAA", "AAAI", "IAAA"])
     assert run["builds"] == ["AAAA", "AAAI", "IAAA"]
     assert run["s6"] == ("ab", "emitted", "ab")
@@ -132,6 +132,17 @@ def test_census_identity_is_accepted_by_its_cut_file():
     C.check(_Model(), run)
     with pytest.raises(SystemExit):
         C.check(_Model(), TF.cut_identity(M.AngleUse.parse(off="kf"), None, None, 2.0, None, ["AAAA"]))
+
+def test_s5_is_off_by_default_and_a_switch():
+    """Physicist, 2026-10-15: every stage but S5 by default; 'all' or naming kf turns it on."""
+    import tp_findability as TF
+    assert M.DEFAULT_STAGES == frozenset(M.ANGLE_STAGES) - {"kf"}
+    assert M.AngleUse.parse().on == M.DEFAULT_STAGES
+    assert not M.AngleUse.parse()("kf") and M.AngleUse.parse("all")("kf")
+    assert M.AngleUse.parse("default,kf").on == frozenset(M.ANGLE_STAGES)
+    assert M.AngleUse.parse(off="dr").on == M.DEFAULT_STAGES - {"dr"}
+    run = TF.cut_identity(M.AngleUse.parse(), None, None, 2.0, None, ["AAAA"])
+    assert run["s6"] == ("off", "emitted", "ab")
 
 def test_s6_per_n_keeps_99_percent_per_populated_n():
     n = np.repeat([2, 4, 6, 8], 4000)

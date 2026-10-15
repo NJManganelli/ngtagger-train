@@ -90,7 +90,12 @@ IT_REQUIRED = (IT_MODULE_COL,)
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 33   # 33: THE ANGLE IMPORT (WP-D0b; sheet angle.error_table,
+FORMAT_VERSION = 34   # 34: S5 OFF BY DEFAULT (physicist, 2026-10-15: the angles "add far
+                      # too little" in the fit; M.DEFAULT_STAGES, a switch as before) and
+                      # the angle compatibility exported per track for later MVAs:
+                      # track columns n_angle_meas and chi2_angle_per_meas appended
+                      # (S6's statistic over both angles).
+                      # 33: THE ANGLE IMPORT (WP-D0b; sheet angle.error_table,
                       # angle.cut_level, angle.k_knob): every angle comes from the
                       # shared angle module and the locked table p03.table.v1a1e
                       # (census_angles): per cluster the knob (k per angle, fixed /
@@ -468,7 +473,7 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0,
     `ang` is the census's M.AngleUse (None: every stage), `pos_arb` its position
     arbitration (M.POS_ARB; None: POS_ARB_DEFAULT).
     """
-    ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
+    ang = M.AngleUse(M.DEFAULT_STAGES) if ang is None else ang
     pos_arb = POS_ARB_DEFAULT if pos_arb is None else pos_arb
     formed, F, err = None, None, None
     for s_i, sd in enumerate(seeds):
@@ -784,7 +789,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         if it_ptmin is None:
             return min_it_layers, min_ot_conf   # one floor: rule applies to all
         return (min_it_layers, min_ot_conf) if sd.soft else (None, 0)
-    ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
+    ang = M.AngleUse(M.DEFAULT_STAGES) if ang is None else ang
     # every fit of the census: angles in the update only under S5, with its
     # angle set and table key (the census angle model's sigmas)
     fopt = {"use_angles": ang("kf"), "angles": tuple(sorted(ang.angles["kf"])),
@@ -1065,7 +1070,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     # kf_opts IS part of the identity. It changes the quality columns in every
     # shard, so a cache built with one angle weighting or d0 prior must not be
     # silently extended by a run using another.
-    ang = M.AngleUse(M.ANGLE_STAGES) if ang is None else ang
+    ang = M.AngleUse(M.DEFAULT_STAGES) if ang is None else ang
     pos_arb = POS_ARB_DEFAULT if pos_arb is None else pos_arb
     model = CA.Model() if model is None else model
     if bench is not None and "prediction" in ang.keys.values():
@@ -1559,10 +1564,11 @@ def main():
                          "Z0_RANGE (every beta use derives from it). Both must "
                          "be given together.")
     stages = "; ".join(f"{v[0]}={k}: {v[1]}" for k, v in M.ANGLE_STAGES.items())
-    ap.add_argument("--angle-stages", default="all",
+    ap.add_argument("--angle-stages", default="default",
                     help="where the SmartPixels angles are used: comma list of "
-                         "stages (names or S-labels; S2/S4 = the family), 'all' "
-                         f"or 'none'. Stages: {stages}")
+                         "stages (names or S-labels; S2/S4 = the family), "
+                         "'default' (every stage but S5), 'all' or 'none'. "
+                         f"Stages: {stages}")
     ap.add_argument("--angle-stages-off", default="",
                     help="stages to remove from --angle-stages (leave-one-out)")
     ap.add_argument("--pos-arb", default=POS_ARB_DEFAULT, choices=M.POS_ARB,
