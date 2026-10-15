@@ -1775,7 +1775,11 @@ def alpha_veto(D, Q, idxL, kmax, displaced, ang=None):
         if ang.cuts_open:
             k = np.ones(len(idxL), bool)
         else:
-            k = st <= ang.cuts.s1_thr(floor, Q["row"][idxL])
+            # S1 TESTS SMARTPIXELS CLUSTERS ONLY. An OT stub has no SmartPixels angle (its
+            # components are NaN, so its statistic is NaN, which no threshold passes): it is a
+            # wildcard here as at every other stage. Until 2026-10-15 the comparison vetoed every
+            # OT stub of a cut run -- every OT-seeded entry and every OT follow hit (runs KG, G).
+            k = (D["layer"][idxL] > 4) | (st <= ang.cuts.s1_thr(floor, Q["row"][idxL]))
     else:
         k = np.abs(Q["kap_a"][idxL]) <= kmax + NSIG * Q["s_kap"][idxL]
     k |= Q["ovf_a"][idxL] & displaced      # displaced KEEPS alpha overflow

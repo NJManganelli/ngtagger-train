@@ -135,6 +135,24 @@ def test_census_identity_is_accepted_by_its_cut_file():
         C.check(_Model(), TF.cut_identity(M.AngleUse.parse("all", off="kf"), None, None, 2.0, None, ["AAAA"]))
 
 
+def test_s1_tests_smartpixels_clusters_only():
+    """S1 with a cut file: an OT stub (the model's OT fill: NaN components, so a NaN statistic) is a
+    wildcard and passes; IT clusters are cut at their row's threshold. Until 2026-10-15 every OT stub
+    of a cut run was vetoed (KG, G: every OT-seeded entry empty)."""
+    ot = {**CA.COMP_FILL, **CA.CORR_FILL, **M.OT_STUB_ANGLES}
+    Q = {"half_c": np.array([0.0, 0.5, ot["half_c"], ot["half_c"]]),
+         "s_half_c": np.array([0.01, 0.01, ot["s_half_c"], ot["s_half_c"]]),
+         "r": np.array([3.0, 3.0, ot["r"], ot["r"]]),
+         "row": np.array([3, 3, ot["row"], ot["row"]]),
+         "ovf_a": np.zeros(4, bool), "dir_ok": np.array([True, True, ot["dir_ok"], ot["dir_ok"]])}
+    D = {"layer": np.array([1, 1, 12, 13])}
+    ang = M.AngleUse.parse("all")
+    ang.model = object.__new__(CA.Model)               # s1 reads only Q
+    ang.cuts = CA.CutSet(_doc())                        # S1 bin (floor 2, row 3) at 2.5
+    assert M.alpha_veto(D, Q, np.arange(4), 0.5, False, ang).tolist() == [0, 2, 3]
+    ang.cuts_open = True
+    assert M.alpha_veto(D, Q, np.arange(4), 0.5, False, ang).tolist() == [0, 1, 2, 3]
+
 def test_s5_and_s6_are_off_by_default_and_switches():
     """Physicist, 2026-10-15: every stage but S5 (angles in the fit) and S6 (the angle cut; a
     feature only, its statistic still exported) by default; 'all' or naming kf / accept turns them on."""
