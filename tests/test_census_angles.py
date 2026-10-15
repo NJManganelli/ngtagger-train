@@ -153,6 +153,25 @@ def test_s1_tests_smartpixels_clusters_only():
     ang.cuts_open = True
     assert M.alpha_veto(D, Q, np.arange(4), 0.5, False, ang).tolist() == [0, 1, 2, 3]
 
+
+def test_nan_guard_counts_it_inputs_only():
+    """The NaN guard (census.angle_nonfinite): a non-finite S1 statistic of an IT cluster with a usable
+    direction is counted; an OT stub's (NaN by construction, a wildcard) is not; outside the census
+    (nonfinite None) nothing is counted."""
+    ot = {**CA.COMP_FILL, **CA.CORR_FILL, **M.OT_STUB_ANGLES}
+    Q = {"half_c": np.array([0.0, 0.0, ot["half_c"]]), "s_half_c": np.array([0.01, np.nan, ot["s_half_c"]]),
+         "r": np.array([3.0, 3.0, ot["r"]]), "row": np.array([3, 3, ot["row"]]),
+         "ovf_a": np.zeros(3, bool), "dir_ok": np.array([True, True, ot["dir_ok"]])}
+    D = {"layer": np.array([1, 2, 12])}
+    ang = M.AngleUse.parse("all")
+    ang.model = object.__new__(CA.Model)
+    ang.cuts = CA.CutSet(_doc())
+    M.alpha_veto(D, Q, np.arange(3), 0.5, False, ang)          # outside the census: no count kept
+    assert ang.nonfinite is None
+    ang.nonfinite = {s: 0 for s in M.NONFINITE_STAGES}
+    M.alpha_veto(D, Q, np.arange(3), 0.5, False, ang)
+    assert ang.nonfinite["S1"] == 1 and sum(ang.nonfinite.values()) == 1
+
 def test_s5_and_s6_are_off_by_default_and_switches():
     """Physicist, 2026-10-15: every stage but S5 (angles in the fit) and S6 (the angle cut; a
     feature only, its statistic still exported) by default; 'all' or naming kf / accept turns them on."""

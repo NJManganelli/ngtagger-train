@@ -5,9 +5,12 @@ the sheet says through the census path, and each per-angle switch removes exactl
 import the census from THIS code root's eval_refitq/combinatorics."""
 from __future__ import annotations
 
+import json
+import os
+
 import numpy as np
 
-from .core import Item, identity, same_input, t_family
+from .core import Item, NotApplicable, identity, same_input, t_family
 
 CENSUS_DIR = "eval_refitq/combinatorics"
 SIGZ = {L: 0.2 for L in range(1, 7)}          # OT stub sigma z: irrelevant to the angle checks
@@ -352,4 +355,61 @@ class AngleSwitches(Item):
                          ) if not why else "; ".join(why)
 
 
-ITEMS = [AngleImport(), KKnob(), AngleSwitches()]
+# ---------------------------------------------------------------- the NaN guard
+class AngleNonFinite(Item):
+    id = "census.angle_nonfinite"
+    title = ("the NaN guard: no stage of a cut run computes a non-finite angle statistic for an IT cluster "
+             "with a usable direction (a NaN fails every threshold and vetoes silently)")
+    c4_row = "a NaN angle statistic vetoes silently (WP-D0b, 2026-10-15: S1 and the OT stubs)"
+    known_bad_desc = ("a missing table width on one surface: IL2's alpha uncertainty set to NaN on the gate input's "
+                      "first events, through the census's own S1 (alpha_veto) with the cut file; its non-finite "
+                      "statistics must be counted")
+    rule_desc = ("the 4-event AAAI+IAAA census with the cut file (census.cut_entries' cut run): the census's NaN-guard "
+                 "counts (non-finite S1, S2a, S2z, S3, S4w, S4a and S6 statistics among IT inputs with a usable "
+                 "direction, M.NONFINITE_STAGES) are present for every stage and all 0; n/a without the cut file")
+    trees = (CENSUS_DIR,)
+
+    def compute(self, ctx):
+        from .items_census import CUT_FILE, CutEntries
+
+        if not os.path.exists(CUT_FILE):
+            raise NotApplicable(f"no angle cut file at {CUT_FILE}")
+        out = CutEntries()._run_cut(ctx)
+        return {"input": ctx.input, "events": ctx.events, "variant": None,
+                "nonfinite": json.load(open(os.path.join(out, "census.json")))["angle_nonfinite"]}
+
+    def known_bad(self, ctx):
+        from .items_census import CUT_FILE
+
+        if not os.path.exists(CUT_FILE):
+            raise NotApplicable(f"no angle cut file at {CUT_FILE}")
+        CA = ctx.script_module(CENSUS_DIR, "census_angles")
+        M = ctx.script_module(CENSUS_DIR, "tracklet_topology_cost")
+        model = CA.Model()
+        U, Q = _chunk(ctx, model)
+        Q = dict(Q)
+        Q["s_half_c"] = np.where(U["layer"] == 2, np.nan, Q["s_half_c"])     # IL2's width lost
+        ang = M.AngleUse.parse("all")
+        ang.model, ang.cuts = model, CA.CutSet.load(CUT_FILE)
+        ang.nonfinite = {s: 0 for s in M.NONFINITE_STAGES}
+        for L in (1, 2, 3, 4):
+            M.alpha_veto(U, Q, np.flatnonzero(U["layer"] == L), 0.5, False, ang)
+        return {"input": ctx.input, "events": ctx.events, "variant": "IL2 alpha width NaN",
+                "nonfinite": ang.nonfinite}
+
+    def judge(self, stat, ref):
+        nf = stat["nonfinite"]
+        why = []
+        if nf is None:
+            why.append("the census wrote no NaN-guard counts")
+        else:
+            bad = {k: v for k, v in nf.items() if v}
+            if bad:
+                why.append(f"non-finite angle statistics: {bad}")
+            if ref is not None and set(nf) != set(ref["stat"]["nonfinite"] or {}):
+                why.append(f"stages counted {sorted(nf)} != reference {sorted(ref['stat']['nonfinite'] or {})}")
+        return not why, ("every stage's statistic finite for every IT input: " + ", ".join(
+            f"{k} 0" for k in nf)) if not why else "; ".join(why)
+
+
+ITEMS = [AngleImport(), KKnob(), AngleSwitches(), AngleNonFinite()]

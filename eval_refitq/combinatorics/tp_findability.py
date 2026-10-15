@@ -842,6 +842,8 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         trip0 = (o["_gA"], o["_gB"], gc0 if gc0 is not None else o["_gB"])
         fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, **fopt)
         keep, chi2s = KF.good_state(fit0, pt_s)
+        # the NaN guard on S6's statistic, cut or feature (the exported chi2_angle_per_meas)
+        ang.count_nonfinite("S6", fit0["chi2_angle"][fit0["n_angle_meas"] > 0])
         base = {"arity": float(sd.arity), "before_chi2": float(n_pre),
                 "seed_objects": float(o.get("seed_objects", 0)),
                 "pairs": float(o.get("tracklets", 0)),
@@ -1192,6 +1194,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
             ang.rec = CA.Recorder(U, Q, model)
+            ang.nonfinite = {s: 0 for s in M.NONFINITE_STAGES}
             (cen, found, found_dr, counters, qual, trk, hits, angr, nonant,
              seed_eta) = process_chunk(
                 U, Q, seeds, meta["dr_groups"], ptmin, ci, QUAL_PER_CHUNK, kf_opts,
@@ -1200,7 +1203,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 min_it_layers=min_it_layers, min_ot_conf=min_ot_conf, ang=ang,
                 pos_arb=pos_arb, entry_builds=entry_builds)
             recs = ang.rec.arrays()
-            ang.rec = None
+            nonfinite, ang.rec, ang.nonfinite = ang.nonfinite, None, None
             moved = np.array([[Q["n_moved"][a][f"IL{L}"] for L in (1, 2, 3, 4)]
                               for a in CA.ANGLES], np.int64)
             np.savez_compressed(
@@ -1219,7 +1222,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                 # the angle model's records (census_angles.Recorder) and the
                 # clusters the knob moved per angle x IL1-IL4
                 **{f"rec_{c}__{k}": v for c, d_ in recs.items() for k, v in d_.items()},
-                n_moved=moved)
+                n_moved=moved, nonfinite=json.dumps(nonfinite))
             done, nev_seen = ci + 1, nev_seen + len(ev)
             meta["chunks_done"], meta["n_events"] = done, nev_seen
             json.dump(meta, open(mpath, "w"), indent=1, default=float)
@@ -1286,6 +1289,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
     non = []
     moved = np.zeros((len(CA.ANGLES), 4), np.int64)
+    nonfin = {}
     seta = None
     cl_tot = cl_off = 0
     for sh in shards:
@@ -1301,6 +1305,12 @@ def load(d, nev=None, verbose=True, with_tracks=False):
         nread += int(z["n_events"])
         non.append(z["nonant"])
         moved += z["n_moved"]
+        # the NaN guard's counts; None when a shard predates them (written before 2026-10-15)
+        if "nonfinite" not in z.files:
+            nonfin = None
+        elif nonfin is not None:
+            for k, v in json.loads(str(z["nonfinite"])).items():
+                nonfin[k] = nonfin.get(k, 0) + v
         seta = z["seed_eta"] if seta is None else seta + z["seed_eta"]
         for k, v in json.loads(str(z["counters"])).items():
             a = cnt.setdefault(int(k), {})
@@ -1351,6 +1361,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["angle_notes"] = meta["angle_notes"]
     C["n_moved"] = {a: {f"IL{L}": int(moved[i, L - 1]) for L in (1, 2, 3, 4)}
                     for i, a in enumerate(CA.ANGLES)}
+    C["angle_nonfinite"] = nonfin
     C["mva_features"] = KF.mva_features(C["angle_use"])
     C["ptmin"] = float(meta["config"]["ptmin"])
     C["min_layers"] = int(meta["config"]["min_layers"])
@@ -1687,6 +1698,9 @@ def main():
           "likely to go as a fake. The eta-sector boundary is ASSUMED at "
           "eta = 0 (L1TTrack_etaSector is unfilled in these ntuples); that "
           "redistributes load between two bins but cannot change the total.")
+    if C["angle_nonfinite"] and any(C["angle_nonfinite"].values()):
+        print(f"\nWARNING: non-finite angle statistics (the NaN guard; a NaN vetoes silently): "
+              f"{C['angle_nonfinite']}")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "n_tp": int(len(C["key"])),
@@ -1694,7 +1708,7 @@ def main():
                    "pos_arb": C["pos_arb"],
                    "angles": C["angle_use"].key(), "angle_model": C["angle_model"],
                    "angle_cuts": C["angle_cuts"], "angle_notes": C["angle_notes"],
-                   "n_moved": C["n_moved"],
+                   "n_moved": C["n_moved"], "angle_nonfinite": C["angle_nonfinite"],
                    "truncation": trunc,
                    "seeds": seed_table(C)}, open(a.out, "w"), indent=1)
         print(f"\nwrote {a.out}")

@@ -1271,6 +1271,12 @@ TABLE_KEYS = ("emitted", "prediction")
 DEFAULT_KEYS = {"proj_arb": "prediction", "kf": "emitted"}
 
 
+# THE NaN GUARD (census.angle_nonfinite): the stages whose angle statistic is counted when it is not
+# finite among the IT inputs with a usable direction. A NaN statistic fails every threshold, so it
+# vetoes silently (S1 vetoed every OT stub that way until 2026-10-15).
+NONFINITE_STAGES = ("S1", "S2a", "S2z", "S3", "S4w", "S4a", "S6")
+
+
 class AngleUse:
     """Which stages use the SmartPixels angles, with which angles, and how.
 
@@ -1316,6 +1322,7 @@ class AngleUse:
         self.dr_weight = tuple(float(x) for x in p["dr_weight"])
         self.model = self.cuts = self.rec = None
         self.cuts_open = False
+        self.nonfinite = None       # per chunk {stage: count}, set by the census (NaN guard)
 
     def __call__(self, stage):
         """Whether `stage` uses any angle (a per-angle stage with no angle left is off)."""
@@ -1389,6 +1396,13 @@ class AngleUse:
             return out
         angle_sets = {s: [a for a in v.split("+") if a] for s, v in pairs(sets).items()}
         return cls(names(on) - names(off), angles=angle_sets, keys=pairs(keys), **params)
+
+    def count_nonfinite(self, stage, values):
+        """The NaN guard: add the non-finite entries of a stage's statistic (IT inputs with a
+        usable direction only) to this chunk's count; a no-op outside the census."""
+        if self.nonfinite is not None:
+            v = np.asarray(values, np.float64)
+            self.nonfinite[stage] = self.nonfinite.get(stage, 0) + int(v.size - np.isfinite(v).sum())
 
     def key(self):
         """The identity of this configuration, for cache keys and manifests."""
@@ -1772,6 +1786,7 @@ def alpha_veto(D, Q, idxL, kmax, displaced, ang=None):
     if ang is not None and ang.model is not None:
         floor = 1.0 / kmax
         st = ang.model.s1(Q, idxL, floor)
+        ang.count_nonfinite("S1", st[(D["layer"][idxL] <= 4) & Q["dir_ok"][idxL]])
         if ang.cuts_open:
             k = np.ones(len(idxL), bool)
         else:
@@ -1897,6 +1912,8 @@ def _pair_angle_gates(D, Q, ang, gA, gB, kap, ok, ptmin, la, lb, displaced, both
     pass_z = np.ones(n, bool)
     if ang("pair_alpha") and (la <= 4 or lb <= 4):
         st_a = m.s2a(kap, Q, gA, gB, useA, useB)
+        if not record:
+            ang.count_nonfinite("S2a", st_a[useA | useB])
         ovf = (useA & Q["ovf_a"][gA]) | (useB & Q["ovf_a"][gB])
         cons = (np.ones(n, bool) if ang.cuts_open
                 else st_a <= ang.cuts.s2a_thr(ptmin, la, lb))
@@ -1904,6 +1921,8 @@ def _pair_angle_gates(D, Q, ang, gA, gB, kap, ok, ptmin, la, lb, displaced, both
     if ang("pair_z0") and both_it:
         both = useA & useB
         st_z = np.where(both, m.s2z(Q, gA, gB), 0.0)
+        if not record:
+            ang.count_nonfinite("S2z", st_z[both])
         ovf = both & (Q["ovf_z"][gA] | Q["ovf_z"][gB])
         cons = (np.ones(n, bool) if ang.cuts_open
                 else st_z <= ang.cuts.s2z_thr(ptmin, la, lb, Q["row"][gA]))
@@ -2265,6 +2284,7 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
             u_ = Q["dir_ok"][gC]
             if win_on:
                 pa_, pb_ = cand_angle_pulls(Q, gC, kp, cp)
+                ang.count_nonfinite("S3" if role_i == 0 else "S4w", np.r_[pa_[good & u_], pb_[good & u_]])
                 ptb = model.ptbin(kap[ja])
                 if ang.cuts_open:
                     inw = np.ones(len(gC), bool)
@@ -2284,6 +2304,7 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                 pa2, pb2 = model.arb_pulls(Q, gC, kp, cp, skap, sct[ja], ang.keys["proj_arb"])
                 t = ((pa2 * pa2 if ang.uses("proj_arb", "alpha") else 0.0)
                      + (pb2 * pb2 if ang.uses("proj_arb", "beta") else 0.0))
+                ang.count_nonfinite("S4a", np.broadcast_to(t, u_.shape)[good & u_])
                 score = base + ang.arb_weight * np.where(u_, t, 0.0)
         if not good.any():
             continue
