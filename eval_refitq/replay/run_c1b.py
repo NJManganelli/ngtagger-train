@@ -47,25 +47,29 @@ def overlap(a):
     geo = OP.load_geometry(CM.GEOMETRY)
     tools = AR.Tools(None, calibration=AR.CALIBRATION, angle_table=None)
     tables = tools.cal["R_tables"]
+    files = tuple(a.files) if a.files else CM.FIT_FILES
+    fit_files = files == CM.FIT_FILES
+    in_use = load_disc_R(a.disc_r) if a.disc_r else {}             # the R in use per disc (else v3's)
     parts = []
-    for fi, f in enumerate(CM.FIT_FILES):
+    for fi, f in enumerate(files):
         path = CM.input_path("AAAA", f)
         for start, A in CM.iterate(path, AR.branches(path), chunk=a.chunk, nev=a.nev):
             ctx = AR.prepare(A, geo)
             parts.append(DR.pairs_of_chunk(ctx, geo, (IL1,) + DISCS, start=fi * NEV_FILE + start))
         print(f"[{time.time() - t0:7.1f}s] AAAA f{f:02d}: pairs collected", flush=True)
     P = _concat(parts)
-    nev = NEV_FILE * len(CM.FIT_FILES)
+    nev = NEV_FILE * len(files)
     reps = G.replicas(nev=nev)
-    res = {"plan": "c1b/PLAN.md rev 4 §1 item 2, §3 T0 D0 D2", "files": [str(CM.input_path("AAAA", f)) for f in CM.FIT_FILES],
+    res = {"plan": "c1b/PLAN.md rev 4 §1 item 2, §3 T0 D0 D2", "files": [str(CM.input_path("AAAA", f)) for f in files],
+           "role": "fit and decision" if fit_files else ("known-good" if a.known_bad else "gate"), "disc_r": a.disc_r,
            "n_pairs": {str(s): int((P["surface"] == s).sum()) for s in (IL1,) + DISCS}, "material": [], "minor": []}
     rng = np.random.default_rng(20261015)
     planted = DR.planted_widths(tables)
 
-    # T0: the toy closure on the real disc pairs (and its no-rotation known-bad). A bin is judged when it holds
+    # T0 (files 1-2 only): the toy closure on the real disc pairs (and its no-rotation known-bad). A bin is judged when it holds
     # >= 200 pairs and the replica mean's standard error is <= 1 % (amendment A3); others are reported.
     res["T0"] = {}
-    for s in DISCS:
+    for s in (DISCS if fit_files else ()):
         sel = P["surface"] == s
         out = {}
         jb = None
@@ -115,7 +119,8 @@ def overlap(a):
                          "per_bin_ratio": fits[IL1][0][f"R_{ax}"] / ref, "n_clusters": n,
                          "edge_vs_module": ref / v3c}
         if not res["D0"][ax]["pass"]:
-            res["material"].append(f"D0 {ax}: IL1 pooled ratio {ratios[0]:.3f} [{lo:.3f}, {hi:.3f}] outside [0.90, 1.10]")
+            (res["material"] if fit_files else res["minor"]).append(
+                f"D0 {ax}: IL1 pooled ratio {ratios[0]:.3f} [{lo:.3f}, {hi:.3f}] outside [0.90, 1.10]")
     print(f"[{time.time() - t0:7.1f}s] D0", flush=True)
 
     # D2 per disc; the facing agreement; B'
@@ -123,18 +128,11 @@ def overlap(a):
     disc_fail = False
     for s in DISCS:
         sel = P["surface"] == s
-        e = {}
-        for ax in ("u", "v"):
-            v3c, n = DR.v3_at_cells(P, tables, sel, ax)
-            R = np.array([f[f"R_{ax}"] for f in fits[s]])
-            ratio = R / v3c
-            sd = np.nanstd(ratio[1:], 0)
-            nj = sum(judged(x) for x in n)
-            W = G.t_one(max(nj, 1))
-            fail = [b for b in range(len(n)) if judged(n[b]) and np.isfinite(ratio[0][b])
-                    and abs(ratio[0][b] - 1) > D2_TOL + W * sd[b]]
-            e[ax] = {"R": R[0], "v3_at_cells": v3c, "ratio": ratio[0], "sd": sd, "n_clusters": n, "W": W, "failing": fail}
-            disc_fail |= bool(fail)
+        use = in_use.get(s, tables)
+        e = d2_ratio(P, sel, fits[s], lambda ax, sz, cot: DR.v3_width(use, ax, sz, cot))
+        disc_fail |= any(e[ax]["failing"] for ax in ("u", "v"))
+        if a.known_bad:                                   # file 4: the D2 known-bads, each must fail
+            e["known_bads"] = d2_known_bads(P, sel, fits[s], use, tables)
         bp = np.array([f["B_prime"] for f in fits[s]])
         e["B_prime"], e["B_prime_sd"] = bp[0], np.nanstd(bp[1:], 0)
         e["B_prime_ok"] = bool(np.all(np.nan_to_num(bp[0]) < DR.B_PRIME_MAX))
@@ -159,15 +157,64 @@ def overlap(a):
         e["known_bad_facing_sign_dropped"] = {"B_prime": kb["B_prime"], "R_u": kb["R_u"], "R_v": kb["R_v"]}
         res["D2"][str(s)] = e
         print(f"[{time.time() - t0:7.1f}s] D2 surface {s}", flush=True)
-    res["D2_decision"] = "build disc R tables from the overlap R" if disc_fail else "keep v3's R"
+    if fit_files:
+        res["D2_decision"] = "build disc R tables from the overlap R" if disc_fail else "keep v3's R"
+    else:
+        res["D2_pass"] = not disc_fail
+        if disc_fail:
+            res["material"].append(f"D2 fails on file(s) {list(files)} against the R in use")
     res["seconds"] = round(time.time() - t0, 1)
-    out_dir = os.path.join(a.out, "overlap")
+    out_dir = os.path.join(a.out, "overlap" if fit_files else f"overlap_f{'_'.join(f'{x:02d}' for x in files)}")
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, "overlap_pairs.npz"), **P)
     with open(os.path.join(out_dir, "overlap_summary.json"), "w") as fh:
         json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
-    print(json.dumps({k: res[k] for k in ("n_pairs", "material", "D2_decision")}, indent=1, default=str))
+    print(json.dumps({k: res.get(k) for k in ("n_pairs", "material", "D2_decision", "D2_pass")}, indent=1, default=str))
     return 0
+
+
+def d2_ratio(P, sel, fits_s, width_fn):
+    """D2 per axis: the overlap R (and its bootstrap replicas) over the R in use at the pairs' own (size, |cot|)
+    cells, pair-weighted per size bin; failing bins at 1 +- 0.1 widened by t1(N) x the bootstrap sd."""
+    e = {}
+    for ax in ("u", "v"):
+        sx, cx = ("sx", "cotA") if ax == "u" else ("sy", "cotB")
+        size = np.concatenate([P[f"{sx}{j}"][sel] for j in ("1", "2")])
+        cot = np.concatenate([P[f"{cx}{j}"][sel] for j in ("1", "2")])
+        edges = AR.Tools(None, calibration=AR.CALIBRATION, angle_table=None).cal["R_tables"][ax]["size_edges"]
+        b = DR.size_bin(size, edges)
+        n = np.bincount(b, minlength=len(edges) - 1)
+        ref = np.bincount(b, weights=width_fn(ax, size, cot), minlength=len(edges) - 1) / np.maximum(n, 1)
+        R = np.array([f[f"R_{ax}"] for f in fits_s])
+        ratio = R / ref
+        sd = np.nanstd(ratio[1:], 0)
+        W = G.t_one(max(sum(judged(x) for x in n), 1))
+        fail = [k for k in range(len(n)) if judged(n[k]) and np.isfinite(ratio[0][k])
+                and abs(ratio[0][k] - 1) > D2_TOL + W * sd[k]]
+        e[ax] = {"R": R[0], "in_use_at_cells": ref, "ratio": ratio[0], "sd": sd, "n_clusters": n, "W": W, "failing": fail}
+    return e
+
+
+def d2_known_bads(P, sel, fits_s, use, tables):
+    """C1b §4, D2's known-bads on file 4 (each must fail D2; the decision-scale one with its power): the
+    scattering-contaminated R (the production-helix residual's MAD at pT >= 5 GeV, the round-0 estimator), X / Y
+    swapped, half width, R x 1.15, and v3's IL1 tables kept when C1b built disc tables."""
+    out = {}
+    hi = sel & (P["p"] / np.cosh(P["eta"]) >= 5.0)
+    cont = {ax: DR.truth_width(P, tables, hi, ax)[0] for ax in ("u", "v")}
+    variants = {
+        "contaminated": lambda ax, sz, cot: cont[ax][DR.size_bin(sz, tables[ax]["size_edges"])],
+        "xy_swapped": lambda ax, sz, cot: DR.v3_width(use, "v" if ax == "u" else "u", sz, cot),
+        "half_width": lambda ax, sz, cot: 0.5 * DR.v3_width(use, ax, sz, cot),
+        "x1.15 (power)": lambda ax, sz, cot: 1.15 * DR.v3_width(use, ax, sz, cot)}
+    if use is not tables:
+        variants["IL1_tables_kept"] = lambda ax, sz, cot: DR.v3_width(tables, ax, sz, cot)
+    for k, fn in variants.items():
+        e = d2_ratio(P, sel, fits_s, fn)
+        nj = {ax: [b for b in range(len(e[ax]["n_clusters"])) if judged(e[ax]["n_clusters"][b])] for ax in ("u", "v")}
+        nf = sum(len(e[ax]["failing"]) for ax in ("u", "v"))
+        out[k] = {"fails": nf > 0, "failing_bins": nf, "judged_bins": sum(len(v) for v in nj.values())}
+    return out
 
 
 PT_BINS = (2.0, 3.0, 5.0, 10.0, 20.0, np.inf)          # v3's seed pT bins
@@ -554,6 +601,8 @@ def main(argv=None):
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--cuts", default=str(CM.CUTS), help="the cut file in use (the window)")
     ap.add_argument("--disc-r", default=None, help="J1's disc position-error tables, if D2 built them")
+    ap.add_argument("--files", type=int, nargs="+", default=None, help="overlap: files other than 1-2 (4, 6)")
+    ap.add_argument("--known-bad", action="store_true", help="file 4: the known-bads")
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--chunk", type=int, default=10)
     ap.add_argument("--out", default=str(C1B_OUT))
