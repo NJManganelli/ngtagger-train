@@ -246,7 +246,7 @@ def e1b_consumer(cuts, consumer, key, stat, surface, first, ev, keybin=None, nev
 def e1b_all(own, loo, cuts, scen, cov="calibrated"):
     """Every consumer's coverage on one file of scenario scen (populations PD1 + PD8; rr cuts per
     scenario, PD15)."""
-    gate, window, rr = CU.populations(own, {"own_primary": loo["own_primary"], "clean_track": loo["clean_track"]})
+    gate, window, rr = CU.populations(own, {k: loo[k] for k in ("own_primary", "clean_track", "n_acc") if k in loo})
     res = {}
     for dims in ("xy", "xya", "xyb", "xyab"):
         res[f"gate|{dims}"] = e1b_consumer(cuts, "gate", f"gate|{dims}|{cov}", own[f"g_{dims}"][gate],

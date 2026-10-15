@@ -217,6 +217,17 @@ def test_loo_smoothed_known_answers(data):
     assert np.array_equal(aS, hist["fa"][:, 2]) and np.array_equal(CS, hist["fC"][:, 2])
 
 
+def test_rr_keeps_one_smartpixels_cluster(data):
+    """PD19: with a zero rr cut every hit is a removal candidate, yet every refitted track keeps exactly one
+    SmartPixels cluster, and the tracks whose last cluster the rule kept are flagged."""
+    cfg, geo, ctx = data["cfg"], data["geo"], data["ctx"]
+    arm = AR.inn(cfg, name="rr-all", rr=True, rr_max_iter=8, window_cut="nsig")
+    out = AR.run_arm(ctx, geo, cfg, "AAAA", arm, AR.Tools(cfg, cuts=ConstCuts(0.0)))
+    had = out["removed"].any(1) | out["rr_protected"]
+    assert had.any()
+    assert np.all(out["rec"]["acc"][had].sum(1) == 1) and np.all(out["rr_protected"][had])
+
+
 def test_wide_window_search_bound(data, monkeypatch):
     """PD18: the 'gate99' window (the 99 % hit cut) is searched within WINDOW_SEARCH_NSIG of the prediction;
     a wider search changes no selection, and the window accepts no candidate beyond its bin's cut."""

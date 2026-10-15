@@ -731,8 +731,8 @@ def loo_stats(arm, ctx, geo, cfg, tools, st, v, path, kpt, all_dims=False):
 
 
 def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=False):
-    """K resolution, reject-and-refit (with the scenario mask's rr cuts, PD15), inner material,
-    passthrough; the per-track output."""
+    """K resolution, reject-and-refit (with the scenario mask's rr cuts, PD15; never removing a track's
+    only remaining SmartPixels cluster, PD19), inner material, passthrough; the per-track output."""
     ntrk = ctx["ntrk"]
     if arm.K == 2:
         st = st.take(resolve_k(arm, st, geo, tools))
@@ -741,8 +741,10 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
         owner, jj, stat = loo_stats(arm, ctx, geo, cfg, tools, st, np.arange(len(st.o)), path, kpt, all_dims=True)
         inner = st.rec["acc"][owner] & (np.arange(seq.shape[1])[None, :] > jj[:, None])
         loo_out = {"o": st.o[owner], "step": jj, "ci": st.rec["ci"][owner, jj], "mi": st.rec["mi"][owner, jj],
-                   "surface": st.rec["surface"][owner, jj], "first": jj == 0, "n_inner": inner.sum(1), "dims": stat}
+                   "surface": st.rec["surface"][owner, jj], "first": jj == 0, "n_inner": inner.sum(1),
+                   "n_acc": st.rec["acc"][owner].sum(1), "dims": stat}
     removed = np.zeros((len(st.o), seq.shape[1]), bool)
+    protected = np.zeros(len(st.o), bool)
     if arm.rr and tools.cuts.rr_statistic != arm.loo_pred:
         raise ValueError(f"the cut file's rr statistic is {tools.cuts.rr_statistic!r}, the arm's {arm.loo_pred!r} (PD17)")
     if arm.rr:
@@ -753,6 +755,10 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
             mi = st.rec["mi"][owner, jj]
             cut = tools.cuts.chi2("rr", arm.dims_key("rr"), arm.cov_model, geo["surface"][mi], jj == 0, scen=mask)
             ratio = stat / cut
+            # PD19: never remove a track's only remaining SmartPixels cluster
+            last = st.rec["acc"][owner].sum(1) <= 1
+            protected[owner[last & (ratio > 1.0)]] = True
+            ratio = np.where(last, 0.0, ratio)
             worst = np.full(len(st.o), -1, np.int64)
             o_ = np.lexsort((-ratio, owner))
             first = np.r_[True, owner[o_][1:] != owner[o_][:-1]]
@@ -780,7 +786,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     out = {"a": ctx["a"].copy(), "C": ctx["C"].copy(), "nacc": np.zeros(ntrk, np.int64),
            "refit": np.zeros(ntrk, bool), "branch": np.full(ntrk, -1, np.int8),
            "rec": {k: np.full((ntrk,) + v.shape[1:], fill.get(k, 0), v.dtype) for k, v in st.rec.items()},
-           "removed": np.zeros((ntrk, seq.shape[1]), bool), "seq": seq}
+           "removed": np.zeros((ntrk, seq.shape[1]), bool), "rr_protected": np.zeros(ntrk, bool), "seq": seq}
     ok = nacc >= cfg.get("minHits", 1)
     o = st.o
     out["a"][o[ok]], out["C"][o[ok]] = st.a[ok], st.C[ok]
@@ -790,6 +796,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     for k, v in st.rec.items():
         out["rec"][k][o] = v
     out["removed"][o] = removed
+    out["rr_protected"][o] = protected
     if own_rows is not None:
         out["own"] = CM.concat([r for r in own_rows if r])
     if loo_out is not None:

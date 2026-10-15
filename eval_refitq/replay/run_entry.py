@@ -10,7 +10,7 @@
            old fit's 95 % order-statistic interval; writes cuts/compare_<old>_<new>.json with the adopted file
   windowcheck PD18, file 4 only: INN's window as the 99 % hit cut against the 4-sigma ellipse: the cut's
            coverage, the own-primary loss (no hit / wrong hit), the wrong-hit share, candidates per window,
-           and the end-to-end smoke
+           and the end-to-end run (reject-and-refit on vs off, the tracks PD19 protects), whole file
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def cutfit(a):
                     L = out["loo"]
                     loo[arm.cov_model].append({"surface": L["surface"], "first": L["first"], "own_primary": prim,
                                                "clean_track": clean_track, "scen": np.full(len(prim), scen),
-                                               "n_inner": L["n_inner"],
+                                               "n_inner": L["n_inner"], "n_acc": L["n_acc"],
                                                **{f"d_{k}": v for k, v in L["dims"].items()}})
                     n += len(A)
                 meta.append({"scen": scen, "file": f, "arm": arm.name, "events": n})
@@ -174,7 +174,8 @@ def smoke_counts(ctx, geo, cfg, scen, tools, off):
     tg, jg = np.nonzero(on["rec"]["gated"])
     tr, jr = np.nonzero(on["removed"])
     c = {"tracks": int(on["refit"].sum()), "gated": len(tg), "gated_own": int(own(tg, on["rec"]["ci"][tg, jg]).sum()),
-         "removed": len(tr), "removed_own": int(own(tr, on["rec"]["ci"][tr, jr]).sum())}
+         "removed": len(tr), "removed_own": int(own(tr, on["rec"]["ci"][tr, jr]).sum()),
+         "rr_protected": int(on["rr_protected"].sum())}
     per = on["removed"].sum(1)
     c.update({f"tracks_removals_{k}": int((per == k).sum()) for k in range(3)})
     pr = truth["pop"] & (truth["origin"] == 0)
@@ -329,14 +330,14 @@ def windowcheck(a):
     """PD18, file 4 only: INN with the window as the 99 % hit cut ("wide") against the 4-sigma ellipse
     ("nsig4"), on the same events. Per scenario x surface x step: the hit cut's coverage of the own
     primaries (E1(b)), the own-primary loss on clean-history visits (no hit / a wrong hit), the wrong-hit
-    share, candidates per window; and the end-to-end smoke with the wide window. Writes
-    entry/windowcheck_summary.json."""
+    share, candidates per window; and the end-to-end run with the wide window and reject-and-refit on vs off
+    over the whole file, with the tracks PD19 protects. Writes entry/windowcheck_summary.json."""
     import fom as FM
     import gates as G
     t0 = time.time()
     geo = OP.load_geometry(CM.GEOMETRY)
     cuts = CU.Cuts.load(a.cuts)
-    res = {"cuts": a.cuts, "plan": "PLAN §10 PD18", "material": [], "minor": [], "scenarios": {}, "smoke": {}}
+    res = {"cuts": a.cuts, "plan": "PLAN §10 PD18, PD19", "material": [], "minor": [], "scenarios": {}, "end_to_end": {}}
     for scen in a.scen:
         path = CM.input_path(scen, CM.PRED_FILE)
         cfg = CM.producer_config(path)
@@ -369,8 +370,7 @@ def windowcheck(a):
                 acc[k]["wrong"] += int(w[pop].sum())
                 nc = out["rec"]["ncand"][out["rec"]["visited"]]
                 acc[k]["ncand"].append(nc[nc > 0])
-            if start < SMOKE_EVENTS:
-                smoke.append(smoke_counts(ctx, geo, cfg, scen, tools, outs["wide"]))
+            smoke.append(smoke_counts(ctx, geo, cfg, scen, tools, outs["wide"]))
         sc = {}
         rep = G.replicas()
         for k in arms:
@@ -418,7 +418,7 @@ def windowcheck(a):
             res["material"].append(f"{scen}: wrong hits gained ({sc['wrong_gained']}) exceed own hits gained "
                                    f"({sc['own_gained']}), accepted hits of population tracks")
         res["scenarios"][scen] = sc
-        res["smoke"][scen] = {k: int(sum(c[k] for c in smoke)) for k in smoke[0]}
+        res["end_to_end"][scen] = {k: int(sum(c[k] for c in smoke)) for k in smoke[0]}
         print(f"[{time.time() - t0:7.1f}s] {scen}: file 4 done", flush=True)
     res["seconds"] = round(time.time() - t0, 1)
     with open(os.path.join(a.out, "entry", "windowcheck_summary.json"), "w") as fh:

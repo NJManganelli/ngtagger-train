@@ -134,11 +134,14 @@ def table_key(consumer, dims, cov_model, scen=None):
 def populations(R, L, clean=True):
     """The fit populations (PD1, PD8): gate = own primaries (table criterion) with a clean history;
     window = own class-T clusters (table criterion) with a clean history; rr = accepted own primaries on
-    tracks whose other accepted hits are all their own. clean=False: without the history condition."""
+    tracks whose other accepted hits are all their own and, for rows that carry n_acc (PD19), that are not
+    their track's only accepted SmartPixels cluster. clean=False: without the history condition."""
     h = R["clean"] if clean else np.ones(len(R["clean"]), bool)
     gate = R["primary"] & R["table_pop"] & h
     window = R["table_pop"] & h
     rr = L["own_primary"] & (L["clean_track"] if clean else True)
+    if "n_acc" in L:                                     # PD19 rows: reject-and-refit never acts on a track's only cluster
+        rr = rr & (L["n_acc"] >= 2)
     return gate, window, rr
 
 

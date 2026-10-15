@@ -73,7 +73,7 @@ def loo_block(out, ctx, off, R, tr_off):
     prim, clean_track = RE.loo_flags(out, R, ctx)
     L = out["loo"]
     d = {"o": L["o"] + tr_off, "ev": ctx["tev"][L["o"]] + off, "surface": L["surface"], "first": L["first"],
-         "n_inner": L["n_inner"], "own_primary": prim, "clean_track": clean_track}
+         "n_inner": L["n_inner"], "n_acc": L["n_acc"], "own_primary": prim, "clean_track": clean_track}
     d.update({f"d_{k}": v for k, v in L["dims"].items()})
     return d
 
