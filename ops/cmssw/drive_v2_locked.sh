@@ -58,8 +58,6 @@ for item in "$@"; do
   case $d in
     canon_v2) cfg=spstudy_${tag}_cfg.py; pat="spstudy_*_100ev*.root"; DEST=/Volumes/WDMac/smartpixels_scratch/canon_v2 ;;
     canon_v3) cfg=spstudy_${tag}_cfg.py; pat="spstudy_*_100ev*.root"; DEST=/Volumes/WDMac/smartpixels_scratch/canon_v3 ;;
-    canon_v4) cfg=spstudy_${tag}_cfg.py; pat="spstudy_*_100ev*.root"; DEST=/Volumes/WDMac/smartpixels_scratch/canon_v4 ;;
-    canon_v4_closure) cfg=spstudy_${tag}_cfg.py; pat="spstudy_*ev_*.root"; DEST=/Volumes/WDMac/smartpixels_scratch/canon_v4/closure ;;
     canon_v4_test) cfg=spstudy_${tag}_cfg.py; pat="spstudy_*_10ev*.root"; DEST=/Volumes/WDMac/smartpixels_scratch/canon_v4_test ;;
     canon_v2_htt) cfg=spstudy_${tag}_cfg.py; pat="spstudy_*_htt_f*.root"; DEST=/Volumes/WDMac/smartpixels_scratch/canon_v2_htt ;;
     canon_v2_minbias) cfg=spstudy_${tag}_cfg.py; pat="spstudy_*_minbias_f*.root"; DEST=/Volumes/WDMac/smartpixels_scratch/canon_v2_minbias ;;
