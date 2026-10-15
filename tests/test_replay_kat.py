@@ -397,3 +397,42 @@ def test_k_toys():
     bad = AR.Arm("k", K=2, k_score="tailprob")
     win_bad = st.branch[AR.resolve_k(bad, st, None, tools)]
     assert (win_bad != 0).mean() > 0.2
+
+
+# ---------------------------------------------------------------- C1b: the disc angle import
+@pytest.mark.skipif(not Path("/Volumes/WDMac/smartpixels_scratch/p03_angles/angle_table_v1a1e_disclocal_canon_v3.json").exists(),
+                    reason="no disc table")
+def test_disc_import_exact_form():
+    """C1b rev 4 §1 item 1: the disc import is exactly m - c sigma_local, w sigma_local per angle and facing, with
+    no missing centre; the two facing known-bads differ from it; the knob is linear in cot."""
+    import disc_angles as DA
+    imp = DA.DiscImport()
+    rng = np.random.default_rng(5)
+    n = 4000
+    surface = rng.choice([11, 12, 13, 14], n)
+    cotA, cotB = rng.uniform(-0.5, 0.5, n), rng.uniform(-0.6, 0.6, n)
+    facing = rng.choice([-1, 1], n).astype(np.int8)
+    rows = imp.rows(surface, cotA, cotB)
+    assert (rows >= 0).mean() > 0.95
+    m, sig = rng.normal(0, 0.05, n), rng.uniform(0.01, 0.05, n)
+    for angle in SA.ANGLES:
+        c = imp.table.get(DA.KEY, angle, "centre", rows)
+        w = imp.table.get(DA.KEY, angle, "width", rows)
+        ok = rows >= 0
+        assert np.all(np.isfinite(c[ok])) and np.all(np.isfinite(w[ok]))
+        mm, ss = imp.calibrate(angle, m, sig, rows)
+        assert np.array_equal(mm[ok], m[ok] - c[ok] * sig[ok]) and np.array_equal(ss[ok], w[ok] * sig[ok])
+        for f in (-1, 1):                      # the same per facing: no orientation sign anywhere
+            k = ok & (facing == f)
+            assert np.array_equal(mm[k], m[k] - c[k] * sig[k])
+        kb, _ = imp.calibrate(angle, m, sig, rows, variant="to_local", facing=facing)
+        assert not np.allclose(kb[ok], mm[ok])
+    kr = imp.rows_known_bad_key(surface, cotA, cotB, facing)
+    assert np.array_equal(kr[facing == 1], rows[facing == 1]) and not np.array_equal(kr[facing == -1], rows[facing == -1])
+    # the cot-linear knob
+    tp, loc = rng.normal(0, 0.3, n), rng.normal(0, 0.3, n)
+    T = rng.random(n) < 0.9
+    assert np.array_equal(DA.knob(loc, tp, 1.0, T), loc)
+    k0 = DA.knob(loc, tp, 0.0, T)
+    assert np.array_equal(k0[T], tp[T]) and np.array_equal(k0[~T], loc[~T])
+    assert np.allclose(DA.knob(loc, tp, 0.5, T)[T] - tp[T], 0.5 * (loc[T] - tp[T]))
