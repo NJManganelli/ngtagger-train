@@ -536,19 +536,27 @@ def match_tracklet(cp, tr, layer, cand, k=KF.K, rng=None):
     phishift, dzshift, icorrshift, icorzshift = mp_shifts(layer, k)
     projrinv = (1 << (NRINV - 1)) - 1 - (iphider >> (NBITS_PHIDER - NRINV))
     me = L.me[layer]
-    best_phi, best_z = cut_phi, cut_z
-    kept = []
+    cand = [int(c) for c in cand if me[(projrinv << NBEND[layer]) + int(cp.bend[c])]]
+    dphi, dz = [], []
     for c in cand:
-        if not me[(projrinv << NBEND[layer]) + int(cp.bend[c])]:
-            continue
         ir = int(cp.ir[c])
         iphi = iphiproj + ((ir * iphider) >> icorrshift)
         iz = izproj + ((ir * izder + (1 << (icorzshift - 1))) >> icorzshift)
-        dphi = (int(cp.iphi[c]) - iphi) << phishift
-        dz = (int(cp.iz[c]) - iz) << dzshift
-        if abs(dphi) <= best_phi and -best_z <= dz < best_z:
-            best_phi, best_z = abs(dphi), abs(dz)
-            kept.append(int(c))
+        dphi.append((int(cp.iphi[c]) - iphi) << phishift)
+        dz.append((int(cp.iz[c]) - iz) << dzshift)
+    return [cand[i] for i in improving_chain(dphi, dz, cut_phi, cut_z)]
+
+
+def improving_chain(dphi, dz, cut_phi, cut_z):
+    """MatchProcessor::matchCalculator's rule over one tracklet's candidates in arrival order (:684-714): the
+    best values start at the seed's cuts; a candidate is kept iff |dphi| <= best and -best <= dz < best, and
+    its |dphi|, |dz| become the best. Returns the kept positions."""
+    best_phi, best_z = cut_phi, cut_z
+    kept = []
+    for i, (p, z) in enumerate(zip(dphi, dz)):
+        if abs(p) <= best_phi and -best_z <= z < best_z:
+            best_phi, best_z = abs(p), abs(z)
+            kept.append(i)
     return kept
 
 
