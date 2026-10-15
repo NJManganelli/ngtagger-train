@@ -281,11 +281,22 @@ writing one text and json output per tool per process.
 pixi run train -c configs/deepset_hgq2.yaml -i nano*.root -o output/baseline
 
 # multi-shot: N seeds in parallel, best-of (QAT local-minima mitigation)
-pixi run multishot -c configs/deepset_hgq2.yaml -i nano*.root -o output/ms -n 5 -p 2
+pixi run multishot -c configs/deepset_hgq2.yaml -i nano*.root -o output/ms -n 10 -p 2
 
 # contrastive: SimCLR embedding pre-train -> quantized fine-tune
 pixi run train -c configs/deepset_contrastive.yaml -i nano*.root -o output/contrastive
 ```
+
+**Training policy: always train several trials.** A single training is not a result. Aim for X good
+taggers per configuration: launch enough trials (seeds), discard those that fail to train or train
+well below their siblings' distribution, and deploy the best one or an ensemble of the best ~3.
+Choose and discard on validation data only, never on the test set, and report how many trials were
+launched and discarded, and why. A trial has failed if more than 1 % of its jets share one output
+vector or a working-point threshold sits on a tie of identical outputs
+(`eval_refitq/tagger_sp/d0_analyze.py:screen`), or if its validation loss or AUC is a clear outlier.
+The model keeps upstream's ReLU on the class logits: it makes about two trials in three degenerate,
+but linear logits did not perform better (d0 study, 8 cells x 10 trials), so expect about 10 trials
+for 3 good ones.
 
 Constituent features are **composable groups** in `data_config.feature_groups`:
 `baseline` (upstream hardware inputs) + `track` (track-word floats via
