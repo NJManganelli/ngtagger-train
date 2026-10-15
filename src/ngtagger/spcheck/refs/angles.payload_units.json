@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T102956Z-wpd0b-gate34b-derive-46572/copy",
- "derived": "2026-10-15T12:01:50Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T203446Z-wpd0b-gate-nanguard-s6cut-derive-37723/copy",
+ "derived": "2026-10-15T20:50:38Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "angles.payload_units",
- "job_id": "20261015T102956Z-wpd0b-gate34b-derive-46572",
+ "job_id": "20261015T203446Z-wpd0b-gate-nanguard-s6cut-derive-37723",
  "known_bad": "the published sigmas divided by 2 (input perturbation)",
  "rule": "per surface x angle x |true local cot| bin with >= 200 class-T clusters: B.1 core of (emitted - true) / sigma agrees with the reference within t(N) combined event-bootstrap sigma (250 replicas) and the chi2 over bins has p > 0.01; identity on the reference input",
  "stat": {

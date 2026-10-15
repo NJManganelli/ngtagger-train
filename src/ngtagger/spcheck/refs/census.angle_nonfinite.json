@@ -1,0 +1,24 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T203446Z-wpd0b-gate-nanguard-s6cut-derive-37723/copy",
+ "derived": "2026-10-15T20:51:34Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+ "item": "census.angle_nonfinite",
+ "job_id": "20261015T203446Z-wpd0b-gate-nanguard-s6cut-derive-37723",
+ "known_bad": "a missing table width on one surface: IL2's alpha uncertainty set to NaN on the gate input's first events, through the census's own S1 (alpha_veto) with the cut file; its non-finite statistics must be counted",
+ "rule": "the 4-event AAAI+IAAA census with the cut file (census.cut_entries' cut run): the census's NaN-guard counts (non-finite S1, S2a, S2z, S3, S4w, S4a and S6 statistics among IT inputs with a usable direction, M.NONFINITE_STAGES) are present for every stage and all 0; n/a without the cut file",
+ "stat": {
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+  "nonfinite": {
+   "S1": 0,
+   "S2a": 0,
+   "S2z": 0,
+   "S3": 0,
+   "S4a": 0,
+   "S4w": 0,
+   "S6": 0
+  },
+  "variant": null
+ }
+}
