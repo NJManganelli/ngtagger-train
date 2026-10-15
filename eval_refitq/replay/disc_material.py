@@ -95,9 +95,9 @@ def build_table(cal, geometry_path, out=TABLE):
     return doc
 
 
-def crossings(a, planes):
+def crossings(a, planes, cyl_extent=True):
     """(s, r, on) per (track, plane): the transverse arc length to each plane, the crossing radius and whether
-    the crossing lies within the plane's extent (no margin)."""
+    the crossing lies within the plane's extent (no margin; cyl_extent=False: any |z| for the cylinders)."""
     n, k = len(a), len(planes)
     s = np.full((n, k), np.nan)
     r = np.full((n, k), np.nan)
@@ -106,7 +106,7 @@ def crossings(a, planes):
         if pl["kind"] == "cyl":
             sj = OP.cylinder_s(a, pl["r"])
             pos, _ = OP.helix_at(a, np.nan_to_num(sj))
-            ok = np.isfinite(sj) & (np.abs(pos[:, 2]) <= pl["half_z"])
+            ok = np.isfinite(sj) & ((np.abs(pos[:, 2]) <= pl["half_z"]) | (not cyl_extent))
             rj = np.full(n, pl["r"])
         else:
             sj = OP.disc_s(a, pl["z"])
@@ -117,12 +117,14 @@ def crossings(a, planes):
     return s, r, on
 
 
-def charge(a, C, t, s_cur, s_prev, planes, disc_scale, cyl_scale, kpt):
+def charge(a, C, t, s_cur, s_prev, planes, disc_scale, cyl_scale, kpt, disc_factor="disc", cyl_extent=True):
     """Add the kinks of every plane crossed with s_cur < s <= s_prev (+1e-6) to C[t], each at its crossing radius
-    with its path factor (the half-open convention). s_prev = +inf: everything outside the first visit."""
+    with its path factor (the half-open convention). s_prev = +inf: everything outside the first visit.
+    disc_factor "barrel": the C1b known-bad with the cylinder's path factor on the disc planes; cyl_extent=False:
+    the known-bad charging the cylinders by radius only (whatever their |z| extent)."""
     if not len(t):
         return
-    s, r, on = crossings(a[t], planes)
+    s, r, on = crossings(a[t], planes, cyl_extent)
     tanl = a[t, 2]
     pt = kpt / np.maximum(np.abs(a[t, 0]), 1e-12)
     p = pt * np.sqrt(1.0 + tanl ** 2)
@@ -137,7 +139,7 @@ def charge(a, C, t, s_cur, s_prev, planes, disc_scale, cyl_scale, kpt):
             path = np.ones(len(t))                       # ORP._highland_theta2 adds sqrt(1 + tanL^2)
         else:
             xx0 = disc_scale * pl["xx0"]
-            path = 1.0 / np.maximum(np.abs(tanl), 1e-6)  # the disc factor sec / |tanL| = sec x this
+            path = 1.0 / np.maximum(np.abs(tanl), 1e-6) if disc_factor == "disc" else np.ones(len(t))
         th2 = np.where(m, ORP._highland_theta2(xx0 * path, p, tanl), 0.0)
         rs = r[:, j]
         jT = np.zeros((len(t), 5)); jT[:, 1] = sec; jT[:, 4] = +rs * sec

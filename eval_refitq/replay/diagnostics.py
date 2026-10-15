@@ -71,6 +71,12 @@ def own_rows(arm, st, j, t, S, ctx, geo, tools, kpt):
     e1 = np.where(has, e1, np.nan)
     t1 = np.where(has, t1, np.nan)
     out.update(e1=e1, t1=t1, z=np.abs(e1), has=has)
+    # C1b: the raw ingredients of the angle pull, for the disc import's known-bads (applied post hoc)
+    out["m_raw"] = np.stack([K["localCotAlpha"][ci], K["localCotBeta"][ci]], 1).astype(np.float64)
+    out["sig_pub"] = np.stack([K["sigAlpha"][ci], K["sigBeta"][ci]], 1).astype(np.float64)
+    out["cot_pred"] = h0[:, 2:4].copy()
+    out["cot_true"] = np.stack([K["tpLocalCotAlpha"][ci], K["tpLocalCotBeta"][ci]], 1).astype(np.float64)
+    out["hch"] = np.stack([Sz[:, 2, 2], Sz[:, 3, 3]], 1)
     out["vu"] = sig[:, 0] ** 2 + Sz[:, 0, 0]                                 # innovation position variances
     out["vv"] = sig[:, 1] ** 2 + Sz[:, 1, 1]
     with np.errstate(invalid="ignore", divide="ignore"):

@@ -100,6 +100,9 @@ class Arm:
     loo_pred: str = "smoothed"      # the leave-one-out prediction (PD17): "smoothed" (two-sided) | "final" (the
                                     # final refit state, the PD17 known-bad)
     disc_model: bool = False        # C1b: disc-going tracks get the path-ordered material and the disc rows
+    disc_material: str = "path"     # C1b known-bads: "radius" (the barrel planes by radius only on disc-going
+                                    # tracks), "barrel_factor" (the barrel path factor on disc planes),
+                                    # "all_tracks" (the disc model's charging on barrel-only tracks too)
 
     @property
     def cov_model(self) -> str:
@@ -484,8 +487,9 @@ def _q_step(arm, st, t, S, path, geo, tools, kpt, cfg):
     if arm.scattering == "highland":
         cal = tools.cal if arm.material_scale == 1.0 else dict(tools.cal, material_scale=tools.cal["material_scale"]
                                                                 * arm.material_scale)
-        dgt = t[st.dg[t]] if arm.disc_model else t[:0]
-        ORP.add_material(st.a, st.C, t[~np.isin(t, dgt)], S, st.Lv, geo, cal, kpt)
+        dg = (st.dg[t] | (arm.disc_material == "all_tracks")) if arm.disc_model else np.zeros(len(t), bool)
+        dgt = t[dg]
+        ORP.add_material(st.a, st.C, t[~dg], S, st.Lv, geo, cal, kpt)
         if len(dgt):                                   # C1b: path-ordered, extent-aware, each plane's path factor
             import disc_material as DM
             s_cur = OP.surface_s(st.a[dgt], geo, S)
@@ -494,7 +498,9 @@ def _q_step(arm, st, t, S, path, geo, tools, kpt, cfg):
                 if L != 5:
                     k = st.Lv[dgt] == L
                     s_prev[k] = OP.surface_s(st.a[dgt[k]], geo, int(L))
-            DM.charge(st.a, st.C, dgt, s_cur, s_prev, tools.disc.planes, tools.disc.disc_scale, cal["material_scale"], kpt)
+            DM.charge(st.a, st.C, dgt, s_cur, s_prev, tools.disc.planes, tools.disc.disc_scale, cal["material_scale"], kpt,
+                      disc_factor="barrel" if arm.disc_material == "barrel_factor" else "disc",
+                      cyl_extent=arm.disc_material != "radius")
         st.Lv[t] = S
     elif cfg["applyProcessNoise"]:
         q = t[(st.nUpd[t] > 0) & (st.prevR[t] > 0)]

@@ -561,6 +561,142 @@ def c1b_cutfit(a):
     return 0
 
 
+def checks(a):
+    """J5 (file 4, --known-bad) / J6 (file 6): the final configuration (C1b's cut file, the fitted scale, the
+    decided seed, the disc R in use) judged by D1, D3 (relative, A4), D4 and D5; on file 4 the D1 false veto,
+    the known-bads (D1 / D4 post hoc; D3 / D5 by arm variants) and the power statements. D0 / D2 come from the
+    overlap job on the same file. Writes c1b/checks/checks_f<NN>.json."""
+    import cuts as CU
+    import diagnostics as DG
+    import disc_checks as DC
+    import run_entry as RE
+    t0 = time.time()
+    files = tuple(a.files)
+    nev = NEV_FILE * len(files)
+    geo = OP.load_geometry(CM.GEOMETRY)
+    cuts = CU.Cuts.load(os.path.join(a.out, "cuts", C1B_CUTS))
+    with open(os.path.join(a.out, "scale", "scalefit_summary.json")) as fh:
+        scale = float(json.load(fh)["scale"])
+    disc_R = load_disc_R(a.disc_r) if a.disc_r else None
+    variants = {"model": ({}, scale)}
+    if a.known_bad:
+        variants.update({"kb_radius_only": ({"disc_material": "radius"}, scale), "kb_no_disc_material": ({}, 0.0),
+                         "kb_2x_scale": ({}, 2 * scale), "kb_1.3x_scale (power)": ({}, 1.3 * scale),
+                         "kb_barrel_path_factor": ({"disc_material": "barrel_factor"}, scale),
+                         "kb_disc_material_on_barrel_only": ({"disc_material": "all_tracks"}, scale)})
+    rows = {k: [] for k in variants}
+    own_all, loo_all, d5 = {}, {}, {k: [0, 0] for k in variants}
+    for scen in a.scen:
+        own_s, loo_s = [], []
+        for fi, f in enumerate(files):
+            path_f = CM.input_path(scen, f)
+            cfg = CM.producer_config(path_f)
+            assert CM.mask_of(cfg) == scen
+            for start, A in CM.iterate(path_f, AR.branches(path_f), chunk=a.chunk, nev=a.nev):
+                ctx = AR.prepare(A, geo)
+                off = None
+                for lab, (kw, sc) in variants.items():
+                    disc = AR.DiscTools(disc_scale=sc, R_tables=disc_R)
+                    tools = AR.Tools(cfg, cuts=cuts, disc=disc)
+                    arm = AR.inn_disc(cfg, **kw)
+                    path, _ = AR.visit_plan(ctx, geo, cfg, scen, arm)
+                    dg = AR.disc_going(path)
+                    fmd = first_met_disc(ctx["a"], disc.planes, path)
+                    out = AR.run_arm(ctx, geo, cfg, scen, arm, tools, own=True, loo=(lab == "model"))
+                    if off is None:
+                        off = AR.run_arm(ctx, geo, cfg, scen, AR.inn(cfg), tools)
+                    bo = np.flatnonzero(~dg & out["refit"])
+                    k = off["rec"]["acc"].shape[1]
+                    sel = lambda r: np.where(r["rec"]["acc"][bo, :k], r["rec"]["ci"][bo, :k], -1)
+                    diff = ~(np.all(out["a"][bo] == off["a"][bo], 1) & np.all(sel(out) == sel(off), 1))
+                    d5[lab][0] += len(bo)
+                    d5[lab][1] += int(diff.sum())
+                    R = DG.mark_primary(out["own"])
+                    m = R["primary"] & R["clean"]
+                    o = R["o"][m]
+                    rows[lab].append({"scen": np.full(m.sum(), CM.SCENARIOS.index(scen)), "ev": R["ev"][m] + fi * NEV_FILE + start,
+                                      "surface": R["surface"][m], "step": R["step"][m], "first": R["first"][m],
+                                      "pu": R["pu"][m], "pv": R["pv"][m], "dg": dg[o], "group": np.minimum(fmd[o], 5),
+                                      "stubs": ctx["T"]["nStubs"][o],
+                                      "ptbin": np.clip(np.searchsorted(PT_BINS, ctx["T"]["pt"][o], side="right") - 1, 0,
+                                                       len(PT_BINS) - 2)})
+                    if lab == "model":
+                        Rc = {kk: (R["csurface"] if kk == "surface" else v) for kk, v in R.items()}
+                        Rc["ev"] = R["ev"] + fi * NEV_FILE + start
+                        own_s.append(Rc)
+                        L = out["loo"]
+                        prim, clean_track = RE.loo_flags(out, R, ctx)
+                        loo_s.append({"surface": L["csurface"], "first": L["first"], "own_primary": prim,
+                                      "clean_track": clean_track, "scen": np.full(len(prim), scen), "n_inner": L["n_inner"],
+                                      "n_acc": L["n_acc"], "ev": ctx["tev"][L["o"]] + fi * NEV_FILE + start,
+                                      **{f"d_{dd}": v for dd, v in L["dims"].items()}})
+            print(f"[{time.time() - t0:7.1f}s] {scen} f{f:02d}", flush=True)
+        own_all[scen], loo_all[scen] = _concat(own_s), _concat(loo_s)
+    reps = G.replicas(nev=nev)
+    res = {"plan": "c1b/PLAN.md rev 4 §3-§4", "files": list(files), "role": "known-good" if a.known_bad else "gate",
+           "cuts": C1B_CUTS, "disc_scale": scale, "disc_r": a.disc_r, "material": [], "minor": []}
+    # D1 (pooled over scenarios: the disc rows are scenario-independent; one copy of each event is AAAA's)
+    imp = AR.DiscTools().imp
+    d1v = ("no_rows", "flip_centre", "global_rows", "key_from_local", "to_local", "width_div_1.15", "emitted_key") \
+        if a.known_bad else ()
+    res["D1"] = DC.d1(own_all["AAAA"], imp, geo, nev, false_veto=a.known_bad, variants=d1v)
+    if res["D1"]["pooled"]["n_fail"]:
+        res["material"].append(f"D1: {res['D1']['pooled']['n_fail']} failing bins (pooled facings)")
+    if a.known_bad and res["D1"]["false_veto"]["material"]:
+        res["material"].append(f"D1 false veto: lower bound {res['D1']['false_veto']['lower95']:.3f} > 5.7 %")
+    if any(v["facing_only"] for v in res["D1"]["variants"].values()) and res["D1"]["per_facing"]["n_fail"]:
+        res["material"].append(f"D1 per facing: {res['D1']['per_facing']['n_fail']} failing bins (a facing known-bad "
+                               "is caught only per facing)")
+    # D3 (A4) for the model and the D3 / D5 known-bads
+    res["D3"] = {}
+    for lab in variants:
+        J = judge_all(_concat(rows[lab]), reps)
+        res["D3"][lab] = J
+        res["D3"][lab]["any_fail"] = bool(J["D3a_fail"] or J["D3b_fail"] or J["D3c_fail"])
+    M = res["D3"]["model"]
+    res["material"] += M["D3a_fail"] + M["D3b_fail"] + M["D3c_fail"]
+    # D4 per scenario; its known-bads on file 4
+    res["D4"] = {scen: DC.d4(own_all[scen], loo_all[scen], cuts, scen, nev) for scen in a.scen}
+    for scen, e in res["D4"].items():
+        res["material"] += e["material"]
+        res["minor"] += e["minor"]
+    if a.known_bad:
+        z = np.load(os.path.join(a.out, "cuts", "c1b_cut_rows.npz"))
+        R = {k[5:]: z[k] for k in z.files if k.startswith("own__")}
+        m = R["primary"] & R["table_pop"] & R["clean"]
+        old = CU.LEVEL
+        CU.LEVEL = 0.975
+        try:
+            tab = CU._fit_table(R["g_xy"][m], R["surface"][m], R["first"][m])
+        finally:
+            CU.LEVEL = old
+        c975 = CU.Cuts({"schema": CU.SCHEMA, "level": 0.975, "cuts": {"gate|xy|calibrated": tab}})
+        res["D4_known_bads"] = DC.d4_known_bads(_concat(list(own_all.values())), c975)
+    # D5
+    res["D5"] = {lab: {"barrel_only_tracks": v[0], "different": v[1]} for lab, v in d5.items()}
+    if d5["model"][1]:
+        res["material"].append(f"D5: {d5['model'][1]} of {d5['model'][0]} barrel-only tracks differ with the discs on")
+    # the known-bads' verdicts
+    if a.known_bad:
+        kb = {f"D1/{k}": v["fails"] for k, v in res["D1"]["variants"].items() if k != "emitted_key"}
+        kb.update({f"D3/{k}": res["D3"][k]["any_fail"] for k in variants if k.startswith("kb_") and "power" not in k
+                   and k != "kb_disc_material_on_barrel_only"})
+        kb["D5/disc_material_on_barrel_only"] = d5["kb_disc_material_on_barrel_only"][1] > 0
+        kb.update({f"D4/{k}": v["fails"] for k, v in res["D4_known_bads"].items()})
+        res["known_bads"] = kb
+        res["power"] = {"D1 width / 1.15": res["D1"]["variants"]["width_div_1.15"],
+                        "D3 1.3 x scale": res["D3"]["kb_1.3x_scale (power)"]["any_fail"]}
+        res["material"] += [f"known-bad {k} does not fail its check" for k, v in kb.items() if not v]
+    res["seconds"] = round(time.time() - t0, 1)
+    out_dir = os.path.join(a.out, "checks")
+    os.makedirs(out_dir, exist_ok=True)
+    with open(os.path.join(out_dir, f"checks_f{'_'.join(f'{x:02d}' for x in files)}.json"), "w") as fh:
+        json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else
+                  (float(o) if np.isscalar(o) else str(o)))
+    print(json.dumps({k: res.get(k) for k in ("material", "known_bads")}, indent=1, default=str))
+    return 0
+
+
 def disc_r_tables(a):
     """Light, after J1: when D2 decided to build disc tables, write them from J1's overlap R in v3's layout
     (size x |cot| widths; the overlap R per size bin over every |cot| cell; a bin J1 left unconstrained keeps
@@ -597,7 +733,7 @@ def load_disc_R(path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("overlap", "discR", "seedtest", "scalefit", "cutfit"))
+    ap.add_argument("job", choices=("overlap", "discR", "seedtest", "scalefit", "cutfit", "checks"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--cuts", default=str(CM.CUTS), help="the cut file in use (the window)")
     ap.add_argument("--disc-r", default=None, help="J1's disc position-error tables, if D2 built them")
@@ -608,7 +744,7 @@ def main(argv=None):
     ap.add_argument("--out", default=str(C1B_OUT))
     a = ap.parse_args(argv)
     return {"overlap": overlap, "discR": disc_r_tables, "seedtest": seedtest, "scalefit": scalefit,
-            "cutfit": c1b_cutfit}[a.job](a)
+            "cutfit": c1b_cutfit, "checks": checks}[a.job](a)
 
 
 if __name__ == "__main__":
