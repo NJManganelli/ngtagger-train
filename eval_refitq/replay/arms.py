@@ -1,4 +1,4 @@
-"""The free-running replay: arms, switches and the visit loop (PLAN §1 items 3-6, §2, §10 PD1-PD3).
+"""The free-running replay: arms, switches and the visit loop (PLAN §1 items 3-6, §2, §10 PD1-PD3, PD17, PD18).
 
 An ARM is one configuration of the switches of PLAN §2. The named arms of the entry gate:
 
@@ -8,12 +8,13 @@ An ARM is one configuration of the switches of PLAN §2. The named arms of the e
         maxHitsPerWindow, its selection metric (positions and angles over the CLUSTER sigma), its Q with
         the empty-window recharge, maxKFUpdates, the d0 floor, the measured-angle cap (the cluster loader
         applies it, spix_nano.cluster_columns), discs; the cluster table as input. PM-B: no discs.
-  INN   the calibrated arm: ellipse candidates (ot_projection.evaluate_surface, central Jacobian), the
+  INN   the calibrated arm: ellipse candidates (ot_projection.evaluate_surface, central Jacobian) accepted
+        by the 99 % hit cut (PD18: the window is the designed cut, not a 4-sigma ellipse), the
         innovation metric, the calibrated seed and Highland material (refit_calibration v3), the
         position R tables, the table's angle errors (angle_import, barrel), the inner material at the
         POCA. No discs at all (PLAN §7: C1b).
-  ORP-cal  INN with ORP's payload-era angle scales and no inner material: ORP's calibrated `innovation`
-        arm, which the engine reproduces bit for bit (E2 / E3, E6).
+  ORP-cal  INN with ORP's payload-era angle scales, no inner material and the 4-sigma ellipse: ORP's
+        calibrated `innovation` arm, which the engine reproduces bit for bit (E2 / E3, E6).
 
 Angle use is a set of (consumer, angle, region): consumers window (a cut before ranking), rank, gate
 (the forward hit gate), rr (reject-and-refit) and update.
@@ -60,6 +61,10 @@ def producer_use(cfg):
     return use_set(("rank", "update"), ang)
 
 
+WINDOW_SEARCH_NSIG = 25.0           # PD18: the search bound of the "gate99" window (prediction-covariance sigma);
+                                    # the largest 99 % gate cut is 148 (12.2 sigma), the cluster error only adds
+
+
 @dataclass(frozen=True)
 class Arm:
     name: str
@@ -67,6 +72,9 @@ class Arm:
     jac: str = "cmssw"              # "cmssw": the producer's one-sided + same-module guard; "central": OP's
     window: str = "box"             # "box": the producer's module and boxes; "ellipse": nsig, all modules
     nsig: float = 4.0
+    window_cut: str = "nsig"        # the ellipse's acceptance: "nsig" (m^2 < nsig^2 in the prediction covariance) |
+                                    # "gate99" (the hit-gate statistic <= its 99 % cut, PD18; searched within
+                                    # WINDOW_SEARCH_NSIG)
     metric: str = "producer"        # "producer" | "innovation"
     seed_cov: str = "reported"      # "reported" | "calibrated"
     scattering: str = "producer"    # "producer" | "highland"
@@ -113,7 +121,8 @@ def pm_b(cfg, **kw):
 
 
 def inn(cfg, **kw):
-    base = dict(crossing="f64", jac="central", window="ellipse", metric="innovation", seed_cov="calibrated",
+    base = dict(crossing="f64", jac="central", window="ellipse", window_cut="gate99", metric="innovation",
+                seed_cov="calibrated",
                 scattering="highland", inner_material=True, pos_err="rtables", ang_err="table",
                 use=use_set(("rank", "update"), ANGLE_NAMES, ("barrel",)), discs=False)
     base.update(kw)
@@ -123,7 +132,7 @@ def inn(cfg, **kw):
 def orp_cal(cfg, **kw):
     """ORP's calibrated `innovation` arm (the E2 / E3 identity configuration)."""
     ang = {"alphaBeta": ANGLE_NAMES, "alpha": ("alpha",)}[cfg["useAngles"]]
-    return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False,
+    return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False, window_cut="nsig",
                use=use_set(("rank", "update"), ang, ("barrel",)), **kw)
 
 
@@ -477,7 +486,8 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
     else:
         on = np.zeros(len(st.o), bool)
         on[t] = True
-        ev = OP.evaluate_surface(_vctx(ctx, st.o), st.a, st.C, S, geo, arm.nsig, on)
+        nsig = {"nsig": arm.nsig, "gate99": WINDOW_SEARCH_NSIG}[arm.window_cut]
+        ev = OP.evaluate_surface(_vctx(ctx, st.o), st.a, st.C, S, geo, nsig, on)
         if ev is None:
             return None
         c = ev["cand"]
@@ -490,6 +500,13 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
         ch0 = np.stack([pj["u"][p], pj["v"][p], pj["cotA"][p], pj["cotB"][p]], 1)
         cJ = pj["J"][p]
         cSz = np.einsum("nij,njk,nlk->nil", E.guard_zeroed(cJ), st.C[tt], E.guard_zeroed(cJ))
+        if arm.window_cut == "gate99":                            # PD18: the window is the 99 % hit cut
+            g = gate_stat(arm, "gate", ctx, geo, ci, cmi, ch0, cSz, tools)
+            w = g <= tools.cuts.chi2("gate", arm.dims_key("gate"), arm.cov_model, geo["surface"][cmi],
+                                     np.full(len(ci), j == 0))
+            if not w.any():
+                return None
+            p, tt, ci, cmi, ch0, cJ, cSz = p[w], tt[w], ci[w], cmi[w], ch0[w], cJ[w], cSz[w]
         S_rank = pj["S"][p]                                       # ORP.rank uses the unguarded S
         cgr = None
         # crossings = the tracks with at least one in-ellipse candidate (one record per track)

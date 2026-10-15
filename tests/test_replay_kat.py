@@ -16,7 +16,8 @@ HERE = Path(__file__).resolve().parents[1] / "eval_refitq" / "replay"
 sys.path.insert(0, str(HERE))
 
 import angle_import as AI          # noqa: E402
-import arms as AR                  # noqa: E402
+import arms as AR
+import cuts as CU                  # noqa: E402
 import common as CM                # noqa: E402
 import engine as E                 # noqa: E402
 import identity as ID              # noqa: E402
@@ -178,8 +179,9 @@ def test_reject_and_refit_identities(data):
     off = run(data, AR.inn(cfg))
     on_inf = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg, name="rr", rr=True), AR.Tools(cfg, cuts=ConstCuts(np.inf)))
     assert np.array_equal(off["a"], on_inf["a"])
-    # a removed hit gives exactly the forced refit (from the OT seed) without it
-    arm = AR.inn(cfg, name="rr0", rr=True, rr_max_iter=1)
+    # a removed hit gives exactly the forced refit (from the OT seed) without it (the 4-sigma window, so that a
+    # zero cut acts on reject-and-refit only)
+    arm = AR.inn(cfg, name="rr0", rr=True, rr_max_iter=1, window_cut="nsig")
     on0 = AR.run_arm(ctx, geo, cfg, "AAAA", arm, AR.Tools(cfg, cuts=ConstCuts(0.0)))
     t = np.flatnonzero(on0["removed"].any(1) & on0["refit"])
     assert len(t)
@@ -213,6 +215,25 @@ def test_loo_smoothed_known_answers(data):
     hist["fa"][0, 2] = 1.0
     aS, CS = AR.smooth_back(hist, np.array([2]))
     assert np.array_equal(aS, hist["fa"][:, 2]) and np.array_equal(CS, hist["fC"][:, 2])
+
+
+def test_wide_window_search_bound(data, monkeypatch):
+    """PD18: the 'gate99' window (the 99 % hit cut) is searched within WINDOW_SEARCH_NSIG of the prediction;
+    a wider search changes no selection, and the window accepts no candidate beyond its bin's cut."""
+    if not CM.CUTS.exists():
+        pytest.skip("no cut file")
+    cfg, geo, ctx = data["cfg"], data["geo"], data["ctx"]
+    tools = AR.Tools(cfg, cuts=CU.Cuts.load(str(CM.CUTS)))
+    base = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg), tools)
+    monkeypatch.setattr(AR, "WINDOW_SEARCH_NSIG", 40.0)
+    wide = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg), tools)
+    assert np.array_equal(base["rec"]["ci"], wide["rec"]["ci"]) and np.array_equal(base["rec"]["acc"], wide["rec"]["acc"])
+    g = base["rec"]["gstat"][base["rec"]["acc"]]
+    S = base["rec"]["surface"][base["rec"]["acc"]]
+    first = np.nonzero(base["rec"]["acc"])[1] == 0
+    assert np.all(g <= tools.cuts.chi2("gate", "xy", "calibrated", S, first))
+    n4 = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg, window_cut="nsig"), tools)
+    assert base["nacc"].sum() > n4["nacc"].sum()        # the 4-sigma ellipse accepts fewer hits
 
 
 def test_inner_material_changes_covariance_only(data):

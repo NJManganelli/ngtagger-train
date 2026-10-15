@@ -43,25 +43,35 @@ def _q(stat):
     return float(SA.consumer_quantile(stat, np.zeros(len(stat), np.int64), levels=(LEVEL,), n_bins=1)[0, 0])
 
 
-def _fit_table(stat, surface, first, keybin=None):
-    """{bin key: (value, n, source)} for the consumer's statistic."""
+def _interval95(stat):
+    """The 95 % order-statistic interval (lo, hi) of the LEVEL quantile (PD18's cut comparison)."""
+    x = np.sort(np.asarray(stat, np.float64)[np.isfinite(stat)])
+    if len(x) < 1:
+        return None
+    k = min(int(np.ceil(LEVEL * (len(x) + 1))), len(x)) - 1
+    d = int(np.ceil(1.96 * np.sqrt(len(x) * LEVEL * (1 - LEVEL))))
+    return float(x[max(k - d, 0)]), float(x[min(k + d, len(x) - 1)])
+
+
+def _fit_table(stat, surface, first, keybin=None, q=_q):
+    """{bin key: (q(values), n, source)} for the consumer's statistic; q is the LEVEL quantile (the cut)
+    or _interval95."""
     stat = np.asarray(stat, np.float64)
     ok = np.isfinite(stat)
     stat, surface, first = stat[ok], np.asarray(surface)[ok], np.asarray(first)[ok]
     kb = np.asarray(keybin)[ok] if keybin is not None else None
     out = {}
-    glob = _q(stat)
-    out["*"] = (glob, int(len(stat)), "all")
+    out["*"] = (q(stat), int(len(stat)), "all")
     for S in np.unique(surface):
         mS = surface == S
-        out[f"{S}"] = (_q(stat[mS]), int(mS.sum()), "surface")
+        out[f"{S}"] = (q(stat[mS]), int(mS.sum()), "surface")
         for f in (True, False):
             m = mS & (first == f)
-            out[f"{S}|{int(f)}"] = (_q(stat[m]), int(m.sum()), "surface|step")
+            out[f"{S}|{int(f)}"] = (q(stat[m]), int(m.sum()), "surface|step")
             if kb is not None:
                 for b in np.unique(kb[m]):
                     mb = m & (kb == b)
-                    out[f"{S}|{int(f)}|{int(b)}"] = (_q(stat[mb]), int(mb.sum()), "surface|step|key")
+                    out[f"{S}|{int(f)}|{int(b)}"] = (q(stat[mb]), int(mb.sum()), "surface|step|key")
     return {k: {"value": v, "n": n, "level": src} for k, (v, n, src) in out.items()}
 
 
@@ -132,22 +142,34 @@ def populations(R, L, clean=True):
     return gate, window, rr
 
 
-def fit(own_by_cov: dict, loo_by_cov: dict, provenance: dict, rr_statistic: str, clean: bool = True) -> Cuts:
-    """own_by_cov[cov] = concatenated own-cluster rows (diagnostics.own_rows + mark_primary);
-    loo_by_cov[cov] = {"dims": {dims: stat}, "surface", "first", "own_primary", "clean_track", "scen"}."""
+def _tables(own_by_cov, loo_by_cov, clean, q):
+    """Every consumer's table {table key: {bin key: {value, n, level}}}, value = q(the bin's values)."""
     cuts = {}
     for cov in own_by_cov:
         R, L = own_by_cov[cov], loo_by_cov[cov]
         gate, window, rr = populations(R, L, clean)
         for dims in ("xy", "xya", "xyb", "xyab"):
-            cuts[f"gate|{dims}|{cov}"] = _fit_table(R[f"g_{dims}"][gate], R["surface"][gate], R["first"][gate])
+            cuts[f"gate|{dims}|{cov}"] = _fit_table(R[f"g_{dims}"][gate], R["surface"][gate], R["first"][gate], q=q)
             for scen in np.unique(L["scen"]):
                 m = rr & (L["scen"] == scen)
                 cuts[table_key("rr", dims, cov, str(scen))] = _fit_table(L["dims"][dims][m], L["surface"][m],
-                                                                       L["first"][m])
+                                                                       L["first"][m], q=q)
         for i, ang in enumerate(("alpha", "beta")):
             cuts[f"window|{ang}|{cov}"] = _fit_table(R["z"][window, i], R["surface"][window], R["first"][window],
-                                                     R["keybin"][window, i])
+                                                     R["keybin"][window, i], q=q)
+    return cuts
+
+
+def intervals(own_by_cov: dict, loo_by_cov: dict, clean: bool = True) -> dict:
+    """The 95 % order-statistic interval of every cut bin, from the fit rows (PD18: did a refit change the
+    cuts?), in fit()'s table layout."""
+    return _tables(own_by_cov, loo_by_cov, clean, _interval95)
+
+
+def fit(own_by_cov: dict, loo_by_cov: dict, provenance: dict, rr_statistic: str, clean: bool = True) -> Cuts:
+    """own_by_cov[cov] = concatenated own-cluster rows (diagnostics.own_rows + mark_primary);
+    loo_by_cov[cov] = {"dims": {dims: stat}, "surface", "first", "own_primary", "clean_track", "scen"}."""
+    cuts = _tables(own_by_cov, loo_by_cov, clean, _q)
     doc = {"schema": SCHEMA, "level": LEVEL, "rank": "k = min(ceil(L (n + 1)), n) (spdefs.consumer_quantile)",
            "population": "PD1 + PD8: own primaries / own class T with a clean history" if clean else "no history condition",
            "min_n": MIN_N, "rr_statistic": rr_statistic, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
