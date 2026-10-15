@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261014T201127Z-wpd0b-gate-derive-91667/copy",
- "derived": "2026-10-14T20:13:13Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T092514Z-wpd0b-gate34-derive-33792/copy",
+ "derived": "2026-10-15T09:26:27Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "census.input_contract",
- "job_id": "20261014T201127Z-wpd0b-gate-derive-91667",
+ "job_id": "20261015T092514Z-wpd0b-gate34-derive-33792",
  "known_bad": "five copies of the gate input's OT stub and IT cluster tables written to scratch under NanoAOD names, each of which the census must refuse: (a) without L1TOTStub_isPS / isTilted (as canon_v2); (b) without L1TOTStub_tpIdxInner / tpIdxOuter; (c) with one stub's tpIdxInner set to -2 (truth unavailable); (d) without L1TOTStub_detId; (e) without L1TSmartPixelsCluster_detId. The same copy with every column and no -2 is accepted, so each change alone causes its refusal",
  "rule": "tp_findability.require_census_inputs accepts the input; on every OT barrel stub of the first 5 events isPS == (layer <= 3) and isTilted only on PS modules (D121); KF.ot_variances with the stub's flags equals KFParamsComb::matrixV written out independently (pitch and length by isPS, z variance x approxB^2 exactly on tilted modules) to 1e-12 relative; identity of the stub counts with the reference",
  "stat": {

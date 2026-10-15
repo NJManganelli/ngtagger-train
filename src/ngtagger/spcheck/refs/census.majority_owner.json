@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261014T201127Z-wpd0b-gate-derive-91667/copy",
- "derived": "2026-10-14T20:11:29Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T092514Z-wpd0b-gate34-derive-33792/copy",
+ "derived": "2026-10-15T09:25:16Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "census.majority_owner",
- "job_id": "20261014T201127Z-wpd0b-gate-derive-91667",
+ "job_id": "20261015T092514Z-wpd0b-gate34-derive-33792",
  "known_bad": "two variants, each of which must be red: (sentinel) an int32 sentinel injected: empty layer slots handed to the census as valid hits carrying np.iinfo(int32).min (the missing-mask/sentinel class of the 813be3e bug); (index tie-break) the census owner with every tie given to the larger index again, the rule of census formats <= 31",
  "rule": "KF.credited_owner on the OT tracks of the gate input (stubs from L1TTrackStub -> L1TOTStub, each credited to its tpIdx, tpIdxInner and tpIdxOuter through M.credited_tps; SP-refit IT clusters from L1TSmartPixelsTrackCluster, credited to their tpIdx; empty slots invalid) equals a plain counting reference (each real hit counts once for every distinct matched TP among its raw truth columns; the most counts wins, a tie gives no owner, as CMSSW) on every track; n_own <= real hits; owner -1 or a TP credited by a hit on the track; input tpIdx int32, output int64; identity of the counts with the reference, including the number of tracks whose owner the cluster credit changes (against the stub's own tpIdx alone)",
  "stat": {
