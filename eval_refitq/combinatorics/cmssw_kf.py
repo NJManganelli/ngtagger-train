@@ -604,12 +604,16 @@ def fitted_output(state, seed, k=K):
     # HybridFit.cc:198-221
     phi0fit = reduce_phi(float(phi0) - seed.isector * 2 * math.pi / N_SECTOR + 0.5 * k.dphisector_hg)
     rinvfit = 0.01 * C_TRK * k.b * float(q)
-    irinv = math.floor(rinvfit / k.krinvpars)
-    iphi0 = math.floor(phi0fit / k.kphi0pars)
-    it = math.floor(float(tanl) / k.ktpars)
-    iz0 = math.floor(float(z0) / k.kz0pars)
-    id0 = math.floor(float(d0) / k.kd0pars)
-    # Tracklet::setFitPars clamps (Tracklet.cc:560-576)
+    out.ipars, out.track = track_from_ipars(math.floor(rinvfit / k.krinvpars), math.floor(phi0fit / k.kphi0pars),
+                                            math.floor(float(d0) / k.kd0pars), math.floor(float(tanl) / k.ktpars),
+                                            math.floor(float(z0) / k.kz0pars), seed.isector, k)
+    return out
+
+
+def track_from_ipars(irinv, iphi0, id0, it, iz0, isector, k=K):
+    """Tracklet::setFitPars' clamps (Tracklet.cc:560-576), then the TTTrack's floats (Track.h:70-73,
+    Track.cc:38-53): bin centres for rinv, tanL, z0 and d0, phi0 = iphi0 LSBs above the sector's phimin.
+    Returns (clamped (irinv, iphi0, id0, it, iz0), (rinv, phi0, tanL, z0, d0))."""
     irinv = min(irinv, 1 << 14)
     if irinv <= -(1 << 14):
         irinv = -(1 << 14) + 1
@@ -618,9 +622,6 @@ def fitted_output(state, seed, k=K):
         iz0 = half_z0 - 1
     if iz0 <= -half_z0:
         iz0 = 1 - half_z0
-    out.ipars = (irinv, iphi0, id0, it, iz0)
-    # Track.h:70-73, Track.cc:38-53 -> TTTrack (floats in the nano)
-    out.track = ((irinv + 0.5) * k.krinvpars,
-                 reduce_phi(iphi0 * k.kphi0pars + sector_phimin(seed.isector, k)),
-                 (it + 0.5) * k.ktpars, (iz0 + 0.5) * k.kz0pars, (id0 + 0.5) * k.kd0pars)
-    return out
+    return ((irinv, iphi0, id0, it, iz0),
+            ((irinv + 0.5) * k.krinvpars, reduce_phi(iphi0 * k.kphi0pars + sector_phimin(isector, k)),
+             (it + 0.5) * k.ktpars, (iz0 + 0.5) * k.kz0pars, (id0 + 0.5) * k.kd0pars))
