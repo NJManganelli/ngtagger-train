@@ -70,9 +70,11 @@ def own_rows(arm, st, j, t, S, ctx, geo, tools, kpt):
     e1 = np.where(has, e1, np.nan)
     t1 = np.where(has, t1, np.nan)
     out.update(e1=e1, t1=t1, z=np.abs(e1), has=has)
+    out["vu"] = sig[:, 0] ** 2 + Sz[:, 0, 0]                                 # innovation position variances
+    out["vv"] = sig[:, 1] ** 2 + Sz[:, 1, 1]
     with np.errstate(invalid="ignore", divide="ignore"):
-        out["pu"] = r[:, 0] / np.sqrt(sig[:, 0] ** 2 + Sz[:, 0, 0])          # innovation position pulls
-        out["pv"] = r[:, 1] / np.sqrt(sig[:, 1] ** 2 + Sz[:, 1, 1])
+        out["pu"] = r[:, 0] / np.sqrt(out["vu"])                             # innovation position pulls
+        out["pv"] = r[:, 1] / np.sqrt(out["vv"])
     out["ev"] = ctx["tev"][st.o[v]]
     for dims, d in (("xy", (False, False)), ("xya", (True, False)), ("xyb", (False, True)), ("xyab", (True, True))):
         dm = np.concatenate([np.ones((len(v), 2), bool), has & np.array(d)[None, :]], 1)

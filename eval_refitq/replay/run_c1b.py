@@ -218,25 +218,16 @@ def width_table(rows, keys, reps, min_n=200):
     return out
 
 
-def judge(table, label, min_n=200):
-    """D3's rule: |core width - 1| <= 0.1 + t1(N) x the bootstrap sd, N = the judged (bin, axis) count."""
-    jb = [(k, ax) for k, e in table.items() for ax in ("pu", "pv") if e["n"] >= min_n and np.isfinite(e[ax])]
-    W = G.t_one(max(len(jb), 1))
-    fails = [f"{label} {k} {ax}: core width {table[k][ax]:.3f} (sd {table[k][ax + '_sd']:.3f}, n {table[k]['n']})"
-             for k, ax in jb if abs(table[k][ax] - 1) > D3_TOL + W * table[k][ax + "_sd"]]
-    return fails, W, len(jb)
+SCALE_GRID = (0.5, 0.71, 1.0, 1.41, 2.0)              # A5
+CLIP = 25.0
 
 
-def seedtest(a):
-    """§1 items 3 and the barrel visits (D3a decision, its stub-count test, D3c), files 1-2 x 3 scenarios: the
-    disc arm with the seed as is (each disc-going track's own v3 deficit), the disc material at scale 1, the
-    disc R chosen by J1, the adopted window. Writes c1b/seed/seedtest_summary.json and the rows."""
-    import cuts as CU
+def collect(a, disc_scale, cuts, disc_R):
+    """One pass of the disc arm over files 1-2 x the scenarios at a disc material scale: own primaries with a
+    clean history (pulls and innovation variances), with the population, group, step, surface and pT bin."""
     import diagnostics as DG
-    t0 = time.time()
     geo = OP.load_geometry(CM.GEOMETRY)
-    cuts = CU.Cuts.load(a.cuts)
-    disc = AR.DiscTools(R_tables=load_disc_R(a.disc_r) if a.disc_r else None)
+    disc = AR.DiscTools(disc_scale=disc_scale, R_tables=disc_R)
     parts = []
     for scen in a.scen:
         for fi, f in enumerate(CM.FIT_FILES):
@@ -257,36 +248,159 @@ def seedtest(a):
                 pt = ctx["T"]["pt"][o]
                 parts.append({"scen": np.full(m.sum(), CM.SCENARIOS.index(scen)), "ev": R["ev"][m] + fi * NEV_FILE + start,
                               "surface": R["surface"][m], "step": R["step"][m], "first": R["first"][m],
-                              "pu": R["pu"][m], "pv": R["pv"][m], "dg": dg[o], "group": np.minimum(fmd[o], 5),
-                              "ptbin": np.clip(np.searchsorted(PT_BINS, pt, side="right") - 1, 0, len(PT_BINS) - 2),
-                              "stubs": ctx["T"]["nStubs"][o]})
-            print(f"[{time.time() - t0:7.1f}s] {scen} f{f:02d}", flush=True)
-    rows = _concat(parts)
-    reps = G.replicas(nev=NEV_FILE * len(CM.FIT_FILES))
-    res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §3 D3a D3c", "cuts": a.cuts, "disc_r": a.disc_r, "material": [], "minor": []}
+                              "pu": R["pu"][m], "pv": R["pv"][m], "vu": R["vu"][m], "vv": R["vv"][m],
+                              "dg": dg[o], "group": np.minimum(fmd[o], 5), "stubs": ctx["T"]["nStubs"][o],
+                              "ptbin": np.clip(np.searchsorted(PT_BINS, pt, side="right") - 1, 0, len(PT_BINS) - 2)})
+    return _concat(parts)
+
+
+def judge_relative(table, ref, refkey, label, min_n=200):
+    """A4: |width - width(reference)| <= 0.1 + t1(N) sqrt(sd^2 + sd_ref^2), per bin and axis; refkey maps a bin
+    key to its reference key. Returns (failing lines, W, N)."""
+    jb = []
+    for k, e in table.items():
+        r = ref.get(refkey(k))
+        for ax in ("pu", "pv"):
+            if e["n"] >= min_n and r and r["n"] >= min_n and np.isfinite(e[ax]) and np.isfinite(r[ax]):
+                jb.append((k, ax, r))
+    W = G.t_one(max(len(jb), 1))
+    fails = [f"{label} {k} {ax}: width {table[k][ax]:.3f} vs reference {r[ax]:.3f} (n {table[k]['n']} / {r['n']})"
+             for k, ax, r in jb
+             if abs(table[k][ax] - r[ax]) > D3_TOL + W * np.hypot(table[k][ax + "_sd"], r[ax + "_sd"])]
+    return fails, W, len(jb)
+
+
+def judge_all(rows, reps):
+    """D3a, D3b, D3c relative to the barrel-only references (A4), the stub-count test, the absolute widths."""
+    sub = lambda m: {k: v[m] for k, v in rows.items()}
+    bo = ~rows["dg"] & (rows["surface"] <= 4)
+    out = {"ref_same": width_table(sub(bo), ("surface", "first", "ptbin"), reps),
+           "ref_first": width_table(sub(bo & (rows["step"] == 0)), ("ptbin",), reps),
+           "ref_later": width_table(sub(bo & (rows["step"] > 0)), ("ptbin",), reps)}
     first = rows["dg"] & (rows["step"] == 0)
-    d3a = {k: v[first] for k, v in rows.items()}
-    res["D3a"] = width_table(d3a, ("group", "ptbin"), reps)
-    res["D3a_fail"], res["D3a_W"], res["D3a_N"] = judge(res["D3a"], "D3a")
-    res["D3a_masked_only"] = width_table({k: v[d3a["surface"] <= 4] for k, v in d3a.items()}, ("group",), reps)
-    res["D3a_stubs"] = width_table(d3a, ("group", "ptbin", "stubs"), reps)
-    sf, _, _ = judge(res["D3a_stubs"], "D3a stub-count sub-bin")
-    group_ok = {k for k in res["D3a"] if not any(f.startswith(f"D3a {k} ") for f in res["D3a_fail"])}
-    res["stub_split"] = sorted({f.split()[3].rsplit("|", 1)[0] for f in sf} & group_ok)
+    out["D3a"] = width_table(sub(first), ("group", "ptbin"), reps)
+    pt_of = lambda k: k.split("|")[-1]
+    out["D3a_fail"], out["D3a_W"], out["D3a_N"] = judge_relative(out["D3a"], out["ref_first"], pt_of, "D3a")
+    out["D3a_masked_only"] = width_table(sub(first & (rows["surface"] <= 4)), ("group",), reps)
+    out["D3a_stubs"] = width_table(sub(first), ("group", "ptbin", "stubs"), reps)
+    sf, _, _ = judge_relative(out["D3a_stubs"], out["ref_first"], lambda k: k.split("|")[1], "D3a stub sub-bin")
+    bad_groups = {f.split()[1] for f in out["D3a_fail"]}
+    out["stub_split"] = sorted({f.split()[3].rsplit("|", 1)[0] for f in sf} - bad_groups)
+    later_disc = rows["dg"] & (rows["surface"] > 10) & (rows["step"] > 0)
+    out["D3b"] = width_table(sub(later_disc), ("surface", "ptbin"), reps)
+    out["D3b_fail"], out["D3b_W"], out["D3b_N"] = judge_relative(out["D3b"], out["ref_later"], pt_of, "D3b")
     bar = rows["dg"] & (rows["surface"] <= 4)
-    res["D3c"] = width_table({k: v[bar] for k, v in rows.items()}, ("surface", "first", "ptbin"), reps)
-    res["D3c_fail"], res["D3c_W"], res["D3c_N"] = judge(res["D3c"], "D3c")
-    res["material"] += [f"{x} (files 1-2: a D3c failure stops the package)" for x in res["D3c_fail"]]
-    ref = ~rows["dg"] & (rows["surface"] <= 4)
-    res["reference_barrel_only"] = width_table({k: v[ref] for k, v in rows.items()}, ("surface", "first", "ptbin"), reps)
-    res["decision"] = "refit the disc seed groups" if res["D3a_fail"] else "keep the seed (each track's v3 deficit)"
-    res["seconds"] = round(time.time() - t0, 1)
+    out["D3c"] = width_table(sub(bar), ("surface", "first", "ptbin"), reps)
+    out["D3c_fail"], out["D3c_W"], out["D3c_N"] = judge_relative(out["D3c"], out["ref_same"], lambda k: k, "D3c")
+    return out
+
+
+def seedtest(a):
+    """§1 item 3 with A4: the D3a test-or-fit decision on files 1-2 x 3 scenarios, the disc arm with the seed as
+    is (each disc-going track's own v3 deficit) and the material scale fixed at 1; D3b / D3c are recorded, not
+    judged (they are judged after the scale fit). Writes c1b/seed/seedtest_summary.json and the rows."""
+    import cuts as CU
+    t0 = time.time()
+    cuts = CU.Cuts.load(a.cuts)
+    rows = collect(a, 1.0, cuts, load_disc_R(a.disc_r) if a.disc_r else None)
+    reps = G.replicas(nev=NEV_FILE * len(CM.FIT_FILES))
+    J = judge_all(rows, reps)
+    res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §8 A4", "cuts": a.cuts, "disc_r": a.disc_r, "disc_scale": 1.0,
+           "material": [], "minor": [], **J,
+           "decision": "refit the disc seed groups" if J["D3a_fail"] else "keep the seed (each track's v3 deficit)",
+           "note": "D3b and D3c recorded at scale 1; judged after the material-scale fit (A4)",
+           "seconds": round(time.time() - t0, 1)}
     out_dir = os.path.join(a.out, "seed")
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, "seedtest_rows.npz"), **rows)
     with open(os.path.join(out_dir, "seedtest_summary.json"), "w") as fh:
         json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
-    print(json.dumps({k: res[k] for k in ("material", "D3a_fail", "decision")}, indent=1, default=str))
+    print(json.dumps({k: res[k] for k in ("D3a_fail", "decision")}, indent=1, default=str))
+    return 0
+
+
+def nll_per_event(rows, sel, nev):
+    """Per event: sum over u and v of log V + min(r^2 / V, CLIP), the rows sel (A5)."""
+    out = np.zeros(nev)
+    for p_, v_ in (("pu", "vu"), ("pv", "vv")):
+        x = np.log(rows[v_][sel]) + np.minimum(rows[p_][sel] ** 2, CLIP)
+        ok = np.isfinite(x)
+        out += np.bincount(rows["ev"][sel][ok].astype(np.int64), weights=x[ok], minlength=nev)
+    return out
+
+
+def quad_min(logs, y):
+    """The minimum of a parabola through the grid's lowest point and its neighbours (log scale); the edge
+    when the lowest point is at the grid's edge."""
+    i = int(np.argmin(y))
+    if i in (0, len(y) - 1):
+        return float(np.exp(logs[i])), True
+    x3, y3 = logs[i - 1:i + 2], y[i - 1:i + 2]
+    c = np.polyfit(x3, y3, 2)
+    return float(np.exp(-c[1] / (2 * c[0]))) if c[0] > 0 else float(np.exp(logs[i])), False
+
+
+def scalefit(a):
+    """§1 items 4-5 with A4 / A5: the disc material scale from the scan, its second-on vs third-on check, then
+    one pass at the fitted scale: D3b, D3c (the stop rule) and the D3a re-check, relative to the barrel-only
+    references; the absolute widths reported. Writes c1b/scale/scalefit_summary.json."""
+    import cuts as CU
+    t0 = time.time()
+    cuts = CU.Cuts.load(a.cuts)
+    disc_R = load_disc_R(a.disc_r) if a.disc_r else None
+    nev = NEV_FILE * len(CM.FIT_FILES)
+    reps = G.replicas(nev=nev)
+    logs = np.log(np.array(SCALE_GRID))
+    nll = {"second_on": [], "third_on": []}
+    core_ratio = []                     # diagnostic (reported only): the later disc visits' core width over the
+    for s in SCALE_GRID:                # barrel-only later visits', u and v averaged, per grid scale
+        rows = collect(a, s, cuts, disc_R)
+        later = rows["dg"] & (rows["surface"] > 10)
+        nll["second_on"].append(nll_per_event(rows, later & (rows["step"] >= 1), nev))
+        nll["third_on"].append(nll_per_event(rows, later & (rows["step"] >= 2), nev))
+        ref = ~rows["dg"] & (rows["surface"] <= 4) & (rows["step"] > 0)
+        dl = later & (rows["step"] >= 1)
+        core_ratio.append(np.mean([core_width(rows[x][dl]) / core_width(rows[x][ref]) for x in ("pu", "pv")]))
+        print(f"[{time.time() - t0:7.1f}s] scale {s}", flush=True)
+    res = {"plan": "c1b/PLAN.md rev 4 §1 items 4-5, §8 A4 A5", "grid": SCALE_GRID, "material": [], "minor": []}
+    fit = {}
+    for k in nll:
+        M = np.array(nll[k])                                     # (grid, nev)
+        s_hat, edge = quad_min(logs, M.sum(1))
+        bs = [quad_min(logs, M @ w)[0] for w in reps]
+        fit[k] = {"scale": s_hat, "at_bound": edge, "nll": M.sum(1), "boot": np.array(bs)}
+    d = fit["second_on"]["boot"] - fit["third_on"]["boot"]
+    sd_d = float(np.std(d))
+    res["scale"] = fit["second_on"]["scale"]
+    res["scale_sd"] = float(np.std(fit["second_on"]["boot"]))
+    res["third_on"] = fit["third_on"]["scale"]
+    res["paired_sd"] = sd_d
+    res["nll"] = {k: v["nll"] for k, v in fit.items()}
+    cr = np.array(core_ratio)
+    res["diagnostic_core_ratio"] = cr
+    ok = np.flatnonzero(np.diff(np.sign(cr - 1.0)) != 0)
+    res["diagnostic_core_matching_scale"] = (float(np.exp(np.interp(1.0, cr[ok[0]:ok[0] + 2][::-1] if cr[ok[0]] > cr[ok[0] + 1] else cr[ok[0]:ok[0] + 2],
+                                                               logs[ok[0]:ok[0] + 2][::-1] if cr[ok[0]] > cr[ok[0] + 1] else logs[ok[0]:ok[0] + 2])))
+                                             if len(ok) else None)
+    if fit["second_on"]["at_bound"]:
+        res["material"].append(f"the disc material scale is at a bound of the grid ({res['scale']:.2f})")
+    if abs(res["scale"] - res["third_on"]) > 2 * sd_d:
+        res["material"].append(f"second-on scale {res['scale']:.3f} vs third-on {res['third_on']:.3f}: beyond 2 paired sd ({sd_d:.3f})")
+    if 1.25 <= res["scale"] <= 1.6:
+        res["note_1p4"] = "a scale near 1.4 is most likely the barrel model's unexplained 1.37x excess, not disc material"
+    rows = collect(a, res["scale"], cuts, disc_R)
+    J = judge_all(rows, reps)
+    res.update(J)
+    res["material"] += [f"{x} (after the scale fit: a D3c failure stops the package)" for x in J["D3c_fail"]]
+    res["material"] += J["D3b_fail"]
+    res["D3a_recheck"] = "fails: the seed groups are refitted" if J["D3a_fail"] else "passes"
+    res["seconds"] = round(time.time() - t0, 1)
+    out_dir = os.path.join(a.out, "scale")
+    os.makedirs(out_dir, exist_ok=True)
+    np.savez_compressed(os.path.join(out_dir, "scalefit_rows.npz"), **rows)
+    with open(os.path.join(out_dir, "scalefit_summary.json"), "w") as fh:
+        json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
+    print(json.dumps({k: res[k] for k in ("scale", "scale_sd", "third_on", "material", "D3a_recheck")}, indent=1, default=str))
     return 0
 
 
@@ -326,7 +440,7 @@ def load_disc_R(path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("overlap", "discR", "seedtest"))
+    ap.add_argument("job", choices=("overlap", "discR", "seedtest", "scalefit"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--cuts", default=str(CM.CUTS), help="the cut file in use (the window)")
     ap.add_argument("--disc-r", default=None, help="J1's disc position-error tables, if D2 built them")
@@ -334,7 +448,7 @@ def main(argv=None):
     ap.add_argument("--chunk", type=int, default=10)
     ap.add_argument("--out", default=str(C1B_OUT))
     a = ap.parse_args(argv)
-    return {"overlap": overlap, "discR": disc_r_tables, "seedtest": seedtest}[a.job](a)
+    return {"overlap": overlap, "discR": disc_r_tables, "seedtest": seedtest, "scalefit": scalefit}[a.job](a)
 
 
 if __name__ == "__main__":
