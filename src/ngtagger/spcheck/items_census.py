@@ -15,7 +15,7 @@ from collections import Counter
 
 import numpy as np
 
-from .core import Item, identity, same_input
+from .core import Item, NotApplicable, identity, same_input
 
 CENSUS_DIR = "eval_refitq/combinatorics"
 CENSUS_EVENTS = 4
@@ -444,4 +444,82 @@ class CensusInputContract(Item):
                          f"variances = matrixV") if not why else "; ".join(why)
 
 
-ITEMS = [MajorityOwner(), CensusBuilds(), CensusInputContract()]
+# ---------------------------------------------------------------- a cut run fills its entries
+CUT_FILE = "/Volumes/WDMac/smartpixels_scratch/wpd0b/cuts/cuts_k1.json"   # registry wpd0b.cuts.k1
+CUT_ENTRY_MIN = 5          # an entry finding at least this many TPs with cuts open must find one with cuts on
+
+
+class CutEntries(Item):
+    id = "census.cut_entries"
+    title = "a census run with an angle cut file forms something in every entry the cuts-open census fills"
+    c4_row = "angle cuts reach only what they test (WP-D0b: S1 once vetoed every OT stub of a cut run)"
+    known_bad_desc = ("the 2026-10-15 defect's signature: the cut run with every entry whose seed holds an OT layer "
+                      "emptied (as S1 did by vetoing every OT stub through its NaN statistic)")
+    rule_desc = (f"the 4-event AAAI+IAAA census of census.builds_and_dr (cuts open) against the same census with "
+                 f"the cut file wpd0b.cuts.k1 (default stages): every entry that finds >= {CUT_ENTRY_MIN} TPs with "
+                 f"cuts open finds >= 1 with cuts on; identity of the entry list and the found counts with the "
+                 f"reference; n/a without the cut file")
+    trees = (CENSUS_DIR,)
+
+    def _run_cut(self, ctx) -> str:
+        key = ("census_cut_cache", ctx.input)
+        if key in ctx.cache:
+            return ctx.cache[key]
+        root = ctx.tree(CENSUS_DIR)
+        out = tempfile.mkdtemp(prefix="spcheck_census_cut_", dir=ctx.scratch)
+        cmd = [sys.executable, "-u", str(root / "tp_findability.py"), "-i", ctx.input, "-n", str(CENSUS_EVENTS),
+               "--chunk", "2", "--calib-events", str(CENSUS_EVENTS), "--it-ptmin", "1.0",
+               "--min-layers", "4", "--min-it-layers", "3", "--masks", CENSUS_BUILDS, "--cache-dir", out,
+               "--angle-cuts", CUT_FILE, "-o", os.path.join(out, "census.json")]
+        try:
+            r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ctx.code_root),
+                               timeout=CENSUS_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"the 4-event cut census exceeded {CENSUS_TIMEOUT_S} s") from None
+        if r.returncode != 0:
+            raise RuntimeError(f"cut census failed rc={r.returncode}: {r.stderr[-2000:]}")
+        ctx.cache[key] = out
+        return out
+
+    @staticmethod
+    def _found(path):
+        S = json.load(open(path))["seeds"]
+        return [(str(s["seed"]), ",".join(s["builds"]), bool(s["soft"]), int(s["n_found"])) for s in S]
+
+    def _stat(self, ctx, perturb=False):
+        if not os.path.exists(CUT_FILE):
+            raise NotApplicable(f"no angle cut file at {CUT_FILE}")
+        open_dir = os.path.dirname(CensusBuilds()._run(ctx))
+        cut_dir = self._run_cut(ctx)
+        fo = self._found(os.path.join(open_dir, "census.json"))
+        fc = self._found(os.path.join(cut_dir, "census.json"))
+        if [x[:3] for x in fo] != [x[:3] for x in fc]:
+            raise RuntimeError("the cuts-open and cut censuses list different entries")
+        if perturb:                              # the defect's signature: OT-seeded entries empty
+            fc = [(s, b, so, 0 if "OL" in s else n) for s, b, so, n in fc]
+        empty = [f"{s} {b}{' soft' if so else ''} ({no} open)" for (s, b, so, no), (*_, nc) in zip(fo, fc)
+                 if no >= CUT_ENTRY_MIN and nc == 0]
+        return {"input": ctx.input, "events": CENSUS_EVENTS, "perturbed": perturb, "n_entries": len(fo),
+                "n_checked": sum(no >= CUT_ENTRY_MIN for *_, no in fo), "empty_with_cuts": empty,
+                "found_open": sum(x[3] for x in fo), "found_cut": sum(x[3] for x in fc)}
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        return self._stat(ctx, perturb=True)
+
+    def judge(self, stat, ref):
+        why = []
+        if stat["empty_with_cuts"]:
+            why.append(f"{len(stat['empty_with_cuts'])} entries empty with cuts: "
+                       + "; ".join(stat["empty_with_cuts"][:6]))
+        if same_input(stat, ref) and stat.get("perturbed") == ref["stat"].get("perturbed"):
+            why += identity(stat, ref, ["n_entries", "n_checked", "found_open", "found_cut"])[1]
+        if why:
+            return False, "; ".join(why)
+        return True, (f"{stat['n_checked']} of {stat['n_entries']} entries checked: every one finds TPs with cuts "
+                      f"({stat['found_cut']} against {stat['found_open']} with cuts open)")
+
+
+ITEMS = [MajorityOwner(), CensusBuilds(), CensusInputContract(), CutEntries()]
