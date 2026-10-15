@@ -348,9 +348,10 @@ def material(res):
 
 
 def fails_gate(res):
-    """Whether a judgement fails the gate by (b-ii) or (b-iii) (for the known-bads)."""
-    return (any(not v["pass"] for v in res["b_iii"].values())
-            or any(not v["pass"] for v in res["b_ii"].values()))
+    """Whether a judgement fails the gate (for the known-bads): by the MATERIAL rule itself, so a known-bad
+    is red only where the nominal would be MATERIAL -- a non-report-only (b-iii) cell failing, or under-covering
+    (b-ii) bins holding > 2 % of a consumer's particles; one failing bin or a report-only cell is not enough."""
+    return bool(material(res))
 
 
 # ==========================================================================
