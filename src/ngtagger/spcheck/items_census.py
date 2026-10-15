@@ -383,16 +383,18 @@ class CensusInputContract(Item):
 
     @staticmethod
     def _input_copy(ctx, drop, tag, unavailable=None) -> str:
-        """The gate input's OT stub and IT cluster tables written to scratch under NanoAOD
-        branch names (nL1TOTStub, L1TOTStub_<column>, nL1TSmartPixelsCluster, ...), without
-        the branches in `drop`, and with the first stub's column `unavailable` set to -2
-        (truth unavailable) when given."""
+        """The gate input's OT stub, IT cluster and DTC frame tables written to scratch under
+        NanoAOD branch names (nL1TOTStub, L1TOTStub_<column>, nL1TSmartPixelsCluster, ...),
+        without the branches in `drop` (a table left without columns is not written), and with
+        the first stub's column `unavailable` set to -2 (truth unavailable) when given."""
         import awkward as ak
         import uproot
 
         data = {}
-        for table in ("L1TOTStub", "L1TSmartPixelsCluster"):
+        for table in ("L1TOTStub", "L1TSmartPixelsCluster", "L1TOTStubDTC"):
             cols = [k for k in ctx.keys() if k.startswith(f"{table}_") and k not in drop]
+            if not cols:
+                continue
             A = ctx.arrays(cols)
             fields = {c[len(table) + 1:]: A[c] for c in cols}
             if unavailable and table == "L1TOTStub":
@@ -416,11 +418,15 @@ class CensusInputContract(Item):
             TF.require_census_inputs([self._input_copy(ctx, (), "control")])
         except SystemExit as e:
             raise RuntimeError(f"the known-bad's writer is broken: the control copy is refused: {e}") from None
+        dtc = tuple(k for k in ctx.keys() if k.startswith("L1TOTStubDTC_") or k == "nL1TOTStubDTC")
         cases = {"noflags": dict(drop=("L1TOTStub_isPS", "L1TOTStub_isTilted")),
                  "noowners": dict(drop=("L1TOTStub_tpIdxInner", "L1TOTStub_tpIdxOuter")),
                  "unavailable": dict(drop=(), unavailable="tpIdxInner"),
                  "nostubdetid": dict(drop=("L1TOTStub_detId",)),
-                 "noclusterdetid": dict(drop=("L1TSmartPixelsCluster_detId",))}
+                 "noclusterdetid": dict(drop=("L1TSmartPixelsCluster_detId",)),
+                 # census format 35: the DTC frames (canon_v3 has none) and the stub positions
+                 "nodtc": dict(drop=dtc),
+                 "nostubxy": dict(drop=("L1TOTStub_x", "L1TOTStub_y"))}
         refusals = []
         for tag, kw in cases.items():
             bad = Ctx(input_path=self._input_copy(ctx, tag=tag, **kw), events=ctx.events,
@@ -444,4 +450,132 @@ class CensusInputContract(Item):
                          f"variances = matrixV") if not why else "; ".join(why)
 
 
-ITEMS = [MajorityOwner(), CensusBuilds(), CensusInputContract()]
+# ---------------------------------------------------------------- the OT arms (WP-D, census format 35)
+OT_TARGETS = "OL1,OL2,OL3,OL4,OL5,OL6"
+
+
+def _census_run(ctx, tag, args):
+    """A CENSUS_EVENTS-event census of the gate input run from this code root with `args` (cached per tag)."""
+    key = ("census_run", ctx.input, tag)
+    if key in ctx.cache:
+        return ctx.cache[key]
+    root = ctx.tree(CENSUS_DIR)
+    out = tempfile.mkdtemp(prefix=f"spcheck_{tag}_", dir=ctx.scratch)
+    cmd = [sys.executable, "-u", str(root / "tp_findability.py"), "-i", ctx.input, "-n", str(CENSUS_EVENTS),
+           "--chunk", "2", "--calib-events", str(CENSUS_EVENTS), "--export-tracks", "--cache-dir", out, *args]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=str(ctx.code_root), timeout=CENSUS_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"the {tag} census exceeded {CENSUS_TIMEOUT_S} s") from None
+    if r.returncode != 0:
+        raise RuntimeError(f"{tag} census failed rc={r.returncode}: {r.stderr[-2000:]}")
+    d = glob.glob(os.path.join(out, "tpcensus_*"))[0]
+    ctx.cache[key] = d
+    return d
+
+
+def _fingerprint(d, entries=None):
+    """(sha256 of the census's outputs, tracks, TPs found) for `entries` (None: all): the found and found_dr
+    bitmap columns, the counters and every exported track record, chunk by chunk."""
+    import hashlib
+
+    man = json.load(open(os.path.join(d, "manifest.json")))
+    es = list(range(len(man["seeds"]))) if entries is None else list(entries)
+    h = hashlib.sha256()
+    n_tracks = n_found = 0
+    for c in sorted(glob.glob(os.path.join(d, "chunk_*.npz"))):
+        z = np.load(c)
+        cnt = json.loads(str(z["counters"]))
+        for e in es:
+            col = lambda b: ((b[:, e >> 6] >> np.uint64(e & 63)) & np.uint64(1)).astype(np.uint8)
+            f, fd = col(z["found"]), col(z["found_dr"])
+            n_found += int(f.sum())
+            h.update(f.tobytes()); h.update(fd.tobytes())
+            h.update(json.dumps(cnt.get(str(e), {}), sort_keys=True).encode())
+            for k in (f"hit_r{e}", f"hit_rm{e}"):
+                if k in z.files:
+                    h.update(z[k].tobytes())
+                    n_tracks += len(z[k]) if k == f"hit_r{e}" else 0
+    return h.hexdigest(), n_tracks, n_found
+
+
+class OtAngleInert(Item):
+    id = "census.ot_angle_inert"
+    title = "the closed OT arm is bit-identical with every angle stage off and every stage on at k = 0.5"
+    c4_row = "WP-D plan sec. 6.1 (the angle stages inert in the closure arm)"
+    known_bad_desc = ("the same comparison with the second run's match order randomised (--ot-order random:1): a "
+                      "change of the arm's output, which the identity must see")
+    rule_desc = ("two fresh 4-event closed-arm censuses of the gate input (--ot-chain closed, --masks IIII, OT "
+                 "targets), one with --angle-stages none and one with every stage on, cuts open (--calibrate) and "
+                 "k = 0.5 for both angles: their found and found_dr bitmaps, counters and track records are "
+                 "identical; identity of the track and found counts with the reference")
+    trees = (CENSUS_DIR,)
+    BASE = ["--ot-chain", "closed", "--masks", "IIII", "--targets", OT_TARGETS]
+
+    def _stat(self, ctx, bad=False):
+        a = _census_run(ctx, "ot_inert_off", self.BASE + ["--angle-stages", "none"])
+        extra = ["--ot-order", "random:1"] if bad else []
+        b = _census_run(ctx, "ot_inert_on" + ("_bad" if bad else ""),
+                        self.BASE + ["--angle-stages", "all", "--calibrate", "--k-alpha", "0.5", "--k-beta", "0.5"]
+                        + extra)
+        fa, nt, nf = _fingerprint(a)
+        fb, _, _ = _fingerprint(b)
+        return {"input": ctx.input, "events": CENSUS_EVENTS, "identical": fa == fb, "n_tracks": nt, "n_found": nf}
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        return self._stat(ctx, bad=True)
+
+    def judge(self, stat, ref):
+        why = [] if stat["identical"] else ["the angle-on run differs from the angle-off run"]
+        if not stat["n_tracks"]:
+            why.append("no closed-arm tracks")
+        if same_input(stat, ref):
+            why += identity(stat, ref, ["n_tracks", "n_found"])[1]
+        return not why, (f"{stat['n_tracks']} tracks, {stat['n_found']} TP-seed founds, identical with the angles on"
+                         if not why else "; ".join(why))
+
+
+class SpItOffIsOt(Item):
+    id = "census.sp_it_off_is_ot"
+    title = "an SP build with every IT surface off equals the OT-only arm (census chain) bit for bit"
+    c4_row = "WP-D plan sec. 6.2 (the T5 reference until WP-D2: the OT-only arm with D3-D5 off)"
+    known_bad_desc = "the same comparison with IL1 left on (--masks AIII): the OT seeds then follow into IL1"
+    rule_desc = ("two fresh 4-event censuses of the gate input with the census chain, cuts open (--calibrate): "
+                 "--masks IIII with the default targets (every surface) and --masks IIII with the OT targets only: "
+                 "the prompt OT doublets' found and found_dr bitmaps, counters and track records are identical; "
+                 "identity of the track and found counts with the reference")
+    trees = (CENSUS_DIR,)
+
+    def _ot_entries(self, d):
+        man = json.load(open(os.path.join(d, "manifest.json")))
+        ot = [[11, 12], [12, 13], [13, 14], [15, 16]]
+        return [i for i, sd in enumerate(man["seeds"]) if list(sd) in ot]
+
+    def _stat(self, ctx, bad=False):
+        a = _census_run(ctx, "sp_it_off" + ("_bad" if bad else ""),
+                        ["--masks", "AIII" if bad else "IIII", "--calibrate"])
+        b = _census_run(ctx, "ot_only", ["--masks", "IIII", "--targets", OT_TARGETS, "--calibrate"])
+        fa, nt, nf = _fingerprint(a, self._ot_entries(a))
+        fb, _, _ = _fingerprint(b, self._ot_entries(b))
+        return {"input": ctx.input, "events": CENSUS_EVENTS, "identical": fa == fb, "n_tracks": nt, "n_found": nf}
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        return self._stat(ctx, bad=True)
+
+    def judge(self, stat, ref):
+        why = [] if stat["identical"] else ["the IT-off SP build differs from the OT-only arm"]
+        if not stat["n_tracks"]:
+            why.append("no OT doublet tracks")
+        if same_input(stat, ref):
+            why += identity(stat, ref, ["n_tracks", "n_found"])[1]
+        return not why, (f"{stat['n_tracks']} OT doublet tracks, {stat['n_found']} TP-seed founds, identical"
+                         if not why else "; ".join(why))
+
+
+ITEMS = [MajorityOwner(), CensusBuilds(), CensusInputContract(), OtAngleInert(), SpItOffIsOt()]
