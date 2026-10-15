@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T092514Z-wpd0b-gate34-derive-33792/copy",
- "derived": "2026-10-15T09:26:30Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T102956Z-wpd0b-gate34b-derive-46572/copy",
+ "derived": "2026-10-15T12:01:16Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "census.k_knob",
- "job_id": "20261015T092514Z-wpd0b-gate34-derive-33792",
+ "job_id": "20261015T102956Z-wpd0b-gate34b-derive-46572",
  "known_bad": "the k = 1 centre subtracted at k = 0 (the class-T after-table centre is then not 0)",
  "rule": "census_angles.prepare on the first events of the gate input: (i) k = 1 in fixed and scaled mode bit-identical, and equal to the knob-free correction; (ii) scaled at k = 0.999 within 1.1e-3 of k = 1 in every usable cluster's sigma; (iii) scaled at k = 0 every usable sigma finite and 0.05 x the k = 1 one; (iv) class C (not tpEmuClass 1) never moved: its corrected angle plus k c sigma is the emitted angle (1e-12) at k = 0 and 0.5; (v) at k = 0, in both modes, every class-T cluster the knob moves has after-table residual 0 (centre k c); (vi) k_alpha = 0, k_beta = 1 moves alpha to truth and leaves beta at k = 1",
  "stat": {

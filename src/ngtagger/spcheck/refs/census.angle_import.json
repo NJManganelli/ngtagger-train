@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T092514Z-wpd0b-gate34-derive-33792/copy",
- "derived": "2026-10-15T09:26:29Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261015T102956Z-wpd0b-gate34b-derive-46572/copy",
+ "derived": "2026-10-15T12:01:15Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
  "item": "census.angle_import",
- "job_id": "20261015T092514Z-wpd0b-gate34-derive-33792",
+ "job_id": "20261015T102956Z-wpd0b-gate34b-derive-46572",
  "known_bad": "four variants, each of which must be red: (scales) the legacy per-layer pull scales and no centre in place of the table; (key) the cluster correction read in the true key; (sign) the centre added instead of subtracted; (cut file) a cut file whose S6 entries were made with S5 on, applied to an S5-off run",
  "rule": "on the first events of the gate input, every IT barrel cluster's census-path corrected alpha / beta and uncertainty (census_angles.prepare, k = 1) equal spdefs' (the emitted-key row's centre subtracted, the width applied) to 1e-12; the table's sha256 equals the reference's (the locked p03.table.v1a1e); per surface and angle the class-T (usable, pT >= 1 GeV) after-table centre (25 %-trimmed mean) within 0 +- 0.25 and width (95 %-trimmed) within 1 +- 0.1, each widened by t(N = 8) event-bootstrap sd; a cut file is accepted for its own configuration (CutSet.check) and refused for an S5-off run when made with S5 on; identity of the cluster counts with the reference",
  "stat": {
