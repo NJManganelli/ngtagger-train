@@ -13,6 +13,7 @@ import census_angles as CA          # noqa: E402
 import angle_cuts as AC             # noqa: E402
 import tracklet_topology_cost as M  # noqa: E402
 import kf_emulation as KF         # noqa: E402
+import tp_findability as TF       # noqa: E402
 from ngtagger.spdefs import angles as SD  # noqa: E402
 
 RNG = np.random.default_rng(20261014)
@@ -82,7 +83,8 @@ def test_per_angle_switches():
 def _doc(s5="ab", key="emitted", sub="ab"):
     return {"schema": CA.CUT_SCHEMA,
             "identity": {"table_sha256": "x", "k_alpha": 1.0, "k_beta": 1.0, "mode": "fixed",
-                         "bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL, "floors": [2.0]},
+                         "bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL, "floors": [2.0],
+                         "calibration": {"format": TF.FORMAT_VERSION}},
             "s1": {"bins": [[2.0, 3]], "thr": [2.5]}, "s2a": {"bins": [], "thr": []},
             "s2z": {"bins": [], "thr": []},
             "win": {"bins": [[0, 10203, 3, 1, 2.0]], "thr": {"ab": [[3.0, 4.0]]}},
@@ -98,7 +100,7 @@ class _Model:
 
 
 def _run(**kw):
-    r = {"bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL, "floors": [2.0],
+    r = {"format": TF.FORMAT_VERSION, "bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL, "floors": [2.0],
          "s6": ("ab", "emitted", "ab"), "win_subsets": ["ab"], "builds": ["AAAA"]}
     r.update(kw)
     return r
@@ -108,7 +110,7 @@ def test_cut_file_refuses_a_configuration_it_was_not_made_for():
     C = CA.CutSet(_doc())
     C.check(_Model(), _run())
     for bad in ({"s6": ("off", "emitted", "ab")}, {"win_subsets": ["a"]}, {"floors": [1.0, 2.0]},
-                {"d0_prior_cm": 0.5}, {"bench": [8, 8]}):
+                {"d0_prior_cm": 0.5}, {"bench": [8, 8]}, {"format": TF.FORMAT_VERSION - 1}):
         with pytest.raises(SystemExit):
             C.check(_Model(), _run(**bad))
     m = _Model()
@@ -124,7 +126,6 @@ def test_cut_file_refuses_a_configuration_it_was_not_made_for():
 def test_census_identity_is_accepted_by_its_cut_file():
     """The census's own run identity (tp_findability.cut_identity), not a hand-made one: the S6 build
     keys are the fit's (one mask -> its name; was 'A+A+A+A', which refused every cut file)."""
-    import tp_findability as TF
     ang = M.AngleUse.parse("all")
     run = TF.cut_identity(ang, None, None, 2.0, None, ["AAAA", "AAAI", "IAAA"])
     assert run["builds"] == ["AAAA", "AAAI", "IAAA"]

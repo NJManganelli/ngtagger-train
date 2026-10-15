@@ -39,6 +39,8 @@ the table. Not emulated: IR 156, VMR 108 / 128, VM bins of 15, projection pages 
 127 tracklets, PC 108, MP 108 steps; the no-truncation sibling production measures them.
 """
 from __future__ import annotations
+import hashlib
+import io
 import math
 import re
 from dataclasses import dataclass, field
@@ -70,9 +72,30 @@ NFINEPHI, NFINERZ, ME_BINS_BITS = 3, 3, 3
 VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ (barrel)
 
 
+# the emulated logic's version: bump it when a stage changes (a hash of the tables cannot see that)
+CHAIN_VERSION = 1
+_TABLE_SHA = {}
+
+
+def _read(name):
+    """The text of luts/`name`, its sha256 recorded for numerics_key."""
+    b = (LUT_DIR / name).read_bytes()
+    _TABLE_SHA[name] = hashlib.sha256(b).hexdigest()
+    return b.decode()
+
+
 def _tab(name):
-    t = (LUT_DIR / name).read_text().strip().strip("{};")
+    t = _read(name).strip().strip("{};")
     return np.array([int(x) for x in t.replace("\n", "").split(",") if x.strip()], np.int64)
+
+
+def numerics_key():
+    """The chain's identity for the census cache key: its version, its constants and every table it reads."""
+    luts()
+    return {"chain_version": CHAIN_VERSION, "rinvcut_pt": RINVCUT_PT, "z0cut": Z0CUT, "rcrit": RCRIT,
+            "dphicrit_mc": DPHICRIT_MC, "vmr_z": [VMR_ZMAX, VMR_ZMIN_L2, ZCUT_L2L3_LUT],
+            "caps": [TB_MAX, DR_MAX, DR_COMPARED, MIN_SHARE], "b_field": KF.K.b,
+            "tables": dict(sorted(_TABLE_SHA.items()))}
 
 
 class Luts:
@@ -86,8 +109,8 @@ class Luts:
         self.zcut = {L: _tab(f"MP_L{L}PHIA_zcut.tab") for L in range(1, 7)}
         self.te = {}
         for sd, nm in SEED_NAME.items():
-            ti = np.loadtxt(LUT_DIR / f"TP_{nm}A_stubptinnercut.dat", dtype=np.int64)
-            to = np.loadtxt(LUT_DIR / f"TP_{nm}A_stubptoutercut.dat", dtype=np.int64)
+            ti = np.loadtxt(io.StringIO(_read(f"TP_{nm}A_stubptinnercut.dat")), dtype=np.int64)
+            to = np.loadtxt(io.StringIO(_read(f"TP_{nm}A_stubptoutercut.dat")), dtype=np.int64)
             la = SEEDS[sd][0]
             nbd = int(round(math.log2(len(ti) >> NBEND[la])))
             self.te[sd] = (ti, to, nbd)
@@ -110,7 +133,7 @@ def _tp_wiring():
     stores them: a third inner memory goes to the front (the "innerallstubs_.size() == 2" insert)."""
     name_seed = {nm: sd for sd, nm in SEED_NAME.items()}
     tps = {}
-    for line in (LUT_DIR / "TP_wiring_barrel.txt").read_text().splitlines():
+    for line in _read("TP_wiring_barrel.txt").splitlines():
         if line.startswith("#"):
             continue
         mem, _, src, _, dst = line.split()
@@ -386,11 +409,12 @@ def _in_memory(layer, iphipos, memtype):
     return ok
 
 
-def seed_sector(cp, sector, seed, k=KF.K):
+def seed_sector(cp, sector, seed, k=KF.K, work=None):
     """Tracklets of one barrel seed in one sector: per TrackletProcessor (its inner memories against its outer
     phi region), the tracklet-engine LUTs and the integer tracklet calculator (module docstring). The tcid
     orders tracklets as TCID does: seed, TP letter, then the TP's reading order (inner memory, inner stub,
-    outer stub)."""
+    outer stub). `work` (a dict) accumulates the pairs in the engines' r-z windows ("te_pairs") and those
+    the stub-pT LUTs pass ("lut_pairs")."""
     la, lb = SEEDS[seed]
     inn_all = np.nonzero((cp.region == sector) & (cp.layer == la))[0]
     out_all = np.nonzero((cp.region == sector) & (cp.layer == lb))[0]
@@ -419,7 +443,11 @@ def seed_sector(cp, sector, seed, k=KF.K):
             ok = inr & (ii < len(ti)) & (io < len(to))
             acc = np.zeros(d.shape, bool)
             acc[ok] = (ti[ii[ok]] > 0) & (to[io[ok]] > 0)
-            acc &= te_rz_window(cp, inn, out, seed)
+            rzok = te_rz_window(cp, inn, out, seed)
+            acc &= rzok
+            if work is not None:
+                work["te_pairs"] = work.get("te_pairs", 0) + int(rzok.sum())
+                work["lut_pairs"] = work.get("lut_pairs", 0) + int(acc.sum())
             for a, b in zip(*np.nonzero(acc)):
                 i, j = int(inn[a]), int(out[b])
                 ipars = calc_pars(cp, i, j, seed, k)
@@ -582,11 +610,15 @@ def phi_res(cp, tr, c, k=KF.K):
     return abs(KF.delta_phi(math.atan2(cp.y[c], cp.x[c]), phiproj))
 
 
+def dr_input(cands, caps=True):
+    """PurgeDuplicate's input in one sector: the candidates of builder 0, then builder 1, up to 108 (caps)."""
+    inp = [c for tb in (0, 1) for c in cands if c.tb == tb]
+    return inp[:DR_MAX] if caps else inp
+
+
 def merge_dr(cp, cands, caps=True, k=KF.K):
     """PurgeDuplicate (merge) for one sector; returns the surviving (tracklet, merged stub list)."""
-    inp = [c for tb in (0, 1) for c in cands if c.tb == tb]
-    if caps:
-        inp = inp[:DR_MAX]
+    inp = dr_input(cands, caps)
     n = len(inp)
     if n == 0:
         return []
@@ -629,9 +661,15 @@ def merge_dr(cp, cands, caps=True, k=KF.K):
 
 
 def run_event(stub, dtc, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, collect=None):
-    """The chain on one event. Returns (no-DR tracks, DR tracks), each a list of Track.
-    collect: an optional dict that receives the event's Copies ("copies") and tracklets ("tracklets")."""
-    cp = event_copies(stub, dtc)
+    """The chain on one event from its L1TOTStub and L1TOTStubDTC columns (run_copies)."""
+    return run_copies(event_copies(stub, dtc), caps, order, seed, k, do_dr, collect)
+
+
+def run_copies(cp, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, collect=None):
+    """The chain on one event's Copies. Returns (no-DR tracks, DR tracks), each a list of Track.
+    order: "dtc" (stream order) or "random" (match candidates permuted, numpy seed `seed`).
+    collect: an optional dict that receives the Copies ("copies"), the tracklets ("tracklets"), the
+    track-builder candidates ("candidates") and the duplicate-removal input ("dr_input")."""
     if collect is not None:
         collect["copies"] = cp
     rng = None if order == "dtc" else np.random.default_rng(seed)
@@ -646,9 +684,11 @@ def run_event(stub, dtc, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, col
                 kept = match_tracklet(cp, tr, L, cand, k, rng)
                 if kept:
                     tr.matches[L] = kept
+        cands = build_candidates(cp, sector, trs, caps)
         if collect is not None:
             collect.setdefault("tracklets", []).extend(trs)
-        cands = build_candidates(cp, sector, trs, caps)
+            collect.setdefault("candidates", []).extend(cands)
+            collect.setdefault("dr_input", []).extend(dr_input(cands, caps))
         for c in cands:
             out = fit(cp, c.tracklet, c.stubs, k)
             if out.accepted and out.consistent_sector:
@@ -661,3 +701,62 @@ def run_event(stub, dtc, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, col
                     dr.append(Track(sector, tr.seed, tuple(s.idx for s in out.stubs), out,
                                     tuple(int(cp.row[x]) for x in lst)))
     return nodr, dr
+
+
+# ---- the census's view: the chain on one census chunk ---------------------------------
+class ChunkChain:
+    """The chain's inputs for one census chunk (tp_findability U["ot_in"]: every L1TOTStub row and every
+    L1TOTStubDTC copy, flat, with event numbers) and the map of the chunk's stubs onto the census table U
+    (U["event"], U["ot_row"]; -1 where the census has no such stub)."""
+
+    def __init__(self, ot_in, u_event, u_ot_row):
+        self.stub, self.dtc = ot_in["stub"], ot_in["dtc"]
+        self.ev, self.row = ot_in["event"], ot_in["row"]
+        self.events = np.unique(self.ev)
+        self._cp = {}
+        sel = np.asarray(u_ot_row) >= 0
+        key = (np.asarray(u_event)[sel].astype(np.int64) << 32) | np.asarray(u_ot_row)[sel]
+        order = np.argsort(key, kind="stable")
+        self._ukey, self._uidx = key[order], np.flatnonzero(sel)[order]
+
+    def copies(self, ev):
+        """The event's Copies (event_copies), built once."""
+        if ev not in self._cp:
+            a, b = np.searchsorted(self.ev, [ev, ev + 1])
+            c, d = np.searchsorted(self.dtc["event"], [ev, ev + 1])
+            self._cp[ev] = event_copies({k: v[a:b] for k, v in self.stub.items()},
+                                        {k: v[c:d] for k, v in self.dtc.items()})
+        return self._cp[ev]
+
+    def to_u(self, ev, rows):
+        """U indices of L1TOTStub rows `rows` of event `ev` (-1: not in the census table)."""
+        key = (np.int64(ev) << 32) | np.asarray(rows, np.int64)
+        if not len(self._ukey):
+            return np.full(len(key), -1, np.int64)
+        p = np.minimum(np.searchsorted(self._ukey, key), len(self._ukey) - 1)
+        return np.where(self._ukey[p] == key, self._uidx[p], -1)
+
+
+def census_pairs(chain, seed, k=KF.K):
+    """The stub pairs CMSSW seeds with `seed` (0-3) in the chunk, as census table indices: every pair that
+    forms a tracklet in at least one sector (a pair formed in two overlapping sectors is one census pair).
+    Returns (gA inner, gB outer, work), pairs in event order; pairs with a stub outside the census table are
+    dropped and counted in work["pairs_outside_census"]."""
+    work = {}
+    ga, gb = [], []
+    for ev in chain.events:
+        cp = chain.copies(ev)
+        pairs = set()
+        for sector in range(KF.N_SECTOR):
+            for tr in seed_sector(cp, sector, seed, k, work):
+                pairs.add((int(cp.row[tr.inner]), int(cp.row[tr.outer])))
+        if not pairs:
+            continue
+        rows = np.array(sorted(pairs), np.int64)
+        a, b = chain.to_u(ev, rows[:, 0]), chain.to_u(ev, rows[:, 1])
+        ok = (a >= 0) & (b >= 0)
+        work["pairs_outside_census"] = work.get("pairs_outside_census", 0) + int((~ok).sum())
+        ga.append(a[ok])
+        gb.append(b[ok])
+    cat = (lambda x: np.concatenate(x) if x else np.zeros(0, np.int64))
+    return cat(ga), cat(gb), work

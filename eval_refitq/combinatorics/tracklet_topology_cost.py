@@ -39,6 +39,7 @@ import numpy as np
 import uproot
 
 from ngtagger.data import spix_nano as SPN
+import ot_chain as OC
 
 IT_TABLE, OT_TABLE = SPN.CLUSTER_TABLE, SPN.OT_TABLE
 C_BEND = 0.29979246 * 3.8 / 2.0 / 100.0
@@ -187,7 +188,9 @@ def ot_numerics_key():
             "fe_bend_cut": float(FE_BEND_CUT),
             "bend_lut": ot_luts() is not None,
             "vmr_z": {k: [float(x) for x in v]
-                      for k, v in sorted(OT_VMR_Z.items())}}
+                      for k, v in sorted(OT_VMR_Z.items())},
+            # the prompt OT doublets' pairs come from the CMSSW seeding emulation (census format 35)
+            "ot_chain": OC.numerics_key()}
 
 
 # ---- window policy for stubs attached to a track AFTER seeding ---------------
@@ -1790,16 +1793,23 @@ def alpha_veto(D, Q, idxL, kmax, displaced, ang=None):
     return idxL[k]
 
 
-def _pair_geometry(D, gA, gB, kmax, kap_slack, kap_min, displaced, la, lb, bend_cut):
-    """The position gates of cluster pairs (gA, gB): (kap, cot, z0p, ok, steps), with
-    `steps` the pass mask after each gate in order ("kappa", "z0lumi", "bend") for
-    the stage counters. Shared by the pair loop and the census's truth enumeration
-    of correct pairs (the S2a / S2z records)."""
+def pair_kinematics(D, gA, gB):
+    """(kap, cot, z0p, ok) of hit pairs (gA inner, gB outer): the d0 = 0 curvature, cot(theta) and z0 of the
+    straight r-z line; ok is False where the radii are too close to define them."""
     drp = D["globalR"][gB] - D["globalR"][gA]
     ok = np.abs(drp) > 0.5
     kap = wrap(D["globalPhi"][gA] - D["globalPhi"][gB]) / np.where(ok, C_BEND * drp, 1e9)
     cot = (D["globalZ"][gB] - D["globalZ"][gA]) / np.where(ok, drp, 1e9)
     z0p = D["globalZ"][gA] - D["globalR"][gA] * cot
+    return kap, cot, z0p, ok
+
+
+def _pair_geometry(D, gA, gB, kmax, kap_slack, kap_min, displaced, la, lb, bend_cut):
+    """The position gates of cluster pairs (gA, gB): (kap, cot, z0p, ok, steps), with
+    `steps` the pass mask after each gate in order ("kappa", "z0lumi", "bend") for
+    the stage counters. Shared by the pair loop and the census's truth enumeration
+    of correct pairs (the S2a / S2z records)."""
+    kap, cot, z0p, ok = pair_kinematics(D, gA, gB)
     ok &= np.abs(kap) <= kmax + kap_slack
     if kap_min > 0.0:
         # LOWER curvature gate, for a doublet aimed at the band where the
@@ -1916,7 +1926,7 @@ def _pair_angle_gates(D, Q, ang, gA, gB, kap, ok, ptmin, la, lb, displaced, both
 
 
 def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
-             d0_cm=0.0, kap_min=0.0, z_inner=None, bend_cut=None):
+             d0_cm=0.0, kap_min=0.0, z_inner=None, bend_cut=None, fixed=None):
     """STAGE 1 ONLY: the surviving cluster pairs, over an ENTIRE CHUNK.
 
     Split out of it_pair_seed so that a DOUBLET seed (which projects to every
@@ -1929,6 +1939,11 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
 
     use_angles: an AngleUse (or the bool shorthand, AngleUse.coerce); this
     stage reads S1 (veto), S2a (pair_alpha), S2z (pair_z0), S2j (pair_joint).
+
+    `fixed` (gA, gB, work) replaces the pair stage by given pairs: the prompt OT
+    doublets as the CMSSW track finder forms them (ot_chain.census_pairs; census
+    format 35), with the finder's work counters. The layer sets and their radii
+    (idx) are built as for any seed; no pair gate runs.
 
     Returns (out, gA, gB, kap, cot, z0p, idx) where idx carries the
     alpha-vetoed cluster index sets for la and lb.
@@ -1958,6 +1973,14 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
         return none
     # the same radii for every projection of these pairs (it_project)
     idx["r_med"] = {la: rA, lb: rB}
+    if fixed is not None:
+        gA, gB, work = fixed
+        kap, cot, z0p, _ = pair_kinematics(D, gA, gB)
+        out.update({"pairs_phi": int(work.get("te_pairs", 0)),
+                    "pairs_bend_ok": int(work.get("lut_pairs", 0)),
+                    "pairs_outside_census": int(work.get("pairs_outside_census", 0)),
+                    "tracklets": int(len(gA))})
+        return (out, gA, gB, kap, cot, z0p, idx) if len(gA) else none
     dr = abs(rB - rA)
     ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
     # d0 allowance: prompt seeds assume d0=0; displaced must open the window by
