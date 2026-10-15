@@ -1578,8 +1578,8 @@ def main():
     ap.add_argument("--angle-stages", default="default",
                     help="where the SmartPixels angles are used: comma list of "
                          "stages (names or S-labels; S2/S4 = the family), "
-                         "'default' (every stage but S5 and S6; S6's statistic "
-                         "is still exported per track), 'all' or 'none'. "
+                         "'default' (every stage but S5; S6's statistic is "
+                         "exported per track either way), 'all' or 'none'. "
                          f"Stages: {stages}")
     ap.add_argument("--angle-stages-off", default="",
                     help="stages to remove from --angle-stages (leave-one-out)")

@@ -172,22 +172,25 @@ def test_nan_guard_counts_it_inputs_only():
     M.alpha_veto(D, Q, np.arange(3), 0.5, False, ang)
     assert ang.nonfinite["S1"] == 1 and sum(ang.nonfinite.values()) == 1
 
-def test_s5_and_s6_are_off_by_default_and_switches():
-    """Physicist, 2026-10-15: every stage but S5 (angles in the fit) and S6 (the angle cut; a
-    feature only, its statistic still exported) by default; 'all' or naming kf / accept turns them on."""
+
+def test_s5_is_off_and_s6_cuts_by_default():
+    """Physicist, 2026-10-15: every stage but S5 (angles in the fit) by default; S6, the final angle
+    check, cuts (its statistic exported per track either way); 'all' or naming kf turns S5 on, and
+    switching accept off makes S6 a feature only."""
     import tp_findability as TF
-    assert M.DEFAULT_STAGES == frozenset(M.ANGLE_STAGES) - {"kf", "accept"}
+    assert M.DEFAULT_STAGES == frozenset(M.ANGLE_STAGES) - {"kf"}
     ang = M.AngleUse.parse()
-    assert ang.on == M.DEFAULT_STAGES and not ang("kf") and not ang("accept")
-    assert ang("dr") and ang("mva")                    # S7 and S8 read the S6 statistic
-    assert M.AngleUse.parse("all")("kf") and M.AngleUse.parse("all")("accept")
-    assert M.AngleUse.parse("default,kf,accept").on == frozenset(M.ANGLE_STAGES)
+    assert ang.on == M.DEFAULT_STAGES and not ang("kf") and ang("accept")
+    assert ang("dr") and ang("mva")
+    assert M.AngleUse.parse("all")("kf")
+    assert not M.AngleUse.parse(off="accept")("accept")
+    assert M.AngleUse.parse("default,kf").on == frozenset(M.ANGLE_STAGES)
     assert M.AngleUse.parse(off="dr").on == M.DEFAULT_STAGES - {"dr"}
-    assert TF.cut_identity(ang, None, None, 2.0, None, ["AAAA"])["s6"] is None   # no S6 thresholds read
-    run = TF.cut_identity(M.AngleUse.parse("default,accept"), None, None, 2.0, None, ["AAAA"])
-    assert run["s6"] == ("off", "emitted", "ab")
+    assert TF.cut_identity(ang, None, None, 2.0, None, ["AAAA"])["s6"] == ("off", "emitted", "ab")
+    assert TF.cut_identity(M.AngleUse.parse(off="accept"), None, None, 2.0, None, ["AAAA"])["s6"] is None
     assert {"n_angle_meas", "chi2_angle_per_meas"} <= set(KF.TRACK_COLS)
     assert not {"n_angle_meas", "chi2_angle_per_meas"} & set(KF.MVA_FEATURES)
+
 
 def test_s6_per_n_keeps_99_percent_per_populated_n():
     n = np.repeat([2, 4, 6, 8], 4000)
