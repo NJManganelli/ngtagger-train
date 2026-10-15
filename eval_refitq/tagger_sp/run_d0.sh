@@ -1,12 +1,14 @@
 #!/bin/zsh
 # PV-(x, y) d0 UPPER-BOUND study (d0pv.py, d0_analyze.py): inputs, track-level validation, the
-# variants A/B/C/D x L2/L3 x {AAAA, IIII, AAAI, IAAA} x 10 seeds with the "linout" recipe (linout.py:
-# the ladder's DeepSetHGQ2 without the ReLU on the class logits, which leaves dead, exactly uniform
+# variants A/B/C/D x L2/L3 x {AAAA, IIII, AAAI, IAAA} x 10 seeds with the "linout" recipe (the
+# ladder's DeepSetHGQ2 without the ReLU on the class logits, which leaves dead, exactly uniform
 # outputs), the same on AAAA with the ladder recipe (for the degeneracy comparison), a seeded-run
 # reproducibility rerun, analysis. Needs the ladder's jet caches (run_all.sh). Sequential, CPU,
 # 2 threads, ~3.5 h:
 #   caffeinate -i eval_refitq/tagger_sp/run_d0.sh
 #   RESUME=1 caffeinate -i eval_refitq/tagger_sp/run_d0.sh     (skip cells whose 10 predictions exist)
+# Since the output-ReLU fix the framework model has linear logits, so "ladder" builds the same model as
+# "linout" and the ReLU comparison cannot be regenerated; its stored predictions remain.
 # Outputs: /Volumes/WDMac/smartpixels_scratch/tagger_sp/d0_upper_bound/ (d0_upper_bound.pdf, summary.json).
 # One heavy job at a time on the shared host: every heavy step waits (60 s polls) while a census run
 # (tp_findability.py, which has priority) or another tagger_sp training is active; waits -> logs/gate_wait.log.

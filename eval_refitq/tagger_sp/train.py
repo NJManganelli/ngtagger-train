@@ -19,9 +19,10 @@ transformed (d0pv.apply), outputs go to OUT/d0_upper_bound/{models,preds} as
 framework seeds only at fit, after the weights exist), so the four variants share each
 seed's initialisation and shuffling.
 
---recipe linout: tagger_sp_linout.yaml (linout.py: the framework DeepSetHGQ2 with linear class
-logits instead of a ReLU on them, which leaves 0-50% of the test jets of a seed with an exactly
-uniform output); outputs under <out>/linout/.
+--recipe linout: tagger_sp_linout.yaml; outputs under <out>/linout/. The d0 study ran it as the
+framework DeepSetHGQ2 with linear class logits, against the ladder recipe's ReLU on them (which
+leaves 0-50% of the test jets of a seed with an exactly uniform output). The framework model now
+has linear logits, so both recipes build the same model; the ReLU runs cannot be regenerated.
 """
 from __future__ import annotations
 
@@ -82,7 +83,7 @@ def main():
     ap.add_argument("--samples", nargs="+", default=["ttbar", "htt"], choices=sorted(C.SAMPLES))
     ap.add_argument("--config", default=None, help="default: the --recipe's yaml")
     ap.add_argument("--recipe", choices=["ladder", "linout"], default="ladder",
-                    help="linout: DeepSetHGQ2 with linear class logits (linout.py); outputs under <out>/linout")
+                    help="linout: tagger_sp_linout.yaml; outputs under <out>/linout")
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--gpu", action="store_true", help="use the Metal GPU (default: CPU only)")
     ap.add_argument("--tag", default="", help="suffix of the output names (dev runs)")
@@ -108,8 +109,6 @@ def main():
         out, vname = d0pv.OUTD, f"{a.variant}_{a.d0}"
     config = a.config or CONFIG
     if a.recipe == "linout":
-        import linout  # noqa: F401  (registers DeepSetHGQ2LinOut)
-
         config = a.config or CONFIG_LINOUT
         out = os.path.join(out, "linout")
     ci = [names.index(c) for c in cols]
