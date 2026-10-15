@@ -613,7 +613,7 @@ def run_arm(ctx, geo, cfg, mask, arm, tools, tracks=None, own=False, loo=False):
             t = np.flatnonzero((st.seq[:, j] == S) & (st.nUpd < cfg["maxKFUpdates"]))
             if len(t):
                 st = step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path, own_rows)
-    return finish(arm, st, ctx, geo, cfg, tools, kpt, path, seq, own_rows, loo)
+    return finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo)
 
 
 def refit_forced(arm, ctx, geo, cfg, tools, o, seq, sel_mi, sel_ci, path, kpt):
@@ -679,8 +679,9 @@ def loo_stats(arm, ctx, geo, cfg, tools, st, v, path, kpt, all_dims=False):
     return owner, jj, (stat if all_dims else stat[keys[0]])
 
 
-def finish(arm, st, ctx, geo, cfg, tools, kpt, path, seq, own_rows, loo=False):
-    """K resolution, reject-and-refit, inner material, passthrough; the per-track output."""
+def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=False):
+    """K resolution, reject-and-refit (with the scenario mask's rr cuts, PD15), inner material,
+    passthrough; the per-track output."""
     ntrk = ctx["ntrk"]
     if arm.K == 2:
         st = st.take(resolve_k(arm, st, geo, tools))
@@ -696,7 +697,7 @@ def finish(arm, st, ctx, geo, cfg, tools, kpt, path, seq, own_rows, loo=False):
             if not len(owner):
                 break
             mi = st.rec["mi"][owner, jj]
-            cut = tools.cuts.chi2("rr", arm.dims_key("rr"), arm.cov_model, geo["surface"][mi], jj == 0)
+            cut = tools.cuts.chi2("rr", arm.dims_key("rr"), arm.cov_model, geo["surface"][mi], jj == 0, scen=mask)
             ratio = stat / cut
             worst = np.full(len(st.o), -1, np.int64)
             o_ = np.lexsort((-ratio, owner))

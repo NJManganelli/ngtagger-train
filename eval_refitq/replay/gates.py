@@ -234,20 +234,40 @@ def e1b_consumer(cuts, consumer, key, stat, surface, first, ev, keybin=None, nev
     return out
 
 
-def e1b_all(own, loo, cuts, cov="calibrated"):
-    """Every consumer's coverage on one file (populations PD1 + PD8)."""
+def e1b_all(own, loo, cuts, scen, cov="calibrated"):
+    """Every consumer's coverage on one file of scenario scen (populations PD1 + PD8; rr cuts per
+    scenario, PD15)."""
     gate, window, rr = CU.populations(own, {"own_primary": loo["own_primary"], "clean_track": loo["clean_track"]})
     res = {}
     for dims in ("xy", "xya", "xyb", "xyab"):
         res[f"gate|{dims}"] = e1b_consumer(cuts, "gate", f"gate|{dims}|{cov}", own[f"g_{dims}"][gate],
                                            own["surface"][gate], own["first"][gate], own["ev"][gate])
-        res[f"rr|{dims}"] = e1b_consumer(cuts, "rr", f"rr|{dims}|{cov}", loo[f"d_{dims}"][rr], loo["surface"][rr],
-                                         loo["first"][rr], loo["ev"][rr])
+        res[f"rr|{dims}"] = e1b_consumer(cuts, "rr", CU.table_key("rr", dims, cov, scen), loo[f"d_{dims}"][rr],
+                                         loo["surface"][rr], loo["first"][rr], loo["ev"][rr])
     for i, ang in enumerate(SA.ANGLES):
         m = window & np.isfinite(own["z"][:, i])
         res[f"window|{ang}"] = e1b_consumer(cuts, "window", f"window|{ang}|{cov}", own["z"][m, i],
                                             own["surface"][m], own["first"][m], own["ev"][m], own["keybin"][m, i])
     return res
+
+
+def e1b_verdict(scen, k, r, safe_direction_minor):
+    """(MATERIAL lines, MINOR lines) of one consumer's E1(b) result. A failing pooled bound is MATERIAL;
+    bins beyond t(N) are MATERIAL when they hold > 2 % of the pooled rows, else MINOR. With
+    safe_direction_minor (PD15, PD16), over-coverage bins (z > +t) are MINOR whatever their size."""
+    mat, minor = [], []
+    if not r["pooled"]["pass"]:
+        mat.append(f"E1(b) {scen} {k}: pooled shortfall bound {r['pooled']['shortfall_bound95']:.4f} > 0.005")
+    bad = [b for b in r["bins"] if np.isfinite(b["z"]) and abs(b["z"]) > r["t"]]
+    safe = [b for b in bad if b["z"] > 0] if safe_direction_minor else []
+    unsafe = [b for b in bad if b not in safe]
+    if safe:
+        minor.append(f"E1(b) {scen} {k}: {len(safe)} bins over-covered beyond t(N) (safe direction): "
+                     + ", ".join(f"{b['bin']} {b['coverage']:.4f} (z {b['z']:+.1f})" for b in safe))
+    if unsafe:
+        big = [b for b in unsafe if b["n_test"] > 0.02 * r["pooled"]["n"]]
+        (mat if big else minor).append(f"E1(b) {scen} {k}: {len(unsafe)} bins beyond t(N)")
+    return mat, minor
 
 
 # ---------------------------------------------------------------- E2 / E3

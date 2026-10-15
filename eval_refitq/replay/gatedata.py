@@ -36,7 +36,6 @@ from common import OP, ORP
 OWN_FIELDS = ("o", "ev", "step", "first", "surface", "ci", "mi", "clean", "e1", "t1", "pu", "pv", "keybin",
               "orient", "table_pop", "primary", "classT", "has", "g_xy", "g_xya", "g_xyb", "g_xyab", "z", "tp_pt")
 N_DRAWS = 10                                     # E5's perturbation model (file 4)
-CUTS = str(CM.OUT / "cuts" / "wpc_cuts_v1.json")
 SP_COLS = ("d0", "z0", "pt", "phi", "tanL", "rInv", "cov_d0_d0", "cov_z0_z0", "cov_rInv_rInv", "cov_phi_phi",
            "cov_tanL_tanL")
 PARAMS = ("rInv", "phi", "tanL", "z0", "d0")
@@ -59,11 +58,21 @@ def track_block(out, ctx, off):
     return d
 
 
-def loo_block(out, ctx, off, R):
+def own_block(out, ctx, off, tr_off):
+    """The own-cluster rows of an engine output run with own=True (primaries marked, PD1), with the
+    file's event and track offsets; returns (block, the marked rows)."""
+    R = DG.mark_primary(out["own"])
+    ob = {k: R[k] for k in OWN_FIELDS}
+    ob["ev"] = ob["ev"] + off
+    ob["o"] = ob["o"] + tr_off
+    return ob, R
+
+
+def loo_block(out, ctx, off, R, tr_off):
     import run_entry as RE
     prim, clean_track = RE.loo_flags(out, R, ctx)
     L = out["loo"]
-    d = {"o": L["o"], "ev": ctx["tev"][L["o"]] + off, "surface": L["surface"], "first": L["first"],
+    d = {"o": L["o"] + tr_off, "ev": ctx["tev"][L["o"]] + off, "surface": L["surface"], "first": L["first"],
          "own_primary": prim, "clean_track": clean_track}
     d.update({f"d_{k}": v for k, v in L["dims"].items()})
     return d
@@ -192,7 +201,7 @@ def run_file(scen, f, nev, chunk, known_bad):
     cfg = CM.producer_config(path)
     assert CM.mask_of(cfg) == scen
     geo = OP.load_geometry(CM.GEOMETRY)
-    cuts = CU.Cuts.load(CUTS)
+    cuts = CU.Cuts.load(str(CM.CUTS))
     tools = AR.Tools(cfg, cuts=cuts)
     gated = f == CM.GATED_FILE
     runs = {"INN": AR.inn(cfg), "INN-K2": AR.inn(cfg, name="INN-K2", K=2)}
@@ -235,15 +244,10 @@ def run_file(scen, f, nev, chunk, known_bad):
                 add(f"{name}/wrong", {"w": hw[pop].astype(float), "ev": ctx["tev"][ht[pop]] + start,
                                       "surface": hs[pop]})
             if own:
-                R = DG.mark_primary(out["own"])
-                ob = {k: R[k] for k in OWN_FIELDS}
-                ob["ev"] = ob["ev"] + start
-                ob["o"] = ob["o"] + tr_off
+                ob, R = own_block(out, ctx, start, tr_off)
                 add(name + "/own", ob)
                 if loo:
-                    lb = loo_block(out, ctx, start, R)
-                    lb["o"] = lb["o"] + tr_off
-                    add(name + "/loo", lb)
+                    add(name + "/loo", loo_block(out, ctx, start, R, tr_off))
         Hh = E.hit_table(A)
         for nm, fo in (("forced", E.ForcedOpts(crossing="f32fma")),
                        ("forced-cluster", E.ForcedOpts(crossing="f32fma", meas="cluster"))):
@@ -276,7 +280,7 @@ def run_file(scen, f, nev, chunk, known_bad):
         nev_done += len(A)
         print(f"[{time.time() - t0:7.1f}s] {scen} f{f:02d}: {nev_done} events", flush=True)
     data = {k: CM.concat(v) for k, v in parts.items()}
-    meta = {"scen": scen, "file": f, "events": nev_done, "runs": list(runs) + list(kb), "cuts": CUTS,
+    meta = {"scen": scen, "file": f, "events": nev_done, "runs": list(runs) + list(kb), "cuts": str(CM.CUTS),
             "identity_chunks": ident, "seconds": round(time.time() - t0, 1)}
     return data, meta
 

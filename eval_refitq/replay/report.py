@@ -65,7 +65,7 @@ def main(argv=None):
                     help="do not read file 3's K runs: E7 on its file-4 known-good only (see the module docstring)")
     a = ap.parse_args(argv)
     blind = BLIND_RUNS if a.blind_e7_f03 else ()
-    cuts = CU.Cuts.load(str(CM.OUT / "cuts" / "wpc_cuts_v1.json"))
+    cuts = CU.Cuts.load(str(CM.CUTS))
     table = SA.AngleTable.load(os.environ.get("WPC_ANGLE_TABLE",
                                               "/Volumes/WDMac/smartpixels_scratch/p03_angles/angle_table_v1a1e_canon_v3.json"))
     S = {"p02_closure": {}, "E1a": {}, "E1b": {}, "E23": {}, "E4": {}, "E5": {}, "E7": {}, "known_bad": {},
@@ -94,16 +94,13 @@ def main(argv=None):
         if fv["rate"] > 0.057:
             S["material"].append(f"E1(a) {scen}: false-veto rate {fv['rate']:.3f} > 5.7 %")
         # E1(b)
-        r3 = G.e1b_all(d3["INN/own"], d3["INN/loo"], cuts)
-        r4 = G.e1b_all(d4["INN/own"], d4["INN/loo"], cuts)
+        r3 = G.e1b_all(d3["INN/own"], d3["INN/loo"], cuts, scen)
+        r4 = G.e1b_all(d4["INN/own"], d4["INN/loo"], cuts, scen)
         S["E1b"][scen] = {"file3": r3, "file4_known_good": r4}
         for k, r in r3.items():
-            bad_bins = [b for b in r["bins"] if np.isfinite(b["z"]) and abs(b["z"]) > r["t"]]
-            if not r["pooled"]["pass"]:
-                S["material"].append(f"E1(b) {scen} {k}: pooled shortfall bound {r['pooled']['shortfall_bound95']:.4f} > 0.005")
-            if bad_bins:
-                big = [b for b in bad_bins if b["n_test"] > 0.02 * r["pooled"]["n"]]
-                (S["material"] if big else S["minor"]).append(f"E1(b) {scen} {k}: {len(bad_bins)} bins beyond t(N)")
+            mat_, min_ = G.e1b_verdict(scen, k, r, safe_direction_minor=False)
+            S["material"] += mat_
+            S["minor"] += min_
         # E2 / E3
         e = G.e23(meta3["identity_chunks"], d3["INN/own"], d3["INN-payload/own"])
         S["E23"][scen] = e

@@ -1,8 +1,12 @@
 """Registry entries of the WP-C entry package (src/ngtagger/spops/registry.py; working rule 6).
 
   tail      wpc.c1a.tail          the tail localisation (tail_summary.json), job dir of the variants job
-  cuts      wpc.c1a.cuts          the 99 % cut file (cuts/wpc_cuts_v1.json), job dir of the cut fit
+  cuts      wpc.c1a.cuts-v2       the 99 % cut file (common.CUTS; rr per scenario, PD15), job dir of the cut fit;
+                                  supersedes wpc.c1a.cuts (v1, rr pooled)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
+  final     wpc.entry.e1b-v2, wpc.entry.final
+                                  the final verdict (entry/entry_verdict.json, verdict.py) with PD15's rr check, job
+                                  dir of the rr check; the statuses of the earlier entries follow PD15 / PD16
 
 Every entry carries the launch-time provenance of its job (--job-dir), the bias line and a status.
 """
@@ -13,9 +17,14 @@ import json
 import os
 
 import common as CM
+import verdict as VD
 from ngtagger.spops import registry as R
 
 BY = "WP-C entry (cmssw-l1t-expert, Claude Opus 5.5)"
+
+GATE_TITLES = {"E1a": "the table import in INN (P0.3 test (i) form)", "E1b": "the 99 % cuts' coverage",
+               "E23": "the ORP-cal identity", "E4": "the forced replay's final parameters vs CMSSW",
+               "E5": "the mirror PM vs refit v2", "E7": "K's skip-loss on real data"}
 
 
 def _reg(entry, job_dir, overwrite):
@@ -49,14 +58,17 @@ def tail(job_dir, overwrite):
 
 
 def cuts(job_dir, overwrite):
-    with open(CM.OUT / "cuts" / "wpc_cuts_v1.json") as fh:
+    with open(CM.CUTS) as fh:
         C = json.load(fh)
     vals = [{"name": k, "value": v["*"]["value"], "note": f"n = {v['*']['n']} (pooled; per-bin values in the file)"}
             for k, v in C["cuts"].items()]
-    _reg({"id": "wpc.c1a.cuts", "title": "WP-C C1a item 5: the replay's 99 % cuts (files 1-2, PD1 + PD8)",
+    rid = "wpc.c1a.cuts-v2"
+    _reg({"id": rid, "title": "WP-C C1a item 5: the replay's 99 % cuts (files 1-2, PD1 + PD8; rr per scenario, PD15)",
           "status": "in-sample", "status_note": "fitted on canon_v3 files 1-2, also the angle table's fit sample",
           "values": vals, "bias": "none known; populations with a clean history (PD8), truth only for ownership (PD1)",
-          "sources": [str(CM.OUT / "cuts" / "wpc_cuts_v1.json")]}, job_dir, overwrite)
+          "sources": [str(CM.CUTS)]}, job_dir, overwrite)
+    R.set_status("wpc.c1a.cuts", "superseded", "the rr cuts pooled over scenarios biased AAAA against IAAA; refitted per "
+                 "scenario (PD15); the gate and window tables are unchanged", by=BY, superseded_by=rid)
 
 
 def entry(job_dir, overwrite):
@@ -65,9 +77,7 @@ def entry(job_dir, overwrite):
     material = S["material"]
     base = {"bias": "refit-v2 mirror and replay arms; numbers are the entry gate's, not physics results",
             "sources": [str(CM.OUT / "entry" / "entry_summary.json")]}
-    gates = {"E1a": ("E1(a)", "the table import in INN (P0.3 test (i) form)"), "E1b": ("E1(b)", "the 99 % cuts' coverage"),
-             "E23": ("E2/E3", "the ORP-cal identity"), "E4": ("E4 ", "the forced replay's final parameters vs CMSSW"),
-             "E5": ("E5", "the mirror PM vs refit v2"), "E7": ("E7", "K's skip-loss on real data")}
+    gates = {g: (p, GATE_TITLES[g]) for g, p in {**VD.GATE_PREFIX, "E7": "E7"}.items()}
     for g, (prefix, title) in gates.items():
         mat = [m for m in material if m.startswith(prefix)]
         vals = [{"name": scen, "value": json.dumps(v)[:2000]} for scen, v in S[g].items()]
@@ -84,13 +94,49 @@ def entry(job_dir, overwrite):
          job_dir, overwrite)
 
 
+def final(job_dir, overwrite):
+    entry_dir = CM.OUT / "entry"
+    with open(entry_dir / "entry_verdict.json") as fh:
+        V = json.load(fh)
+    with open(entry_dir / "rrcheck_summary.json") as fh:
+        Q = json.load(fh)
+    with open(entry_dir / "entry_summary.json") as fh:
+        S = json.load(fh)
+    base = {"bias": "refit-v2 mirror and replay arms; numbers are the entry gate's, not physics results",
+            "sources": [str(entry_dir / "entry_verdict.json"), str(entry_dir / "rrcheck_summary.json"),
+                        str(entry_dir / "entry_summary.json")]}
+    e1b = V["gates"]["E1b"]
+    vals = [{"name": f"{scen} gate / window, file 3", "value": json.dumps({k: r["pooled"] for k, r in e["file3"].items()
+                                                                           if not k.startswith("rr|")})[:2000]}
+            for scen, e in S["E1b"].items()]
+    vals += [{"name": f"{scen} rr (PD15), file {lab}", "value": json.dumps({k: {"pooled": r["pooled"], "max_abs_z": r["max_abs_z"],
+                                                                             "t": r["t"]} for k, r in q[key].items()
+                                                                         if k.startswith("rr|")})[:2000]}
+             for scen, q in Q["scenarios"].items() for lab, key in (("4 (known-good)", "file4_known_good"), ("5", "file5"))]
+    _reg({**base, "id": "wpc.entry.e1b-v2", "title": "WP-C entry gate E1b: the 99 % cuts' coverage (rr per scenario, PD15)",
+          "status": "valid" if not e1b["material"] else "void", "status_note": "; ".join(e1b["material"] + e1b["minor"]),
+          "values": vals}, job_dir, overwrite)
+    _reg({**base, "id": "wpc.entry.final", "title": "WP-C entry gate: the final verdict (PD13, PD15, PD16)",
+          "status": "valid", "values": [{"name": k, "value": "; ".join(V[k]) or "none"}
+                                        for k in ("material", "minor", "accepted", "not_in_verdict")]
+          + [{"name": "entry_passes", "value": str(V["entry_passes"])}]}, job_dir, overwrite)
+    R.set_status("wpc.entry.e1b", "superseded", "the rr cuts are per scenario (PD15)", by=BY, superseded_by="wpc.entry.e1b-v2")
+    R.set_status("wpc.entry.verdict", "superseded", "the final verdict follows PD15 / PD16", by=BY,
+                 superseded_by="wpc.entry.final")
+    R.set_status("wpc.entry.e7", "not-used", VD.K_SET_ASIDE, by=BY)
+    acc = V["gates"]["E1a"]["accepted"]
+    R.set_status("wpc.entry.e1a", "valid" if not V["gates"]["E1a"]["material"] else "void", "; ".join(acc), by=BY)
+    R.set_status("wpc.entry.known-bads", "valid", "PM-nocap, PM-notrunc, INN-kb-angleunits accepted (PD16): " + VD.POWER
+                 + "; E7's known-bad not judged (blinded, PD13)", by=BY)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("what", choices=("tail", "cuts", "entry"))
+    ap.add_argument("what", choices=("tail", "cuts", "entry", "final"))
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args(argv)
-    {"tail": tail, "cuts": cuts, "entry": entry}[a.what](a.job_dir, a.overwrite)
+    {"tail": tail, "cuts": cuts, "entry": entry, "final": final}[a.what](a.job_dir, a.overwrite)
     return 0
 
 

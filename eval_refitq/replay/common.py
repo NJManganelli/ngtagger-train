@@ -2,7 +2,7 @@
 
 Plan: /Volumes/WDMac/smartpixels_scratch/wpc/PLAN.md (round 1 + the pre-declared changes of §10).
 File roles are fixed there: canon_v3 TTbar files 1-2 fit only, file 4 predictions / known-goods,
-file 3 gated (judged once), files 5-10 untouched.
+file 3 gated (judged once), file 5 gated for the per-scenario rr cuts only (PD15), files 6-10 untouched.
 """
 from __future__ import annotations
 
@@ -25,10 +25,12 @@ import ot_refit_projection as ORP      # noqa: E402
 
 CANON_V3 = Path(os.environ.get("WPC_CANON", "/Volumes/WDMac/smartpixels_scratch/canon_v3"))
 OUT = Path(os.environ.get("WPC_OUT", "/Volumes/WDMac/smartpixels_scratch/wpc"))
+CUTS = OUT / "cuts" / "wpc_cuts_v2.json"     # the consumers' 99 % cuts (rr per scenario, PLAN PD15)
 GEOMETRY = os.environ.get("WPC_GEOMETRY",
                           "/Users/nmangane/smartpixels/cmssw/work/otstub_arm/spix_module_geometry_D121.json")
 SCENARIOS = ("AAAA", "AAAI", "IAAA")
 FIT_FILES, PRED_FILE, GATED_FILE = (1, 2), 4, 3
+RR_CHECK_FILE = 5                             # PD15: the per-scenario rr cuts' gated file
 REFIT_HIT = "L1TSmartPixelsRefitHit"         # canon_v3's (unsuffixed) refit hit table
 SP_TRACK = "L1TSmartPixelsTrack"
 CHUNK = 10                                    # events per chunk (ORP's study-20 default)

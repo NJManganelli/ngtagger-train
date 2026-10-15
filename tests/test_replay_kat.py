@@ -32,7 +32,7 @@ class ConstCuts:
     def __init__(self, v):
         self.v = v
 
-    def chi2(self, consumer, dims, cov, surface, first):
+    def chi2(self, consumer, dims, cov, surface, first, scen=None):
         return np.full(len(np.atleast_1d(surface)), self.v, float)
 
     def window(self, cov, surface, first, kb_a, kb_b):
