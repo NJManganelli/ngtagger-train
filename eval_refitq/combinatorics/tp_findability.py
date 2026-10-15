@@ -860,8 +860,8 @@ def _closed_rows(chain, ev, tracks, n_layers):
     return G, S, outside
 
 
-def process_chunk_closed(U, seeds, groups, ci, export_tracks, ot_chain):
-    """The closed OT arm on chunk `ci`; the same outputs as process_chunk. found: TPs a seed's no-DR tracks
+def process_chunk_closed(U, seeds, groups, export_tracks, ot_chain):
+    """The closed OT arm on one chunk; the same outputs as process_chunk. found: TPs a seed's no-DR tracks
     recover (seed-truthful on the tracklet's two stubs, as the census), found_dr: those its merge-DR tracks
     recover. Exported tracks (shard keys hit_<entry>, hit_m<entry>; hit_s<entry>, hit_sm<entry>; hit_r<entry>,
     hit_rm<entry>): the no-DR and the merge-DR tracks' fitted stubs, their tracklets' seed stubs and their
@@ -879,7 +879,7 @@ def process_chunk_closed(U, seeds, groups, ci, export_tracks, ot_chain):
     # the census's counter names, with the closed arm's meaning: pairs = tracklets, cand = before_chi2 =
     # track-builder candidates (the KF input), fit = no-DR tracks the KF accepts, before_dr = the DR input
     # (capped), owned = merge-DR tracks; trip / trip_true = no-DR tracks with both seed stubs in the census
-    # table / seed-truthful (the fake column)
+    # table / seed-truthful (the fake column); stubs_outside_census: no-DR tracks' stubs the table lacks
     counters = {i: {k: 0.0 for k in ("pairs", "cand", "before_chi2", "fit", "before_dr", "owned", "trip",
                                      "trip_true", "nlayer_sum", "stubs_outside_census")}
                 for i in range(len(seeds))}
@@ -916,8 +916,8 @@ def process_chunk_closed(U, seeds, groups, ci, export_tracks, ot_chain):
                     [OC.kf_region(t.tracklet.rinv, t.tracklet.phi0, t.tracklet.t, t.tracklet.z0) for t in mine],
                     [len(t.rows) for t in mine], [t.sector for t in mine]))
                 counters[i][kc] += len(mine)
-                counters[i]["stubs_outside_census"] += outside
                 if kc == "fit":
+                    counters[i]["stubs_outside_census"] += outside
                     ok = (S >= 0).all(axis=1)
                     counters[i]["trip"] += float(ok.sum())
                     counters[i]["trip_true"] += float(M.seed_tp(U, S[ok, 0], S[ok, 1])[1].sum())
@@ -969,7 +969,7 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
     with what survived.
     """
     if ot_chain is not None and ot_chain.get("mode") == "closed":
-        return process_chunk_closed(U, seeds, groups, ci, export_tracks, ot_chain)
+        return process_chunk_closed(U, seeds, groups, export_tracks, ot_chain)
     kf_opts = kf_opts or {}
     # THE pT FLOOR IS PER SEED, not global. The OT stub algorithm's own bend
     # windows are built for pT >~ 2, so below that a particle usually makes no

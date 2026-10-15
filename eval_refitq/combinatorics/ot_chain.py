@@ -44,6 +44,7 @@ until drained). The DTC's own truncation is in the table. Not emulated: TP 108 s
 PC 108; the no-truncation sibling production measures them.
 """
 from __future__ import annotations
+import dataclasses
 import hashlib
 import io
 import math
@@ -1128,7 +1129,7 @@ def census_pairs(chain, seed, k=KF.K):
     work = {}
     ga, gb = [], []
     for ev in chain.events:
-        cp = chain.copies(ev)
+        cp = dataclasses.replace(chain.copies(ev), alive=None, te_ok=None, me_ok=None)   # no caps: A-0 only
         pairs = set()
         for sector in range(KF.N_SECTOR):
             for tr in seed_sector(cp, sector, seed, k, work):
