@@ -12,15 +12,17 @@ THE CHAIN, as CMSSW_20_1_0_pre1 runs it for L1TTrack, stage by stage, and what i
              DTC words, then barrelSeeding's gates: |irinv| below the 1.91 GeV cut, |iz0| < 15 cm (L1L2) or
              22.5 cm, and the integer inSector window at rcrit = 55 cm). The float exact two-stub helix
              (exacttracklet) is kept beside the integers: it is the KF prior, as in CMSSW.
-  matching   per tracklet and target layer: the integer projection (ProjectionCalculator::projLayer from the
-             tracklet's integer parameters, at the layer's rmean, with its validity and edge cuts), the
-             match engine's selection (allstub region, VM bin and the neighbour near an edge, fine phi,
-             z slots and fine z, the bend LUT METable_L<n> indexed by the projection's 5-bit rinv) and the
-             match processor's integer residual with its r corrections (MatchProcessor::matchCalculator),
-             cut by MP_L<n>PHIA phicut / zcut by seed in the IMPROVING CHAIN (:684-714): a candidate is
-             kept iff |dphi| <= best and -best <= dz < best, and then becomes the best. Candidates arrive
-             in the engine's order over the stream (the `dtc` order mode) or in a seeded random order
-             (`random`).
+  matching   the integer projections (ProjectionCalculator::projLayer from the tracklet's integer parameters,
+             at the layer's rmean, with its validity and edge cuts) go to the match processors as wired
+             (per layer and allstub region; L1L2's to the duplicated processors of L3-L6 regions B, C), which
+             run clock by clock (match_processor: the input-memory reading, the projection buffer, four match
+             engines with their pipelines and candidate buffers, one match calculation per clock, 108 clocks
+             with caps on): the engines read the VM memory bins (fine phi as CMSSW computes it, fine z, the
+             bend table METable_L<n> indexed by the projection's 5-bit rinv), the calculator takes the integer
+             residual with its r corrections, cut by MP_L<n>PHIA phicut / zcut by seed in the IMPROVING CHAIN
+             (MatchProcessor.cc:684-714): kept iff |dphi| <= best and -best <= dz < best, which becomes the
+             best. The VM memory order is the VMRouter's reading order (the `dtc` order mode) or a seeded
+             random permutation within each bin (`random`).
   builder    a tracklet with matches in >= 2 layers becomes a candidate; its stub list is the two seed
              stubs, then the matches by layer (FitTrack.cc:67-89). Two track builders per sector, seeds
              {L1L2, L2L3, L5L6, L2D1} and {L3L4, D1D2, D3D4, L1D1}, each processing tracklets in TCID
@@ -37,9 +39,9 @@ THE CHAIN, as CMSSW_20_1_0_pre1 runs it for L1TTrack, stage by stage, and what i
 CAPS (input_caps, projection_pages, build_candidates, merge_dr), each in the finder's reading order (the
 VMRouter's: vmr_order). The step caps, switch `caps`: IR 156 per DTC link, VMR 108, TB 108, DR-input 108 and
 the 32 comparators. The memory sizes, always: 128 per VMRouter, 15 per VM bin of the tracklet-engine and
-match-engine memories, 63 projections per page. The DTC's own truncation is in the table. Not emulated:
-TP 108 steps / 127 tracklets, PC 108 and MP 108 steps (clock-level scheduling); the no-truncation sibling
-production measures them.
+match-engine memories, 63 projections per page; and MP 108 (the clocks of match_processor; caps off:
+until drained). The DTC's own truncation is in the table. Not emulated: TP 108 steps / 127 tracklets and
+PC 108; the no-truncation sibling production measures them.
 """
 from __future__ import annotations
 import hashlib
@@ -75,8 +77,9 @@ NFINEPHI, NFINERZ, ME_BINS_BITS = 3, 3, 3
 VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ (barrel)
 
 
-# the emulated logic's version: bump it when a stage changes (a hash of the tables cannot see that)
-CHAIN_VERSION = 1
+# the emulated logic's version: bump it when a stage changes (a hash of the tables cannot see that).
+# 2: the match processor clock by clock (MP 108), the VMRouter's reading order and the input-memory caps.
+CHAIN_VERSION = 2
 # KNOWN-BAD VARIANTS of the chain (WP-D plan sec. 3), like cmssw_kf.KF_KNOWN_BADS: None in every real run;
 # set_known_bad() switches one on (a chain variant here, a fit variant in cmssw_kf) for a known-bad run.
 CHAIN_KNOWN_BADS = {
@@ -599,100 +602,294 @@ def seed_sector(cp, sector, seed, k=KF.K, work=None):
 # ---- projections and matching ------------------------------------------------
 
 
-def me_candidates(cp, cand, layer, iphiproj, izproj, ps_seed):
-    """The match engine's view (MatchProcessor.cc:436-545, MatchEngineUnit.cc:100-200): only stubs of the
-    projection's allstub phi region, in the projection's VM bin or the neighbour it looks into near a
-    bin edge, within 3 fine-phi units as the engine computes them (a neighbour-bin stub never passes; see
-    dphi below) and the fine-z window (1 for a PS seed, 5 otherwise), in the order the engine reads them:
-    VM bin (minus, then plus), z slot (first, then second), then memory order."""
+# ---- the match processor, clock by clock (MatchProcessor::execute, MatchEngineUnit) ----------------------
+MP_MAX = 108                   # maxStep("MP")
+N_MEU = 4                      # MatchProcessor nMatchEngines_
+N_RZBINS = 1 << ME_BINS_BITS   # VM z bins per phi bin of the match-engine memory
+TCID_IDLE = (math.inf,)        # an idle engine's TCID: above every tracklet's
+# tracklet processors per merged projection calculator (TrackletConfigBuilder::iMergedTCStr: L1L2 AB, CD, ...,
+# L2L3 ABCD, L3L4 AB, CD, L5L6 ABCD): a TP's projections go to page (letter mod this) of memory (letter div)
+PC_PAGES = {0: 2, 1: 4, 2: 2, 3: 4}
+
+
+def me_fields(cp):
+    """Per copy, the match-engine memory's view (VMStubMERouter): (VM bin within the allstub region, z bin,
+    fine z, fine phi)."""
+    n = len(cp.row)
+    vm, zbin, finez, finephi = (np.zeros(n, np.int64) for _ in range(4))
+    for L in np.unique(cp.layer):
+        m = np.flatnonzero(cp.layer == L)
+        nb, nall, nvm = D.NPHIBITS_L[L - 1], NBITS_ALLSTUBS[L - 1], NBITS_VMME[L - 1]
+        vm[m] = (cp.phicorr[m] >> (nb - nall - nvm)) & ((1 << nvm) - 1)
+        finephi[m] = (cp.phicorr[m] >> (nb - nall - nvm - NFINEPHI)) & ((1 << NFINEPHI) - 1)
+        melut = luts().vmrme[int(L)][_vmr_lut_index(cp, m, int(L))]
+        zbin[m], finez[m] = melut >> NFINERZ, melut & ((1 << NFINERZ) - 1)
+    return vm, zbin, finez, finephi
+
+
+def meu_finephi(projfinephi, second, shift):
+    """MatchEngineUnit::step's projection fine phi for a candidate in the projection's own bin (second 1 when
+    shift is -1, else 0) or its neighbour: moved by one VM bin with the OPPOSITE sign to the geometry, so a
+    neighbour-bin stub (dphi then 8 +- a few) never passes |dphi| < 3 in CMSSW. Reproduced as CMSSW runs it."""
+    if second == 0 and shift == -1:
+        return projfinephi - (1 << NFINEPHI)
+    if second == 1 and shift == 1:
+        return projfinephi + (1 << NFINEPHI)
+    return projfinephi
+
+
+@dataclass
+class ProjTemp:
+    """MatchProcessor's ProjectionTemp: what a match engine is initialised with."""
+    tr: object
+    slot: int
+    projrinv: int
+    projfinerz: int
+    projfinephi: int
+    ivm_minus: int
+    shift: int
+    use: list
+    ps_seed: bool
+
+
+class Buffer:
+    """trklet::CircularBuffer: 2^nbits slots, one always free."""
+
+    def __init__(self, nbits):
+        self.size = 1 << nbits
+        self.buf = [None] * self.size
+        self.r = self.w = 0
+
+    def empty(self):
+        return self.r == self.w
+
+    def full(self):
+        return (self.w + 1) % self.size == self.r
+
+    def near(self, k):
+        """nearfull (k = 3) / nearfull4 (k = 4): the write pointer within k of the read pointer."""
+        return any((self.w + i) % self.size == self.r for i in range(1, k + 1))
+
+    def store(self, x):
+        assert not self.full()
+        self.buf[self.w] = x
+        self.w = (self.w + 1) % self.size
+
+    def read(self):
+        x = self.buf[self.r]
+        self.r = (self.r + 1) % self.size
+        return x
+
+    def peek(self):
+        return self.buf[self.r]
+
+
+class MEU:
+    """MatchEngineUnit: reads one VM-memory stub per clock, a one-register pipeline, then the fine-phi,
+    fine-z and bend-table test; passing pairs go to its candidate buffer (8 slots, nearfull at 3)."""
+
+    def __init__(self, layer, fields):
+        self.layer, self.fields = layer, fields
+        self.lut = luts().me[layer]
+        self.cand = Buffer(3)
+        self.idle, self.afs = True, False
+        self.good2 = self.good4 = False
+        self.s2 = self.s4 = None
+        self.p, self.mem = None, None
+
+    def init(self, mem, p):
+        self.mem, self.p = mem, p
+        self.idle, self.istub, self.iuse, self.good2 = False, 0, 0, False
+
+    def step(self):
+        self.good2 = not self.idle and not self.afs
+        if not self.good2:
+            return
+        p = self.p
+        first, second = p.use[self.iuse]
+        stubs = self.mem.get((p.ivm_minus + second) * N_RZBINS + p.slot + first, [])
+        self.s2 = (stubs[self.istub], p.projfinerz - (1 << NFINERZ) * first,
+                   meu_finephi(p.projfinephi, second, p.shift), p)
+        self.istub += 1
+        if self.istub >= len(stubs):
+            self.iuse += 1
+            if self.iuse < len(p.use):
+                self.istub = 0
+            else:
+                self.idle = True
+
+    def process(self, bend):
+        if self.good4:
+            c, fz, fp, p = self.s4
+            _, _, finez, finephi = self.fields
+            ok = (abs(int(finephi[c]) - fp) < 3 and abs(int(finez[c]) - fz) <= (1 if p.ps_seed else 5)
+                  and self.lut[(p.projrinv << NBEND[self.layer]) + int(bend[c])])
+            if ok:
+                self.cand.store((p.tr, int(c)))
+        self.s4, self.good4 = self.s2, self.good2
+
+    def tcid(self):
+        if not self.cand.empty():
+            return self.cand.peek()[0].tcid
+        if self.good4:
+            return self.s4[3].tr.tcid
+        if self.good2:
+            return self.s2[3].tr.tcid
+        return TCID_IDLE if self.idle else self.p.tr.tcid
+
+    def active(self):
+        return not self.idle or self.good2 or self.good4 or not self.cand.empty()
+
+
+def _proj_temp(tr, layer, mem):
+    """MatchProcessor::execute's step 1: a projection's VM bins, z slot, fine positions and the bins to read
+    (None when every bin it would read is empty)."""
+    iphi, iz, iphider, _ = tr.projs[layer]
     nb, nz = D.NPHIBITS_L[layer - 1], D.NZBITS_L[layer - 1]
-    nall, nvm = NBITS_ALLSTUBS[layer - 1], NBITS_VMME[layer - 1]
-    nvmtot = nall + nvm
-    nvmbins = 1 << nvm
-    reg_p = iphiproj >> (nb - nall)
-    vm_p = (iphiproj >> (nb - nvmtot)) & (nvmbins - 1)
-    extra = (iphiproj >> (nb - nvmtot - 2)) & 3
-    fine_p = (iphiproj >> (nb - nvmtot - NFINEPHI)) & ((1 << NFINEPHI) - 1)
-    vm_plus, vm_minus = vm_p, vm_p
-    if extra == 3 and vm_p != nvmbins - 1:
-        vm_plus = vm_p + 1
-    if extra == 0 and vm_p != 0:
-        vm_minus = vm_p - 1
-    # z slots (Projection.cc:58-84): the projection's first bin, a second one when it straddles
-    offset = 1 if ps_seed else 4
-    ztemp = izproj >> (nz - ME_BINS_BITS - NFINERZ)
+    nvmbins = 1 << NBITS_VMME[layer - 1]
+    nvmbits = NBITS_VMME[layer - 1] + NBITS_ALLSTUBS[layer - 1]
+    ivm = (iphi >> (nb - nvmbits)) & (nvmbins - 1)
+    extra = (iphi >> (nb - nvmbits - 4)) & 3                   # FPGAWord::bits(nbits - overlapbits - 2, 2)
+    ivm_plus = ivm_minus = ivm
+    shift = 0
+    if extra == 3 and ivm != nvmbins - 1:
+        shift, ivm_plus = 1, ivm + 1
+    if extra == 0 and ivm != 0:
+        shift, ivm_minus = -1, ivm - 1
+    projrinv = (1 << (NRINV - 1)) - 1 - (iphider >> (NBITS_PHIDER - NRINV))
+    projfinephi = (iphi >> (nb - nvmbits - NFINEPHI)) & ((1 << NFINEPHI) - 1)
+    ps_seed = tr.seed in (0, 1)                                # Tracklet::PSseed: inner L1 or L2
+    offset = 1 if ps_seed else 4                               # Projection::init
+    ztemp = iz >> (nz - ME_BINS_BITS - NFINERZ)
     zbin1 = (1 << (ME_BINS_BITS - 1)) + ((ztemp - offset) >> NFINERZ)
     zbin2 = (1 << (ME_BINS_BITS - 1)) + ((ztemp + offset) >> NFINERZ)
-    zbin1 = 0 if zbin1 >= (1 << ME_BINS_BITS) or zbin1 < 0 else zbin1
-    zbin2 = min(zbin2, (1 << ME_BINS_BITS) - 1)
-    finez_p = ((1 << (ME_BINS_BITS + NFINERZ - 1)) + ztemp) - (zbin1 << NFINERZ)
-    pc = cp.phicorr[cand]
-    reg_s = pc >> (nb - nall)
-    vm_s = (pc >> (nb - nvmtot)) & (nvmbins - 1)
-    fine_s = (pc >> (nb - nvmtot - NFINEPHI)) & ((1 << NFINEPHI) - 1)
-    # the stub's rz bin and fine z: VMStubMERouter.cc, the VMRME_L<n> table of z projected to rmean
-    nr = D.NRBITS_L[layer - 1]
-    indexz = (cp.iz[cand] >> (nz - VMR_LUT_ZBITS)) & ((1 << VMR_LUT_ZBITS) - 1)
-    indexr = (cp.ir[cand] >> (nr - VMR_LUT_RBITS)) & ((1 << VMR_LUT_RBITS) - 1)
-    melut = luts().vmrme[layer][(indexz << VMR_LUT_RBITS) + indexr]
-    zbin_s, finez_s = melut >> NFINERZ, melut & ((1 << NFINERZ) - 1)
-    # MatchEngineUnit::step moves the projection's fine phi by one VM bin for a neighbour-bin stub, with the
-    # OPPOSITE sign to the geometry (-8 for the lower neighbour, +8 for the upper): CMSSW's dphi there is
-    # fine_s - fine_p + 8 (lower) or - 8 (upper), so |dphi| < 3 never holds and neighbour-bin stubs never match.
-    # Reproduced as CMSSW runs it.
-    dphi = fine_s - fine_p - (vm_s - vm_p) * (1 << NFINEPHI)
-    slot = np.where(zbin_s == zbin1, 0, np.where((zbin_s == zbin1 + 1) & (zbin2 != zbin1), 1, -1))
-    drz = finez_s + slot * (1 << NFINERZ) - finez_p
-    drz_cut = 1 if ps_seed else 5
-    ok = ((reg_s == reg_p) & ((vm_s == vm_minus) | (vm_s == vm_plus)) & (np.abs(dphi) < 3) & (slot >= 0)
-          & (np.abs(drz) <= drz_cut))
-    key = np.lexsort((np.arange(len(cand)), slot, (vm_s != vm_minus).astype(int)))
-    return [int(cand[i]) for i in key if ok[i]]
+    zbin1 = 0 if not 0 <= zbin1 < N_RZBINS else zbin1
+    zbin2 = min(zbin2, N_RZBINS - 1)
+    second = zbin1 != zbin2
+    projfinerz = ((1 << (ME_BINS_BITS + NFINERZ - 1)) + ztemp) - (zbin1 << NFINERZ)
+    n = lambda v, s: len(mem.get(v * N_RZBINS + zbin1 + s, []))
+    use = [u for u, ok in (((0, 0), n(ivm_minus, 0) != 0), ((1, 0), second and n(ivm_minus, 1) != 0),
+                           ((0, 1), ivm_plus != ivm_minus and n(ivm_plus, 0) != 0),
+                           ((1, 1), ivm_plus != ivm_minus and second and n(ivm_plus, 1) != 0)) if ok]
+    if not use:
+        return None
+    return ProjTemp(tr, zbin1, projrinv, projfinerz, projfinephi, ivm_minus, shift, use, ps_seed)
 
 
-def match_tracklet(cp, tr, layer, cand, k=KF.K, rng=None):
-    """The improving chain of one (tracklet, layer) over the candidate copies `cand` (array of indices,
-    memory order), after the match engine's selection (me_candidates): MatchProcessor::matchCalculator."""
-    if layer not in tr.projs:
-        return []
-    iphiproj, izproj, iphider, izder = tr.projs[layer]
-    cand = np.asarray(cand)
-    if rng is not None:
-        cand = rng.permutation(cand)
-    cand = me_candidates(cp, cand, layer, iphiproj, izproj, ps_seed=tr.seed in (0, 1))   # Tracklet::PSseed: inner L1 or L2
-    L = luts()
-    cut_phi = int(L.phicut[layer][tr.seed])
-    cut_z = int(L.zcut[layer][tr.seed])
-    if cut_phi <= 0 or cut_z <= 0:
-        return []
+def match_processor(cp, layer, pages, mem, fields, matches, k=KF.K, max_steps=MP_MAX):
+    """One MatchProcessor (MatchProcessor::execute), clock by clock for max_steps clocks: `pages` its input
+    projection memories and pages in reading order (each a list of Tracklets in memory order), `mem` its VM
+    memory (bin -> copies in memory order). Matches are appended to matches[(id(tracklet), layer)] in the
+    order the match calculator accepts them (the improving chain, best values reset on a new tracklet)."""
+    entries = [list(pg) for pg in pages]
+    hasdata = [len(e) > 0 for e in entries]
+    meus = [MEU(layer, fields) for _ in range(N_MEU)]
+    inbuf = Buffer(3)
     phishift, dzshift, icorrshift, icorzshift = mp_shifts(layer, k)
-    projrinv = (1 << (NRINV - 1)) - 1 - (iphider >> (NBITS_PHIDER - NRINV))
-    me = L.me[layer]
-    cand = [int(c) for c in cand if me[(projrinv << NBEND[layer]) + int(cp.bend[c])]]
-    dphi, dz = [], []
-    for c in cand:
-        ir = int(cp.ir[c])
-        iphi = iphiproj + ((ir * iphider) >> icorrshift)
-        iz = izproj + ((ir * izder + (1 << (icorzshift - 1))) >> icorzshift)
-        dphi.append((int(cp.iphi[c]) - iphi) << phishift)
-        dz.append((int(cp.iz[c]) - iz) << dzshift)
-    if KNOWN_BAD == "mp_first_in_window":
-        inside = [i for i, (p, z) in enumerate(zip(dphi, dz)) if abs(p) <= cut_phi and -cut_z <= z < cut_z]
-        return [cand[i] for i in inside[:1]]
-    return [cand[i] for i in improving_chain(dphi, dz, cut_phi, cut_z)]
+    L = luts()
+    imem = read_address = mem_read_addr = 0
+    projdata = projdata_ = None
+    validin = validin_ = validmem = False
+    cand = None
+    prev = None
+    best_phi = best_z = 0
+    for _ in range(max_steps):
+        near4 = inbuf.near(4)
+        for m in meus:
+            m.afs = m.cand.near(3)
+        best = min(range(N_MEU), key=lambda i: meus[i].tcid())
+        if cand is not None:                                   # matchCalculator
+            tr, c = cand
+            if tr is not prev:
+                best_phi, best_z = int(L.phicut[layer][tr.seed]), int(L.zcut[layer][tr.seed])
+                prev = tr
+            iphiproj, izproj, iphider, izder = tr.projs[layer]
+            ir = int(cp.ir[c])
+            dphi = (int(cp.iphi[c]) - (iphiproj + ((ir * iphider) >> icorrshift))) << phishift
+            dz = (int(cp.iz[c]) - (izproj + ((ir * izder + (1 << (icorzshift - 1))) >> icorzshift))) << dzshift
+            if KNOWN_BAD == "mp_first_in_window":
+                ok = improving(dphi, dz, best_phi, best_z)[0] and not matches.get((id(tr), layer))
+            else:
+                ok, best_phi, best_z = improving(dphi, dz, best_phi, best_z)
+            if ok:
+                matches.setdefault((id(tr), layer), []).append(c)
+        cand = meus[best].cand.read() if not meus[best].cand.empty() else None
+        added = False
+        for m in meus:
+            if not added and m.idle and not inbuf.empty():
+                m.init(mem, inbuf.read())
+                added = True
+            else:
+                m.step()
+            m.process(cp.bend)
+        if validin_:
+            pt = _proj_temp(projdata_, layer, mem)
+            if pt is not None:
+                inbuf.store(pt)
+        projdata_, validin_ = projdata, validin
+        validin = validmem
+        if validin:
+            projdata = entries[imem][read_address]
+        validmem = not near4
+        read_address = mem_read_addr
+        if validmem:
+            if any(hasdata):
+                imem = hasdata.index(True)
+                if mem_read_addr + 1 >= len(entries[imem]):
+                    mem_read_addr = 0
+                    hasdata[imem] = False
+                else:
+                    mem_read_addr += 1
+            else:
+                validmem = False
+        if (not validin and not validin_ and not validmem and inbuf.empty() and cand is None
+                and not any(m.active() for m in meus)):
+            break                                              # drained: the remaining clocks do nothing
 
 
-def improving_chain(dphi, dz, cut_phi, cut_z):
-    """MatchProcessor::matchCalculator's rule over one tracklet's candidates in arrival order (:684-714): the
-    best values start at the seed's cuts; a candidate is kept iff |dphi| <= best and -best <= dz < best, and
-    its |dphi|, |dz| become the best. Returns the kept positions."""
-    best_phi, best_z = cut_phi, cut_z
-    kept = []
-    for i, (p, z) in enumerate(zip(dphi, dz)):
-        if abs(p) <= best_phi and -best_z <= z < best_z:
-            best_phi, best_z = abs(p), abs(z)
-            kept.append(i)
-    return kept
+def run_matching(cp, trs, caps=True, rng=None, k=KF.K):
+    """Every match processor of one sector: the projections of the sector's tracklets (trs) per (layer,
+    allstub region), split as TrackletConfigBuilder wires them (the duplicated MPs of L3-L6 regions B, C
+    take the L1L2 projections), their input memories ordered by seed and merged projection calculator and
+    their pages by tracklet processor, against the region's VM memory (alive, me_ok copies, in reading order;
+    `rng` permutes the order within each bin: the random order mode). Fills tr.matches."""
+    if not trs:
+        return
+    sector = trs[0].sector
+    fields = me_fields(cp)
+    vm, zbin = fields[0], fields[1]
+    inst = {}
+    for tr in sorted(trs, key=lambda q: q.tcid):
+        for L, pj in tr.projs.items():
+            reg = pj[0] >> (D.NPHIBITS_L[L - 1] - NBITS_ALLSTUBS[L - 1])
+            dup = L >= 3 and reg in (1, 2) and tr.seed == 0       # MP_<L>PHI{B,C}_E
+            pc, page = divmod(tr.tcid[1], PC_PAGES[tr.seed])
+            inst.setdefault((L, reg, dup), {}).setdefault((tr.seed, pc, page), []).append(tr)
+    matches = {}
+    for (L, reg, _), mems in inst.items():
+        sel = np.flatnonzero((cp.region == sector) & (cp.layer == L) & cp.alive & cp.me_ok)
+        nb, nall = D.NPHIBITS_L[L - 1], NBITS_ALLSTUBS[L - 1]
+        sel = sel[(cp.phicorr[sel] >> (nb - nall)) == reg]
+        key = cp.order[sel] if rng is None else rng.permutation(len(sel))
+        mem = {}
+        for c in sel[np.argsort(key, kind="stable")]:
+            mem.setdefault(int(vm[c]) * N_RZBINS + int(zbin[c]), []).append(int(c))
+        pages = [mems[q] for q in sorted(mems)]
+        match_processor(cp, L, pages, mem, fields, matches, k, MP_MAX if caps else 10 ** 9)
+    for tr in trs:
+        for L in TARGETS[tr.seed]:
+            got = matches.get((id(tr), L))
+            if got:
+                tr.matches[L] = got
+
+
+def improving(dphi, dz, best_phi, best_z):
+    """MatchProcessor::matchCalculator's rule for one candidate (MatchProcessor.cc:684-714): kept iff
+    |dphi| <= best and -best <= dz < best, and its |dphi|, |dz| then become the best. Returns (kept, best_phi,
+    best_z); the best values start at the seed's cuts for each new tracklet."""
+    if abs(dphi) <= best_phi and -best_z <= dz < best_z:
+        return True, abs(dphi), abs(dz)
+    return False, best_phi, best_z
 
 
 # ---- candidates, fit, duplicate removal -------------------------------------------
@@ -846,12 +1043,7 @@ def run_copies(cp, caps=True, order="dtc", seed=0, k=KF.K, do_dr=True, collect=N
         for sd in SEEDS:
             trs += seed_sector(cp, sector, sd, k)
         projection_pages(trs)
-        for tr in trs:
-            for L in TARGETS[tr.seed]:
-                cand = np.nonzero((cp.region == sector) & (cp.layer == L) & cp.alive & cp.me_ok)[0]
-                kept = match_tracklet(cp, tr, L, cand, k, rng)
-                if kept:
-                    tr.matches[L] = kept
+        run_matching(cp, trs, caps, rng, k)
         cands = build_candidates(cp, sector, trs, caps)
         if collect is not None:
             collect.setdefault("tracklets", []).extend(trs)

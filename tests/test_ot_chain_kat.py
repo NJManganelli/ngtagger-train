@@ -1,6 +1,6 @@
 """Known-answer tests of the WP-D OT chain emulation (eval_refitq/combinatorics: ot_dtc, ot_chain, cmssw_kf):
 the DTC frame decoding, the integer tracklet calculator and its gates, the integer projections, the match
-engine's neighbour-bin rule, the match processor's improving chain and the track conversion; then, on the
+engine's neighbour-bin rule, the improving chain and the track conversion; then, on the
 canon_v4 10-event test production when it is present, the decoding against the DTC's own positions and the
 chain against CMSSW's no-DR tracks (a regression floor at the registered identity)."""
 import math
@@ -18,8 +18,8 @@ import ot_dtc as D      # noqa: E402
 TEST_PROD = Path("/Volumes/WDMac/smartpixels_scratch/canon_v4_test/spstudy_AAAA_f01_10ev_at35436445850.root")
 MODECMP_NODR = Path("/Users/nmangane/smartpixels/cmssw/work/modecmp/HYBRID_np5_noDR_f01_100ev.root")
 # the chain's no-DR identity on the test events (identical stub sets / CMSSW no-DR tracks, barrel seeds and
-# barrel-only tracks), registered 2026-10-15 at 0.949; a drop below this floor is a regression
-NODR_IDENTITY_FLOOR = 0.94
+# barrel-only tracks, every KF region), registered 2026-10-15 at 0.959; a drop below this floor is a regression
+NODR_IDENTITY_FLOOR = 0.95
 
 
 # ---- DTC frames ----------------------------------------------------------------------------------
@@ -122,47 +122,36 @@ def test_projection_to_the_outer_layers(rinv, z0, t):
 
 
 # ---- the match engine and processor --------------------------------------------------------------
-def _me_setup():
-    """A layer-3 projection near the upper edge of its VM bin and three stubs: one in its bin close in fine
-    phi, one in the next bin just across the edge (geometrically closer), one in its bin too far."""
-    L = 3
-    vmrme = OC.luts().vmrme[L]
-    nz, nr = D.NZBITS_L[L - 1], D.NRBITS_L[L - 1]
-    for iz in range(0, 1 << (nz - 1), 1 << (nz - OC.VMR_LUT_ZBITS)):
-        ir = 0
-        m = int(vmrme[(((iz >> (nz - OC.VMR_LUT_ZBITS)) & 127) << OC.VMR_LUT_RBITS)
-                      + ((ir >> (nr - OC.VMR_LUT_RBITS)) & 15)])
-        zb, fz = m >> OC.NFINERZ, m & 7
-        if fz >= 2:
-            break
-    ztemp = 8 * (zb - 4) + fz
-    izproj = ztemp << (nz - OC.ME_BINS_BITS - OC.NFINERZ)
-    reg, vm = 1, 2
-    iphiproj = (reg << 12) | (vm << 9) | (7 << 6)               # fine 7: extrabits 3, looks into vm + 1
-    phic = np.array([(reg << 12) | (vm << 9) | (6 << 6),         # same bin, fine 6: |dphi| 1
-                     (reg << 12) | ((vm + 1) << 9) | (0 << 6),   # next bin, fine 0: geometric dphi +1
-                     (reg << 12) | (vm << 9) | (2 << 6)])        # same bin, fine 2: |dphi| 5
-    n = len(phic)
-    cp = OC.Copies(np.arange(n), np.zeros(n, np.int64), np.arange(n), np.full(n, L), np.ones(n, bool),
-                   np.zeros(n, bool), phic, np.full(n, iz), np.full(n, ir), np.zeros(n, np.int64), phic,
-                   np.full(n, D.rmean(L)), np.ones(n), np.zeros(n), np.zeros(n))
-    return cp, L, iphiproj, izproj
-
-
 def test_match_engine_neighbour_bin_never_matches():
-    cp, L, iphiproj, izproj = _me_setup()
-    got = OC.me_candidates(cp, np.arange(3), L, iphiproj, izproj, ps_seed=True)
-    assert got == [0]          # CMSSW's MatchEngineUnit: the neighbour-bin stub's dphi is 1 - 16 = -15
+    """MatchEngineUnit::step moves the projection's fine phi by a VM bin with the opposite sign to the
+    geometry: a stub one fine unit across the bin edge is 15 units away as the engine computes it."""
+    # projection near the upper edge (shift +1, fine 7); its own bin is use.second 0, the upper neighbour 1
+    assert 6 - OC.meu_finephi(7, 0, 1) == -1                    # own bin, fine 6: |dphi| 1, passes
+    assert 0 - OC.meu_finephi(7, 1, 1) == -15                   # next bin, fine 0: geometrically +1
+    # projection near the lower edge (shift -1, fine 0): the lower neighbour is use.second 0
+    assert 7 - OC.meu_finephi(0, 0, -1) == 15                   # lower bin, fine 7: geometrically -1
+    assert 1 - OC.meu_finephi(0, 1, -1) == 1                    # own bin
+    assert OC.meu_finephi(5, 0, 0) == 5
+
+
+def _chain(dphi, dz, cut_phi, cut_z):
+    """The kept positions of one tracklet's candidates in arrival order (ot_chain.improving)."""
+    kept, bp, bz = [], cut_phi, cut_z
+    for i, (p, z) in enumerate(zip(dphi, dz)):
+        ok, bp, bz = OC.improving(p, z, bp, bz)
+        if ok:
+            kept.append(i)
+    return kept
 
 
 def test_improving_chain():
     # worse then better: both kept; better then worse: one; the z window is [-best, best)
-    assert OC.improving_chain([5, 2], [3, 1], 10, 10) == [0, 1]
-    assert OC.improving_chain([2, 5], [1, 3], 10, 10) == [0]
-    assert OC.improving_chain([0, 0], [10, -10], 10, 10) == [1]
-    assert OC.improving_chain([11], [0], 10, 10) == []
-    assert OC.improving_chain([3, -3, 2], [4, 3, 3], 10, 10) == [0, 1]   # ties in phi pass; dz 3 < best 3 fails
-    assert OC.improving_chain([5, 1], [0, 0], 10, 10) == [0]             # a dz 0 match closes the z window
+    assert _chain([5, 2], [3, 1], 10, 10) == [0, 1]
+    assert _chain([2, 5], [1, 3], 10, 10) == [0]
+    assert _chain([0, 0], [10, -10], 10, 10) == [1]
+    assert _chain([11], [0], 10, 10) == []
+    assert _chain([3, -3, 2], [4, 3, 3], 10, 10) == [0, 1]   # ties in phi pass; dz 3 < best 3 fails
+    assert _chain([5, 1], [0, 0], 10, 10) == [0]             # a dz 0 match closes the z window
 
 
 def test_track_from_ipars_clamps_and_bin_centres():
