@@ -104,17 +104,18 @@ class Cuts:
             e = table.get(k)
             if e is not None and e["value"] is not None and e["n"] >= MIN_N:
                 return e["value"]
-        if surface is not None and surface > 10 and not any(k.split("|")[0] == str(surface) for k in table):
+        if surface is not None and 10 < surface < 100 and not any(k.split("|")[0] == str(surface) for k in table):
             return PROVISIONAL_DISC_CUT              # C1b rev 4 §1 item 6: no disc bins fitted yet
         e = table["*"]
         return e["value"]
 
     def chi2(self, consumer, dims, cov_model, surface, first, scen=None):
-        """The consumer's cut per (surface, first); rr needs the scenario (PD15)."""
+        """The consumer's cut per (surface, first); rr needs the scenario (PD15). A C1b barrel visit of a
+        disc-going track (surface + 100) falls back to the barrel bin when its own bins are not fitted."""
         tab = self.doc["cuts"][table_key(consumer, dims, cov_model, scen)]
         surface, first = np.atleast_1d(surface), np.atleast_1d(first)
-        return np.array([self._lookup(tab, (f"{s}|{int(f)}", f"{s}"), s) for s, f in zip(surface.tolist(),
-                                                                                        first.tolist())])
+        chain = lambda s, f: (f"{s}|{f}", f"{s}") + ((f"{s - 100}|{f}", f"{s - 100}") if s > 100 else ())
+        return np.array([self._lookup(tab, chain(s, int(f)), s) for s, f in zip(surface.tolist(), first.tolist())])
 
     def window(self, cov_model, surface, first, keybin_alpha, keybin_beta):
         out = np.full((len(surface), 2), np.inf)

@@ -56,7 +56,8 @@ def own_rows(arm, st, j, t, S, ctx, geo, tools, kpt):
     meas, sig, has = AR.measurements(ctx, geo, ci, mi, h0[:, 2], h0[:, 3], arm, tools)
     r = meas - h0
     out = {"v": v, "o": st.o[v], "step": np.full(len(v), j, np.int16), "first": np.full(len(v), j == 0),
-           "surface": np.full(len(v), S, np.int16), "ci": ci, "mi": mi}
+           "surface": np.full(len(v), S, np.int16), "ci": ci, "mi": mi,
+           "csurface": AR.cut_surface(arm, st, v, np.full(len(v), S, np.int16))}
     # PD8: a clean history = every earlier accepted hit of the (virtual) track is its own TP's
     acc_prev = st.rec["acc"][v][:, :j]
     tp_prev = K["tp_global"][np.maximum(st.rec["ci"][v][:, :j], 0)]

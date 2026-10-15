@@ -220,6 +220,18 @@ class DiscTools:
         self.R_tables = R_tables
 
 
+BARREL_ON_DISC_GOING = 100         # C1b: a barrel visit of a disc-going track is binned as surface + 100
+
+
+def cut_surface(arm, st, v, surface):
+    """The cut bins' surface code (c1b/PLAN.md rev 4 §1): for the disc_model arms, a barrel visit of a
+    disc-going track has its own bins (surface + 100); everything else keeps the surface."""
+    surface = np.asarray(surface)
+    if not arm.disc_model:
+        return surface
+    return np.where(st.dg[v] & (surface <= 4), surface + BARREL_ON_DISC_GOING, surface)
+
+
 def disc_going(path):
     """C1b's population: the arm's own path (the producer's drPath: a disc within its radial extent +- 1 cm,
     before the scenario mask) contains a disc."""
@@ -583,8 +595,8 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
         cSz = np.einsum("nij,njk,nlk->nil", E.guard_zeroed(cJ), st.C[tt], E.guard_zeroed(cJ))
         if arm.window_cut == "gate99":                            # PD18: the window is the 99 % hit cut
             g = gate_stat(arm, "gate", ctx, geo, ci, cmi, ch0, cSz, tools)
-            w = g <= tools.cuts.chi2("gate", arm.dims_key("gate"), arm.cov_model, geo["surface"][cmi],
-                                     np.full(len(ci), j == 0))
+            w = g <= tools.cuts.chi2("gate", arm.dims_key("gate"), arm.cov_model,
+                                     cut_surface(arm, st, tt, geo["surface"][cmi]), np.full(len(ci), j == 0))
             if not w.any():
                 return None
             p, tt, ci, cmi, ch0, cJ, cSz = p[w], tt[w], ci[w], cmi[w], ch0[w], cJ[w], cSz[w]
@@ -648,7 +660,8 @@ def _choose_apply(arm, st, j, X, cands, pick, ctx, geo, tools, path, S, kpt):
     st.rec["gstat"][t, j] = g
     ok = np.ones(len(t), bool)
     if arm.gate:
-        cut = tools.cuts.chi2("gate", arm.dims_key("gate"), arm.cov_model, geo["surface"][mi], np.full(len(t), j == 0))
+        cut = tools.cuts.chi2("gate", arm.dims_key("gate"), arm.cov_model, cut_surface(arm, st, t, geo["surface"][mi]),
+                              np.full(len(t), j == 0))
         ok = ~(g > cut)
         st.rec["gated"][t[~ok], j] = True
         st.rec["mi"][t[~ok], j], st.rec["ci"][t[~ok], j] = mi[~ok], ci[~ok]
@@ -823,6 +836,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
         inner = st.rec["acc"][owner] & (np.arange(seq.shape[1])[None, :] > jj[:, None])
         loo_out = {"o": st.o[owner], "step": jj, "ci": st.rec["ci"][owner, jj], "mi": st.rec["mi"][owner, jj],
                    "surface": st.rec["surface"][owner, jj], "first": jj == 0, "n_inner": inner.sum(1),
+                   "csurface": cut_surface(arm, st, owner, st.rec["surface"][owner, jj]),
                    "n_acc": st.rec["acc"][owner].sum(1), "dims": stat}
     removed = np.zeros((len(st.o), seq.shape[1]), bool)
     protected = np.zeros(len(st.o), bool)
@@ -834,7 +848,8 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
             if not len(owner):
                 break
             mi = st.rec["mi"][owner, jj]
-            cut = tools.cuts.chi2("rr", arm.dims_key("rr"), arm.cov_model, geo["surface"][mi], jj == 0, scen=mask)
+            cut = tools.cuts.chi2("rr", arm.dims_key("rr"), arm.cov_model, cut_surface(arm, st, owner, geo["surface"][mi]),
+                                  jj == 0, scen=mask)
             ratio = stat / cut
             # PD19: never remove a track's only remaining SmartPixels cluster
             last = st.rec["acc"][owner].sum(1) <= 1
@@ -903,7 +918,8 @@ def resolve_k(arm, st, geo, tools):
         first[:, 0] = True
         cut = np.zeros(vis.shape)
         m = vis & (S >= 0)
-        cut[m] = tools.cuts.chi2("gate", arm.dims_key("gate"), arm.cov_model, S[m], first[m])
+        cs = np.where(st.dg[:, None] & (S <= 4), S + BARREL_ON_DISC_GOING, S) if arm.disc_model else S
+        cut[m] = tools.cuts.chi2("gate", arm.dims_key("gate"), arm.cov_model, cs[m], first[m])
         score = g + cut.sum(1)
     o = np.lexsort((st.branch, score, st.o))
     first = np.r_[True, st.o[o][1:] != st.o[o][:-1]]
