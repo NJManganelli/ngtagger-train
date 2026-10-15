@@ -37,7 +37,8 @@ import numpy as np
 # known-bad run only (the census keeps it in its cache identity).
 KF_KNOWN_BADS = {
     "no_quantisation": "the fitted parameters without HybridFit's floor and Track's bin centres",
-    "no_float32": "every float32 cast of CMSSW skipped (double throughout)",
+    "no_float32": "every run-time float32 cast of CMSSW skipped (the import-time constants, B, the eta "
+                  "region bounds and 1/sqrt(12), stay float32-rounded)",
     "phi0_bin_centre": "phi0 at a +0.5 bin centre",
     "no_ho_terms": "residual() without the higher-order helix terms",
     "no_approxb": "matrixV without approxB^2 on tilted modules",
@@ -323,10 +324,13 @@ def make_seed(rinv, phi0_rel, t, z0, isector, n_input, k=K):
     kfphi0 = reduce_phi(phi0_rel + isector * k.dphisector - 0.5 * k.dphisector_hg)
     q = f32(rinv / (0.01 * C_TRK * k.b))
     kfz0, kft = f32(z0), f32(t)
-    kfzref = f32(float(kfz0) + CHOSEN_R_OF_Z * float(kft))
+    # float kfzRef = kfz0 + chosenRofZ * kft, the tracklet's DOUBLE z0 and t (HybridFit.cc:161); zRefMax:
+    # etaMax float, exp and atan in float, 2.0 * atan and tan in double, stored as float (:164-165)
+    kfzref = f32(z0 + CHOSEN_R_OF_Z * t)
     eta_reg = 0
     for i in range(1, len(ETA_REGIONS) - 1):
-        zref_max = f32(CHOSEN_R_OF_Z) / math.tan(2.0 * math.atan(math.exp(-ETA_REGIONS[i])))
+        a = f32(np.arctan(f32(np.exp(f32(-ETA_REGIONS[i])))))
+        zref_max = f32(CHOSEN_R_OF_Z / math.tan(2.0 * float(a)))
         if kfzref > zref_max:
             eta_reg = i
     return Seed(q, f32(kfphi0), kfz0, kft, int(isector), eta_reg, int(n_input))
@@ -570,12 +574,16 @@ def do_kf(seed, stubs):
     return best_by_n[max(best_by_n)] if best_by_n else None
 
 
-def forced_fit(seed, stubs, max_skip=KF_MAX_SKIP_EASY):
+def forced_fit(seed, stubs, max_skip=None):
     """The sequential filter over exactly these stubs (one per KF layer) in KF-layer order, with doKF's
-    layer and skip bookkeeping: what doKF's chosen state computed if these were its stubs.
+    layer and skip bookkeeping: what doKF's chosen state computed if these were its stubs. The skip budget
+    is doKF's for the seed's input size (2 easy, 1 hard at >= 10 input stubs) unless given; a caller that
+    knows only the fitted stubs passes their number as n_input, which gives the permissive easy budget.
 
     Returns (State or None, list of per-step gate results, reason). None with a reason when doKF could
     not have produced this sequence (a gap it cannot step over, a stub in an invalid KF layer)."""
+    if max_skip is None:
+        max_skip = KF_MAX_SKIP_EASY if seed.n_input < KF_MAX_STUBS_EASY else KF_MAX_SKIP_HARD
     by_layer = {}
     for s in stubs:
         kl = kalman_layer(seed, s)

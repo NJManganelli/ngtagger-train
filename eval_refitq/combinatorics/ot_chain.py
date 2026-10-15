@@ -80,7 +80,8 @@ VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ 
 
 # the emulated logic's version: bump it when a stage changes (a hash of the tables cannot see that).
 # 2: the match processor clock by clock (MP 108), the VMRouter's reading order and the input-memory caps.
-CHAIN_VERSION = 2
+# 3: the IR cap counts the link's stubs of every layer (disc stubs included).
+CHAIN_VERSION = 3
 # KNOWN-BAD VARIANTS of the chain (WP-D plan sec. 3), like cmssw_kf.KF_KNOWN_BADS: None in every real run;
 # set_known_bad() switches one on (a chain variant here, a fit variant in cmssw_kf) for a known-bad run.
 CHAIN_KNOWN_BADS = {
@@ -219,8 +220,8 @@ class Copies:
     x: np.ndarray            # float stub position (the KF's input)
     y: np.ndarray
     z: np.ndarray
-    link: np.ndarray = None  # the DTC link (region * 48 + channel) and the stub's place in its stream
-    stream_index: np.ndarray = None
+    link: np.ndarray = None  # the DTC link (region * 48 + channel)
+    link_rank: np.ndarray = None   # the stub's place among the link's stubs of every layer, in stream order
     # what survives the finder's input memories (input_caps): None = everything
     alive: np.ndarray = None
     te_ok: np.ndarray = None
@@ -242,8 +243,12 @@ def vmr_order(region, channel, index):
 def event_copies(stub, dtc):
     """stub: dict of L1TOTStub numpy columns for one event; dtc: dict of L1TOTStubDTC columns."""
     row = np.asarray(dtc["otStubIdx"], np.int64)
-    bar = np.asarray(stub["isBarrel"], bool)[row]
-    keep = bar
+    link_all = np.asarray(dtc["region"], np.int64) * 48 + np.asarray(dtc["channel"], np.int64)
+    srt = np.lexsort((np.asarray(dtc["index"], np.int64), link_all))
+    start = np.r_[0, np.flatnonzero(link_all[srt][1:] != link_all[srt][:-1]) + 1]
+    rank_all = np.empty(len(row), np.int64)
+    rank_all[srt] = np.arange(len(row)) - np.repeat(start, np.diff(np.r_[start, len(row)]))
+    keep = np.asarray(stub["isBarrel"], bool)[row]
     row = row[keep]
     region = np.asarray(dtc["region"], np.int64)[keep]
     channel = np.asarray(dtc["channel"], np.int64)[keep]
@@ -262,7 +267,7 @@ def event_copies(stub, dtc):
     return Copies(row, region, order, layer, ps, np.asarray(stub["isTilted"], bool)[row], iphi, iz, ir, bend,
                   phicorr, rm + ir * D.kr_barrel(),
                   np.asarray(stub["x"], np.float64)[row], np.asarray(stub["y"], np.float64)[row],
-                  np.asarray(stub["z"], np.float64)[row], region * 48 + channel, index)
+                  np.asarray(stub["z"], np.float64)[row], region * 48 + channel, rank_all[keep])
 
 
 # ---- the finder's input memories ---------------------------------------------------------------
@@ -287,13 +292,14 @@ def _first_n(group, order, n):
 
 def input_caps(cp, caps=True):
     """Set cp.alive / te_ok / me_ok: the copies the finder keeps through its input memories, in their reading
-    order (cp.order). The step caps (caps on): the first 156 stubs of a DTC link (IR) and 108 per VMRouter.
+    order (cp.order). The step caps (caps on): the first 156 stubs of a DTC link, of every layer (IR), and
+    108 per VMRouter.
     The memory sizes (always): 128 per VMRouter, 15 per VM bin of the tracklet-engine memories (outer stubs:
     phi region, ivmte, z bin) and of the match-engine memories (phi region, VM bin, z bin)."""
     n = len(cp.row)
     alive = np.ones(n, bool)
     if caps:
-        alive &= _first_n(cp.link, cp.stream_index, IR_MAX)
+        alive &= cp.link_rank < IR_MAX
     layers = np.unique(cp.layer)
     preg, sub3 = np.zeros(n, np.int64), np.zeros(n, np.int64)
     for L in layers:
