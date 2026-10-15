@@ -52,9 +52,7 @@ class DeepSetHGQ2(TagModel):
             jet_id = main
             for i, width in enumerate(cfg.get("classification_layers", [32, 16])):
                 jet_id = QDense(width, activation="relu", name=f"Dense_{i + 1}_jetID")(jet_id)
-            # Linear class logits: the losses use from_logits=True. A ReLU here (as upstream) zeros
-            # negative logits; jets with all-negative logits then get dead, uniform outputs.
-            jet_id = QDense(n_classes, name="Dense_out_jetID")(jet_id)
+            jet_id = QDense(n_classes, activation="relu", name="Dense_out_jetID")(jet_id)
             jet_id = Activation("linear", name=self.output_id_name)(jet_id)
 
             pt = main
@@ -69,7 +67,7 @@ class DeepSetHGQ2(TagModel):
                 charge = main
                 for i, width in enumerate(cfg["charge_layers"]):
                     charge = QDense(width, activation="relu", name=f"Dense_{i + 1}_charge")(charge)
-                charge = QDense(3, name="Dense_out_charge")(charge)
+                charge = QDense(3, activation="relu", name="Dense_out_charge")(charge)
                 charge = Activation("linear", name=self.output_charge_name)(charge)
                 outputs.append(charge)
 

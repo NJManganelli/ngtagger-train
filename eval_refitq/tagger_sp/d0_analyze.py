@@ -4,7 +4,7 @@
 
 Inputs: train.py --d0 predictions, two recipes:
   linout  (PRIMARY) OUT/d0_upper_bound/linout/preds/<mask>_<variant>_<d0>_s<seed>.npz -- the ladder's
-          DeepSetHGQ2 with linear class logits, every mask
+          DeepSetHGQ2 with linear class logits (linout.py), every mask
   ladder  OUT/d0_upper_bound/preds/... -- the ladder recipe as is (ReLU on the class logits), AAAA
 and d0pv.py validate (validation.json / validation_hists.npz).
 
@@ -452,7 +452,7 @@ def main():
                      "unchanged": ["trk_sig_d0 (KF covariance)", "trackmva heads (d0 withheld; window routing by "
                                    "|d0| from the origin kept)"]},
         "recipes": {"linout": "PRIMARY. The ladder's DeepSetHGQ2 with the ReLU on the class logits (Dense_out_jetID) "
-                              "removed (tagger_sp_linout.yaml); everything else the ladder's (split, "
+                              "removed (linout.py, tagger_sp_linout.yaml); everything else the ladder's (split, "
                               "HGQ/EBOPs, widths, hyperparameters, class weights, acceptance, matched WPs)",
                     "ladder": "the ladder v2 recipe as is (framework DeepSetHGQ2); AAAA only",
                     "why_linout": "with the ReLU on the logits, jets whose 8 pre-activations are all negative get "

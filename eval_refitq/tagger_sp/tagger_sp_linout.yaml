@@ -1,4 +1,4 @@
-model: DeepSetHGQ2    # linear class logits (framework default since the output-ReLU fix; was linout.py)
+model: DeepSetHGQ2LinOut    # linout.py: DeepSetHGQ2 with linear class logits (no output ReLU)
 experiment: tagger_sp
 
 run_config:

@@ -103,7 +103,7 @@ class DeepSetContrastive(TagModel):
             jet_id = main
             for i, width in enumerate(cfg.get("classification_layers", [32, 16])):
                 jet_id = QDense(width, activation="relu", name=f"Dense_{i + 1}_jetID")(jet_id)
-            jet_id = QDense(self._n_classes, name="Dense_out_jetID")(jet_id)  # linear logits (from_logits loss)
+            jet_id = QDense(self._n_classes, activation="relu", name="Dense_out_jetID")(jet_id)
             jet_id = Activation("linear", name=self.output_id_name)(jet_id)
 
             pt = main
