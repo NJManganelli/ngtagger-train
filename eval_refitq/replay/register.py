@@ -7,6 +7,8 @@
                                   is registered not-used
   windowcheck wpc.c1a.window-gate99  PD18's file-4 validation of the wide window (entry/windowcheck_summary.json)
   cutcheck  wpc.c1a.cutcheck-<ver>   PD20's file-4 check of a cut file (entry/cutcheck_wpc_cuts_<ver>.json)
+  c1b-il1   wpc.c1b.il1-truth          C1b A8 / A11: IL1's truth width, reference and findings (c1b/overlap/il1truth_summary.json)
+  c1b-j1    wpc.c1b.j1-shape-fit       C1b J1: the disc shape fits, T0, D0, D2 (c1b/overlap/overlap_summary.json)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
                                   the final verdict (entry/entry_verdict.json, verdict.py) with PD15's rr check, job
@@ -202,9 +204,48 @@ def loocheck(job_dir, overwrite):
           "values": vals, "bias": "file-4 validation, not a gate", "sources": [str(p)]}, job_dir, overwrite)
 
 
+def c1b_il1(job_dir, overwrite):
+    p = CM.OUT / "c1b" / "overlap" / "il1truth_summary.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": f"reference {ax}", "value": json.dumps([[r["size_bin"], r["n"], r["width_cm"], r["judged"]]
+                                                            for r in Q["reference"][ax]])} for ax in ("u", "v")]
+    vals += [{"name": f"v3 barrel tables over the reference {ax}", "value": json.dumps(Q["barrel_finding"][ax]["summary"])}
+             for ax in ("u", "v")]
+    vals += [{"name": f"RMS^2 / width^2 {ax} (occupancy-weighted)", "value": Q["mad_vs_rms"][ax]["variance_ratio"]}
+             for ax in ("u", "v")]
+    vals += [{"name": "u-v joint tail ratio", "value": Q["uv_independence"]["ratio"]},
+             {"name": "count-only power", "value": json.dumps(Q["count_power"])}]
+    _reg({"id": "wpc.c1b.il1-truth", "title": "WP-C C1b: IL1's truth width against p, its reference by predicted beam-pipe "
+                                              "offset, and the findings (A8, A11)",
+          "status": "in-sample", "status_note": "canon_v3 AAAA fit files (A10); findings reported only; " + "; ".join(Q["minor"]),
+          "values": vals, "bias": "the reference's fixed point can run away in wide-cluster bins (u size 4)",
+          "sources": [str(p)]}, job_dir, overwrite)
+
+
+def c1b_j1(job_dir, overwrite):
+    p = CM.OUT / "c1b" / "overlap" / "overlap_summary.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": f"surface {s} R {ax} (um)", "value": json.dumps([round(x * 1e4, 2) if x == x else None
+                                                                      for x in e["central"][f"R_{ax}"]])}
+            for s, e in Q["fits"].items() for ax in ("u", "v")]
+    vals += [{"name": f"D0 {ax}", "value": json.dumps({k: Q["D0"][ax][k] for k in ("pooled_ratio", "bounds95", "half_width95")})}
+             for ax in ("u", "v")]
+    vals += [{"name": f"D2 {s} ratio {ax}", "value": json.dumps([round(x, 3) if x == x else None for x in e[ax]["ratio"]])}
+             for s, e in Q["D2"].items() for ax in ("u", "v")]
+    _reg({"id": "wpc.c1b.j1-shape-fit", "title": "WP-C C1b J1: the disc position errors from overlap pairs, split-core shape "
+                                                 "fits (A8, A11, A12)",
+          "status": "exploratory", "status_note": "J1 stopped on its pre-declared rules (decision pending): "
+                                                  + "; ".join(Q["material"] + Q["decisions"]),
+          "values": vals, "bias": "the split-core family reads heavy-tailed shapes ~6 % wide (T0); size >= 2 bins not "
+                                  "identifiable from overlaps", "sources": [str(p)]}, job_dir, overwrite)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck"))
+    ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
+                                     "c1b-j1"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -212,8 +253,8 @@ def main(argv=None):
     if a.what in ("cuts", "cutcheck"):
         {"cuts": cuts, "cutcheck": cutcheck}[a.what](a.job_dir, a.overwrite, a.ver)
     else:
-        {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck,
-         "windowcheck": windowcheck}[a.what](a.job_dir, a.overwrite)
+        {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
+         "c1b-il1": c1b_il1, "c1b-j1": c1b_j1}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
