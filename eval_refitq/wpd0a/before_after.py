@@ -4,7 +4,11 @@ D 30, E 31), one set of figures of merit, paired event-bootstrap errors.
     # each census read by its OWN code root (a census refuses other formats); with
     # PYTHONPATH=ROOT/src so ngtagger comes from the same root
     python before_after.py extract LABEL CENSUS ROOT OUT.npz
-    python before_after.py compare A.npz B.npz ... --universe E [--pairs A:B,B:C,...] -o out.json
+    python before_after.py compare A.npz B.npz ... --universe E [--pairs A:B,B:C,...] [--cross-format] -o out.json
+
+PAIRING BY EVENT IDENTITY: compare pairs the runs' TPs by (run, lumi, event, tpIdx) and their per-event counts
+by (run, lumi, event), never by entry number (two nanos of one file can hold the events in different orders);
+runs whose event sets differ are refused. Runs of different census formats are refused unless --cross-format.
 
 extract keeps, per TP of the census's own table: event, true pT, |eta|, |d0|, phi, z0,
 production radius, the hit patterns, the charge and the findable flag (census format >= 30:
@@ -35,7 +39,7 @@ each |eta| range with its OT-truncated label (M.eta_range_label). It also report
 bin, what counting modules instead of layers adds, what one hit per module removes from a
 format-30 run's per-hit count (given one), and how many neutral TPs the charge removes. Errors are the standard deviation over event-bootstrap replicas
 (1000; the 100 events resampled with replacement, every figure recomputed as a ratio of
-sums), PAIRED across runs (same replica weights: the runs share their events), so a
+sums), PAIRED across runs (same replica weights per event identity: the runs share their events), so a
 difference's error includes the correlation.
 """
 from __future__ import annotations
@@ -88,6 +92,8 @@ def extract(label, census, root, out):
     R = {"label": label, "format": fmt, "n_events": nev, "census": d, "code_root": root,
          "builds": list(C["builds"]), "inputs": [r["path"] for r in man["inputs"]],
          "findable_count": count[0][:5] if count[0] in C else None}
+    if len(R["inputs"]) != 1:
+        raise SystemExit(f"{d}: a census of one input file expected (its event index is that file's entry)")
     A = {"key": key, "event": np.asarray(C["event"], np.int32), "pt": C["pt"],
          "aeta": np.abs(C["eta"]), "ad0": np.abs(C["d0"]), "phi": C["phi"], "z0": C["z0"],
          "vr": C["vr"], "hit_it": C["hit_it"], "hit_ot": C["hit_ot"]}
@@ -140,6 +146,8 @@ def extract(label, census, root, out):
         for k, v in seed.items():
             A[f"{b}/seed_{k}"] = v
         print(f"{label} {b}: {len(T):,} fitted, {len(S):,} after DR", flush=True)
+    # the census event index is the input's entry number: its (run, lumi, event) pairs the runs in compare
+    A["event_ids"] = read_event_ids(R["inputs"][0], nev)
     np.savez_compressed(out, meta=json.dumps(R), **A)
     print(f"wrote {out}")
 
@@ -148,6 +156,87 @@ def extract(label, census, root, out):
 def load(p):
     z = np.load(p, allow_pickle=False)
     return json.loads(str(z["meta"])), {k: z[k] for k in z.files if k != "meta"}
+
+
+def read_event_ids(path, n):
+    """(n, 3) run, luminosityBlock, event of the first n entries of the nano `path`."""
+    import uproot
+    t = uproot.open(f"{path}:Events")
+    return np.stack([t[c].array(library="np", entry_stop=n).astype(np.int64)
+                     for c in ("run", "luminosityBlock", "event")], 1)
+
+
+def event_ids(meta, Z):
+    """The run's event identities in its entry order: stored by extract, or read from its input for an extract
+    that predates them."""
+    if "event_ids" in Z:
+        return Z["event_ids"]
+    p = meta["inputs"][0]
+    if not os.path.exists(p):
+        raise SystemExit(f"run {meta['label']}: no stored event identities and its input {p} is gone: re-extract it")
+    return read_event_ids(p, meta["n_events"])
+
+
+def _per_event(name):
+    """The per-event count arrays of an extract (BUILD/n_*); every other array but event_ids is per TP."""
+    return "/" in name and name.split("/", 1)[1].startswith("n_")
+
+
+def reindex(Z, cmap):
+    """Run arrays Z re-indexed by event identity: cmap[entry] = the event's index among the sorted identities.
+    Per-event counts are reordered to identity order; TP keys are re-packed as tp_key(identity index, tpIdx)
+    (the TP arrays re-sorted with them, as found_on's search needs)."""
+    sys.path.insert(0, str(HERE))
+    import tracklet_topology_cost as M
+    n = len(cmap)
+    inv = np.empty(n, np.int64)
+    inv[cmap] = np.arange(n)
+    ev, tp = M.tp_key_parts(Z["key"])
+    key = M.tp_key(cmap[ev], tp)
+    o = np.argsort(key, kind="stable")
+    out = {}
+    for k, v in Z.items():
+        if k == "event_ids":
+            continue
+        if _per_event(k):
+            if len(v) != n:
+                raise SystemExit(f"{k}: {len(v)} entries, not one per event ({n})")
+            out[k] = v[inv]
+        else:
+            if len(v) != len(key):
+                raise SystemExit(f"{k}: {len(v)} entries, not one per TP ({len(key)})")
+            out[k] = v[o]
+    out["key"] = key[o]
+    if "event" in Z:
+        out["event"] = cmap[ev][o].astype(np.asarray(Z["event"]).dtype)
+    return out
+
+
+def by_identity(runs):
+    """THE PAIRING: every run re-indexed by event identity (run, lumi, event). Two nanos of one file can hold the
+    same events in different entry orders (multi-threaded productions; canon_v3 against canon_v4), so TPs are
+    paired by (event identity, tpIdx) and the per-event counts, hence the bootstrap replicas, by identity:
+    index i is the i-th of the sorted identities, for every run. Refuses runs whose event sets differ.
+    Returns ({label: (meta, re-indexed Z)}, the sorted identities, {label: cmap})."""
+    ids = {lab: event_ids(m, Z) for lab, (m, Z) in runs.items()}
+    first = next(iter(ids))
+    ref = np.unique(ids[first], axis=0)
+    for lab, x in ids.items():
+        if len(np.unique(x, axis=0)) != len(x):
+            raise SystemExit(f"run {lab}: an event identity appears twice")
+        if not np.array_equal(np.unique(x, axis=0), ref):
+            raise SystemExit(f"runs {first} and {lab} hold different event sets: they cannot be paired")
+    pos = {tuple(r): i for i, r in enumerate(ref.tolist())}
+    cmaps = {lab: np.array([pos[tuple(r)] for r in x.tolist()], np.int64) for lab, x in ids.items()}
+    return {lab: (m, reindex(Z, cmaps[lab])) for lab, (m, Z) in runs.items()}, ref, cmaps
+
+
+def formats(runs, cross_format=False):
+    """The runs' census formats; a mix is refused unless the comparison is marked cross-format
+    (tp_findability.one_format). Either way the runs are paired by event identity (by_identity)."""
+    sys.path.insert(0, str(HERE))
+    import tp_findability as TF
+    return TF.one_format({lab: m for lab, (m, _) in runs.items()}, cross_format)
 
 
 def kin_sel(Z, pt, eta):
@@ -185,24 +274,27 @@ def figures(meta, Z, W):
     return out
 
 
-def l1ttp_evt(path):
-    """(sorted tp_key, event-id) of every L1TTP row of the input."""
+def l1ttp_evt(path, cmap):
+    """(sorted tp_key, event-id) of every L1TTP row of the input's first len(cmap) entries, keyed by event
+    identity (cmap: entry -> identity index, by_identity)."""
     import awkward as ak
     import uproot
     sys.path.insert(0, str(HERE))
     import tracklet_topology_cost as M
-    A = uproot.open(f"{path}:Events").arrays(["L1TTP_evt"])
+    A = uproot.open(f"{path}:Events").arrays(["L1TTP_evt"], entry_stop=len(cmap))
     nt = ak.to_numpy(ak.num(A["L1TTP_evt"]))
-    key = M.tp_key(np.repeat(np.arange(len(nt)), nt), np.arange(int(nt.sum())) - np.repeat(np.cumsum(nt) - nt, nt))
-    return key, ak.to_numpy(ak.flatten(A["L1TTP_evt"]))
+    key = M.tp_key(cmap[np.repeat(np.arange(len(nt)), nt)],
+                   np.arange(int(nt.sum())) - np.repeat(np.cumsum(nt) - nt, nt))
+    o = np.argsort(key, kind="stable")
+    return key[o], ak.to_numpy(ak.flatten(A["L1TTP_evt"]))[o]
 
 
-def denominators(U, umeta, hits=None):
+def denominators(U, umeta, ucmap, hits=None):
     """The census denominator and the CMSSW-like comparison one over the universe table
-    U (a census of format >= 31), plus, per pT bin, what counting modules instead of
-    layers adds, what one hit per module removes from the per-hit count of a format-30
+    U (a census of format >= 31; ucmap its entry -> identity index), plus, per pT bin, what counting modules
+    instead of layers adds, what one hit per module removes from the per-hit count of a format-30
     run `hits` (same TP table), and how many neutral TPs the charge requirement removes."""
-    tkey, tevt = l1ttp_evt(umeta["inputs"][0])
+    tkey, tevt = l1ttp_evt(umeta["inputs"][0], ucmap)
     p = np.clip(np.searchsorted(tkey, U["key"]), 0, len(tkey) - 1)
     hard = (tkey[p] == U["key"]) & (tevt[p] == 0)
     charged = np.isfinite(U["charge"]) & (U["charge"] != 0)
@@ -288,26 +380,26 @@ def _pair(F, x, y):
     return d
 
 
-def compare(paths, pairs, out, universe, per_hit=None):
+def compare(paths, pairs, out, universe, per_hit=None, cross_format=False):
     runs = {}
     for p in paths:
         meta, Z = load(p)
         runs[meta["label"]] = (meta, Z)
-    nev = {m["n_events"] for m, _ in runs.values()}
-    if len(nev) != 1:
-        raise SystemExit(f"runs have different event counts {nev}")
-    nev = nev.pop()
+    fmts = formats(runs, cross_format)
+    runs, ids, cmaps = by_identity(runs)
+    nev = len(ids)
     umeta, U = runs[universe]
     if umeta.get("findable_count") != "n_mod":
         raise SystemExit(f"the universe run {universe} must be a census of format >= 31")
     W = np.random.default_rng(SEED).multinomial(nev, np.full(nev, 1.0 / nev), size=N_REP).astype(float)
     sys.path.insert(0, str(HERE))
     import tracklet_topology_cost as M
-    D, hits_report = denominators(U, umeta, runs[per_hit][1] if per_hit else None)
+    D, hits_report = denominators(U, umeta, cmaps[universe], runs[per_hit][1] if per_hit else None)
     F = {lab: figures(m, Z, W) for lab, (m, Z) in runs.items()}
     G = den_figures(runs, U, D, W, nev)
     sd = lambda d: {k: {"value": v, "sd": float(np.std(r, ddof=1))} for k, (v, r) in d.items()}
-    res = {"n_events": nev, "n_replicas": N_REP, "seed": SEED,
+    res = {"n_events": nev, "n_replicas": N_REP, "seed": SEED, "formats": fmts,
+           "pairing": "by event identity (run, lumi, event) and tpIdx; replicas over the sorted identities",
            "runs": {lab: {k: m.get(k) for k in ("format", "census", "code_root", "builds")}
                     for lab, (m, _) in runs.items()},
            "eta_labels": {k: M.eta_range_label(*v) for k, v in ETA.items()},
@@ -339,12 +431,15 @@ def main():
     c.add_argument("--universe", required=True, help="the label of a census of format >= 31")
     c.add_argument("--per-hit", default=None,
                    help="the label of a format-30 census (findable per hit), to report what one hit per module removes")
+    c.add_argument("--cross-format", action="store_true",
+                   help="mark the comparison cross-format: runs of different census formats are allowed (their "
+                        "formats are reported); refused otherwise")
     c.add_argument("-o", "--out", required=True)
     a = ap.parse_args()
     if a.cmd == "extract":
         extract(a.label, a.census, a.root, a.out)
     else:
-        compare(a.npz, a.pairs.split(","), a.out, a.universe, a.per_hit)
+        compare(a.npz, a.pairs.split(","), a.out, a.universe, a.per_hit, a.cross_format)
 
 
 if __name__ == "__main__":
