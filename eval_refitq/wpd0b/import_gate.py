@@ -427,9 +427,12 @@ def known_bad_bodies(cal_R, cal_man, model, body, cfg):
 # ==========================================================================
 # commands
 # ==========================================================================
-def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP):
+def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP, cross_format=False):
     cal_d, cal_man, cal_R = load(cal)
     t_d, t_man, t_R = load(test_c)
+    # the cuts come from the calibration census and are judged on the test census: one format, unless
+    # marked cross-format (WP-D0b's own runs: CAL at format 33, KG / G / G2 at 34)
+    formats = TF.one_format({"calibration": cal_man, "test": t_man}, cross_format)
     doc = json.load(open(cuts))
     body = {k: doc[k] for k in ("s1", "s2a", "s2z", "win", "s6")}
     model = model_of(cal_man)
@@ -457,7 +460,7 @@ def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP
                      n_rep, extra=kbs)
     for r in reps:
         r["legacy_3sigma"] = r["nominal"]          # sd of the legacy known-bad: the nominal's
-    res = {"cal": cal_d, "test": t_d, "cuts": os.path.realpath(cuts), "config": cfg,
+    res = {"cal": cal_d, "test": t_d, "formats": formats, "cuts": os.path.realpath(cuts), "config": cfg,
            "n_rep": n_rep, "bootstrap_s": time.time() - t0, "offline_vs_census_disagreements": agree}
     res["nominal"] = judge_one("nominal", eff["nominal"], reps, body, report_only)
     res["known_bad"] = {k: judge_one(k, eff[k], reps, body, report_only)
@@ -493,7 +496,7 @@ def genealogy(test, body, units, passed):
 
 
 def cmd_tolerances(a):
-    res = _gate_run(a.cal, a.kg, a.cuts, n_rep=a.n_rep)
+    res = _gate_run(a.cal, a.kg, a.cuts, n_rep=a.n_rep, cross_format=a.cross_format)
     ro = sorted(k for k, v in res["nominal"]["b_iii"].items() if v["power"] < POWER_MIN)
     res["report_only"] = ro
     res["rule"] = {"margin": MARGIN, "power_min": POWER_MIN, "material_bin_share": MATERIAL_BIN_SHARE,
@@ -507,7 +510,8 @@ def cmd_tolerances(a):
 
 def cmd_judge(a):
     tol = json.load(open(a.tol))
-    res = _gate_run(a.cal, a.test, a.cuts, report_only=tuple(tol["report_only"]), n_rep=tol["rule"]["n_rep"])
+    res = _gate_run(a.cal, a.test, a.cuts, report_only=tuple(tol["report_only"]), n_rep=tol["rule"]["n_rep"],
+                    cross_format=a.cross_format)
     res["report_only"] = tol["report_only"]
     res["tolerances"] = os.path.realpath(a.tol)
     res["material"] = material(res["nominal"])
@@ -639,6 +643,7 @@ def cmd_report(a):
         C = TF.load(d, with_tracks=True, verbose=False)
         runs[lab] = C
     Cg, Co = runs["angles"], runs["off"]
+    out["formats"] = TF.one_format(runs, a.cross_format)
     if not np.array_equal(Cg["key"], Co["key"]):
         raise SystemExit("the two censuses' TP tables differ")
     keys = Cg["key"]
@@ -712,6 +717,10 @@ def main():
     r.add_argument("g")
     r.add_argument("off")
     r.add_argument("-o", "--out", required=True)
+    for p in (t, j, r):
+        p.add_argument("--cross-format", action="store_true",
+                       help="mark the comparison cross-format: censuses of different formats are allowed "
+                            "(their formats are reported); refused otherwise")
     a = ap.parse_args()
     {"keys": cmd_keys, "tolerances": cmd_tolerances, "judge": cmd_judge, "report": cmd_report}[a.cmd](a)
 

@@ -179,6 +179,26 @@ FORMAT_VERSION = 35   # 35: THE OT INPUTS AS THE TRACK FINDER READS THEM (WP-D; 
                       # fails the angle cap (SPN.direction_usable) from angle-using
                       # seeds. 19: TP truth (census d0/z0/eta/phi/vr, qual_* and
                       # track-row residuals, OT sigma z) from L1TTP at the POCA
+# The formats load() READS: this one, and 34, the last census built from canon_v3 (rebuild one at the
+# tag census-canon_v3-format34), so the canon_v3 results stay readable. Two formats are different
+# numbers under the same names, so load() records the one it read (C["format"]) and every comparison or
+# aggregation of censuses goes through one_format(), which refuses a mix unless the caller marks the
+# comparison cross-format.
+READ_FORMATS = (34, FORMAT_VERSION)
+
+
+def one_format(runs, cross_format=False):
+    """The census formats of `runs` ({label: a loaded census or its manifest}, each with "format"), as a
+    sorted tuple. SystemExit when they differ, unless `cross_format` (a comparison explicitly across
+    formats, which then reports them side by side)."""
+    fmts = {lab: r.get("format") for lab, r in runs.items()}
+    got = tuple(sorted(set(fmts.values()), key=str))
+    if len(got) > 1 and not cross_format:
+        raise SystemExit("census formats differ (" + ", ".join(f"{k}: {v}" for k, v in fmts.items())
+                         + "): two formats are different numbers under the same names. Use censuses of "
+                         "one format, or mark the comparison cross-format.")
+    return got
+
 
 # ---- THE OUTPUT CEILING OF THE REAL OT TRACK FINDER ------------------------
 # THE TARGET TO DESIGN AGAINST, stated once here so it does not get re-derived
@@ -1510,12 +1530,12 @@ def census_dir(path):
 
 def load(d, nev=None, verbose=True, with_tracks=False):
     meta = json.load(open(os.path.join(d, "manifest.json")))
-    # ONLY THIS FORMAT IS READ. A census of another format means other numbers
+    # ONLY READ_FORMATS ARE READ. A census of another format means other numbers
     # under the same names -- before 23, every build's seeds followed into all
     # of IL1-IL4 -- so it is refused, never reinterpreted.
-    if meta.get("format") != FORMAT_VERSION:
+    if meta.get("format") not in READ_FORMATS:
         raise SystemExit(f"{d} is census format {meta.get('format')}; this code "
-                         f"reads {FORMAT_VERSION} only. Rebuild it.")
+                         f"reads {', '.join(map(str, READ_FORMATS))} only. Rebuild it.")
     shards = sorted(Path(d).glob("chunk_*.npz"))
     if not shards:
         raise SystemExit(f"{d} has no shards")
@@ -1629,8 +1649,9 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     C["angle_cols"] = list(KF.ANGLE_COLS)
     C["track_cols"] = list(KF.TRACK_COLS)
     C["cache_dir"] = d
+    C["format"] = int(meta["format"])
     if verbose:
-        print(f"loaded {len(fnd)} shard(s): {nread} events, "
+        print(f"loaded census format {C['format']}, {len(fnd)} shard(s): {nread} events, "
               f"{len(C['key']):,} TPs, {len(C['seeds'])} entries, "
               f"{C['found'].nbytes / 1e6:.1f} MB bitmap", flush=True)
     return C

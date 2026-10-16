@@ -808,6 +808,9 @@ def floor(dtc_dir, random_dirs, cmssw_nodr=None, cmssw_merge=None, nev=None, exc
     records). The floor is a gate only when the match lists are not shown to follow CMSSW's order: no
     c1b_report, or one whose match-list gate failed."""
     Cs = [TF.load(TF.census_dir(d), nev=nev, with_tracks=True, verbose=False) for d in random_dirs]
+    # the dtc run against the random-order runs: one format
+    TF.one_format({**dict(zip(random_dirs, Cs)),
+                   dtc_dir: json.loads((Path(TF.census_dir(dtc_dir)) / "manifest.json").read_text())})
     nevc = int(Cs[0]["n_events"])
     keep = _event_mask(nevc, exclude)
     stubs = _stub_tables(_census_inputs(Cs[0]), nevc)

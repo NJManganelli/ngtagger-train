@@ -625,6 +625,8 @@ def main():
     s6d = None
     if a.s6_from:
         s6d = TF.census_dir(a.s6_from)
+        # one cut file from two calibration censuses: one format
+        TF.one_format({d: man, s6d: json.load(open(os.path.join(s6d, "manifest.json")))})
         s6R = CA.load_records(s6d)
     k = (a.k_alpha, a.k_beta)
     body, floors = fit(R, man, model, k, a.mode, s6_R=s6R)
