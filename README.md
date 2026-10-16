@@ -262,6 +262,26 @@ Peak memory is set by candidate triplets held at once, and a d0-inflated window
 can explode inside a *single* event -- which no batch size can bound.
 `--rss-ceiling-gb` is hard-clamped to 40% of physical RAM.
 
+### `tp_findability.py` — the census
+
+```bash
+ops/census/run_census.sh LABEL OUTDIR <canon_v4 file> PREREG.txt [options]   # heavy lane
+```
+
+The TrackingParticle census: per TP, which seeds and builds find it, and the exported
+tracks. Census **format 35** (WP-D) reads the OT stubs as the track finder does (the DTC
+frames, `L1TOTStubDTC`), so it builds from **canon_v4** inputs only; canon_v3 is refused.
+
+- **canon_v3 reruns** use the local tag `census-canon_v3-format34` (the last main commit
+  whose census builds from canon_v3): `git worktree add ../ngtagger-train-v3 census-canon_v3-format34`.
+- **Reading** (`tp_findability.load`) accepts formats 34 and 35 and records the one it read
+  (`C["format"]`). Comparing or pooling censuses of different formats is refused
+  (`tp_findability.one_format`) unless the comparison is marked cross-format (`--cross-format`
+  on the tools that compare censuses).
+- **Angle cut files** are bound to the census format they were calibrated on: the format-35
+  file is `WDMac smartpixels_scratch/wpd/cuts/cuts_k1_f35.json` (canon_v4 file 1); the
+  format-33 `wpd0b/cuts/cuts_k1.json` is refused by format 35.
+
 ### `run_all_studies.sh` — everything, per process
 
 ```bash
