@@ -1,8 +1,12 @@
 """Registry entries of the WP-C entry package (src/ngtagger/spops/registry.py; working rule 6).
 
   tail      wpc.c1a.tail          the tail localisation (tail_summary.json), job dir of the variants job
-  cuts      wpc.c1a.cuts-<ver>    the 99 % cut file (common.CUTS), job dir of the cut fit; supersedes the previous
-                                  version (v2: rr per scenario, PD15; v3: the smoothed leave-one-out, PD17)
+  cuts      wpc.c1a.cuts-<ver>    a 99 % cut file (--ver; default common.CUTS), job dir of its cut fit; supersedes the
+                                  previous version (v2: rr per scenario, PD15; v3: the smoothed leave-one-out, PD17;
+                                  v5: PD19's rr population, PD20; v6: the fit files, PD21); v4 (the wide window, PD18)
+                                  is registered not-used
+  windowcheck wpc.c1a.window-gate99  PD18's file-4 validation of the wide window (entry/windowcheck_summary.json)
+  cutcheck  wpc.c1a.cutcheck-<ver>   PD20's file-4 check of a cut file (entry/cutcheck_wpc_cuts_<ver>.json)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
                                   the final verdict (entry/entry_verdict.json, verdict.py) with PD15's rr check, job
@@ -16,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
 import common as CM
 import verdict as VD
@@ -24,12 +27,20 @@ from ngtagger.spops import registry as R
 
 BY = "WP-C entry (cmssw-l1t-expert, Claude Opus 5.5)"
 
-CUT_VERSIONS = {"v2": "rr per scenario, PD15", "v3": "rr per scenario on the smoothed leave-one-out, PD15 + PD17"}
+CUT_VERSIONS = {"v2": "rr per scenario, PD15", "v3": "rr per scenario on the smoothed leave-one-out, PD15 + PD17",
+                "v4": "the window as the 99 % hit cut, PD18, with PD19's rr population",
+                "v5": "the 4-sigma window with PD19's rr population, PD20",
+                "v6": "the 4-sigma window with PD19's rr population, on the fit files, PD20 + PD21"}
 SUPERSEDES = {"v2": ("wpc.c1a.cuts", "the rr cuts pooled over scenarios biased AAAA against IAAA; refitted per scenario "
                                      "(PD15); the gate and window tables are unchanged"),
               "v3": ("wpc.c1a.cuts-v2", "the rr cuts' leave-one-out used the final (innermost) state and missed the "
                                         "scattering to the inner hits; refitted on the smoothed prediction (PD17); the "
-                                        "gate and window tables are unchanged")}
+                                        "gate and window tables are unchanged"),
+              "v5": ("wpc.c1a.cuts-v3", "the rr population excludes a track's only SmartPixels cluster (PD19), with the "
+                                        "4-sigma window (PD20); the gate and window tables are unchanged (no bin outside "
+                                        "v3's intervals)"),
+              "v6": ("wpc.c1a.cuts-v5", "refitted on every file but the known-good and the gate (PD21)")}
+NOT_USED = {"v4": "fitted for the wide window (PD18), which failed its validation; the window went back to 4 sigma (PD20)"}
 GATE_TITLES = {"E1a": "the table import in INN (P0.3 test (i) form)", "E1b": "the 99 % cuts' coverage",
                "E23": "the ORP-cal identity", "E4": "the forced replay's final parameters vs CMSSW",
                "E5": "the mirror PM vs refit v2", "E7": "K's skip-loss on real data"}
@@ -65,18 +76,56 @@ def tail(job_dir, overwrite):
           "sources": [str(CM.OUT / "tail" / "tail_summary.json")]}, job_dir, overwrite)
 
 
-def cuts(job_dir, overwrite):
-    with open(CM.CUTS) as fh:
+def cuts(job_dir, overwrite, ver=None):
+    path = CM.CUTS if ver is None else CM.OUT / "cuts" / f"wpc_cuts_{ver}.json"
+    ver = path.stem.rsplit("_", 1)[1]
+    with open(path) as fh:
         C = json.load(fh)
     vals = [{"name": k, "value": v["*"]["value"], "note": f"n = {v['*']['n']} (pooled; per-bin values in the file)"}
             for k, v in C["cuts"].items()]
-    ver = CM.CUTS.stem.rsplit("_", 1)[1]
-    rid, (prev, note) = f"wpc.c1a.cuts-{ver}", SUPERSEDES[ver]
-    _reg({"id": rid, "title": f"WP-C C1a item 5: the replay's 99 % cuts ({ver}; files 1-2, PD1 + PD8; {CUT_VERSIONS[ver]})",
-          "status": "in-sample", "status_note": "fitted on canon_v3 files 1-2, also the angle table's fit sample",
-          "values": vals, "bias": "none known; populations with a clean history (PD8), truth only for ownership (PD1)",
-          "sources": [str(CM.CUTS)]}, job_dir, overwrite)
-    R.set_status(prev, "superseded", note, by=BY, superseded_by=rid)
+    files = sorted({int(f.rsplit("_f", 1)[1][:2]) for f in C["provenance"]["files"]})
+    rid = f"wpc.c1a.cuts-{ver}"
+    status, note = (("not-used", NOT_USED[ver]) if ver in NOT_USED else
+                    ("in-sample", f"fitted on canon_v3 files {files}; files 1-2 are also the angle table's fit sample"))
+    _reg({"id": rid, "title": f"WP-C C1a item 5: the replay's 99 % cuts ({ver}; files {files}, PD1 + PD8; "
+                              f"{CUT_VERSIONS[ver]})",
+          "status": status, "status_note": note, "values": vals,
+          "bias": "none known; populations with a clean history (PD8), truth only for ownership (PD1)",
+          "sources": [str(path)]}, job_dir, overwrite)
+    if ver in SUPERSEDES:
+        prev, why = SUPERSEDES[ver]
+        R.set_status(prev, "superseded", why, by=BY, superseded_by=rid)
+
+
+def windowcheck(job_dir, overwrite):
+    p = CM.OUT / "entry" / "windowcheck_summary.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": f"{scen} wide / 4-sigma", "value": json.dumps(
+        {"wrong_share": [round(sc[k]["wrong_hits"] / max(sc[k]["accepted"], 1), 4) for k in ("wide", "nsig4")],
+         "ncand_mean": [round(sc[k]["ncand"]["mean"], 2) for k in ("wide", "nsig4")],
+         "loss_nohit": [round(sc[k]["loss_nohit"], 4) for k in ("wide", "nsig4")],
+         "own_gained": sc["own_gained"], "wrong_gained": sc["wrong_gained"]})} for scen, sc in Q["scenarios"].items()]
+    vals += [{"name": f"{scen} end-to-end", "value": json.dumps(e)} for scen, e in Q["end_to_end"].items()]
+    _reg({"id": "wpc.c1a.window-gate99", "title": "WP-C PD18: the window as the 99 % hit cut against the 4-sigma ellipse (file 4)",
+          "status": "valid", "status_note": "PD18 failed its pre-declared rule (wrong clusters gained far exceed correct "
+                                            "ones); back to 4 sigma (PD20). " + "; ".join(Q["material"]),
+          "values": vals, "bias": "file-4 validation, not a gate", "sources": [str(p)]}, job_dir, overwrite)
+
+
+def cutcheck(job_dir, overwrite, ver=None):
+    ver = ver or CM.CUTS.stem.rsplit("_", 1)[1]
+    p = CM.OUT / "entry" / f"cutcheck_wpc_cuts_{ver}.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": f"{scen} pooled coverage", "value": json.dumps(
+        {k: [round(r["pooled"]["coverage"], 4), round(r["pooled"]["shortfall_bound95"], 4)]
+         for k, r in sc["consumers"].items()})[:2000]} for scen, sc in Q["scenarios"].items()]
+    vals += [{"name": f"{scen} end-to-end", "value": json.dumps(e)} for scen, e in Q["end_to_end"].items()]
+    _reg({"id": f"wpc.c1a.cutcheck-{ver}", "title": f"WP-C PD20: the {ver} cuts' coverage and the end-to-end run (file 4)",
+          "status": "valid" if not Q["material"] else "void",
+          "status_note": "; ".join(Q["material"] + Q["minor"]) or "no failure",
+          "values": vals, "bias": "file-4 check, not a gate", "sources": [str(p)]}, job_dir, overwrite)
 
 
 def entry(job_dir, overwrite):
@@ -155,11 +204,16 @@ def loocheck(job_dir, overwrite):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck"))
+    ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck"))
+    ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args(argv)
-    {"tail": tail, "cuts": cuts, "entry": entry, "final": final, "loocheck": loocheck}[a.what](a.job_dir, a.overwrite)
+    if a.what in ("cuts", "cutcheck"):
+        {"cuts": cuts, "cutcheck": cutcheck}[a.what](a.job_dir, a.overwrite, a.ver)
+    else:
+        {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck,
+         "windowcheck": windowcheck}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
