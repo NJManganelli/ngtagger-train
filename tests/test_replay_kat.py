@@ -179,9 +179,8 @@ def test_reject_and_refit_identities(data):
     off = run(data, AR.inn(cfg))
     on_inf = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg, name="rr", rr=True), AR.Tools(cfg, cuts=ConstCuts(np.inf)))
     assert np.array_equal(off["a"], on_inf["a"])
-    # a removed hit gives exactly the forced refit (from the OT seed) without it (the 4-sigma window, so that a
-    # zero cut acts on reject-and-refit only)
-    arm = AR.inn(cfg, name="rr0", rr=True, rr_max_iter=1, window_cut="nsig")
+    # a removed hit gives exactly the forced refit (from the OT seed) without it
+    arm = AR.inn(cfg, name="rr0", rr=True, rr_max_iter=1)
     on0 = AR.run_arm(ctx, geo, cfg, "AAAA", arm, AR.Tools(cfg, cuts=ConstCuts(0.0)))
     t = np.flatnonzero(on0["removed"].any(1) & on0["refit"])
     assert len(t)
@@ -221,7 +220,7 @@ def test_rr_keeps_one_smartpixels_cluster(data):
     """PD19: with a zero rr cut every hit is a removal candidate, yet every refitted track keeps exactly one
     SmartPixels cluster, and the tracks whose last cluster the rule kept are flagged."""
     cfg, geo, ctx = data["cfg"], data["geo"], data["ctx"]
-    arm = AR.inn(cfg, name="rr-all", rr=True, rr_max_iter=8, window_cut="nsig")
+    arm = AR.inn(cfg, name="rr-all", rr=True, rr_max_iter=8)
     out = AR.run_arm(ctx, geo, cfg, "AAAA", arm, AR.Tools(cfg, cuts=ConstCuts(0.0)))
     had = out["removed"].any(1) | out["rr_protected"]
     assert had.any()
@@ -231,19 +230,20 @@ def test_rr_keeps_one_smartpixels_cluster(data):
 def test_wide_window_search_bound(data, monkeypatch):
     """PD18: the 'gate99' window (the 99 % hit cut) is searched within WINDOW_SEARCH_NSIG of the prediction;
     a wider search changes no selection, and the window accepts no candidate beyond its bin's cut."""
-    if not CM.CUTS.exists():
+    cut_file = CM.OUT / "cuts" / "wpc_cuts_v4.json"          # PD18's cut file (the gate99 window's)
+    if not cut_file.exists():
         pytest.skip("no cut file")
     cfg, geo, ctx = data["cfg"], data["geo"], data["ctx"]
-    tools = AR.Tools(cfg, cuts=CU.Cuts.load(str(CM.CUTS)))
-    base = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg), tools)
+    tools = AR.Tools(cfg, cuts=CU.Cuts.load(str(cut_file)))
+    base = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg, window_cut="gate99"), tools)
     monkeypatch.setattr(AR, "WINDOW_SEARCH_NSIG", 40.0)
-    wide = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg), tools)
+    wide = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg, window_cut="gate99"), tools)
     assert np.array_equal(base["rec"]["ci"], wide["rec"]["ci"]) and np.array_equal(base["rec"]["acc"], wide["rec"]["acc"])
     g = base["rec"]["gstat"][base["rec"]["acc"]]
     S = base["rec"]["surface"][base["rec"]["acc"]]
     first = np.nonzero(base["rec"]["acc"])[1] == 0
     assert np.all(g <= tools.cuts.chi2("gate", "xy", "calibrated", S, first))
-    n4 = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg, window_cut="nsig"), tools)
+    n4 = AR.run_arm(ctx, geo, cfg, "AAAA", AR.inn(cfg), tools)                  # INN's 4-sigma ellipse (PD20)
     assert base["nacc"].sum() > n4["nacc"].sum()        # the 4-sigma ellipse accepts fewer hits
 
 

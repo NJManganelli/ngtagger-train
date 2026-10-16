@@ -8,13 +8,13 @@ An ARM is one configuration of the switches of PLAN §2. The named arms of the e
         maxHitsPerWindow, its selection metric (positions and angles over the CLUSTER sigma), its Q with
         the empty-window recharge, maxKFUpdates, the d0 floor, the measured-angle cap (the cluster loader
         applies it, spix_nano.cluster_columns), discs; the cluster table as input. PM-B: no discs.
-  INN   the calibrated arm: ellipse candidates (ot_projection.evaluate_surface, central Jacobian) accepted
-        by the 99 % hit cut (PD18: the window is the designed cut, not a 4-sigma ellipse), the
-        innovation metric, the calibrated seed and Highland material (refit_calibration v3), the
-        position R tables, the table's angle errors (angle_import, barrel), the inner material at the
+  INN   the calibrated arm: ellipse candidates (ot_projection.evaluate_surface, central Jacobian) within
+        4 sigma (PD20: PD18's window as the 99 % hit cut failed its validation; it stays as the switch
+        window_cut="gate99"), the innovation metric, the calibrated seed and Highland material
+        (refit_calibration v3), the position R tables, the table's angle errors (angle_import, barrel), the inner material at the
         POCA. No discs at all (PLAN §7: C1b).
-  ORP-cal  INN with ORP's payload-era angle scales, no inner material and the 4-sigma ellipse: ORP's
-        calibrated `innovation` arm, which the engine reproduces bit for bit (E2 / E3, E6).
+  ORP-cal  INN with ORP's payload-era angle scales and no inner material: ORP's calibrated `innovation`
+        arm, which the engine reproduces bit for bit (E2 / E3, E6).
 
 Angle use is a set of (consumer, angle, region): consumers window (a cut before ranking), rank, gate
 (the forward hit gate), rr (reject-and-refit) and update.
@@ -72,9 +72,9 @@ class Arm:
     jac: str = "cmssw"              # "cmssw": the producer's one-sided + same-module guard; "central": OP's
     window: str = "box"             # "box": the producer's module and boxes; "ellipse": nsig, all modules
     nsig: float = 4.0
-    window_cut: str = "nsig"        # the ellipse's acceptance: "nsig" (m^2 < nsig^2 in the prediction covariance) |
-                                    # "gate99" (the hit-gate statistic <= its 99 % cut, PD18; searched within
-                                    # WINDOW_SEARCH_NSIG)
+    window_cut: str = "nsig"        # the ellipse's acceptance: "nsig" (m^2 < nsig^2 in the prediction covariance;
+                                    # INN's, PD20) | "gate99" (the hit-gate statistic <= its 99 % cut, PD18, which
+                                    # failed its validation; searched within WINDOW_SEARCH_NSIG)
     metric: str = "producer"        # "producer" | "innovation"
     seed_cov: str = "reported"      # "reported" | "calibrated"
     scattering: str = "producer"    # "producer" | "highland"
@@ -125,7 +125,7 @@ def pm_b(cfg, **kw):
 
 
 def inn(cfg, **kw):
-    base = dict(crossing="f64", jac="central", window="ellipse", window_cut="gate99", metric="innovation",
+    base = dict(crossing="f64", jac="central", window="ellipse", window_cut="nsig", metric="innovation",
                 seed_cov="calibrated",
                 scattering="highland", inner_material=True, pos_err="rtables", ang_err="table",
                 use=use_set(("rank", "update"), ANGLE_NAMES, ("barrel",)), discs=False)
@@ -144,7 +144,7 @@ def inn_disc(cfg, **kw):
 def orp_cal(cfg, **kw):
     """ORP's calibrated `innovation` arm (the E2 / E3 identity configuration)."""
     ang = {"alphaBeta": ANGLE_NAMES, "alpha": ("alpha",)}[cfg["useAngles"]]
-    return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False, window_cut="nsig",
+    return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False,
                use=use_set(("rank", "update"), ang, ("barrel",)), **kw)
 
 

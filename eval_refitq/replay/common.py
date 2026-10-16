@@ -25,7 +25,8 @@ import ot_refit_projection as ORP      # noqa: E402
 
 CANON_V3 = Path(os.environ.get("WPC_CANON", "/Volumes/WDMac/smartpixels_scratch/canon_v3"))
 OUT = Path(os.environ.get("WPC_OUT", "/Volumes/WDMac/smartpixels_scratch/wpc"))
-CUTS = OUT / "cuts" / "wpc_cuts_v3.json"     # the consumers' 99 % cuts (rr per scenario, PD15; smoothed, PD17)
+CUTS = OUT / "cuts" / "wpc_cuts_v5.json"     # the consumers' 99 % cuts (rr per scenario, PD15; smoothed, PD17;
+                                              # 4-sigma window and PD19's rr population, PD20)
 GEOMETRY = os.environ.get("WPC_GEOMETRY",
                           "/Users/nmangane/smartpixels/cmssw/work/otstub_arm/spix_module_geometry_D121.json")
 SCENARIOS = ("AAAA", "AAAI", "IAAA")

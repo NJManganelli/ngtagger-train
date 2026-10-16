@@ -1,16 +1,18 @@
 """Driver of the WP-C entry jobs (PLAN §6). Every job runs through ops/spheavy --frozen, in the background.
 
-  cutfit   canon_v3 files 1-2, AAAA / AAAI / IAAA: PM (producer covariance) and INN (calibrated) with the
-           own-cluster diagnostics and the leave-one-out chi2; fits the 99 % cuts (cuts.fit, PD1 + PD8; the
-           rr cuts per scenario, PD15); reports the unconditioned cuts, PD1's chi2-vs-helix comparison and
-           the local disc pulls (C1b); stores the own rows and the leave-one-out rows
+  cutfit   canon_v3 files 1-2, AAAA / AAAI / IAAA: PM (producer covariance) and INN (calibrated, the 4-sigma
+           window, PD20) with the own-cluster diagnostics and the leave-one-out chi2; fits the 99 % cuts
+           (cuts.fit, PD1 + PD8; the rr cuts per scenario, PD15, on PD19's population); reports the unconditioned
+           cuts, PD1's chi2-vs-helix comparison and the local disc pulls (C1b); stores the own rows and the
+           leave-one-out rows
   loocheck PD17, file 4 only: the smoothed leave-one-out's coverage per number of remaining inner hits,
            before / after, and the end-to-end smoke of the hit gate + reject-and-refit
   cutcompare  PD18 (light): did a cut refit change the cuts? Each calibrated bin's new value against the
-           old fit's 95 % order-statistic interval; writes cuts/compare_<old>_<new>.json with the adopted file
+           old fit's 95 % order-statistic interval; writes cuts/compare_<old>_<new>.json
   windowcheck PD18, file 4 only: INN's window as the 99 % hit cut against the 4-sigma ellipse: the cut's
            coverage, the own-primary loss (no hit / wrong hit), the wrong-hit share, candidates per window,
            and the end-to-end run (reject-and-refit on vs off, the tracks PD19 protects), whole file
+  cutcheck PD20, file 4 only: a cut file's E1(b) coverage per scenario and the end-to-end run
 """
 from __future__ import annotations
 
@@ -51,7 +53,6 @@ def loo_flags(out, R, ctx):
 def cutfit(a):
     t0 = time.time()
     geo = OP.load_geometry(CM.GEOMETRY)
-    window_cuts = CU.Cuts.load(a.cuts)
     own = {"producer": [], "calibrated": []}
     loo = {"producer": [], "calibrated": []}
     meta = []
@@ -60,7 +61,7 @@ def cutfit(a):
             path = CM.input_path(scen, f)
             cfg = CM.producer_config(path)
             assert CM.mask_of(cfg) == scen
-            tools = AR.Tools(cfg, cuts=window_cuts)              # INN's window is the 99 % hit cut (PD18)
+            tools = AR.Tools(cfg)                                # no consumer reads a cut: the 4-sigma window (PD20)
             arms = (AR.pm(cfg), AR.inn(cfg))
             rr_statistic, = {arm.loo_pred for arm in arms}
             for arm in arms:
@@ -89,7 +90,7 @@ def cutfit(a):
         loo[k]["dims"] = {d: loo[k].pop(f"d_{d}") for d in AR.DIMS}
     prov = {"files": [str(CM.input_path(s, f)) for s in a.scen for f in CM.FIT_FILES], "runs": meta,
             "angle_table": AR.AI.TABLE, "calibration": AR.CALIBRATION,
-            "plan": "PLAN §1 item 5, §10 PD1, PD2, PD8, PD15, PD17, PD18", "window_cuts": a.cuts}
+            "plan": "PLAN §1 item 5, §10 PD1, PD2, PD8, PD15, PD17, PD19, PD20"}
     stem = a.write_as.removesuffix(".json")
     CU.fit(own, loo, prov, rr_statistic, clean=True).save(os.path.join(out_dir, f"{stem}.json"))
     CU.fit(own, loo, prov, rr_statistic, clean=False).save(os.path.join(out_dir, f"{stem}_unconditioned.json"))
@@ -296,16 +297,17 @@ def fit_rows(d):
 
 
 def cutcompare(a):
-    """PD18: the new cut file's calibrated bins (n >= MIN_N) against the old fit's 95 % order-statistic
-    intervals (from the old fit's rows, a.old_dir). Adopted: the new file if more bins fall outside than
-    the binomial 99 % bound on the 5 % expected by chance, else the old one (a.cuts)."""
+    """PD18's rule: the new cut file's calibrated bins (n >= MIN_N) of the consumers a.consumers against the old
+    fit's 95 % order-statistic intervals (from the old fit's rows, a.old_dir). Changed: more bins fall outside
+    than the binomial 99 % bound on the 5 % expected by chance. Which file is adopted is the PLAN's decision
+    (PD19, PD20: the refit, for its rr tables by definition)."""
     from scipy import stats
     own, loo = fit_rows(a.old_dir)
     iv = CU.intervals(own, loo)
     new = CU.Cuts.load(a.new).doc["cuts"]
     n_bins, outside = 0, []
     for tk, tab in iv.items():
-        if "calibrated" not in tk:
+        if "calibrated" not in tk or tk.split("|")[0] not in a.consumers:
             continue
         for b, e in tab.items():
             ne = new.get(tk, {}).get(b)
@@ -317,12 +319,12 @@ def cutcompare(a):
                 outside.append({"table": tk, "bin": b, "new": ne["value"], "old_interval": [lo, hi], "n": ne["n"]})
     bound = float(stats.binom.ppf(0.99, n_bins, 0.05))
     changed = len(outside) > bound
-    res = {"old_rows": a.old_dir, "old": a.cuts, "new": a.new, "bins": n_bins, "outside": len(outside),
-           "bound": bound, "changed": changed, "adopted": a.new if changed else a.cuts, "outside_bins": outside}
+    res = {"old_rows": a.old_dir, "old": a.cuts, "new": a.new, "consumers": a.consumers, "bins": n_bins,
+           "outside": len(outside), "bound": bound, "changed": changed, "outside_bins": outside}
     stem = lambda p: os.path.basename(p).removesuffix(".json").split("_")[-1]
     with open(os.path.join(os.path.dirname(a.new), f"compare_{stem(a.cuts)}_{stem(a.new)}.json"), "w") as fh:
         json.dump(res, fh, indent=1)
-    print(json.dumps({k: res[k] for k in ("bins", "outside", "bound", "changed", "adopted")}))
+    print(json.dumps({k: res[k] for k in ("consumers", "bins", "outside", "bound", "changed")}))
     return 0
 
 
@@ -343,7 +345,7 @@ def windowcheck(a):
         cfg = CM.producer_config(path)
         assert CM.mask_of(cfg) == scen
         tools = AR.Tools(cfg, cuts=cuts)
-        arms = {"wide": AR.inn(cfg), "nsig4": AR.inn(cfg, name="INN-4sigma", window_cut="nsig")}
+        arms = {"wide": AR.inn(cfg, name="INN-wide", window_cut="gate99"), "nsig4": AR.inn(cfg)}
         acc = {k: {"own": [], "visits": [], "acc": 0, "wrong": 0, "ncand": []} for k in arms}     # acc / wrong: hits
         smoke = []
         for start, A in CM.iterate(path, AR.branches(path), chunk=a.chunk, nev=a.nev):
@@ -427,19 +429,80 @@ def windowcheck(a):
     return 0
 
 
+def cutcheck(a):
+    """PD20, file 4 only: the v5 cuts (4-sigma window, PD19's rr population) - E1(b) coverage per scenario (gate,
+    window, rr, rr per number of remaining inner clusters; over-coverage MINOR) and the end-to-end run (reject-
+    and-refit on vs off over the whole file: removed clusters own / wrong, the tracks PD19 protects, H and P).
+    Writes entry/cutcheck_<cuts>.json."""
+    import gates as G
+    t0 = time.time()
+    geo = OP.load_geometry(CM.GEOMETRY)
+    cuts = CU.Cuts.load(a.cuts)
+    res = {"cuts": a.cuts, "plan": "PLAN §10 PD20", "material": [], "minor": [], "scenarios": {}, "end_to_end": {}}
+    for scen in a.scen:
+        path = CM.input_path(scen, CM.PRED_FILE)
+        cfg = CM.producer_config(path)
+        assert CM.mask_of(cfg) == scen
+        tools = AR.Tools(cfg, cuts=cuts)
+        own, loo, e2e = [], [], []
+        for start, A in CM.iterate(path, AR.branches(path), chunk=a.chunk, nev=a.nev):
+            ctx = AR.prepare(A, geo)
+            out = AR.run_arm(ctx, geo, cfg, scen, AR.inn(cfg), tools, own=True, loo=True)
+            R = DG.mark_primary(out["own"])
+            R["ev"] = R["ev"] + start
+            own.append(R)
+            prim, clean_track = loo_flags(out, R, ctx)
+            L = out["loo"]
+            loo.append({"surface": L["surface"], "first": L["first"], "own_primary": prim, "clean_track": clean_track,
+                        "n_inner": L["n_inner"], "n_acc": L["n_acc"], "ev": ctx["tev"][L["o"]] + start,
+                        **{f"d_{d}": v for d, v in L["dims"].items()}})
+            e2e.append(smoke_counts(ctx, geo, cfg, scen, tools, out))
+        own, loo = CM.concat(own), CM.concat(loo)
+        r = G.e1b_all(own, loo, cuts, scen)
+        sc = {"consumers": r}
+        for k, v in r.items():
+            mat, minor = G.e1b_verdict(scen, k, v, safe_direction_minor=True)
+            res["material"] += mat
+            res["minor"] += minor
+        _, _, rr = CU.populations(own, {k: loo[k] for k in ("own_primary", "clean_track", "n_acc")})
+        for dims in AR.DIMS:
+            cl = G.e1b_consumer(cuts, "rr", CU.table_key("rr", dims, "calibrated", scen), loo[f"d_{dims}"][rr],
+                                loo["surface"][rr], loo["first"][rr], loo["ev"][rr], cls=loo["n_inner"][rr])
+            mat, minor, t = G.e1b_class_verdict(scen, dims, cl)
+            sc[f"rr_per_class_{dims}"] = {"bins": cl["bins"], "t": t}
+            res["material"] += mat
+            res["minor"] += minor
+        res["scenarios"][scen] = sc
+        e = {k: int(sum(c[k] for c in e2e)) for k in e2e[0]}
+        for lab in ("off", "on"):                    # H: prompt either-harm fraction; P: wrong share of accepted hits
+            e[f"H_{lab}"] = e[f"harm_{lab}"] / max(e["prompt"], 1)
+            e[f"P_{lab}"] = e[f"wrong_{lab}"] / max(e[f"acc_{lab}"], 1)
+        res["end_to_end"][scen] = e
+        print(f"[{time.time() - t0:7.1f}s] {scen}: file 4 done", flush=True)
+    res["seconds"] = round(time.time() - t0, 1)
+    name = os.path.basename(a.cuts).removesuffix(".json")
+    with open(os.path.join(a.out, "entry", f"cutcheck_{name}.json"), "w") as fh:
+        json.dump(res, fh, indent=1, default=float)
+    print(json.dumps({"material": res["material"], "minor": res["minor"], "end_to_end": res["end_to_end"]}, indent=1))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("cutfit", "loocheck", "cutcompare", "windowcheck"))
+    ap.add_argument("job", choices=("cutfit", "loocheck", "cutcompare", "windowcheck", "cutcheck"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--chunk", type=int, default=10)
     ap.add_argument("--out", default=str(CM.OUT))
-    ap.add_argument("--cuts", default=str(CM.CUTS), help="the cut file in use (INN's window, the checks)")
+    ap.add_argument("--cuts", default=str(CM.CUTS), help="the cut file the checks use")
     ap.add_argument("--write-as", default=CM.CUTS.name, help="cutfit: the output cut file's name")
     ap.add_argument("--old-dir", help="cutcompare: the old fit's rows")
     ap.add_argument("--new", help="cutcompare: the new cut file")
+    ap.add_argument("--consumers", nargs="+", default=["gate", "window", "rr"], choices=("gate", "window", "rr"),
+                    help="cutcompare: the tables compared")
     a = ap.parse_args(argv)
-    return {"cutfit": cutfit, "loocheck": loocheck, "cutcompare": cutcompare, "windowcheck": windowcheck}[a.job](a)
+    return {"cutfit": cutfit, "loocheck": loocheck, "cutcompare": cutcompare, "windowcheck": windowcheck,
+            "cutcheck": cutcheck}[a.job](a)
 
 
 if __name__ == "__main__":

@@ -33,8 +33,6 @@ from ngtagger.spdefs import angles as SA
 SCHEMA = "wpc-cuts/2"
 LEVEL = 0.99
 MIN_N = 200
-PROVISIONAL_DISC_CUT = 148.0     # C1b: a disc surface's chi2 cut before its bins are fitted (the barrel's largest
-                                 # hit cut); used by the disc window during the first disc cut fit
 
 
 def _q(stat):
@@ -99,13 +97,11 @@ class Cuts:
             json.dump(self.doc, fh, indent=1)
         os.replace(tmp, path)
 
-    def _lookup(self, table, keys_chain, surface=None):
+    def _lookup(self, table, keys_chain):
         for k in keys_chain:
             e = table.get(k)
             if e is not None and e["value"] is not None and e["n"] >= MIN_N:
                 return e["value"]
-        if surface is not None and 10 < surface < 100 and not any(k.split("|")[0] == str(surface) for k in table):
-            return PROVISIONAL_DISC_CUT              # C1b rev 4 §1 item 6: no disc bins fitted yet
         e = table["*"]
         return e["value"]
 
@@ -115,7 +111,7 @@ class Cuts:
         tab = self.doc["cuts"][table_key(consumer, dims, cov_model, scen)]
         surface, first = np.atleast_1d(surface), np.atleast_1d(first)
         chain = lambda s, f: (f"{s}|{f}", f"{s}") + ((f"{s - 100}|{f}", f"{s - 100}") if s > 100 else ())
-        return np.array([self._lookup(tab, chain(s, int(f)), s) for s, f in zip(surface.tolist(), first.tolist())])
+        return np.array([self._lookup(tab, chain(s, int(f))) for s, f in zip(surface.tolist(), first.tolist())])
 
     def window(self, cov_model, surface, first, keybin_alpha, keybin_beta):
         out = np.full((len(surface), 2), np.inf)
