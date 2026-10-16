@@ -5,6 +5,8 @@ Every job runs through ops/spheavy --frozen --on-busy wait, in the background.
             AAAA only (one copy of each event), the fit files or --files
   il1truth  A8 (c1b_overlap): IL1's truth width against p with the beam pipe's Highland expectation, the plateau
             p*, the finding on v3's barrel tables, the u-v independence, the IL1 check's count-only power
+  fit       §1 item 2 with A8 / A11 (c1b_overlap): the split-core shape fits with the event bootstrap, T0, the
+            shape systematic, D0 (IL1, the method check), D2 with the facing agreement, B' and the known-bads
   discR     after the position-error decision: the disc R tables in v3's layout
   seedtest  §1 item 3: the D3a test-or-fit decision
   scalefit  §1 items 4-5: the disc material scale, D3b / D3c, the D3a re-check
@@ -165,7 +167,7 @@ def seedtest(a):
     seed as is (each disc-going track's own v3 deficit) and the material scale fixed at 1; D3b / D3c are recorded,
     not judged (they are judged after the scale fit). Writes c1b/seed/seedtest_summary.json and the rows."""
     t0 = time.time()
-    rows = collect(a, 1.0, load_disc_R(a.disc_r) if a.disc_r else None)
+    rows = collect(a, 1.0, OV.load_disc_R(a.disc_r) if a.disc_r else None)
     reps = G.replicas(nev=NEV_FILE * len(CM.FIT_FILES))
     J = judge_all(rows, reps)
     res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §8 A4, A9, A10", "files": CM.FIT_FILES, "disc_r": a.disc_r,
@@ -208,7 +210,7 @@ def scalefit(a):
     one pass at the fitted scale: D3b, D3c (the stop rule) and the D3a re-check, relative to the barrel-only
     references; the absolute widths reported. Writes c1b/scale/scalefit_summary.json."""
     t0 = time.time()
-    disc_R = load_disc_R(a.disc_r) if a.disc_r else None
+    disc_R = OV.load_disc_R(a.disc_r) if a.disc_r else None
     nev = NEV_FILE * len(CM.FIT_FILES)
     reps = G.replicas(nev=nev)
     logs = np.log(np.array(SCALE_GRID))
@@ -323,7 +325,7 @@ def c1b_cutfit(a):
     t0 = time.time()
     with open(os.path.join(a.out, "scale", "scalefit_summary.json")) as fh:
         scale = float(json.load(fh)["scale"])
-    disc_R = load_disc_R(a.disc_r) if a.disc_r else None
+    disc_R = OV.load_disc_R(a.disc_r) if a.disc_r else None
     out_dir = os.path.join(a.out, "cuts")
     os.makedirs(out_dir, exist_ok=True)
     res = {"plan": "c1b/PLAN.md rev 4 §1 item 6, §3 D5, §8 A9 A10", "files": CM.FIT_FILES, "disc_scale": scale,
@@ -366,7 +368,7 @@ def checks(a):
     cuts = CU.Cuts.load(os.path.join(a.out, "cuts", C1B_CUTS))
     with open(os.path.join(a.out, "scale", "scalefit_summary.json")) as fh:
         scale = float(json.load(fh)["scale"])
-    disc_R = load_disc_R(a.disc_r) if a.disc_r else None
+    disc_R = OV.load_disc_R(a.disc_r) if a.disc_r else None
     variants = {"model": ({}, scale)}
     if a.known_bad:
         variants.update({"kb_radius_only": ({"disc_material": "radius"}, scale), "kb_no_disc_material": ({}, 0.0),
@@ -514,24 +516,21 @@ def disc_r_tables(a):
     return 0
 
 
-def load_disc_R(path):
-    """C1b's disc position-error tables (J1's D2 decision), per disc surface, in v3's table layout."""
-    with open(path) as fh:
-        return {int(k): v for k, v in json.load(fh)["tables"].items()}
-
-
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("pairs", "il1truth", "discR", "seedtest", "scalefit", "cutfit", "checks"))
+    ap.add_argument("job", choices=("pairs", "il1truth", "fit", "discR", "seedtest", "scalefit", "cutfit", "checks"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--disc-r", default=None, help="J1's disc position-error tables, if D2 built them")
-    ap.add_argument("--files", type=int, nargs="+", default=None, help="pairs / il1truth: files other than the fit files")
+    ap.add_argument("--files", type=int, nargs="+", default=None, help="pairs / il1truth / fit: files other than the fit files")
     ap.add_argument("--known-bad", action="store_true", help="file 4: the known-bads")
+    ap.add_argument("--n-boot", type=int, default=OV.N_BOOT,
+                    help="fit: the shape fits' bootstrap replicas (a disc: at most N_BOOT_DISC)")
+    ap.add_argument("--n-toy", type=int, default=OV.N_TOY, help="fit: T0's replicas per surface and planted shape")
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--chunk", type=int, default=10)
     ap.add_argument("--out", default=str(C1B_OUT))
     a = ap.parse_args(argv)
-    return {"pairs": OV.pairs, "il1truth": OV.il1truth, "discR": disc_r_tables, "seedtest": seedtest,
+    return {"pairs": OV.pairs, "il1truth": OV.il1truth, "fit": OV.fit, "discR": disc_r_tables, "seedtest": seedtest,
             "scalefit": scalefit, "cutfit": c1b_cutfit, "checks": checks}[a.job](a)
 
 

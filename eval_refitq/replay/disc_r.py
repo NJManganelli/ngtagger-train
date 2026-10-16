@@ -389,7 +389,8 @@ class ShapeFit:
             g = np.asarray(g, np.float64)
             return float(v), (g if flb is None else g[:-1])
 
-        r = optimize.minimize(fun, th0, jac=True, method="L-BFGS-B", options={"maxiter": 3000, "maxfun": 6000})
+        r = optimize.minimize(fun, th0, jac=True, method="L-BFGS-B",
+                              options={"maxiter": 3000, "maxfun": 6000, "maxcor": 30})
         th = r.x if flb is None else np.r_[r.x, flb]
         return self.result(th, r)
 
