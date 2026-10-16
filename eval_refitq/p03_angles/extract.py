@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""P0.3 step 1: read each canon_v3 AAAA file ONCE into a compact per-file cache (own loader:
+"""P0.3 step 1: read each AAAA file of the era (common.ERA) ONCE into a compact per-file cache (own loader:
 uproot only; no census loader, plan D.3).
 
 Per cluster (raw nano columns, float32 as stored) for:
@@ -30,8 +30,11 @@ import awkward as ak
 import numpy as np
 import uproot
 
-IN_DIR = Path("/Volumes/WDMac/smartpixels_scratch/canon_v3")
-OUT_DIR = Path("/Volumes/WDMac/smartpixels_scratch/p03_angles/cache")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import common as CM  # noqa: E402
+
+IN_DIR = CM.IN_DIR          # the era's TTbar files (common.ERA)
+OUT_DIR = CM.CACHE_DIR
 CACHE_FMT = 1
 SUB = 20                    # 1-in-SUB subsample of the clusters outside the kept population
 KEEP_PT = 1.0               # GeV: linked clusters at or above it are all kept

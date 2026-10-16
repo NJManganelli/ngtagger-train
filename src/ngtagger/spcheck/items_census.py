@@ -451,7 +451,7 @@ class CensusInputContract(Item):
 
 
 # ---------------------------------------------------------------- a cut run fills its entries
-CUT_FILE = "/Volumes/WDMac/smartpixels_scratch/wpd0b/cuts/cuts_k1.json"   # registry wpd0b.cuts.k1
+CUT_FILE = "/Volumes/WDMac/smartpixels_scratch/wpd/cuts/cuts_k1_f35.json"   # registry wpd.cuts.k1.f35
 CUT_ENTRY_MIN = 5          # an entry finding at least this many TPs with cuts open must find one with cuts on
 
 
@@ -462,7 +462,7 @@ class CutEntries(Item):
     known_bad_desc = ("the 2026-10-15 defect's signature: the cut run with every entry whose seed holds an OT layer "
                       "emptied (as S1 did by vetoing every OT stub through its NaN statistic)")
     rule_desc = (f"the 4-event AAAI+IAAA census of census.builds_and_dr (cuts open) against the same census with "
-                 f"the cut file wpd0b.cuts.k1 (default stages): every entry that finds >= {CUT_ENTRY_MIN} TPs with "
+                 f"the cut file wpd.cuts.k1.f35 (default stages): every entry that finds >= {CUT_ENTRY_MIN} TPs with "
                  f"cuts open finds >= 1 with cuts on; identity of the entry list and the found counts with the "
                  f"reference; n/a without the cut file")
     trees = (CENSUS_DIR,)

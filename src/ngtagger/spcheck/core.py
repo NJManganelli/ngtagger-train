@@ -12,9 +12,10 @@ from pathlib import Path
 
 import numpy as np
 
-# canon_v3: it carries the OT module flags (isPS, isTilted) the census requires since format 27, and is
-# bit-identical to the deleted canon_v2 file 3 on every other branch but GenJet_partonFlavour.
-KNOWN_GOOD_INPUT = "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root"
+# canon_v4 (C_v4 b85da0c18cd): it carries the DTC frames (L1TOTStubDTC) census format 35 requires, and equals
+# canon_v3 file 3 on every branch but the declared bridge columns (closure_vs_cmssw bridge, matched by
+# run / lumi / event: the two hold the same events in different orders).
+KNOWN_GOOD_INPUT = "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root"
 KNOWN_GOOD_EVENTS = 5
 REFS_DIR = Path(__file__).resolve().parent / "refs"
 CODE_ROOT = Path(__file__).resolve().parents[3]          # the repo, or the frozen copy's root

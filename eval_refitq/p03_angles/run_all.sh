@@ -1,10 +1,11 @@
 #!/bin/bash
 # P0.3, one heavy-lane job: module checks -> table sequence (run_table.sh) -> ROC -> other outputs
-# -> summary PDF -> registry. Outputs in $P03_OUT (default /Volumes/WDMac/smartpixels_scratch/p03_angles).
+# -> summary PDF -> registry. Outputs in $P03_OUT (default: the era's, common.OUT_DIR).
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PY="${PY:-/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/bin/python}"
-export P03_OUT="${P03_OUT:-/Volumes/WDMac/smartpixels_scratch/p03_angles}"
+# the era's output directory (common.ERA / common.OUT_DIR: canon_v3 in p03_angles, another era in p03_angles_<era>)
+export P03_OUT="${P03_OUT:-$(cd "$here" && "$PY" -c 'import common; print(common.OUT_DIR)')}"
 REP="${REP:-250}"
 PROC="${PROC:-10}"
 export REP PROC

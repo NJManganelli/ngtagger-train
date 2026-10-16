@@ -16,7 +16,7 @@ clusters (the 1-in-20 subsample weighted by 20).
 Errors: event bootstrap (250). At k = 1 the whole chain (calibration re-measured per replica);
 at k < 1 the test side only (calibration fixed; stated).
 
-    python roc.py [--table .../angle_table_v1_canon_v3.json] [--rep 250] [--proc 10]
+    python roc.py [--table .../angle_table_v1_<era>.json] [--rep 250] [--proc 10]
 """
 from __future__ import annotations
 
@@ -218,7 +218,7 @@ def to_lists(x):
 # ---------------------------------------------------------------- driver
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--table", default=str(CM.OUT_DIR / "angle_table_v1_canon_v3.json"))
+    ap.add_argument("--table", default=str(CM.OUT_DIR / CM.table_name("angle_table_v1")))
     ap.add_argument("--rep", type=int, default=250)
     ap.add_argument("--proc", type=int, default=max(1, (os.cpu_count() or 2) - 2))
     ap.add_argument("--cal-files", type=int, nargs="*", default=list(SA.FIT_FILES))

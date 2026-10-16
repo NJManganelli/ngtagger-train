@@ -1,8 +1,7 @@
 """Known-answer checks of the shared angle module (plan C.2 P8; C.4 rows "k knob" and "frame
 sign"), in the fast gate's item form (ngtagger.spcheck.core.Item), each with the known-bad it
-must fail. They run on 5 events of canon_v3 AAAA file 3 (the angle items' known-good after the
-canon_v3 switch, C.4) and are not yet in the fast gate's item list (joining it is a one-line
-edit of spcheck/gate.py, left to its owner).
+must fail. They run on 5 events of canon_v4 AAAA file 3 (the fast gate's known-good input, C.4) and are
+not yet in the fast gate's item list (joining it is a one-line edit of spcheck/gate.py, left to its owner).
 
     python -m ngtagger.spdefs.checks run        [--json OUT]   every item green on the known-good
     python -m ngtagger.spdefs.checks known-bad  [--json OUT]   every item red on its known-bad
@@ -18,7 +17,7 @@ import numpy as np
 from ngtagger.spcheck.core import Ctx, Item, jsonable, now_utc
 from ngtagger.spdefs import angles as SA
 
-KNOWN_GOOD_INPUT = "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root"
+KNOWN_GOOD_INPUT = "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root"
 KNOWN_GOOD_EVENTS = 5
 CL = "L1TSmartPixelsCluster"
 COLS = ("surface", "detId", "tpEmuClass", "tpIdx", "hasAlpha", "hasBeta", "globalR", "globalZ", "globalPhi",

@@ -251,7 +251,7 @@ def priors(fit: dict, test: dict, tab, table_doc: dict) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--table", default=str(CM.OUT_DIR / "angle_table_v1_canon_v3.json"))
+    ap.add_argument("--table", default=str(CM.OUT_DIR / CM.table_name("angle_table_v1")))
     ap.add_argument("--rep", type=int, default=250)
     ap.add_argument("--out", default=str(CM.OUT_DIR))
     a = ap.parse_args(argv)

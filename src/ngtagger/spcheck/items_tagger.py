@@ -137,7 +137,7 @@ class LabelMask(Item):
             p = C.manifest_path(m)
             if os.path.exists(p):
                 files = [f[2] for f in json.load(open(p))["files"]]
-                eras[m] = sorted({e for e in ("canon_v2", "canon_v3") if any(f"/{e}" in f for f in files)})
+                eras[m] = sorted({e for e in ("canon_v2", "canon_v3", "canon_v4") if any(f"/{e}" in f for f in files)})
         out["manifest_eras"] = eras
         return out
 

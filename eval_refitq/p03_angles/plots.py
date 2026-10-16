@@ -273,8 +273,8 @@ def main(argv=None) -> int:
     kg, kb, gt = (load(T.result_name(m)) for m in ("known-good", "known-bad", "gated"))
     roc, ex = load("p03_roc.json"), load("p03_extras.json")
     with PdfPages(a.out) as pdf:
-        text_page(pdf, "P0.3 angle definitions, uncertainty table and cluster-level ROC (canon_v3 AAAA)",
-                  [f"Provenance: canon_v3 TTbar AAAA files 1-10, 150X D121 PU200; definition sheet {SA.SHEET_VERSION}; "
+        text_page(pdf, f"P0.3 angle definitions, uncertainty table and cluster-level ROC ({CM.ERA} AAAA)",
+                  [f"Provenance: {CM.ERA} TTbar AAAA files 1-10, 150X D121 PU200; definition sheet {SA.SHEET_VERSION}; "
                    "ngtagger.spdefs.",
                    "Bias: emulated class-T angles (truth + 1.5 x PixelAV residual); the table models the emulator.", ""]
                   + summary_lines(kg, kb, gt, roc, ex))

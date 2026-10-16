@@ -47,7 +47,7 @@ pooled, keys emitted_local / true_local, pull = (localCot - tpLocalCot) / sigAlp
 geometric facing map (disc modules, from positions) is stored with the table; known-bads (a) global rows read
 in the local frame, (c) wrong key, (d) folded, (e) x 1.05, (f) sigma swapped, (g) units swapped, KB-q95 / c / w;
 (b) the per-facing split is reported. Outputs p03_table_<mode>_a2.json, amend2/, the table
-angle_table_v1a1e_disclocal_canon_v3.json; the gated run needs amendment2_approval.txt.
+angle_table_v1a1e_disclocal_<era>.json (common.ERA); the gated run needs amendment2_approval.txt.
 Earlier results (v1, amendments 1-1d) stay as they are.
 """
 from __future__ import annotations
@@ -70,11 +70,12 @@ from ngtagger.spdefs import angles as SA  # noqa: E402
 
 FRAMES = {   # --frame: the global table (amendment 1e) or the module-frame disc rows (amendment 2, the 1e rule)
     "global": {"rule": "P0.3 pre-registration amendment 1e (2026-10-14)", "tag": "a1e", "keys": SA.KEYS,
-               "table": "angle_table_v1a1e_canon_v3.json", "untested": "angle_table_v1a1e_canon_v3_UNTESTED.json",
+               "table": CM.table_name("angle_table_v1a1e"),
+               "untested": CM.table_name("angle_table_v1a1e", "_UNTESTED"),
                "approval": "amendment1e_approval.txt", "amend_dir": "amend1e", "item": "angle.error_table"},
     "module": {"rule": "P0.3 pre-registration amendment 2 (2026-10-14; the amendment-1e rule)", "tag": "a2",
-               "keys": SA.MODULE_KEYS, "table": "angle_table_v1a1e_disclocal_canon_v3.json",
-               "untested": "angle_table_v1a1e_disclocal_canon_v3_UNTESTED.json", "approval": "amendment2_approval.txt",
+               "keys": SA.MODULE_KEYS, "table": CM.table_name("angle_table_v1a1e_disclocal"),
+               "untested": CM.table_name("angle_table_v1a1e_disclocal", "_UNTESTED"), "approval": "amendment2_approval.txt",
                "amend_dir": "amend2", "item": "angle.error_table_disc_local"},
 }
 FRAME = FRAMES["global"]
@@ -1197,9 +1198,9 @@ def table_doc(P: dict, stack: dict, orient, flags, prov: dict) -> dict:
                                                           ("clip_centre", "core_width", "mad", "out3", "full_rms0")}}
             rows.append(ent)
         keys_rows[key] = rows
-    doc = SA.new_table_doc(keys_rows, orient, prov, era="canon_v3 (150X D121 PU200 TTbar, AAAA)",
+    doc = SA.new_table_doc(keys_rows, orient, prov, era=f"{CM.ERA} (150X D121 PU200 TTbar, AAAA)",
                            fit_sample=prov.get("fit_sample_text") or (
-                               f"canon_v3 AAAA files {list(SA.FIT_FILES)}, class T, pT >= {SA.PT_MIN:g} GeV (the class-C "
+                               f"{CM.ERA} AAAA files {list(SA.FIT_FILES)}, class T, pT >= {SA.PT_MIN:g} GeV (the class-C "
                                "angles of these files are cluster-CNN training data; class T is truth + 1.5 x a PixelAV "
                                "residual and is not)"))
     doc["recipe"] = f"{FRAME['item']} (sheet {SA.SHEET_VERSION}); tested under {FRAME['rule']}"
@@ -1348,7 +1349,7 @@ def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> 
             SA.AngleTable(doc).save(str(out_dir / fn))
             res["table_file"] = str(out_dir / fn)
         else:      # the demonstration's own fit, for the width comparison and the packet
-            prov["fit_sample_text"] = (f"DEMONSTRATION FIT ONLY (not for use): canon_v3 AAAA files {list(fit_files)}, "
+            prov["fit_sample_text"] = (f"DEMONSTRATION FIT ONLY (not for use): {CM.ERA} AAAA files {list(fit_files)}, "
                                        f"class T, pT >= {SA.PT_MIN:g} GeV")
             prov["test"] = f"files {list(test_files)}; see {result_name(mode)}"
             doc = table_doc(P, boot, (facing_map["ids"], facing_map["sign"]) if module else orient, flags, prov)

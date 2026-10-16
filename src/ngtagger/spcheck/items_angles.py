@@ -1,6 +1,6 @@
 """Fast-gate items on the census angle model (WP-D0b, census format 33; plan C.4 rows "an error
 table from the wrong era or key", "k knob" and "dead angle flags"), on the first events of the gate
-input (canon_v3 file 3): the census's corrected angles are the locked table's, the knob behaves as
+input (canon_v4 file 3): the census's corrected angles are the locked table's, the knob behaves as
 the sheet says through the census path, and each per-angle switch removes exactly its angle. They
 import the census from THIS code root's eval_refitq/combinatorics."""
 from __future__ import annotations

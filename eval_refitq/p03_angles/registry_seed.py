@@ -290,6 +290,10 @@ def main(argv=None) -> int:
     ap.add_argument("--overwrite", action="store_true")
     ap.add_argument("--only", help="register only the entries whose id starts with this prefix")
     a = ap.parse_args(argv)
+    if CM.ERA != "canon_v3":
+        # the entries describe the canon_v3 runs (registry provenance, kept as it is): another era's results
+        # need their own ids first, or --overwrite would replace the canon_v3 records
+        raise SystemExit(f"registry_seed holds the canon_v3 P0.3 entries; era {CM.ERA} has no registry ids yet")
     E = [e for e in entries() if not a.only or e["id"].startswith(a.only)]
     bad = 0
     for e in E:

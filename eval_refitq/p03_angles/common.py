@@ -12,11 +12,22 @@ import numpy as np
 
 from ngtagger.spdefs import angles as SA
 
-OUT_DIR = Path(os.environ.get("P03_OUT", "/Volumes/WDMac/smartpixels_scratch/p03_angles"))
+# THE INPUT ERA (P03_ERA; default canon_v4, the campaign after canon_v3). canon_v3's stored results stay where they
+# are (p03_angles: caches, tables named *_canon_v3.json, the ROC and summary); another era writes beside them in
+# p03_angles_<era>, so a rerun never overwrites a stored result. The caches record their own input path.
+ERA = os.environ.get("P03_ERA", "canon_v4")
+SCRATCH = Path("/Volumes/WDMac/smartpixels_scratch")
+IN_DIR = SCRATCH / ERA
+OUT_DIR = Path(os.environ.get("P03_OUT", str(SCRATCH / ("p03_angles" if ERA == "canon_v3" else f"p03_angles_{ERA}"))))
 CACHE_DIR = Path(os.environ.get("P03_CACHE", str(OUT_DIR / "cache")))
 SCEN = "AAAA"
 HERE = Path(__file__).resolve().parent
 EVENTS_PER_FILE = 100
+
+
+def table_name(stem: str, suffix: str = "") -> str:
+    """A table's file name in this era: <stem>_<era><suffix>.json."""
+    return f"{stem}_{ERA}{suffix}.json"
 
 
 def cache_path(f: int, scen: str = SCEN) -> Path:

@@ -11,7 +11,9 @@
 set -u
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="${PY:-/Users/nmangane/smartpixels/ngtagger-train/.pixi/envs/default/bin/python}"
-OUT="${P03_OUT:-/Volumes/WDMac/smartpixels_scratch/p03_angles}"
+OUT="${P03_OUT:-$(cd "$here" && "$PY" -c 'import common; print(common.OUT_DIR)')}"
+TABLE="$(cd "$here" && "$PY" -c 'import common; print(common.table_name("angle_table_v1a1e"))')"
+UNTESTED="$(cd "$here" && "$PY" -c 'import common; print(common.table_name("angle_table_v1a1e", "_UNTESTED"))')"
 REP="${REP:-250}"
 PROC="${PROC:-10}"
 rm -f "$OUT/p03_table_used.txt"
@@ -24,10 +26,10 @@ if [ "$kg" -eq 0 ] && [ "$kb" -eq 0 ] && [ -f "$OUT/amendment1e_approval.txt" ];
     "$PY" "$here/table.py" gated --rep "$REP" --proc "$PROC"; g=$?
     echo "gated exit $g (0 = the table passes its test)"
     [ "$g" -eq 0 ] || [ "$g" -eq 4 ] || [ "$g" -eq 5 ] || exit "$g"
-    echo "$OUT/angle_table_v1a1e_canon_v3.json" > "$OUT/p03_table_used.txt"
+    echo "$OUT/$TABLE" > "$OUT/p03_table_used.txt"
 else
     echo "the gated test does not run (amendment 1e not approved, or D.0 step 4): fitting the UNTESTED table for the ROC"
     "$PY" "$here/table.py" fit-only --rep "$REP" --proc "$PROC" || exit $?
-    echo "$OUT/angle_table_v1a1e_canon_v3_UNTESTED.json" > "$OUT/p03_table_used.txt"
+    echo "$OUT/$UNTESTED" > "$OUT/p03_table_used.txt"
 fi
 exit 0
