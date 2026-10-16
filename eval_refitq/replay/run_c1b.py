@@ -31,7 +31,6 @@ TOY_TOL, TOY_SE_MAX = 0.03, 0.01
 D0_BAND = (0.90, 1.10)
 D2_TOL = 0.10
 NEV_FILE = 100
-FIT_FILES = (1, 2, 3, 5, 7, 8, 9, 10)         # A10: every canon_v3 file but the known-good (4) and the gate (6)
 
 
 def _concat(parts):
@@ -48,8 +47,8 @@ def overlap(a):
     geo = OP.load_geometry(CM.GEOMETRY)
     tools = AR.Tools(None, calibration=AR.CALIBRATION, angle_table=None)
     tables = tools.cal["R_tables"]
-    files = tuple(a.files) if a.files else FIT_FILES
-    fit_files = files == FIT_FILES
+    files = tuple(a.files) if a.files else CM.FIT_FILES
+    fit_files = files == CM.FIT_FILES
     in_use = load_disc_R(a.disc_r) if a.disc_r else {}             # the R in use per disc (else v3's)
     parts = []
     for fi, f in enumerate(files):
@@ -278,7 +277,7 @@ def collect(a, disc_scale, disc_R):
     disc = AR.DiscTools(disc_scale=disc_scale, R_tables=disc_R)
     parts = []
     for scen in a.scen:
-        for fi, f in enumerate(FIT_FILES):
+        for fi, f in enumerate(CM.FIT_FILES):
             path_f = CM.input_path(scen, f)
             cfg = CM.producer_config(path_f)
             assert CM.mask_of(cfg) == scen
@@ -349,10 +348,10 @@ def seedtest(a):
     not judged (they are judged after the scale fit). Writes c1b/seed/seedtest_summary.json and the rows."""
     t0 = time.time()
     rows = collect(a, 1.0, load_disc_R(a.disc_r) if a.disc_r else None)
-    reps = G.replicas(nev=NEV_FILE * len(FIT_FILES))
+    reps = G.replicas(nev=NEV_FILE * len(CM.FIT_FILES))
     J = judge_all(rows, reps)
-    res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §8 A4, A9, A10", "files": FIT_FILES, "disc_r": a.disc_r, "disc_scale": 1.0,
-           "material": [], "minor": [], **J,
+    res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §8 A4, A9, A10", "files": CM.FIT_FILES, "disc_r": a.disc_r,
+           "disc_scale": 1.0, "material": [], "minor": [], **J,
            "decision": "refit the disc seed groups" if J["D3a_fail"] else "keep the seed (each track's v3 deficit)",
            "note": "D3b and D3c recorded at scale 1; judged after the material-scale fit (A4)",
            "seconds": round(time.time() - t0, 1)}
@@ -392,7 +391,7 @@ def scalefit(a):
     references; the absolute widths reported. Writes c1b/scale/scalefit_summary.json."""
     t0 = time.time()
     disc_R = load_disc_R(a.disc_r) if a.disc_r else None
-    nev = NEV_FILE * len(FIT_FILES)
+    nev = NEV_FILE * len(CM.FIT_FILES)
     reps = G.replicas(nev=nev)
     logs = np.log(np.array(SCALE_GRID))
     nll = {"second_on": [], "third_on": []}
@@ -406,7 +405,7 @@ def scalefit(a):
         dl = later & (rows["step"] >= 1)
         core_ratio.append(np.mean([core_width(rows[x][dl]) / core_width(rows[x][ref]) for x in ("pu", "pv")]))
         print(f"[{time.time() - t0:7.1f}s] scale {s}", flush=True)
-    res = {"plan": "c1b/PLAN.md rev 4 §1 items 4-5, §8 A4 A5 A9 A10", "files": FIT_FILES, "grid": SCALE_GRID,
+    res = {"plan": "c1b/PLAN.md rev 4 §1 items 4-5, §8 A4 A5 A9 A10", "files": CM.FIT_FILES, "grid": SCALE_GRID,
            "material": [], "minor": []}
     fit = {}
     for k in nll:
@@ -461,7 +460,7 @@ def cut_pass(a, scale, disc_R):
     disc = AR.DiscTools(disc_scale=scale, R_tables=disc_R)
     own, loo, d5 = [], [], {"tracks": 0, "different": 0}
     for scen in a.scen:
-        for fi, f in enumerate(FIT_FILES):
+        for fi, f in enumerate(CM.FIT_FILES):
             path_f = CM.input_path(scen, f)
             cfg = CM.producer_config(path_f)
             assert CM.mask_of(cfg) == scen
@@ -509,7 +508,7 @@ def c1b_cutfit(a):
     disc_R = load_disc_R(a.disc_r) if a.disc_r else None
     out_dir = os.path.join(a.out, "cuts")
     os.makedirs(out_dir, exist_ok=True)
-    res = {"plan": "c1b/PLAN.md rev 4 §1 item 6, §3 D5, §8 A9 A10", "files": FIT_FILES, "disc_scale": scale,
+    res = {"plan": "c1b/PLAN.md rev 4 §1 item 6, §3 D5, §8 A9 A10", "files": CM.FIT_FILES, "disc_scale": scale,
            "material": [], "minor": []}
     own, loo, d5 = cut_pass(a, scale, disc_R)
     res["D5"] = d5
@@ -518,7 +517,7 @@ def c1b_cutfit(a):
                                "with the discs on")
     loo_f = dict(loo)
     loo_f["dims"] = {dm: loo_f.pop(f"d_{dm}") for dm in AR.DIMS}
-    prov = {"files": [str(CM.input_path(s, f)) for s in a.scen for f in FIT_FILES], "disc_scale": scale,
+    prov = {"files": [str(CM.input_path(s, f)) for s in a.scen for f in CM.FIT_FILES], "disc_scale": scale,
             "disc_R": a.disc_r, "plan": res["plan"]}
     CU.fit({"calibrated": own}, {"calibrated": loo_f}, prov, "smoothed", clean=True).save(os.path.join(out_dir, C1B_CUTS))
     CU.fit({"calibrated": own}, {"calibrated": loo_f}, prov, "smoothed", clean=False).save(

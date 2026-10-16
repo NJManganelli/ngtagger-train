@@ -1,6 +1,6 @@
 """Driver of the WP-C entry jobs (PLAN §6). Every job runs through ops/spheavy --frozen, in the background.
 
-  cutfit   canon_v3 files 1-2, AAAA / AAAI / IAAA: PM (producer covariance) and INN (calibrated, the 4-sigma
+  cutfit   canon_v3's fit files (PD21), AAAA / AAAI / IAAA: PM (producer covariance) and INN (calibrated, the 4-sigma
            window, PD20) with the own-cluster diagnostics and the leave-one-out chi2; fits the 99 % cuts
            (cuts.fit, PD1 + PD8; the rr cuts per scenario, PD15, on PD19's population); reports the unconditioned
            cuts, PD1's chi2-vs-helix comparison and the local disc pulls (C1b); stores the own rows and the
@@ -90,7 +90,7 @@ def cutfit(a):
         loo[k]["dims"] = {d: loo[k].pop(f"d_{d}") for d in AR.DIMS}
     prov = {"files": [str(CM.input_path(s, f)) for s in a.scen for f in CM.FIT_FILES], "runs": meta,
             "angle_table": AR.AI.TABLE, "calibration": AR.CALIBRATION,
-            "plan": "PLAN §1 item 5, §10 PD1, PD2, PD8, PD15, PD17, PD19, PD20"}
+            "plan": "PLAN §1 item 5, §10 PD1, PD2, PD8, PD15, PD17, PD19, PD20, PD21"}
     stem = a.write_as.removesuffix(".json")
     CU.fit(own, loo, prov, rr_statistic, clean=True).save(os.path.join(out_dir, f"{stem}.json"))
     CU.fit(own, loo, prov, rr_statistic, clean=False).save(os.path.join(out_dir, f"{stem}_unconditioned.json"))

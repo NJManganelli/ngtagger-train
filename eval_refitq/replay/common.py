@@ -25,12 +25,13 @@ import ot_refit_projection as ORP      # noqa: E402
 
 CANON_V3 = Path(os.environ.get("WPC_CANON", "/Volumes/WDMac/smartpixels_scratch/canon_v3"))
 OUT = Path(os.environ.get("WPC_OUT", "/Volumes/WDMac/smartpixels_scratch/wpc"))
-CUTS = OUT / "cuts" / "wpc_cuts_v5.json"     # the consumers' 99 % cuts (rr per scenario, PD15; smoothed, PD17;
-                                              # 4-sigma window and PD19's rr population, PD20)
+CUTS = OUT / "cuts" / "wpc_cuts_v6.json"     # the consumers' 99 % cuts (rr per scenario, PD15; smoothed, PD17;
+                                              # 4-sigma window and PD19's rr population, PD20; the fit files, PD21)
 GEOMETRY = os.environ.get("WPC_GEOMETRY",
                           "/Users/nmangane/smartpixels/cmssw/work/otstub_arm/spix_module_geometry_D121.json")
 SCENARIOS = ("AAAA", "AAAI", "IAAA")
-FIT_FILES, PRED_FILE, GATED_FILE = (1, 2), 4, 3
+FIT_FILES = (1, 2, 3, 5, 7, 8, 9, 10)        # PD21: every file but the known-good (PRED_FILE) and C1b's gate (6)
+PRED_FILE, GATED_FILE = 4, 3                  # GATED_FILE: the entry gate's file (spent)
 RR_CHECK_FILE = 5                             # PD15: the per-scenario rr cuts' gated file
 REFIT_HIT = "L1TSmartPixelsRefitHit"         # canon_v3's (unsuffixed) refit hit table
 SP_TRACK = "L1TSmartPixelsTrack"
