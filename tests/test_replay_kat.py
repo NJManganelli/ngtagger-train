@@ -1,7 +1,7 @@
 """WP-C entry gate E6: known-answer tests for every replay switch (PLAN §2, §4 E6, §10 PD2-PD3, PD4 (c)).
 
 Each switch: an identity at its neutral (producer) setting, a non-null effect, its own-quantity test, and a
-mis-wired variant that the test must catch. Real data: canon_v3 AAAA file 4 (the known-good file), the
+mis-wired variant that the test must catch. Real data: AAAA file 4 of common.CANON (the known-good file), the
 first 5 events; toys: synthetic arrays. Run: pytest tests/test_replay_kat.py (about a minute).
 """
 from __future__ import annotations
@@ -24,7 +24,7 @@ import identity as ID              # noqa: E402
 from common import OP, ORP         # noqa: E402
 from ngtagger.spdefs import angles as SA   # noqa: E402
 
-pytestmark = pytest.mark.skipif(not CM.input_path("AAAA", 4).exists(), reason="canon_v3 file 4 not mounted")
+pytestmark = pytest.mark.skipif(not CM.input_path("AAAA", 4).exists(), reason="file 4 not mounted")
 
 
 class ConstCuts:

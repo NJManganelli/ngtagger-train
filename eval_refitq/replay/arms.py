@@ -207,11 +207,10 @@ REC_KEYS = {"mi": -1, "ci": -1}
 
 
 class DiscTools:
-    """C1b: what the disc_model arms read for disc-going tracks: the disc angle rows, the material planes (with
-    the disc material scale) and, if C1b built them, the disc position-error tables per disc surface (else v3's
-    apply)."""
+    """C1b: what the disc_model arms read for disc-going tracks: the disc angle rows and the material planes (with
+    the disc material scale). The position errors are v3's tables (c1b/PLAN.md §8 A13)."""
 
-    def __init__(self, table=None, material=None, disc_scale=1.0, R_tables=None):
+    def __init__(self, table=None, material=None, disc_scale=1.0):
         import disc_angles as DA
         import disc_material as DM
         self.imp = DA.DiscImport(table or DA.DISC_TABLE)
@@ -220,7 +219,6 @@ class DiscTools:
             self.material = json.load(fh)
         self.planes = self.material["planes"]
         self.disc_scale = disc_scale
-        self.R_tables = R_tables
 
 
 BARREL_ON_DISC_GOING = 100         # C1b: a barrel visit of a disc-going track is binned as surface + 100
@@ -353,23 +351,14 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
 
 
 def _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig):
-    """C1b (c1b/PLAN.md rev 4 §1 items 1-2), in place on the disc clusters: the disc position-error tables if C1b
-    built them; the cot-linear knob on the local columns and the disc rows (the barrel import refuses discs)."""
+    """C1b (c1b/PLAN.md rev 4 §1 item 1), in place on the disc clusters: the cot-linear knob on the local columns and
+    the disc rows (the barrel import refuses discs)."""
     import disc_angles as DA
     d = SPN.is_disc_surface(surface)
     if not d.any():
         return
     K, dk = ctx["K"], tools.disc
     cd = ci[d]
-    if dk.R_tables is not None and arm.pos_err == "rtables":       # per disc surface (J1's D2 tables)
-        import refit_calibration_fit as RCF
-        idx = np.flatnonzero(d)
-        for s_, tab in dk.R_tables.items():
-            k = surface[idx] == s_
-            if k.any():
-                j = idx[k]
-                sig[j, :2] = RCF.apply_R(tab, K["sizeX"][ci[j]], K["sizeY"][ci[j]], cot_a_pred[j], cot_b_pred[j],
-                                         pub[j])[:, :2]
     T = SA.class_T(K["tpEmuClass"][cd])
     rows = dk.imp.rows(surface[d], cot_a_pred[d], cot_b_pred[d]) if arm.ang_err == "table" else None
     for i, ang, k in ((2, "alpha", arm.k_alpha), (3, "beta", arm.k_beta)):

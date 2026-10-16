@@ -315,12 +315,6 @@ IL1_P_SPLIT = (2.0, 5.0, 10.0, np.inf)
 FIT_KEYS = ("R_u", "R_v", "B_prime", "b", "converged", "n_u", "n_v", "shape_u", "shape_v", "sparse_u", "sparse_v")
 
 
-def load_disc_R(path):
-    """C1b's disc position-error tables (J1's D2 decision), per disc surface, in v3's table layout."""
-    with open(path) as fh:
-        return {int(k): v for k, v in json.load(fh)["tables"].items()}
-
-
 def _judged(F, ax):
     """The raw size bins a fit judges: their own shape (not sparse) and >= JUDGE_CLUSTERS clusters."""
     return F.own[ax] & (F.cnt[ax] >= JUDGE_CLUSTERS)
@@ -499,7 +493,6 @@ def fit(a):
     ref_judged = {ax: np.array([r["judged"] for r in ref_bins[ax]]) for ax in ("u", "v")}
     tables = r_tables()
     edges = {ax: tables[ax]["size_edges"] for ax in ("u", "v")}
-    in_use = load_disc_R(a.disc_r) if a.disc_r else {}
     surfaces = (IL1,) + DISCS
     n_boot = {s: a.n_boot if s == IL1 else min(a.n_boot, N_BOOT_DISC) for s in surfaces}
     jobs = [{"surface": s, "dir": d, "files": files, "n_boot": n_boot[s], "n_toy": a.n_toy, "fit_files": fit_files}
@@ -508,7 +501,7 @@ def fit(a):
         W = {o["surface"]: o for o in pool.imap_unordered(surface_work, jobs)}
     print(f"[{time.time() - t0:7.1f}s] surface fits done", flush=True)
     res = {"plan": "c1b/PLAN.md rev 4 §1 item 2, §3 T0 D0 D2, §8 A1-A3, A6, A8, A10-A12", "files": files,
-           "role": "fit and decision" if fit_files else ("known-good" if a.known_bad else "gate"), "disc_r": a.disc_r,
+           "role": "fit and decision" if fit_files else ("known-good" if a.known_bad else "gate"), 
            "model": MODEL, "systematic": SYSTEMATIC, "n_boot": n_boot, "n_toy": a.n_toy,
            "n_pairs": {str(s): int((P["surface"] == s).sum()) for s in surfaces}, "material": [], "minor": [],
            "decisions": []}
@@ -581,11 +574,10 @@ def fit(a):
         w = W[s]
         sel = np.zeros(len(P["p"]), bool)
         sel[w["idx"]] = True
-        use = in_use.get(s, tables)
-        e = d2_ratio(P, sel, w["fits"], lambda ax, sz, cot: DR.v3_width(use, ax, sz, cot), edges, w["systematic"]["rel"])
+        e = d2_ratio(P, sel, w["fits"], lambda ax, sz, cot: DR.v3_width(tables, ax, sz, cot), edges, w["systematic"]["rel"])
         disc_fail |= any(e[ax]["failing"] for ax in ("u", "v"))
         if a.known_bad:
-            e["known_bads"] = d2_known_bads(P, sel, w["fits"], use, tables, edges, w["systematic"]["rel"])
+            e["known_bads"] = d2_known_bads(P, sel, w["fits"], tables, tables, edges, w["systematic"]["rel"])
         bp = np.array([f["B_prime"] for f in w["fits"]])
         e["B_prime"], e["B_prime_sd"] = bp[0], np.nanstd(bp[1:], 0)
         e["B_prime_ok"] = bool(np.all(np.nan_to_num(bp[0]) < DR.B_PRIME_MAX))
@@ -605,15 +597,10 @@ def fit(a):
             zd = {k: (D[k][m0] - np.median(D[k][m0])) / DR.wmad_width(D[k][m0]) for k in D}
             e["uv_tails"] = tail_independence(zd["phi"], zd["2"])
         res["D2"][str(s)] = e
-    if fit_files:
-        res["D2_decision"] = "build disc R tables from the overlap R" if disc_fail else "keep v3's R"
-    else:
-        res["D2_pass"] = not disc_fail
-        if disc_fail:
-            res["material"].append(f"D2 fails on file(s) {list(files)} against the R in use")
+    res["D2_agrees_with_v3"] = not disc_fail           # report-only (A13): v3's R stays on the discs
     res["seconds"] = round(time.time() - t0, 1)
     with open(os.path.join(d, "overlap_summary.json"), "w") as fh:
         json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
-    print(json.dumps({k: res.get(k) for k in ("material", "minor", "decisions", "D2_decision", "D2_pass")}, indent=1,
+    print(json.dumps({k: res.get(k) for k in ("material", "minor", "decisions", "D2_agrees_with_v3")}, indent=1,
                      default=str))
     return 0

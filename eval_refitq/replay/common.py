@@ -1,8 +1,9 @@
 """WP-C entry (replay readiness) shared constants and input helpers.
 
 Plan: /Volumes/WDMac/smartpixels_scratch/wpc/PLAN.md (round 1 + the pre-declared changes of §10).
-File roles are fixed there: canon_v3 TTbar files 1-2 fit only, file 4 predictions / known-goods,
-file 3 gated (judged once), file 5 gated for the per-scenario rr cuts only (PD15), files 6-10 untouched.
+File roles are fixed there (PD21): the TTbar fit files 1, 2, 3, 5, 7-10, file 4 predictions / known-goods, file 6
+C1b's gate. The inputs are canon_v4 (c1b/PLAN.md §8 A14: canon_v3's events, bit-identical for the replay); the
+stored results up to 2026-10-16 were made on canon_v3.
 """
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ import omnibus_support as OSU          # noqa: E402
 import ot_projection as OP             # noqa: E402
 import ot_refit_projection as ORP      # noqa: E402
 
-CANON_V3 = Path(os.environ.get("WPC_CANON", "/Volumes/WDMac/smartpixels_scratch/canon_v3"))
+CANON = Path(os.environ.get("WPC_CANON", "/Volumes/WDMac/smartpixels_scratch/canon_v4"))
 OUT = Path(os.environ.get("WPC_OUT", "/Volumes/WDMac/smartpixels_scratch/wpc"))
 CUTS = OUT / "cuts" / "wpc_cuts_v6.json"     # the consumers' 99 % cuts (rr per scenario, PD15; smoothed, PD17;
                                               # 4-sigma window and PD19's rr population, PD20; the fit files, PD21)
@@ -33,13 +34,22 @@ SCENARIOS = ("AAAA", "AAAI", "IAAA")
 FIT_FILES = (1, 2, 3, 5, 7, 8, 9, 10)        # PD21: every file but the known-good (PRED_FILE) and C1b's gate (6)
 PRED_FILE, GATED_FILE = 4, 3                  # GATED_FILE: the entry gate's file (spent)
 RR_CHECK_FILE = 5                             # PD15: the per-scenario rr cuts' gated file
-REFIT_HIT = "L1TSmartPixelsRefitHit"         # canon_v3's (unsuffixed) refit hit table
+REFIT_HIT = "L1TSmartPixelsRefitHit"         # the (unsuffixed) refit hit table
 SP_TRACK = "L1TSmartPixelsTrack"
 CHUNK = 10                                    # events per chunk (ORP's study-20 default)
 
 
 def input_path(scen: str, f: int) -> Path:
-    return CANON_V3 / f"spstudy_{scen}_f{f:02d}_100ev.root"
+    return CANON / f"spstudy_{scen}_f{f:02d}_100ev.root"
+
+
+def event_rank(path) -> np.ndarray:
+    """Per entry of an input file, the rank of its (run, lumi, event) within the file. The scenarios' files hold the
+    same events in different orders, so the rank (not the entry) identifies an event across scenarios: the joint
+    event bootstrap must resample by it (c1b/PLAN.md §8 A14)."""
+    t = uproot.open(str(path))["Events"]
+    r, l, e = (t[k].array(library="np") for k in ("run", "luminosityBlock", "event"))
+    return np.argsort(np.lexsort((e, l, r)), kind="stable")
 
 
 def producer_config(path) -> dict:

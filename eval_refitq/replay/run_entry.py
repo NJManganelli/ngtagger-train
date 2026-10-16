@@ -1,6 +1,6 @@
 """Driver of the WP-C entry jobs (PLAN §6). Every job runs through ops/spheavy --frozen, in the background.
 
-  cutfit   canon_v3's fit files (PD21), AAAA / AAAI / IAAA: PM (producer covariance) and INN (calibrated, the 4-sigma
+  cutfit   the fit files (PD21), AAAA / AAAI / IAAA: PM (producer covariance) and INN (calibrated, the 4-sigma
            window, PD20) with the own-cluster diagnostics and the leave-one-out chi2; fits the 99 % cuts
            (cuts.fit, PD1 + PD8; the rr cuts per scenario, PD15, on PD19's population); reports the unconditioned
            cuts, PD1's chi2-vs-helix comparison and the local disc pulls (C1b); stores the own rows and the
