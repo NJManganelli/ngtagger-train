@@ -13,6 +13,7 @@
   c23         C2 per candidate (no DR, per seed) and C3 delivered (merge DR, pooled): a closed-arm census
               against CMSSW, with the paired event bootstrap and equivalence at the plan's margins
   floor       the order floor: D_order and Delta_dtc from one dtc and ten random closed-arm censuses
+  truncation  U, the unemulated truncation: the caps-on arm's statistics minus the caps-off arm's (paired)
   register    a known-bad candidate against the known-good on the same events: its shift per gated
               statistic in margin units (paired), its gate outcome and the plan's classification
 
@@ -569,7 +570,9 @@ def c1b(fakefit, nodr=None, nev=None):
             nd = (_table(B, eb, "L1TTrack_"), _table(B, eb, "L1TTrackStub_"))
             match, left = _align_nodr(cms, nd)
             res["nodr_tracks_unaligned"] += left
-        seen = set()
+        # every CMSSW barrel-seed candidate's key, before the barrel-stub cut: an emulated candidate (barrel
+        # targets only) of a CMSSW candidate that also holds disc stubs is not "without CMSSW"
+        seen = {_candidate_key(sd, sec, r, L) for sd, sec, r in cms if sd in SEED_LAYERS}
         for j, (sd, sec, r) in enumerate(cms):
             if sd not in SEED_LAYERS or not L["isBarrel"][r].all():
                 continue
@@ -579,7 +582,6 @@ def c1b(fakefit, nodr=None, nev=None):
             if nd is not None:
                 _kf_on_list(res, nd, match.get(j), key, r, L, x, y, z, e)
             res["cmssw_candidates"] += 1
-            seen.add(key)
             if key not in trk:
                 res["no_emulated_tracklet"] += 1
                 continue
@@ -841,6 +843,28 @@ def floor(dtc_dir, random_dirs, cmssw_nodr=None, cmssw_merge=None, nev=None, exc
     return out, c1b_ok or not exceeds
 
 
+# ---- the truncation decomposition ---------------------------------------------------------------------------
+def truncation(caps_on, caps_off):
+    """U, the unemulated truncation (plan sec. 2-3): for each statistic, the caps-on arm's value (census caps on
+    against production / no-DR) minus the caps-off arm's (census caps off against the no-truncation siblings),
+    i.e. CMSSW's truncation cost minus the census's emulated one; its paired sd from the saved replicas (the
+    same events and bootstrap); MATERIAL when its one-sided 95 % bound exceeds half the margin."""
+    A, B = json.load(open(caps_on)), json.load(open(caps_off))
+    if A["census_inputs"] != B["census_inputs"] or A["n_events"] != B["n_events"] \
+            or A["excluded_events"] != B["excluded_events"] or A["boot_seed"] != B["boot_seed"]:
+        raise SystemExit("the two arms are not on the same events")
+    rows = {}
+    for name, a in A["statistics"].items():
+        b = B["statistics"][name]
+        d = np.array(a["replicas"]) - np.array(b["replicas"])
+        u = a["value"] - b["value"]
+        bound = float(abs(u) + 1.6449 * np.std(d, ddof=1))
+        rows[name] = {"U": u, "paired_sd": float(np.std(d, ddof=1)), "bound95": bound,
+                      "half_margin": a["margin"] / 2, "material": bound > a["margin"] / 2}
+    return {"stage": "truncation decomposition", "caps_on": caps_on, "caps_off": caps_off, "statistics": rows,
+            "gates": {k: not v["material"] for k, v in rows.items()}}, not any(v["material"] for v in rows.values())
+
+
 # ---- known-bad registration -----------------------------------------------------------------------------
 def register(good, bad, gross=False):
     """A known-bad candidate (its report `bad`) against the known-good (`good`) on the same events (plan
@@ -911,6 +935,7 @@ def main():
         p.add_argument("--exclude-events", default=None,
                        help="events left out on both sides, 'a-b[,c-d]' in the census's numbering (the gated "
                             "f01 run: 0-9)")
+    p = sub.add_parser("truncation"); p.add_argument("caps_on"); p.add_argument("caps_off")
     p = sub.add_parser("register"); p.add_argument("good"); p.add_argument("bad")
     p.add_argument("--gross", action="store_true", help="the gate's gross known-bad")
     for p in sub.choices.values():
@@ -936,6 +961,8 @@ def main():
         rep, ok = c23(a.census, a.nodr, a.merge, a.nev, a.exclude_events, pe)
     elif a.stage == "floor":
         rep, ok = floor(a.dtc, a.random, a.nodr, a.merge, a.nev, a.exclude_events, a.c1b_report)
+    elif a.stage == "truncation":
+        rep, ok = truncation(a.caps_on, a.caps_off)
     else:
         rep, ok = register(a.good, a.bad, a.gross)
     _fail(rep, a.out, ok)
