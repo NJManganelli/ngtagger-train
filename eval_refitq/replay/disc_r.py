@@ -51,7 +51,9 @@ NU_MIN, NU_MAX = 1.5, 60.0                          # the Student-t family's deg
 T_Q = (0.125, 0.375, 0.625, 0.875)                  # its 4 equal-weight nodes: quantiles of the Gamma(nu/2, nu/2) precision
 _LOGNU = np.linspace(np.log(NU_MIN), np.log(NU_MAX), 400)
 _T_LAM = np.array([[stats.gamma.ppf(q, a=np.exp(x) / 2, scale=2 / np.exp(x)) for q in T_Q] for x in _LOGNU])
-FAMILIES = {"mix2": 4, "t": 3}                      # parameters per size bin: (log s, eps, kappa, mu) / (log s, nu, mu)
+# parameters per size bin: mix2 (log s, eps, kappa, mu); t (log s, nu, mu); splitN: a core split into two Gaussians at
+# +-delta (flat-topped for delta ~ g) plus N Gaussian tails: (log g, log delta, tail fraction, [tail split], kappas, mu)
+FAMILIES = {"mix2": 4, "t": 3, "split1": 5, "split2": 7}
 # the beam pipe (A8): D121's central beryllium tube (Geometry/CMSCommonData beampipe/2030/v3: r 2.17-2.25 cm, 0.8 mm;
 # X0(Be) = 35.28 cm); tkLayout's is 0.228 % X0 at r = 2.3 cm (arms.BEAM_PIPE)
 BEAM_PIPE_R_CM = 0.5 * (2.17 + 2.25)
@@ -238,16 +240,36 @@ def differences(P, rotation=True, drop_facing=None, du=None, dv=None):
 
 
 # ------------------------------------------------------------------ the shape model (A8)
+def _kappa(x):
+    return 1.0 + (KAPPA_MAX - 1.0) * jax.nn.sigmoid(x)
+
+
 def _components(family, par):
-    """Per size bin (rows of par): the single shape's Gaussian components (weights, variances in um^2) and centre."""
+    """Per size bin (rows of par): the single shape's Gaussian components (weights, variances in um^2, locations in
+    um, symmetric about the centre) and the centre (um)."""
     s = jnp.exp(par[:, 0])
     if family == "mix2":
         eps = EPS_MAX * jax.nn.sigmoid(par[:, 1])
-        kap = 1.0 + (KAPPA_MAX - 1.0) * jax.nn.sigmoid(par[:, 2])
-        return jnp.stack([1.0 - eps, eps], 1), jnp.stack([s * s, (kap * s) ** 2], 1), par[:, 3]
-    lnu = np.log(NU_MIN) + (np.log(NU_MAX) - np.log(NU_MIN)) * jax.nn.sigmoid(par[:, 1])
-    lam = jnp.stack([jnp.interp(lnu, _LOGNU, _T_LAM[:, k]) for k in range(len(T_Q))], 1)
-    return jnp.full(lam.shape, 1.0 / len(T_Q)), (s * s)[:, None] / lam, par[:, 2]
+        kap = _kappa(par[:, 2])
+        var = jnp.stack([s * s, (kap * s) ** 2], 1)
+        return jnp.stack([1.0 - eps, eps], 1), var, jnp.zeros_like(var), par[:, 3]
+    if family == "t":
+        lnu = np.log(NU_MIN) + (np.log(NU_MAX) - np.log(NU_MIN)) * jax.nn.sigmoid(par[:, 1])
+        lam = jnp.stack([jnp.interp(lnu, _LOGNU, _T_LAM[:, k]) for k in range(len(T_Q))], 1)
+        return jnp.full(lam.shape, 1.0 / len(T_Q)), (s * s)[:, None] / lam, jnp.zeros_like(lam), par[:, 2]
+    delta = jnp.exp(par[:, 1])
+    etot = EPS_MAX * jax.nn.sigmoid(par[:, 2])
+    core = jnp.sqrt(s * s + delta * delta)                         # the split core's standard deviation
+    if family == "split1":
+        fr, kaps, mu = [jnp.ones_like(s)], [_kappa(par[:, 3])], par[:, 4]
+    else:
+        f1 = jax.nn.sigmoid(par[:, 3])
+        k1 = _kappa(par[:, 4])
+        fr, kaps, mu = [f1, 1.0 - f1], [k1, k1 * _kappa(par[:, 5])], par[:, 6]
+    w = jnp.stack([0.5 * (1.0 - etot), 0.5 * (1.0 - etot)] + [etot * f for f in fr], 1)
+    var = jnp.stack([s * s, s * s] + [(k * core) ** 2 for k in kaps], 1)
+    loc = jnp.stack([-delta, delta] + [jnp.zeros_like(s) for _ in kaps], 1)
+    return w, var, loc, mu
 
 
 def _nll(theta, family, nbu, nbv, D, A, bins, lo, w, fixed_lb):
@@ -261,18 +283,18 @@ def _nll(theta, family, nbu, nbv, D, A, bins, lo, w, fixed_lb):
     total = 0.0
     n = D.shape[1]
     for d in range(2):
-        mean = 0.0
+        mean = jnp.zeros((n, 1))
         logw = jnp.zeros((n, 1))
         var = (jnp.exp(2.0 * lb) * lo[d])[:, None]
         for ax, tt in terms:
-            cw, cv, mu = comp[ax]
+            cw, cv, cl, mu = comp[ax]
             ib, a = bins[tt], A[d, tt]
-            mean = mean + a * mu[ib]
+            mean = (mean[:, :, None] + (a[:, None] * (mu[ib][:, None] + cl[ib]))[:, None, :]).reshape(n, -1)
             logw = (logw[:, :, None] + jnp.log(cw[ib])[:, None, :]).reshape(n, -1)
             var = (var[:, :, None] + (a * a)[:, None, None] * cv[ib][:, None, :]).reshape(n, -1)
         var = var + 1e-6
-        r2 = (D[d] - mean) ** 2
-        lp = jax.scipy.special.logsumexp(logw - 0.5 * jnp.log(2.0 * np.pi * var) - 0.5 * r2[:, None] / var, axis=1)
+        r2 = (D[d][:, None] - mean) ** 2
+        lp = jax.scipy.special.logsumexp(logw - 0.5 * jnp.log(2.0 * np.pi * var) - 0.5 * r2 / var, axis=1)
         total = total + jnp.sum(w * lp)
     return -total
 
@@ -281,22 +303,22 @@ _VG = jax.jit(jax.value_and_grad(_nll), static_argnums=(1, 2, 3))
 
 
 def single_width(family, par):
-    """MAD / 0.6745 (um) of each size bin's fitted single shape (par rows), solved on the mixture's distribution
-    function: sum_k w_k (2 Phi(m / sigma_k) - 1) = 1/2."""
-    cw, cv, _ = (np.asarray(x) for x in _components(family, jnp.asarray(par)))
+    """MAD / 0.6745 (um) of each size bin's fitted single shape (par rows), about its centre (the median of a symmetric
+    mixture), solved on the mixture's distribution function: sum_k w_k [Phi((m - l_k) / s_k) - Phi((-m - l_k) / s_k)]
+    = 1/2."""
+    cw, cv, cl, _ = (np.asarray(x) for x in _components(family, jnp.asarray(par)))
     sd = np.sqrt(cv)
-    lo, hi = np.zeros(len(par)), 10.0 * sd.max(1)
+    lo, hi = np.zeros(len(par)), 10.0 * (sd + np.abs(cl)).max(1)
     for _ in range(80):
         m = 0.5 * (lo + hi)
-        f = np.sum(cw * (2.0 * stats.norm.cdf(m[:, None] / sd) - 1.0), 1) - 0.5
+        f = np.sum(cw * (stats.norm.cdf((m[:, None] - cl) / sd) - stats.norm.cdf((-m[:, None] - cl) / sd)), 1) - 0.5
         lo, hi = np.where(f < 0, m, lo), np.where(f < 0, hi, m)
     return 0.5 * (lo + hi) / MAD_K
 
 
 class ShapeFit:
     """One surface's pairs (sel, after the surface's p cut) ready for repeated unbinned fits of the single-cluster
-    shapes: bootstrap weights, toy residuals, a fixed leftover scale. family: "mix2" (the model) or "t" (the
-    systematic)."""
+    shapes: bootstrap weights, toy residuals, a fixed leftover scale. family: one of FAMILIES."""
 
     def __init__(self, P, tables, sel, family="mix2", rotation=True, drop_facing=None):
         self.family = family
@@ -335,16 +357,20 @@ class ShapeFit:
         return jnp.asarray(np.stack([D["phi"], D["2"]]) * UM)
 
     def start(self, widths=None):
-        """Starting parameters: each bin's core at its width (um; default 5 um in u, 20 in v), a 10 % tail of 3x."""
+        """Starting parameters: each bin's core at its width (um; default 5 um in u, 20 in v), a 10 % tail of 3x
+        (split: a core of half Gaussian, half split, and a 5 % tail)."""
+        x3 = special.logit(2.0 / (KAPPA_MAX - 1.0))                  # kappa 3
         rows = []
         for ax in ("u", "v"):
             for rb in self.par_bin[ax]:
                 s = (widths[ax][rb] if widths is not None and rb < len(widths[ax]) and np.isfinite(widths[ax][rb])
                      else (5.0 if ax == "u" else 20.0))
-                rows.append([np.log(s), special.logit(0.1 / EPS_MAX), special.logit(2.0 / (KAPPA_MAX - 1.0)), 0.0]
-                            if self.family == "mix2" else
-                            [np.log(s), special.logit((np.log(5.0) - np.log(NU_MIN)) / (np.log(NU_MAX) - np.log(NU_MIN))),
-                             0.0])
+                rows.append({"mix2": [np.log(s), special.logit(0.1 / EPS_MAX), x3, 0.0],
+                             "t": [np.log(s), special.logit((np.log(5.0) - np.log(NU_MIN))
+                                                            / (np.log(NU_MAX) - np.log(NU_MIN))), 0.0],
+                             "split1": [np.log(0.7 * s), np.log(0.7 * s), special.logit(0.05 / EPS_MAX), x3, 0.0],
+                             "split2": [np.log(0.7 * s), np.log(0.7 * s), special.logit(0.05 / EPS_MAX), 0.0, x3, x3,
+                                        0.0]}[self.family])
         return np.concatenate([np.concatenate(rows), [np.log(0.01)]])
 
     def fit(self, weights=None, theta0=None, D=None, fixed_b=None, start_widths=None):
@@ -376,22 +402,13 @@ class ShapeFit:
             par = th[off * k:(off + nb) * k].reshape(nb, k)
             off += nb
             W = single_width(self.family, par) / UM
-            cw, cv, mu = (np.asarray(x) for x in _components(self.family, jnp.asarray(par)))
+            e_all = self._shape(par)
             nraw = len(self.edges[ax]) - 1
             R = np.full(nraw, np.nan)
-            shape = {"s": np.full(nraw, np.nan), "mu": np.full(nraw, np.nan),
-                     ("eps" if self.family == "mix2" else "nu"): np.full(nraw, np.nan)}
-            if self.family == "mix2":
-                shape["kappa"] = np.full(nraw, np.nan)
+            shape = {kk: np.full(nraw, np.nan) for kk in e_all}
             sparse = None
             for i, rb in enumerate(self.par_bin[ax]):
-                e = {"R": W[i], "s": np.sqrt(cv[i, 0]) / UM if self.family == "mix2" else np.exp(par[i, 0]) / UM,
-                     "mu": mu[i] / UM}
-                if self.family == "mix2":
-                    e["eps"], e["kappa"] = cw[i, 1], np.sqrt(cv[i, 1] / cv[i, 0])
-                else:
-                    e["nu"] = float(np.exp(np.log(NU_MIN) + (np.log(NU_MAX) - np.log(NU_MIN))
-                                           * special.expit(par[i, 1])))
+                e = {"R": W[i], **{kk: v[i] for kk, v in e_all.items()}}
                 if rb == nraw:
                     sparse = e
                     continue
@@ -404,10 +421,27 @@ class ShapeFit:
         out["B_prime"] = np.array([b * np.sqrt(np.median(self.Q["g_phi"])), b * np.sqrt(np.median(self.Q["g_2"]))])
         return out
 
+    def _shape(self, par):
+        """Per parameter row: the fitted shape's summary (cm for lengths): the core width, the tail fraction and the
+        first tail's width over the core, the split half-distance or the t's degrees of freedom, the centre."""
+        cw, cv, cl, mu = (np.asarray(x) for x in _components(self.family, jnp.asarray(par)))
+        out = {"mu": mu / UM}
+        if self.family == "t":
+            out["s"] = np.exp(par[:, 0]) / UM
+            out["nu"] = np.exp(np.log(NU_MIN) + (np.log(NU_MAX) - np.log(NU_MIN)) * special.expit(par[:, 1]))
+            return out
+        ncore = 1 if self.family == "mix2" else 2
+        core = np.sqrt(cv[:, 0] + cl[:, 0] ** 2)
+        out["s"] = core / UM
+        out["tail_frac"] = cw[:, ncore:].sum(1)
+        out["tail_rel"] = np.sqrt(cv[:, ncore]) / core
+        if ncore == 2:
+            out["delta"] = np.abs(cl[:, 1]) / UM
+        return out
+
     # -------------------------------------------------------------- toys (T0)
     def toy_D(self, planted, shape, rng, b_common=0.1, b_prime=0.004):
-        """Toy differences on these pairs: each cluster's residual drawn from the planted shape ("mix2": eps 0.15,
-        kappa 4; "t3": Student-t, nu 3) scaled to the planted width per raw size bin (cm, MAD / 0.6745), plus a
+        """Toy differences on these pairs: each cluster's residual drawn from the planted shape (draw_unit) scaled to the planted width per raw size bin (cm, MAD / 0.6745), plus a
         common scattering offset (b_common / p, cancels) and the leftover with the pairs' own geometric factors
         (B'_phi = b_prime cm GeV at the median pair)."""
         Q, n = self.Q, self.n
@@ -430,21 +464,42 @@ class ShapeFit:
         return self._D(D)
 
 
-PLANT_MIX2 = (0.15, 4.0)
+PLANT_MIX2 = (0.15, 4.0)                    # the two-Gaussian plant: tail fraction, tail / core width
+PLANT_BOX = (0.2, 0.01, 5.0)                # the flat-topped plant: a box of half-width 1 smeared by N(0, 0.2), with a
+                                            # 1 % tail of 5x its sd (the real disc size-1 pair quantiles, A8 review)
+
+
+def _box_cdf_sym(m, g):
+    """P(|X| < m) for X uniform on (-1, 1) plus N(0, g^2)."""
+    def F(x):
+        return 0.5 * ((x + 1) * stats.norm.cdf((x + 1) / g) - (x - 1) * stats.norm.cdf((x - 1) / g)
+                      + g * (stats.norm.pdf((x + 1) / g) - stats.norm.pdf((x - 1) / g)))
+    return F(m) - F(-m)
 
 
 def _unit_mad(shape):
+    """The MAD of a planted shape at unit scale."""
     if shape == "t3":
         return float(stats.t.ppf(0.75, 3))
+    if shape == "box":
+        g, eps, kap = PLANT_BOX
+        sT = kap * np.sqrt(1.0 / 3.0 + g * g)
+        return optimize.brentq(lambda m: (1 - eps) * _box_cdf_sym(m, g) + eps * (2 * stats.norm.cdf(m / sT) - 1) - 0.5,
+                               1e-3, 10.0)
     eps, kap = PLANT_MIX2
     return optimize.brentq(lambda m: (1 - eps) * (2 * stats.norm.cdf(m) - 1) + eps * (2 * stats.norm.cdf(m / kap) - 1)
                            - 0.5, 0.1, 10.0)
 
 
 def draw_unit(shape, rng, n):
-    """n draws of a planted shape with MAD / 0.6745 = 1."""
+    """n draws of a planted shape ("mix2", "t3", "box") with MAD / 0.6745 = 1."""
     if shape == "t3":
         x = rng.standard_t(3, n)
+    elif shape == "box":
+        g, eps, kap = PLANT_BOX
+        x = rng.uniform(-1.0, 1.0, n) + g * rng.standard_normal(n)
+        t = rng.random(n) < eps
+        x[t] = kap * np.sqrt(1.0 / 3.0 + g * g) * rng.standard_normal(int(t.sum()))
     else:
         eps, kap = PLANT_MIX2
         x = rng.standard_normal(n) * np.where(rng.random(n) < eps, kap, 1.0)
