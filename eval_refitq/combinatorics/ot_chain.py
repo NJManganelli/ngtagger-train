@@ -76,12 +76,18 @@ NBITS_ALLSTUBS = (3, 2, 2, 2, 2, 2)      # Settings nbitsallstubs_ (barrel)
 NBITS_VMME = (2, 3, 3, 3, 3, 3)          # Settings nbitsvmme_ (barrel)
 NFINEPHI, NFINERZ, ME_BINS_BITS = 3, 3, 3
 VMR_LUT_ZBITS, VMR_LUT_RBITS = 7, 4      # Settings vmrlutzbits_ / vmrlutrbits_ (barrel)
+# TrackletLUT::writeTable writes a -1 entry of a positive table as (1 << nbits) - 1: in the inner tables
+# (TP_<seed>.tab, 10 bits: fine bin 3, next 1, start bin 3, spread 3) that is 1023, "no tracklet"
+TP_INNER_NONE = (1 << (2 * NFINERZ + 1 + ME_BINS_BITS)) - 1
 
 
 # the emulated logic's version: bump it when a stage changes (a hash of the tables cannot see that).
 # 2: the match processor clock by clock (MP 108), the VMRouter's reading order and the input-memory caps.
 # 3: the IR cap counts the link's stubs of every layer (disc stubs included).
-CHAIN_VERSION = 3
+# 4: the inner tables' "no tracklet" entries (written as 1023) reject the inner stub.
+# 5: the TrackletProcessor wiring is CMSSW_20_1's own (TrackletConfigBuilder's table; L1L2 differs from the
+#    cms-data wires file the earlier versions read).
+CHAIN_VERSION = 5
 # KNOWN-BAD VARIANTS of the chain (WP-D plan sec. 3), like cmssw_kf.KF_KNOWN_BADS: None in every real run;
 # set_known_bad() switches one on (a chain variant here, a fit variant in cmssw_kf) for a known-bad run.
 CHAIN_KNOWN_BADS = {
@@ -178,7 +184,7 @@ def _tp_wiring():
         if port == "outervmstubin":
             t.outer_region = ord(re.fullmatch(r"VMR_L\dPHI([A-H])\.\w+", src).group(1)) - ord("A")
         else:
-            m = re.fullmatch(r"AS_L\dPHI([A-H])_B([A-Z])", mem)
+            m = re.fullmatch(r"AS_L\dPHI([A-H])_B([A-Z])(_\w+)?", mem)   # the type: the name's 12th character
             entry = (ord(m.group(1)) - ord("A"), m.group(2))
             if len(t.inner) == 2:
                 t.inner.insert(0, entry)
@@ -510,6 +516,7 @@ def te_rz_window(cp, inn, out, seed):
     first fine bin and the allowed spread; the outer stub's bin and fine position are its VMRME entry."""
     la, lb = SEEDS[seed]
     lut = luts().tp_inner[seed][_vmr_lut_index(cp, inn, la)]
+    none = lut == TP_INNER_NONE              # the table's -1: no tracklet from this inner stub (lookup -1)
     first = lut & ((1 << NFINERZ) - 1)
     nxt = (lut >> NFINERZ) & 1
     start = (lut >> (NFINERZ + 1)) & ((1 << ME_BINS_BITS) - 1)
@@ -521,8 +528,8 @@ def te_rz_window(cp, inn, out, seed):
     rz = np.where(in_next, ofine[None, :] + (1 << NFINERZ), ofine[None, :])
     win = (in_first | in_next) & (rz >= first[:, None]) & (rz - first[:, None] <= diffmax[:, None])
     if KNOWN_BAD == "l2l3_no_z52":
-        win |= (lut < 0)[:, None]          # the table's cut entries: no r-z restriction
-    return win
+        return win | none[:, None]          # the table's cut entries: no r-z restriction
+    return win & ~none[:, None]
 
 
 def _phi_region(cp, idx, layer):
