@@ -30,8 +30,12 @@ from ngtagger.spdefs import angles as SA
 
 MAD_K = 0.6745
 UM = 1e4                                            # cm -> um
-P_EDGES = (10.0, 15.0, 20.0, 30.0, 50.0, np.inf)   # GeV, the cells' momentum bins; p < 10 GeV not used
-ETA_SLICES = 3                                      # the cells' |eta| terciles (the leftover's g varies with eta)
+P_EDGES = {"disc": (10.0, 15.0, 20.0, 30.0, 50.0, np.inf),   # GeV, the cells' momentum bins; below the first edge
+           "barrel": (2.0, 3.0, 5.0, 10.0, 20.0, np.inf)}    # not used (A2 on the discs; A6 on IL1: its overlapping
+                                                              # ladders are ~0.3 cm apart, not 1.9 cm, so the leftover
+                                                              # term at 2 GeV is below the disc's at 10 GeV)
+MIN_PARAM = 400                                     # clusters (after the p cut) a size bin needs to be fitted on its
+                                                    # own; sparser bins share one parameter per axis, reported NaN (A6)
 OVERLAP_MAX_CM = 0.1                                # a geometric overlap: each cluster within 1 mm of its helix
                                                     # crossing, and the two residuals within 1 mm of each other
 PT_MIN, D0_MAX_CM = 2.0, 0.005
@@ -169,11 +173,13 @@ def differences(P, rotation=True, drop_facing=None):
 
 
 def fit_surface(P, tables, sel=None, rotation=True, drop_facing=None):
-    """The joint u-v fit on one surface's pairs (sel). Returns R_u per size-X bin, R_v per size-Y bin
-    (cm, NaN where unconstrained), B' per direction x eta slice (cm GeV), the cell medians, the cells used."""
+    """The joint u-v fit on one surface's pairs (sel). Returns R_u per size-X bin, R_v per size-Y bin (cm; NaN for
+    a sparse bin, A6), the leftover scale b and the effective B' per direction (cm GeV), the largest cell median,
+    the cells used, the clusters per size bin after the p cut."""
     if sel is None:
         sel = np.ones(len(P["p"]), bool)
-    sel = sel & (P["p"] >= P_EDGES[0])               # low-p pairs: the leftover scattering spreads within a cell
+    edges = P_EDGES["disc" if OP.SPN.is_disc_surface(int(P["surface"][sel][0])) else "barrel"] if sel.any() else P_EDGES["disc"]
+    sel = sel & (P["p"] >= edges[0])                 # low-p pairs: the leftover scattering spreads within a cell
     Q = {k: v[sel] for k, v in P.items()}
     if not len(Q["p"]):
         return empty_fit(tables, sel)
@@ -181,12 +187,18 @@ def fit_surface(P, tables, sel=None, rotation=True, drop_facing=None):
     nu, nv = len(eu) - 1, len(ev_) - 1
     bx = [size_bin(Q[f"sx{j}"], eu) for j in ("1", "2")]
     by = [size_bin(Q[f"sy{j}"], ev_) for j in ("1", "2")]
-    eta_cut = np.quantile(Q["eta"], np.linspace(0, 1, ETA_SLICES + 1)[1:-1]) if len(Q["eta"]) else []
-    es = np.searchsorted(eta_cut, Q["eta"])
-    pb = np.clip(np.searchsorted(P_EDGES, Q["p"], side="right") - 1, 0, len(P_EDGES) - 2)
+    # A6: a size bin with fewer than MIN_PARAM clusters is not identifiable on its own; it shares one "sparse"
+    # parameter per axis with the other sparse bins (index n) and is reported NaN
+    def pooled(b, n):
+        cnt = np.bincount(np.concatenate(b), minlength=n)
+        keep = cnt >= MIN_PARAM
+        return [np.where(keep[x], x, n) for x in b], keep, cnt
+    bx, keep_u, cnt_u = pooled(bx, nu)
+    by, keep_v, cnt_v = pooled(by, nv)
+    pb = np.clip(np.searchsorted(edges, Q["p"], side="right") - 1, 0, len(edges) - 2)
     Dv, co = differences(Q, rotation, drop_facing)
     Dv = {d: x * UM for d, x in Dv.items()}                       # the fit runs in um (well-scaled parameters)
-    npar = nu + nv + 1
+    npar = (nu + 1) + (nv + 1) + 1                                  # + the sparse parameter per axis
     rows, obs, wts, meds = [], [], [], []
     for di, d in enumerate(("phi", "2")):
         dom = (bx if d == "phi" else by)
@@ -194,7 +206,7 @@ def fit_surface(P, tables, sel=None, rotation=True, drop_facing=None):
         other = "v" if d == "phi" else "u"
         leak = co[(d, other, "1")] + co[(d, other, "2")]          # the rotation's cross-axis coefficient
         rb = np.searchsorted(ROT_EDGES, leak, side="right")
-        cell = (((lo * 16 + hi) * 8 + pb) * 8 + es) * 8 + rb
+        cell = ((lo * 16 + hi) * 8 + pb) * 8 + rb
         for c in np.unique(cell):
             k = cell == c
             n = int(k.sum())
@@ -208,8 +220,8 @@ def fit_surface(P, tables, sel=None, rotation=True, drop_facing=None):
             A = np.zeros(npar)
             for j, jj in enumerate(("1", "2")):
                 np.add.at(A, bx[j][k], co[(d, "u", jj)][k] / n)
-                np.add.at(A, nu + by[j][k], co[(d, "v", jj)][k] / n)
-            A[nu + nv] = np.mean(Q[f"g_{d}"][k] / Q["p"][k] ** 2) * UM * UM
+                np.add.at(A, nu + 1 + by[j][k], co[(d, "v", jj)][k] / n)
+            A[-1] = np.mean(Q[f"g_{d}"][k] / Q["p"][k] ** 2) * UM * UM
             rows.append(A)
             obs.append(w * w)
             wts.append(n)
@@ -227,12 +239,12 @@ def fit_surface(P, tables, sel=None, rotation=True, drop_facing=None):
         pred = A[:, used] @ r.x
     th = np.full(npar, np.nan)
     th[used] = r.x
-    bb = np.sqrt(th[nu + nv])
-    return {"R_u": np.sqrt(th[:nu]) / UM, "R_v": np.sqrt(th[nu:nu + nv]) / UM, "b": bb,
+    bb = np.sqrt(th[-1])
+    Ru, Rv = np.sqrt(th[:nu]) / UM, np.sqrt(th[nu + 1:nu + 1 + nv]) / UM
+    return {"R_u": np.where(keep_u, Ru, np.nan), "R_v": np.where(keep_v, Rv, np.nan), "b": bb,
             "B_prime": np.array([bb * np.sqrt(np.median(Q["g_phi"])), bb * np.sqrt(np.median(Q["g_2"]))]),
             "median_abs_max": float(np.max(np.abs(meds))) / UM,
-            "n_cells": len(rows), "n_pairs": int(sel.sum()),
-            "n_u": np.bincount(np.concatenate(bx), minlength=nu), "n_v": np.bincount(np.concatenate(by), minlength=nv)}
+            "n_cells": len(rows), "n_pairs": int(sel.sum()), "n_u": cnt_u, "n_v": cnt_v}
 
 
 def empty_fit(tables, sel):

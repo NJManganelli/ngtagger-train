@@ -436,3 +436,32 @@ def test_disc_import_exact_form():
     k0 = DA.knob(loc, tp, 0.0, T)
     assert np.array_equal(k0[T], tp[T]) and np.array_equal(k0[~T], loc[~T])
     assert np.allclose(DA.knob(loc, tp, 0.5, T)[T] - tp[T], 0.5 * (loc[T] - tp[T]))
+
+
+def test_overlap_fit_identifiability():
+    """C1b A6: the overlap fit recovers planted per-size-bin widths on synthetic disc-like pairs (rotated module
+    axes, a skewed size occupancy, p >= 10 GeV) and reports a sparse size bin as NaN instead of a forced value."""
+    import disc_r as DR
+    rng = np.random.default_rng(11)
+    n = 40000
+    tables = {"u": {"size_edges": [1, 2, 3, 4, 5, 99]}, "v": {"size_edges": [1, 2, 3, 5, 7, 9, 12, 99]}}
+    Ru = np.array([5.0, 2.5, 4.0, 7.0, 90.0]) * 1e-4
+    Rv = np.array([22.0, 13.0, 13.0, 14.0, 16.0, 18.0, 29.0]) * 1e-4
+    phi = rng.uniform(0, 2 * np.pi, n)
+    e_phi = np.stack([-np.sin(phi), np.cos(phi), 0 * phi], 1)
+    e_r = np.stack([np.cos(phi), np.sin(phi), 0 * phi], 1)
+    P = {"surface": np.full(n, 11), "ev": rng.integers(0, 200, n), "p": rng.uniform(10, 80, n), "eta": rng.uniform(1.3, 2.4, n),
+         "e_phi": e_phi, "e_2": e_r, "g_phi": np.full(n, 0.5), "g_2": np.full(n, 0.5)}
+    for j in ("1", "2"):
+        psi = np.radians(rng.normal(0, 6, n))
+        u = np.cos(psi)[:, None] * e_phi + np.sin(psi)[:, None] * e_r
+        v = -np.sin(psi)[:, None] * e_phi + np.cos(psi)[:, None] * e_r
+        sx = rng.choice([1, 2, 3], n, p=[0.807, 0.19, 0.003]).astype(float)      # size bin 2 is sparse
+        sy = rng.choice([1, 2], n, p=[0.75, 0.25]).astype(float)
+        P.update({f"ux{j}": u, f"vx{j}": v, f"sx{j}": sx, f"sy{j}": sy, f"cotA{j}": np.zeros(n), f"cotB{j}": np.zeros(n),
+                  f"facing{j}": np.ones(n, np.int8),
+                  f"du{j}": rng.standard_normal(n) * Ru[DR.size_bin(sx, tables["u"]["size_edges"])],
+                  f"dv{j}": rng.standard_normal(n) * Rv[DR.size_bin(sy, tables["v"]["size_edges"])]})
+    f = DR.fit_surface(P, tables)
+    assert np.allclose(f["R_u"][:2], Ru[:2], rtol=0.05) and np.allclose(f["R_v"][:2], Rv[:2], rtol=0.05)
+    assert np.isnan(f["R_u"][2]) and f["n_u"][2] < DR.MIN_PARAM
