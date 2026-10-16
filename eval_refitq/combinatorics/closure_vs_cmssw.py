@@ -142,18 +142,35 @@ def _same(a, b):
     return fa.dtype == fb.dtype and np.array_equal(_bits(fa), _bits(fb))
 
 
+def _event_order(t_a, t_b):
+    """The entries of tree t_a in the order of t_b's events (run, luminosity block, event): a multi-threaded
+    job writes its events in a scheduling-dependent order. None when the two hold different events."""
+    key = lambda t: list(zip(*(t[b].array(library="np").tolist() for b in ("run", "luminosityBlock", "event"))))
+    ka, kb = key(t_a), key(t_b)
+    if len(ka) != len(kb) or set(ka) != set(kb):
+        return None
+    pos = {k: i for i, k in enumerate(ka)}
+    return np.array([pos[k] for k in kb], np.int64)
+
+
 def bridge(v4, v3, nev=None, stub_shift=False):
     """Every branch of canon_v3 equal in canon_v4 except the declared ones; new branches only the declared.
-    The disc columns may differ on disc rows only. stub_shift (the bridge's known-bad): canon_v4's L1TOTStub
-    columns moved by one event."""
+    The events are compared by (run, lumi, event), whatever order each job wrote them in. The disc columns
+    may differ on disc rows only. stub_shift (the bridge's known-bad): canon_v4's L1TOTStub columns moved by
+    one event."""
     t4, t3 = uproot.open(f"{v4}:Events"), uproot.open(f"{v3}:Events")
+    order = _event_order(t4, t3)
+    if order is None:
+        return {"stage": "C0 bridge", "v4": v4, "v3": v3, "same_events": False,
+                "gates": {"bridge": False}}, False
+    order = order[:nev]
     k4, k3 = set(t4.keys()), set(t3.keys())
     missing = sorted(k3 - k4)
     new = sorted(k for k in k4 - k3 if not (k.startswith(BRIDGE_NEW_PREFIX) or k in BRIDGE_NEW))
     barrel = ak.to_numpy(ak.flatten(t3[BRIDGE_ROW_TYPE].array(library="ak", entry_stop=nev))) <= 4
     diff, declared, rounded_bad, disc_on_barrel = [], [], [], []
     for k in sorted(k3 & k4):
-        a = t4[k].array(library="ak", entry_stop=nev)
+        a = t4[k].array(library="ak")[order]
         b = t3[k].array(library="ak", entry_stop=nev)
         if stub_shift and k.startswith("L1TOTStub_"):
             a = ak.concatenate([a[1:], a[:1]])
@@ -173,7 +190,9 @@ def bridge(v4, v3, nev=None, stub_shift=False):
             diff.append(k)
     ok = not (missing or new or diff or rounded_bad or disc_on_barrel)
     tables = sorted({k.split("_")[0].lstrip("n") for k in diff + rounded_bad + disc_on_barrel})
-    return {"stage": "C0 bridge", "v4": v4, "v3": v3, "stub_shift": stub_shift, "branches_common": len(k3 & k4),
+    return {"stage": "C0 bridge", "v4": v4, "v3": v3, "same_events": True,
+            "same_event_order": bool(np.array_equal(order, np.arange(len(order)))),
+            "stub_shift": stub_shift, "branches_common": len(k3 & k4),
             "missing_in_v4": missing, "undeclared_new": new, "undeclared_differences": diff,
             "disc_columns_differing_on_barrel_rows": disc_on_barrel, "tables_differing": tables,
             "declared_differences": declared, "rounded_columns_not_equal": rounded_bad,
@@ -181,14 +200,21 @@ def bridge(v4, v3, nev=None, stub_shift=False):
 
 
 def twice(f1, f2, nev=None):
-    """Run-twice determinism: every branch bit identical."""
+    """Run-twice determinism: every branch bit identical, event by event (the order the jobs wrote their
+    events in may differ; it is reported)."""
     t1, t2 = uproot.open(f"{f1}:Events"), uproot.open(f"{f2}:Events")
+    order = _event_order(t1, t2)
+    if order is None:
+        return {"stage": "C0 run twice", "files": [f1, f2], "same_events": False,
+                "gates": {"determinism": False}}, False
+    order = order[:nev]
     k1, k2 = set(t1.keys()), set(t2.keys())
     diff = [k for k in sorted(k1 & k2)
-            if not _same(t1[k].array(library="ak", entry_stop=nev), t2[k].array(library="ak", entry_stop=nev))]
+            if not _same(t1[k].array(library="ak")[order], t2[k].array(library="ak", entry_stop=nev))]
     ok = k1 == k2 and not diff
-    return {"stage": "C0 run twice", "files": [f1, f2], "branch_sets_equal": k1 == k2, "differences": diff,
-            "gates": {"determinism": ok}}, ok
+    return {"stage": "C0 run twice", "files": [f1, f2], "same_events": True,
+            "same_event_order": bool(np.array_equal(order, np.arange(len(order)))), "branch_sets_equal": k1 == k2,
+            "differences": diff, "gates": {"determinism": ok}}, ok
 
 
 # ---- the per-track records, one rule for both sides ---------------------------------------------------
