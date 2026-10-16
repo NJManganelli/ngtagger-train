@@ -1,49 +1,62 @@
-"""C1b: the disc position errors from same-surface module overlaps (c1b/PLAN.md rev 4 §1 item 2).
+"""C1b: the disc position errors from same-surface module overlaps (c1b/PLAN.md rev 4 §1 item 2, §8 A1, A2, A6, A8, A10).
 
-A particle crossing two overlapping modules of one surface leaves two own class-T clusters. Each cluster's
-truth residual (measured position minus the TP's production helix on its own module) carries the cluster
-error plus the scattering offset from the vertex to the surface; mapped to global through each module's
-local axes and differenced, the common scattering offset cancels and
+A particle crossing two overlapping modules of one surface leaves two own class-T clusters. Each cluster's truth
+residual (measured position minus the TP's production helix on its own module) carries the cluster error plus the
+scattering offset from the vertex to the surface. Mapped to global through each module's local axes and differenced,
+the common offset cancels and, along d in (e_phi, e_2) (e_2 = e_r on a disc, z on a barrel layer),
 
-    var(D_d) = sum_i [(d.u_i)^2 R_u(bX_i)^2 + (d.v_i)^2 R_v(bY_i)^2] + b^2 g_d / p^2,   d in (e_phi, e_2),
+    D_d = sum_j s_j [(d.u_j) x_u,j + (d.v_j) x_v,j] + leftover,      s_1 = +1, s_2 = -1,
 
-with u_i, v_i the modules' local axes (a disc module's u is 1-10 deg from e_phi, so R_v leaks into the
-e_phi difference unless the rotation is in the model), e_2 = e_r on a disc and z on a barrel layer, and
-b^2 g_d / p^2 the small leftover scattering between the two clusters: g_d is the pair's own geometric
-factor (the path between the two module planes squared, the module's path factor for the thickness, and
-the in-plane projection of the kink for direction d; it carries the eta dependence), b one scale per
-surface. The fit is linear in (R_u^2 per size-X bin, R_v^2 per size-Y bin, b^2), one surface at a time;
-each cell (direction, size-bin pair, p bin, eta slice, rotation bin) contributes its
-robust width (MAD / 0.6745 about the cell's own median, v3's estimator) against the cell mean of the
-pairs' coefficients. Errors: event bootstrap. Checks: the toy closure in the real pair geometry (T0), the
-IL1 closure against the same clusters' truth-residual widths (D0), the disc ratio to v3's R at the pairs'
-own (size, |cot|) cells (D2), the same- vs opposite-facing agreement and the effective leftover
-B'_d = b sqrt(median g_d) < 0.02 cm GeV.
+with x_u,j, x_v,j the cluster's local residuals (a disc module's u is 1-10 deg from e_phi, so the rotation mixes u and
+v) and the leftover the scattering between the two clusters, a Gaussian of variance b^2 g_d / p^2 (A1: g_d the pair's
+own geometric factor, b one scale per surface).
+
+A8: per size bin and axis the single-cluster residual is a symmetric core-plus-tail shape about a centre mu (the
+module-local offset, which enters through the signed projections): a two-Gaussian mixture (core s, tail fraction eps,
+tail width kappa s), and as the systematic family a Student-t written as a 4-node Gaussian scale mixture. With a
+cluster's u and v independent, D_d is a Gaussian mixture (16 components for the two-Gaussian family), so the likelihood
+is exact, and a pair whose clusters sit in different size bins gets the convolution of the two shapes. One unbinned
+likelihood per surface (composite over the two directions) fits every bin's shape and b; sparse bins (fewer than
+MIN_PARAM clusters) share one shape per axis and are reported NaN (A6). The table width is read off each fitted single
+shape with v3's definition, MAD / 0.6745 about the median. Errors: the event bootstrap (weighted refits).
+
+IL1 is the method check only (D0): the same fit on IL1's pairs against IL1's single-cluster truth width where the
+beam pipe's scattering is negligible (the plateau rule), reweighted to the pairs' |cot| mix. The truth residual of an
+IL1 cluster carries the beam pipe's Highland scattering (beam_pipe_sigma), which the plateau rule keeps out.
 """
 from __future__ import annotations
 
+import jax
+import jax.numpy as jnp
 import numpy as np
-from scipy.optimize import lsq_linear
+from scipy import optimize, special, stats
 
 from common import OP, ORP
 from ngtagger.spdefs import angles as SA
 
+jax.config.update("jax_enable_x64", True)
+
 MAD_K = 0.6745
-UM = 1e4                                            # cm -> um
-P_EDGES = {"disc": (10.0, 15.0, 20.0, 30.0, 50.0, np.inf),   # GeV, the cells' momentum bins; below the first edge
-           "barrel": (2.0, 3.0, 5.0, 10.0, 20.0, np.inf)}    # not used (A2 on the discs; A6 on IL1: its overlapping
-                                                              # ladders are ~0.3 cm apart, not 1.9 cm, so the leftover
-                                                              # term at 2 GeV is below the disc's at 10 GeV)
-MIN_PARAM = 400                                     # clusters (after the p cut) a size bin needs to be fitted on its
-                                                    # own; sparser bins share one parameter per axis, reported NaN (A6)
+UM = 1e4                                            # cm -> um: the fit runs in um
+P_MIN = {"disc": 10.0, "barrel": 2.0}               # GeV: A2 on the discs; A6 on IL1 (its overlapping ladders are a
+                                                    # few mm apart, so its leftover at 2 GeV is below a disc's at 10)
+MIN_PARAM = 400                                     # clusters (after the p cut) a size bin needs for its own shape (A6)
 OVERLAP_MAX_CM = 0.1                                # a geometric overlap: each cluster within 1 mm of its helix
                                                     # crossing, and the two residuals within 1 mm of each other
 PT_MIN, D0_MAX_CM = 2.0, 0.005
 B_PRIME_MAX = 0.02                                  # cm GeV: a 1.9 cm lever arm gives ~0.003-0.006
-MIN_CELL = 20                                       # pairs per cell for a robust width
-IRLS_ITER = 4                                       # reweighting passes: the weights use the model's variance
-ROT_EDGES = (0.005, 0.02)                           # cells' rotation bins on the summed cross-axis coefficient
-                                                    # (sin^2 of 4 and 8 deg): similar variances within a cell
+# the shapes (A8)
+EPS_MAX, KAPPA_MAX = 0.5, 30.0                      # the two-Gaussian family: tail fraction, tail / core width
+NU_MIN, NU_MAX = 1.5, 60.0                          # the Student-t family's degrees of freedom
+T_Q = (0.125, 0.375, 0.625, 0.875)                  # its 4 equal-weight nodes: quantiles of the Gamma(nu/2, nu/2) precision
+_LOGNU = np.linspace(np.log(NU_MIN), np.log(NU_MAX), 400)
+_T_LAM = np.array([[stats.gamma.ppf(q, a=np.exp(x) / 2, scale=2 / np.exp(x)) for q in T_Q] for x in _LOGNU])
+FAMILIES = {"mix2": 4, "t": 3}                      # parameters per size bin: (log s, eps, kappa, mu) / (log s, nu, mu)
+# the beam pipe (A8): D121's central beryllium tube (Geometry/CMSCommonData beampipe/2030/v3: r 2.17-2.25 cm, 0.8 mm;
+# X0(Be) = 35.28 cm); tkLayout's is 0.228 % X0 at r = 2.3 cm (arms.BEAM_PIPE)
+BEAM_PIPE_R_CM = 0.5 * (2.17 + 2.25)
+BEAM_PIPE_X0 = 0.08 / 35.28
+HIGHLAND_GEV = 0.0136
 
 
 def size_bin(size, edges):
@@ -57,25 +70,49 @@ def v3_width(tables, axis, size, cot):
     return W[size_bin(size, t["size_edges"]), size_bin(np.abs(cot), t["cot_edges"])]
 
 
-# ------------------------------------------------------------------ pairs
-def pairs_of_chunk(ctx, geo, surfaces, start=0):
-    """Overlap pairs of one chunk: per (TP, surface), the own class-T cluster nearest the TP's helix on each
-    module; every two modules of the same surface whose clusters pass the overlap test form a pair.
-    Returns per pair: surface, ev, p, eta, sizes, |truth cot| per cluster, the local residuals (du, dv),
-    each module's axes in the surface plane, the common directions and the facings."""
+def wquantile(x, w, q):
+    """The weighted q quantile (midpoint interpolation: the ordinary median for equal weights)."""
+    o = np.argsort(x)
+    x, w = x[o], w[o]
+    c = np.cumsum(w)
+    if not len(x) or c[-1] <= 0:
+        return np.nan
+    return float(np.interp(q * c[-1], c - 0.5 * w, x))
+
+
+def wmad_width(x, w=None):
+    """v3's robust width: MAD / 0.6745 about the median (weighted)."""
+    w = np.ones(len(x)) if w is None else np.asarray(w, np.float64)
+    m = wquantile(x, w, 0.5)
+    return wquantile(np.abs(x - m), w, 0.5) / MAD_K
+
+
+def beam_pipe_sigma(p, eta, r, cot_a, cot_b):
+    """The Highland scattering offset (cm) the beam pipe puts on a prompt track's truth residual at radius r, per
+    local axis: theta0 over the path from the pipe to the cluster, mapped onto the module plane (a perpendicular
+    offset delta lands at delta sqrt(1 + cot^2) along the axis)."""
+    x = BEAM_PIPE_X0 * np.cosh(eta)
+    th = HIGHLAND_GEV / p * np.sqrt(x) * (1.0 + 0.038 * np.log(x))
+    L = np.maximum(r - BEAM_PIPE_R_CM, 0.0) * np.cosh(eta)
+    return th * L * np.sqrt(1.0 + cot_a ** 2), th * L * np.sqrt(1.0 + cot_b ** 2)
+
+
+# ------------------------------------------------------------------ clusters and pairs
+def own_clusters(ctx, geo, surfaces):
+    """Per (TP, module) on the surfaces: the own class-T cluster nearest the TP's production helix (prompt TPs, pT >= 2
+    GeV, |d0| < 50 um), within 1 mm of it. Returns the cluster index, TP, module, surface, local residuals (du, dv)
+    and the TP's local cots on the module."""
     K, TP = ctx["K"], ctx["TP"]
     kpt = ORP.pt_constant(ctx["T"])
     mi, tp = K["mi"], K["tp_global"]
     ok = (mi >= 0) & (tp >= 0) & SA.class_T(K["tpEmuClass"])
     ok &= np.isin(geo["surface"][np.maximum(mi, 0)], surfaces)
     tpr = np.where(ok, tp, 0)
-    pt, d0 = TP["pt"][tpr], TP["d0"][tpr]
-    ok &= (pt >= PT_MIN) & (np.abs(d0) < D0_MAX_CM)
+    ok &= (TP["pt"][tpr] >= PT_MIN) & (np.abs(TP["d0"][tpr]) < D0_MAX_CM)
     ci = np.flatnonzero(ok)
     if not len(ci):
         return None
-    t = tp[ci]
-    m = mi[ci]
+    t, m = tp[ci], mi[ci]
     S = geo["surface"][m]
     at = np.stack([TP["charge"][t] * kpt / TP["pt"][t], TP["phi0"][t], np.sinh(TP["eta"][t]), TP["z0"][t],
                    TP["d0"][t]], 1)
@@ -88,14 +125,40 @@ def pairs_of_chunk(ctx, geo, surfaces, start=0):
     dv = K["localY"][ci] - pj["v"]
     good = pj["ok"] & (np.hypot(du, dv) < OVERLAP_MAX_CM)
     ci, t, m, S, du, dv = ci[good], t[good], m[good], S[good], du[good], dv[good]
-    cotA, cotB = K["tpLocalCotAlpha"][ci], K["tpLocalCotBeta"][ci]
-    # one cluster per (TP, module): the one nearest the helix
     d = np.hypot(du, dv)
     o = np.lexsort((d, m, t))
     first = np.r_[True, (t[o][1:] != t[o][:-1]) | (m[o][1:] != m[o][:-1])]
     o = o[first]
-    ci, t, m, S, du, dv, cotA, cotB = ci[o], t[o], m[o], S[o], du[o], dv[o], cotA[o], cotB[o]
-    # pairs: same TP and surface, different modules
+    return {"ci": ci[o], "t": t[o], "m": m[o], "S": S[o], "du": du[o], "dv": dv[o],
+            "cotA": K["tpLocalCotAlpha"][ci[o]], "cotB": K["tpLocalCotBeta"][ci[o]]}
+
+
+def clusters_of_chunk(ctx, geo, surface, start=0):
+    """The own clusters of one surface with their truth residuals, for the truth width against p (IL1, A8): ev, p,
+    pT, eta, sizes, the TP's local cots, (du, dv), the transverse radius and the beam pipe's expected offsets."""
+    C = own_clusters(ctx, geo, [surface])
+    if C is None:
+        return None
+    K, TP, t, m = ctx["K"], ctx["TP"], C["t"], C["m"]
+    pos = geo["origin"][m] + C["du"][:, None] * geo["ex"][m] + C["dv"][:, None] * geo["ey"][m]
+    r = np.hypot(pos[:, 0], pos[:, 1])
+    p = TP["pt"][t] * np.cosh(TP["eta"][t])
+    bu, bv = beam_pipe_sigma(p, TP["eta"][t], r, C["cotA"], C["cotB"])
+    return {"ev": K["event"][C["ci"]].astype(np.int64) + start, "p": p, "pt": TP["pt"][t], "eta": TP["eta"][t],
+            "sx": K["sizeX"][C["ci"]].astype(np.float64), "sy": K["sizeY"][C["ci"]].astype(np.float64),
+            "cotA": C["cotA"], "cotB": C["cotB"], "du": C["du"], "dv": C["dv"], "r": r, "bp_u": bu, "bp_v": bv}
+
+
+def pairs_of_chunk(ctx, geo, surfaces, start=0):
+    """Overlap pairs of one chunk: every two modules of the same surface whose own clusters (own_clusters) of one TP
+    pass the overlap test form a pair. Returns per pair: surface, ev, p, eta, sizes, |truth cot| per cluster, the
+    local residuals (du, dv), each module's axes in the surface plane, the common directions, the leftover's
+    geometric factors and the facings."""
+    C = own_clusters(ctx, geo, surfaces)
+    if C is None:
+        return None
+    K, TP = ctx["K"], ctx["TP"]
+    ci, t, m, S, du, dv, cotA, cotB = (C[k] for k in ("ci", "t", "m", "S", "du", "dv", "cotA", "cotB"))
     key = t * 64 + S
     o = np.argsort(key, kind="stable")
     key_o = key[o]
@@ -124,13 +187,13 @@ def pairs_of_chunk(ctx, geo, surfaces, start=0):
                    np.tile([0.0, 0.0, 1.0], (len(phi), 1)))
     D = g1 - g2
     keep = (np.abs((D * e_phi).sum(1)) < OVERLAP_MAX_CM) & (np.abs((D * e_2).sum(1)) < OVERLAP_MAX_CM)
-    i1, i2, g1, g2, e_phi, e_2 = i1[keep], i2[keep], g1[keep], g2[keep], e_phi[keep], e_2[keep]
+    i1, i2, e_phi, e_2 = i1[keep], i2[keep], e_phi[keep], e_2[keep]
     gpos = [geo["origin"][m[ii]] + K["localX"][ci[ii], None] * geo["ex"][m[ii]]
             + K["localY"][ci[ii], None] * geo["ey"][m[ii]] for ii in (i1, i2)]
     tl = np.abs(np.sinh(TP["eta"][t[i1]]))
     sec = np.sqrt(1.0 + tl * tl)
     # the leftover scattering's geometric factor per direction: path between the two module planes L, the
-    # module's thickness path factor, the in-plane projection of a kink (PLAN rev 4 amendment A1)
+    # module's thickness path factor, the in-plane projection of a kink (A1)
     disc_ = disc[keep]
     dz = np.abs(gpos[0][:, 2] - gpos[1][:, 2])
     dr = np.abs(np.hypot(gpos[0][:, 0], gpos[0][:, 1]) - np.hypot(gpos[1][:, 0], gpos[1][:, 1]))
@@ -150,136 +213,262 @@ def pairs_of_chunk(ctx, geo, surfaces, start=0):
     return out
 
 
-# ------------------------------------------------------------------ the fit
-def differences(P, rotation=True, drop_facing=None):
-    """(D_phi, D_2) per pair and the design coefficients: the projections of each cluster's local axes on the
-    two directions. rotation=False: the no-rotation known-bad (u on e_phi and v on e_2 exactly, no mixing).
-    drop_facing = +-1: the known-bad with that facing's u sign dropped (its u axis flipped)."""
+def differences(P, rotation=True, drop_facing=None, du=None, dv=None):
+    """(D_phi, D_2) per pair (cm) and the signed projections of each cluster's local axes on the two directions,
+    co[(d, axis, j)], cluster 2's with its minus sign. rotation=False: the no-rotation known-bad (u on e_phi and v
+    on e_2 exactly, with the facing's sign, no mixing). drop_facing = +-1: the known-bad with that facing's u sign
+    dropped. du, dv: {"1": ..., "2": ...} residuals replacing the pairs' own (the toys)."""
     co = {}
     G = []
-    for j in ("1", "2"):
+    for j, sg in (("1", 1.0), ("2", -1.0)):
         ux, vx = P[f"ux{j}"].copy(), P[f"vx{j}"]
         if drop_facing is not None:
             ux = np.where((P[f"facing{j}"] == drop_facing)[:, None], -ux, ux)
-        G.append(P[f"du{j}"][:, None] * ux + P[f"dv{j}"][:, None] * vx)
+        xu = P[f"du{j}"] if du is None else du[j]
+        xv = P[f"dv{j}"] if dv is None else dv[j]
+        G.append(xu[:, None] * ux + xv[:, None] * vx)
         for d, e in (("phi", P["e_phi"]), ("2", P["e_2"])):
-            if rotation:
-                co[(d, "u", j)], co[(d, "v", j)] = (ux * e).sum(1) ** 2, (vx * e).sum(1) ** 2
-            else:
-                co[(d, "u", j)] = np.full(len(e), 1.0 if d == "phi" else 0.0)
-                co[(d, "v", j)] = np.full(len(e), 0.0 if d == "phi" else 1.0)
+            pu, pv = (ux * e).sum(1), (vx * e).sum(1)
+            if not rotation:
+                pu = np.sign(pu) if d == "phi" else np.zeros_like(pu)
+                pv = np.zeros_like(pv) if d == "phi" else np.sign(pv)
+            co[(d, "u", j)], co[(d, "v", j)] = sg * pu, sg * pv
     D = G[0] - G[1]
     return {"phi": (D * P["e_phi"]).sum(1), "2": (D * P["e_2"]).sum(1)}, co
 
 
-def fit_surface(P, tables, sel=None, rotation=True, drop_facing=None):
-    """The joint u-v fit on one surface's pairs (sel). Returns R_u per size-X bin, R_v per size-Y bin (cm; NaN for
-    a sparse bin, A6), the leftover scale b and the effective B' per direction (cm GeV), the largest cell median,
-    the cells used, the clusters per size bin after the p cut."""
-    if sel is None:
-        sel = np.ones(len(P["p"]), bool)
-    edges = P_EDGES["disc" if OP.SPN.is_disc_surface(int(P["surface"][sel][0])) else "barrel"] if sel.any() else P_EDGES["disc"]
-    sel = sel & (P["p"] >= edges[0])                 # low-p pairs: the leftover scattering spreads within a cell
-    Q = {k: v[sel] for k, v in P.items()}
-    if not len(Q["p"]):
-        return empty_fit(tables, sel)
-    eu, ev_ = tables["u"]["size_edges"], tables["v"]["size_edges"]
-    nu, nv = len(eu) - 1, len(ev_) - 1
-    bx = [size_bin(Q[f"sx{j}"], eu) for j in ("1", "2")]
-    by = [size_bin(Q[f"sy{j}"], ev_) for j in ("1", "2")]
-    # A6: a size bin with fewer than MIN_PARAM clusters is not identifiable on its own; it shares one "sparse"
-    # parameter per axis with the other sparse bins (index n) and is reported NaN
-    def pooled(b, n):
-        cnt = np.bincount(np.concatenate(b), minlength=n)
-        keep = cnt >= MIN_PARAM
-        return [np.where(keep[x], x, n) for x in b], keep, cnt
-    bx, keep_u, cnt_u = pooled(bx, nu)
-    by, keep_v, cnt_v = pooled(by, nv)
-    pb = np.clip(np.searchsorted(edges, Q["p"], side="right") - 1, 0, len(edges) - 2)
-    Dv, co = differences(Q, rotation, drop_facing)
-    Dv = {d: x * UM for d, x in Dv.items()}                       # the fit runs in um (well-scaled parameters)
-    npar = (nu + 1) + (nv + 1) + 1                                  # + the sparse parameter per axis
-    rows, obs, wts, meds = [], [], [], []
-    for di, d in enumerate(("phi", "2")):
-        dom = (bx if d == "phi" else by)
-        lo, hi = np.minimum(dom[0], dom[1]), np.maximum(dom[0], dom[1])
-        other = "v" if d == "phi" else "u"
-        leak = co[(d, other, "1")] + co[(d, other, "2")]          # the rotation's cross-axis coefficient
-        rb = np.searchsorted(ROT_EDGES, leak, side="right")
-        cell = ((lo * 16 + hi) * 8 + pb) * 8 + rb
-        for c in np.unique(cell):
-            k = cell == c
-            n = int(k.sum())
-            if n < MIN_CELL:
-                continue
-            x = Dv[d][k]
-            med = np.median(x)
-            w = np.median(np.abs(x - med)) / MAD_K * n / (n - 0.8)      # the small-sample MAD factor
-            if not w > 0:
-                continue
-            A = np.zeros(npar)
-            for j, jj in enumerate(("1", "2")):
-                np.add.at(A, bx[j][k], co[(d, "u", jj)][k] / n)
-                np.add.at(A, nu + 1 + by[j][k], co[(d, "v", jj)][k] / n)
-            A[-1] = np.mean(Q[f"g_{d}"][k] / Q["p"][k] ** 2) * UM * UM
-            rows.append(A)
-            obs.append(w * w)
-            wts.append(n)
-            meds.append(med)
-    if not rows:
-        return empty_fit(tables, sel)
-    A, y, n_c = np.array(rows), np.array(obs), np.array(wts, np.float64)
-    used = A.any(0)
-    # sd(w^2) ~ model variance / sqrt(n): weighting by the observed w^2 would bias the widths low, so the
-    # weights use the fitted model's variance, iterated from equal relative weights
-    pred = y.copy()
-    for _ in range(IRLS_ITER):
-        W = np.sqrt(n_c) / np.maximum(pred, 1e-6 * np.median(y))
-        r = lsq_linear(A[:, used] * W[:, None], y * W, bounds=(0, np.inf))
-        pred = A[:, used] @ r.x
-    th = np.full(npar, np.nan)
-    th[used] = r.x
-    bb = np.sqrt(th[-1])
-    Ru, Rv = np.sqrt(th[:nu]) / UM, np.sqrt(th[nu + 1:nu + 1 + nv]) / UM
-    return {"R_u": np.where(keep_u, Ru, np.nan), "R_v": np.where(keep_v, Rv, np.nan), "b": bb,
-            "B_prime": np.array([bb * np.sqrt(np.median(Q["g_phi"])), bb * np.sqrt(np.median(Q["g_2"]))]),
-            "median_abs_max": float(np.max(np.abs(meds))) / UM,
-            "n_cells": len(rows), "n_pairs": int(sel.sum()), "n_u": cnt_u, "n_v": cnt_v}
+# ------------------------------------------------------------------ the shape model (A8)
+def _components(family, par):
+    """Per size bin (rows of par): the single shape's Gaussian components (weights, variances in um^2) and centre."""
+    s = jnp.exp(par[:, 0])
+    if family == "mix2":
+        eps = EPS_MAX * jax.nn.sigmoid(par[:, 1])
+        kap = 1.0 + (KAPPA_MAX - 1.0) * jax.nn.sigmoid(par[:, 2])
+        return jnp.stack([1.0 - eps, eps], 1), jnp.stack([s * s, (kap * s) ** 2], 1), par[:, 3]
+    lnu = np.log(NU_MIN) + (np.log(NU_MAX) - np.log(NU_MIN)) * jax.nn.sigmoid(par[:, 1])
+    lam = jnp.stack([jnp.interp(lnu, _LOGNU, _T_LAM[:, k]) for k in range(len(T_Q))], 1)
+    return jnp.full(lam.shape, 1.0 / len(T_Q)), (s * s)[:, None] / lam, par[:, 2]
 
 
-def empty_fit(tables, sel):
-    """A fit with nothing constrained (no cell with enough pairs): NaN widths."""
-    nu, nv = len(tables["u"]["size_edges"]) - 1, len(tables["v"]["size_edges"]) - 1
-    return {"R_u": np.full(nu, np.nan), "R_v": np.full(nv, np.nan), "b": np.nan, "B_prime": np.full(2, np.nan),
-            "median_abs_max": np.nan, "n_cells": 0, "n_pairs": int(np.sum(sel)), "n_u": np.zeros(nu, int),
-            "n_v": np.zeros(nv, int)}
+def _nll(theta, family, nbu, nbv, D, A, bins, lo, w, fixed_lb):
+    """Minus the weighted log-likelihood of the pair differences (composite over the two directions)."""
+    k = FAMILIES[family]
+    pu = theta[:nbu * k].reshape(nbu, k)
+    pv = theta[nbu * k:(nbu + nbv) * k].reshape(nbv, k)
+    lb = theta[-1] if fixed_lb is None else fixed_lb
+    comp = {"u": _components(family, pu), "v": _components(family, pv)}
+    terms = (("u", 0), ("v", 1), ("u", 2), ("v", 3))               # (u1, v1, u2, v2): bins[t], A[d, t]
+    total = 0.0
+    n = D.shape[1]
+    for d in range(2):
+        mean = 0.0
+        logw = jnp.zeros((n, 1))
+        var = (jnp.exp(2.0 * lb) * lo[d])[:, None]
+        for ax, tt in terms:
+            cw, cv, mu = comp[ax]
+            ib, a = bins[tt], A[d, tt]
+            mean = mean + a * mu[ib]
+            logw = (logw[:, :, None] + jnp.log(cw[ib])[:, None, :]).reshape(n, -1)
+            var = (var[:, :, None] + (a * a)[:, None, None] * cv[ib][:, None, :]).reshape(n, -1)
+        var = var + 1e-6
+        r2 = (D[d] - mean) ** 2
+        lp = jax.scipy.special.logsumexp(logw - 0.5 * jnp.log(2.0 * np.pi * var) - 0.5 * r2[:, None] / var, axis=1)
+        total = total + jnp.sum(w * lp)
+    return -total
 
 
-def bootstrap(P, tables, surface, reps, rotation=True, drop_facing=None):
-    """The fit on one surface and its event-bootstrap replicas (rep: (n_rep, nev) multinomial weights)."""
-    base = P["surface"] == surface
-    out = [fit_surface(P, tables, base, rotation, drop_facing)]
-    ev = P["ev"].astype(np.int64)
-    for w in reps:
-        k = np.repeat(np.flatnonzero(base), w[ev[base]])
-        Q = {kk: v[k] for kk, v in P.items()}
-        out.append(fit_surface(Q, tables, None, rotation, drop_facing))
-    return out
+_VG = jax.jit(jax.value_and_grad(_nll), static_argnums=(1, 2, 3))
+
+
+def single_width(family, par):
+    """MAD / 0.6745 (um) of each size bin's fitted single shape (par rows), solved on the mixture's distribution
+    function: sum_k w_k (2 Phi(m / sigma_k) - 1) = 1/2."""
+    cw, cv, _ = (np.asarray(x) for x in _components(family, jnp.asarray(par)))
+    sd = np.sqrt(cv)
+    lo, hi = np.zeros(len(par)), 10.0 * sd.max(1)
+    for _ in range(80):
+        m = 0.5 * (lo + hi)
+        f = np.sum(cw * (2.0 * stats.norm.cdf(m[:, None] / sd) - 1.0), 1) - 0.5
+        lo, hi = np.where(f < 0, m, lo), np.where(f < 0, hi, m)
+    return 0.5 * (lo + hi) / MAD_K
+
+
+class ShapeFit:
+    """One surface's pairs (sel, after the surface's p cut) ready for repeated unbinned fits of the single-cluster
+    shapes: bootstrap weights, toy residuals, a fixed leftover scale. family: "mix2" (the model) or "t" (the
+    systematic)."""
+
+    def __init__(self, P, tables, sel, family="mix2", rotation=True, drop_facing=None):
+        self.family = family
+        disc = OP.SPN.is_disc_surface(int(P["surface"][sel][0]))
+        sel = sel & (P["p"] >= P_MIN["disc" if disc else "barrel"])
+        self.idx = np.flatnonzero(sel)
+        self.Q = Q = {k: v[sel] for k, v in P.items()}
+        self.rotation, self.drop_facing = rotation, drop_facing
+        self.edges = {"u": tables["u"]["size_edges"], "v": tables["v"]["size_edges"]}
+        self.raw, self.cnt, self.own, self.par_bin = {}, {}, {}, {}
+        for ax, sk in (("u", "sx"), ("v", "sy")):
+            e = self.edges[ax]
+            nb = len(e) - 1
+            raw = [size_bin(Q[f"{sk}{j}"], e) for j in ("1", "2")]
+            cnt = np.bincount(np.concatenate(raw), minlength=nb)
+            own = cnt >= MIN_PARAM                       # A6: a bin with fewer clusters shares the sparse shape
+            pooled = [np.where(own[b], b, nb) for b in raw]
+            used = np.unique(np.concatenate(pooled))
+            remap = np.full(nb + 1, -1)
+            remap[used] = np.arange(len(used))
+            self.raw[ax], self.cnt[ax], self.own[ax] = raw, cnt, own
+            self.par_bin[ax] = used                      # raw bin (nb = the sparse shape) of each parameter row
+            pooled = [remap[b] for b in pooled]
+            setattr(self, f"_b{ax}", pooled)
+        self.nbu, self.nbv = len(self.par_bin["u"]), len(self.par_bin["v"])
+        self.bins = jnp.asarray(np.stack([self._bu[0], self._bv[0], self._bu[1], self._bv[1]]))
+        D, co = differences(Q, rotation, drop_facing)
+        self.D = self._D(D)
+        self.A = jnp.asarray(np.stack([np.stack([co[(d, "u", "1")], co[(d, "v", "1")], co[(d, "u", "2")],
+                                                 co[(d, "v", "2")]]) for d in ("phi", "2")]))
+        self.lo = jnp.asarray(np.stack([Q["g_phi"], Q["g_2"]]) / Q["p"] ** 2 * UM * UM)
+        self.n = len(self.idx)
+
+    @staticmethod
+    def _D(D):
+        return jnp.asarray(np.stack([D["phi"], D["2"]]) * UM)
+
+    def start(self, widths=None):
+        """Starting parameters: each bin's core at its width (um; default 5 um in u, 20 in v), a 10 % tail of 3x."""
+        rows = []
+        for ax in ("u", "v"):
+            for rb in self.par_bin[ax]:
+                s = (widths[ax][rb] if widths is not None and rb < len(widths[ax]) and np.isfinite(widths[ax][rb])
+                     else (5.0 if ax == "u" else 20.0))
+                rows.append([np.log(s), special.logit(0.1 / EPS_MAX), special.logit(2.0 / (KAPPA_MAX - 1.0)), 0.0]
+                            if self.family == "mix2" else
+                            [np.log(s), special.logit((np.log(5.0) - np.log(NU_MIN)) / (np.log(NU_MAX) - np.log(NU_MIN))),
+                             0.0])
+        return np.concatenate([np.concatenate(rows), [np.log(0.01)]])
+
+    def fit(self, weights=None, theta0=None, D=None, fixed_b=None, start_widths=None):
+        """One maximum-likelihood fit. weights: per pair (the bootstrap); D: replacement differences (the toys);
+        fixed_b: the leftover scale held fixed. Returns the result dict (widths in cm, NaN for sparse bins)."""
+        w = jnp.ones(self.n) if weights is None else jnp.asarray(weights, jnp.float64)
+        Dj = self.D if D is None else D
+        th0 = self.start(start_widths) if theta0 is None else np.asarray(theta0, np.float64)
+        flb = None if fixed_b is None else float(np.log(max(fixed_b, 1e-12)))
+        if flb is not None:
+            th0 = th0[:-1]
+        args = (self.family, self.nbu, self.nbv, Dj, self.A, self.bins, self.lo, w, flb)
+
+        def fun(th):
+            v, g = _VG(jnp.asarray(th if flb is None else np.r_[th, 0.0]), *args)
+            g = np.asarray(g, np.float64)
+            return float(v), (g if flb is None else g[:-1])
+
+        r = optimize.minimize(fun, th0, jac=True, method="L-BFGS-B", options={"maxiter": 3000, "maxfun": 6000})
+        th = r.x if flb is None else np.r_[r.x, flb]
+        return self.result(th, r)
+
+    def result(self, th, r=None):
+        k = FAMILIES[self.family]
+        out = {"theta": th, "converged": bool(r.success) if r is not None else None,
+               "nll": float(r.fun) if r is not None else None, "n_pairs": self.n}
+        off = 0
+        for ax, nb in (("u", self.nbu), ("v", self.nbv)):
+            par = th[off * k:(off + nb) * k].reshape(nb, k)
+            off += nb
+            W = single_width(self.family, par) / UM
+            cw, cv, mu = (np.asarray(x) for x in _components(self.family, jnp.asarray(par)))
+            nraw = len(self.edges[ax]) - 1
+            R = np.full(nraw, np.nan)
+            shape = {"s": np.full(nraw, np.nan), "mu": np.full(nraw, np.nan),
+                     ("eps" if self.family == "mix2" else "nu"): np.full(nraw, np.nan)}
+            if self.family == "mix2":
+                shape["kappa"] = np.full(nraw, np.nan)
+            sparse = None
+            for i, rb in enumerate(self.par_bin[ax]):
+                e = {"R": W[i], "s": np.sqrt(cv[i, 0]) / UM if self.family == "mix2" else np.exp(par[i, 0]) / UM,
+                     "mu": mu[i] / UM}
+                if self.family == "mix2":
+                    e["eps"], e["kappa"] = cw[i, 1], np.sqrt(cv[i, 1] / cv[i, 0])
+                else:
+                    e["nu"] = float(np.exp(np.log(NU_MIN) + (np.log(NU_MAX) - np.log(NU_MIN))
+                                           * special.expit(par[i, 1])))
+                if rb == nraw:
+                    sparse = e
+                    continue
+                R[rb] = e["R"]
+                for kk in shape:
+                    shape[kk][rb] = e[kk]
+            out[f"R_{ax}"], out[f"shape_{ax}"], out[f"sparse_{ax}"], out[f"n_{ax}"] = R, shape, sparse, self.cnt[ax]
+        b = float(np.exp(th[-1]))
+        out["b"] = b
+        out["B_prime"] = np.array([b * np.sqrt(np.median(self.Q["g_phi"])), b * np.sqrt(np.median(self.Q["g_2"]))])
+        return out
+
+    # -------------------------------------------------------------- toys (T0)
+    def toy_D(self, planted, shape, rng, b_common=0.1, b_prime=0.004):
+        """Toy differences on these pairs: each cluster's residual drawn from the planted shape ("mix2": eps 0.15,
+        kappa 4; "t3": Student-t, nu 3) scaled to the planted width per raw size bin (cm, MAD / 0.6745), plus a
+        common scattering offset (b_common / p, cancels) and the leftover with the pairs' own geometric factors
+        (B'_phi = b_prime cm GeV at the median pair)."""
+        Q, n = self.Q, self.n
+        common = (b_common / Q["p"])[:, None] * rng.standard_normal((n, 2))
+        gc = common[:, 0, None] * Q["e_phi"] + common[:, 1, None] * Q["e_2"]
+        du, dv = {}, {}
+        for j, jj in (("1", 0), ("2", 1)):
+            x = {}
+            for ax in ("u", "v"):
+                R = planted[ax][self.raw[ax][jj]]
+                x[ax] = R * draw_unit(shape, rng, n)
+            du[j] = x["u"] + (gc * Q[f"ux{j}"]).sum(1)
+            dv[j] = x["v"] + (gc * Q[f"vx{j}"]).sum(1)
+        b_scale = b_prime / np.sqrt(np.median(Q["g_phi"]))
+        rel = (b_scale / Q["p"])[:, None] * np.sqrt(np.stack([Q["g_phi"], Q["g_2"]], 1)) * rng.standard_normal((n, 2))
+        g = rel[:, 0, None] * Q["e_phi"] + rel[:, 1, None] * Q["e_2"]
+        du["2"] = du["2"] + (g * Q["ux2"]).sum(1)
+        dv["2"] = dv["2"] + (g * Q["vx2"]).sum(1)
+        D, _ = differences(Q, True, None, du, dv)              # the truth always has the rotation
+        return self._D(D)
+
+
+PLANT_MIX2 = (0.15, 4.0)
+
+
+def _unit_mad(shape):
+    if shape == "t3":
+        return float(stats.t.ppf(0.75, 3))
+    eps, kap = PLANT_MIX2
+    return optimize.brentq(lambda m: (1 - eps) * (2 * stats.norm.cdf(m) - 1) + eps * (2 * stats.norm.cdf(m / kap) - 1)
+                           - 0.5, 0.1, 10.0)
+
+
+def draw_unit(shape, rng, n):
+    """n draws of a planted shape with MAD / 0.6745 = 1."""
+    if shape == "t3":
+        x = rng.standard_t(3, n)
+    else:
+        eps, kap = PLANT_MIX2
+        x = rng.standard_normal(n) * np.where(rng.random(n) < eps, kap, 1.0)
+    return x * MAD_K / _unit_mad(shape)
+
+
+def planted_widths(tables):
+    """The planted R per size bin (only a plausible scale): v3's IL1 widths, the median over each size row's
+    |cot| cells."""
+    return {a: np.median(np.asarray(tables[a]["width_cm"]), axis=1) for a in ("u", "v")}
 
 
 # ------------------------------------------------------------------ references
 def truth_width(P, tables, sel, axis):
-    """The same clusters' truth-residual R per size bin (v3's estimator: MAD / 0.6745 about the median),
-    pooling both clusters of every pair (IL1: scattering-free)."""
+    """The pair clusters' own truth-residual R per size bin (MAD / 0.6745 about the median), both clusters of every
+    pair: D2's scattering-contaminated known-bad (the round-0 estimator)."""
     e = tables[axis]["size_edges"]
     s = np.concatenate([P[f"s{'x' if axis == 'u' else 'y'}{j}"][sel] for j in ("1", "2")])
     r = np.concatenate([P[f"d{axis}{j}"][sel] for j in ("1", "2")])
     b = size_bin(s, e)
     out = np.full(len(e) - 1, np.nan)
     for i in range(len(e) - 1):
-        x = r[b == i]
-        if len(x) >= MIN_CELL:
-            out[i] = np.median(np.abs(x - np.median(x))) / MAD_K
+        if np.sum(b == i) >= 20:
+            out[i] = wmad_width(r[b == i])
     return out, np.bincount(b, minlength=len(e) - 1)
 
 
@@ -294,29 +483,54 @@ def v3_at_cells(P, tables, sel, axis):
     return np.bincount(b, weights=w, minlength=len(e) - 1) / np.maximum(n, 1), n
 
 
-# ------------------------------------------------------------------ the toy closure (T0)
-def toy(P, tables, sel, planted, rng, b_common=0.1, b_prime=0.004, rotation=True):
-    """One toy replica on the real pairs (sel): each cluster's residual replaced by the planted per-size-bin
-    (R_u, R_v) draw plus a common scattering offset (B = b_common / p, cancels) and a leftover relative
-    offset with the pairs' own geometric factors (B'_phi = b_prime cm GeV at the median pair); returns
-    the fit."""
-    Q = {k: v[sel].copy() for k, v in P.items()}
-    n = len(Q["p"])
-    common = (b_common / Q["p"])[:, None] * rng.standard_normal((n, 2))
-    for j in ("1", "2"):
-        Ru = planted["u"][size_bin(Q[f"sx{j}"], tables["u"]["size_edges"])]
-        Rv = planted["v"][size_bin(Q[f"sy{j}"], tables["v"]["size_edges"])]
-        gc = common[:, 0, None] * Q["e_phi"] + common[:, 1, None] * Q["e_2"]          # the common offset, global
-        Q[f"du{j}"] = rng.standard_normal(n) * Ru + (gc * Q[f"ux{j}"]).sum(1)
-        Q[f"dv{j}"] = rng.standard_normal(n) * Rv + (gc * Q[f"vx{j}"]).sum(1)
-    b_scale = b_prime / np.sqrt(np.median(Q["g_phi"]))          # the planted b: B'_phi = b_prime at the median
-    rel = (b_scale / Q["p"])[:, None] * np.sqrt(np.stack([Q["g_phi"], Q["g_2"]], 1)) * rng.standard_normal((n, 2))
-    g = rel[:, 0, None] * Q["e_phi"] + rel[:, 1, None] * Q["e_2"]
-    Q["du2"] = Q["du2"] + (g * Q["ux2"]).sum(1)
-    Q["dv2"] = Q["dv2"] + (g * Q["vx2"]).sum(1)
-    return fit_surface(Q, tables, None, rotation)
+AX_KEYS = {"u": ("sx", "cotA", "du", "bp_u"), "v": ("sy", "cotB", "dv", "bp_v")}
 
 
-def planted_widths(tables):
-    """The planted R per size bin: v3's IL1 widths, the median over the |cot| cells of each size row."""
-    return {a: np.median(np.asarray(tables[a]["width_cm"]), axis=1) for a in ("u", "v")}
+def cell_reweighted_width(C, sel, pair_cells, tables, axis, w_ev=None):
+    """D0's reference per size bin: MAD / 0.6745 of the truth residuals of the clusters C[sel], reweighted within
+    each size bin to the pair clusters' |cot| cell mix (pair_cells: (size bins, cot cells) counts). w_ev: event
+    weights (the bootstrap). Also returns the unmatched share (pair mass in cells with no reference cluster)."""
+    sk, ck, rk, _ = AX_KEYS[axis]
+    t = tables[axis]
+    sb = size_bin(C[sk][sel], t["size_edges"])
+    cb = size_bin(np.abs(C[ck][sel]), t["cot_edges"])
+    x = C[rk][sel]
+    we = np.ones(len(x)) if w_ev is None else w_ev[C["ev"][sel]].astype(np.float64)
+    nb = len(t["size_edges"]) - 1
+    out, unmatched = np.full(nb, np.nan), np.zeros(nb)
+    for i in range(nb):
+        m = sb == i
+        tot = pair_cells[i].sum()
+        if tot == 0 or not m.any():
+            continue
+        ref = np.bincount(cb[m], weights=we[m], minlength=pair_cells.shape[1])
+        f = np.where(ref > 0, pair_cells[i] / tot / np.maximum(ref, 1e-12), 0.0)
+        unmatched[i] = float(pair_cells[i][ref == 0].sum() / tot)
+        out[i] = wmad_width(x[m], we[m] * f[cb[m]])
+    return out, unmatched
+
+
+def pair_cells(P, sel, tables, axis, w=None):
+    """The pair clusters' (size bin, |cot| cell) counts (w: per-pair weights)."""
+    sk, ck = ("sx", "cotA") if axis == "u" else ("sy", "cotB")
+    t = tables[axis]
+    ww = np.ones(int(np.sum(sel))) if w is None else np.asarray(w, np.float64)
+    sb = np.concatenate([size_bin(P[f"{sk}{j}"][sel], t["size_edges"]) for j in ("1", "2")])
+    cb = np.concatenate([size_bin(np.abs(P[f"{ck}{j}"][sel]), t["cot_edges"]) for j in ("1", "2")])
+    nb, nc = len(t["size_edges"]) - 1, len(t["cot_edges"]) - 1
+    return np.bincount(sb * nc + cb, weights=np.r_[ww, ww], minlength=nb * nc).reshape(nb, nc)
+
+
+def highland_inflation(x, sig, rng, draws=20):
+    """The width a residual sample x would have with each cluster's Gaussian offset sig added, over its own width:
+    MAD / 0.6745 of (x_i + N(0, sig_i)), draws per cluster, over that of x."""
+    y = np.repeat(x, draws) + rng.standard_normal(len(x) * draws) * np.repeat(sig, draws)
+    return wmad_width(y) / wmad_width(x)
+
+
+def highland_expected(x_plateau, sig, rng, draws=20):
+    """The Highland expectation of a p bin's width: the plateau residuals (resampled) with each of the bin's
+    clusters' beam-pipe offset added."""
+    pick = rng.integers(0, len(x_plateau), len(sig) * draws)
+    y = x_plateau[pick] + rng.standard_normal(len(sig) * draws) * np.repeat(sig, draws)
+    return wmad_width(y)

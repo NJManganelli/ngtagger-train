@@ -438,15 +438,18 @@ def test_disc_import_exact_form():
     assert np.allclose(DA.knob(loc, tp, 0.5, T)[T] - tp[T], 0.5 * (loc[T] - tp[T]))
 
 
-def test_overlap_fit_identifiability():
-    """C1b A6: the overlap fit recovers planted per-size-bin widths on synthetic disc-like pairs (rotated module
-    axes, a skewed size occupancy, p >= 10 GeV) and reports a sparse size bin as NaN instead of a forced value."""
+def test_overlap_shape_fit():
+    """C1b A6 / A8: on synthetic disc-like pairs (rotated module axes, both facings, a skewed size occupancy,
+    p >= 10 GeV, module-local centres) with planted two-Gaussian single shapes, the joint unbinned fit recovers each
+    populated bin's MAD / 0.6745 width and reports a sparse size bin as NaN; the width read-off is exact for a
+    Gaussian; the beam pipe's Highland offset at IL1 is the expected 3-4 um at 1 GeV."""
     import disc_r as DR
     rng = np.random.default_rng(11)
     n = 40000
     tables = {"u": {"size_edges": [1, 2, 3, 4, 5, 99]}, "v": {"size_edges": [1, 2, 3, 5, 7, 9, 12, 99]}}
-    Ru = np.array([5.0, 2.5, 4.0, 7.0, 90.0]) * 1e-4
+    Ru = np.array([6.0, 4.5, 4.0, 7.0, 90.0]) * 1e-4
     Rv = np.array([22.0, 13.0, 13.0, 14.0, 16.0, 18.0, 29.0]) * 1e-4
+    mu_u = np.array([0.5, -0.3, 0, 0, 0]) * 1e-4
     phi = rng.uniform(0, 2 * np.pi, n)
     e_phi = np.stack([-np.sin(phi), np.cos(phi), 0 * phi], 1)
     e_r = np.stack([np.cos(phi), np.sin(phi), 0 * phi], 1)
@@ -454,14 +457,24 @@ def test_overlap_fit_identifiability():
          "e_phi": e_phi, "e_2": e_r, "g_phi": np.full(n, 0.5), "g_2": np.full(n, 0.5)}
     for j in ("1", "2"):
         psi = np.radians(rng.normal(0, 6, n))
-        u = np.cos(psi)[:, None] * e_phi + np.sin(psi)[:, None] * e_r
+        fac = rng.choice([-1.0, 1.0], n)
+        u = fac[:, None] * (np.cos(psi)[:, None] * e_phi + np.sin(psi)[:, None] * e_r)
         v = -np.sin(psi)[:, None] * e_phi + np.cos(psi)[:, None] * e_r
         sx = rng.choice([1, 2, 3], n, p=[0.807, 0.19, 0.003]).astype(float)      # size bin 2 is sparse
         sy = rng.choice([1, 2], n, p=[0.75, 0.25]).astype(float)
+        bu, bv = DR.size_bin(sx, tables["u"]["size_edges"]), DR.size_bin(sy, tables["v"]["size_edges"])
         P.update({f"ux{j}": u, f"vx{j}": v, f"sx{j}": sx, f"sy{j}": sy, f"cotA{j}": np.zeros(n), f"cotB{j}": np.zeros(n),
-                  f"facing{j}": np.ones(n, np.int8),
-                  f"du{j}": rng.standard_normal(n) * Ru[DR.size_bin(sx, tables["u"]["size_edges"])],
-                  f"dv{j}": rng.standard_normal(n) * Rv[DR.size_bin(sy, tables["v"]["size_edges"])]})
-    f = DR.fit_surface(P, tables)
-    assert np.allclose(f["R_u"][:2], Ru[:2], rtol=0.05) and np.allclose(f["R_v"][:2], Rv[:2], rtol=0.05)
+                  f"facing{j}": fac.astype(np.int8),
+                  f"du{j}": Ru[bu] * DR.draw_unit("mix2", rng, n) + mu_u[bu],
+                  f"dv{j}": Rv[bv] * DR.draw_unit("mix2", rng, n)})
+    f = DR.ShapeFit(P, tables, np.ones(n, bool)).fit()
+    assert f["converged"]
+    # within ~3 sd of the per-sample spread (8 seeds: 1.1 / 3.2 % in u, 0.7 / 3.2 % in v; mean within its error)
+    assert np.allclose(f["R_u"][:2], Ru[:2], rtol=[0.04, 0.10]) and np.allclose(f["R_v"][:2], Rv[:2], rtol=[0.03, 0.10])
     assert np.isnan(f["R_u"][2]) and f["n_u"][2] < DR.MIN_PARAM
+    assert abs(f["shape_u"]["mu"][0] - mu_u[0]) < 0.3e-4
+    from scipy import stats
+    g = DR.single_width("mix2", np.array([[np.log(5.0), -30.0, 0.0, 0.0]]))           # eps -> 0: a Gaussian of 5 um
+    assert abs(g[0] * DR.MAD_K - 5.0 * stats.norm.ppf(0.75)) < 1e-6                    # its MAD, exactly
+    bu, _ = DR.beam_pipe_sigma(1.0, 0.0, 2.9, 0.0, 0.0)
+    assert 3e-4 < bu < 4e-4
