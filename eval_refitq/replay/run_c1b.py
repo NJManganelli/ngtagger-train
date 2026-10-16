@@ -353,9 +353,9 @@ def c1b_cutfit(a):
 
 def checks(a):
     """J5 (file 4, --known-bad) / J6 (file 6): the final configuration (C1b's cut file, the fitted scale, the
-    decided seed, the disc R in use) judged by D1, D3 (relative, A4), D4 and D5; on file 4 the D1 false veto,
-    the known-bads (D1 / D4 post hoc; D3 / D5 by arm variants) and the power statements. D0 / D2 come from the
-    overlap job on the same file. Writes c1b/checks/checks_f<NN>.json."""
+    decided seed, v3's position errors, A13) judged by D1, D3 (relative, A4), D4 and D5; on file 4 the D1 false veto,
+    the known-bads (D1 / D4 post hoc; D3 / D5 by arm variants) and the power statements. Writes
+    c1b/checks/checks_f<NN>.json."""
     import cuts as CU
     import diagnostics as DG
     import disc_checks as DC
