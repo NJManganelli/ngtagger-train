@@ -13,7 +13,8 @@
   c23         C2 per candidate (no DR, per seed) and C3 delivered (merge DR, pooled): a closed-arm census
               against CMSSW, with the paired event bootstrap and equivalence at the plan's margins
   floor       the order floor: D_order and Delta_dtc from one dtc and ten random closed-arm censuses
-  truncation  U, the unemulated truncation: the caps-on arm's statistics minus the caps-off arm's (paired)
+  truncation  U, the unemulated truncation: the caps-on arm's statistics minus the caps-off arm's (paired);
+              reported, not gated (the caps-on arm is not certified, plan sec. 11)
   register    a known-bad candidate against the known-good on the same events: its shift per gated
               statistic in margin units (paired), its gate outcome and the plan's classification
 
@@ -71,6 +72,10 @@ C1_F32_EDGE_ULP = 2         # a single +-1 LSB flip this many float32 ulps from 
 C1_CHI2_REL = 1e-5
 C1_MAX_SKIPPED = 0.02       # plan sec. 3: "exclusions (seed stub skipped) <= 2 %"
 C1B_MATCH_MIN = 0.99
+# THE PHYSICIST'S ACCEPTANCE OF THE MATCH-LIST GATE (2026-10-16, plan sec. 11): "match lists of 98.6% are
+# GOOD-ENOUGH", at the agreement measured on the Fakefit copy (f01 events 0-9): 2,446 of 2,482 tracklets' lists
+# identical. A C1b(i) at or above that fraction is accepted, and the order floor then takes the passed branch.
+C1B_ACCEPTED = (2446, 2482)
 NODR_SHARE_MIN = 0.5        # a no-DR production: most tracks share >= 3 stubs with another of their sector
                             # (canon_v4 test, merge DR: 0.10; modecmp no-DR: 0.96)
 # record columns (track_record): event, CMSSW seed type, seed TP key (-1 none), seed-truthful, KF eta region
@@ -608,9 +613,9 @@ def c1b(fakefit, nodr=None, nev=None):
         res["emulated_candidates"] += len(cand)
         res["emulated_without_cmssw"] += len(set(cand) - seen)
     n = res["same_tracklet"]
-    lo = _wilson_lower(res["identical_list"], n)
+    lo, accepted, ok_lists = match_list_gate(res["identical_list"], n)
     nmin = _min_sample()
-    gates = {"match_lists": bool(lo >= C1B_MATCH_MIN), "match_list_sample": n >= nmin}
+    gates = {"match_lists": ok_lists, "match_list_sample": n >= nmin}
     if nodr:
         bad = (res["kf_both_accept_different"] + res["kf_census_accepts_cmssw_rejects"]
                + res["kf_census_rejects_cmssw_accepts"])
@@ -618,7 +623,18 @@ def c1b(fakefit, nodr=None, nev=None):
         gates["nodr_aligned"] = res["nodr_tracks_unaligned"] == 0
     return {"stage": "C1b", "fakefit": fakefit, "nodr": nodr, **res,
             "identical_list_fraction": res["identical_list"] / max(n, 1), "identical_list_lower95": lo,
+            "match_lists_accepted_by_physicist": accepted,
             "match_list_min_sample": nmin, "examples": examples, "gates": gates}, all(gates.values())
+
+
+def match_list_gate(identical, n):
+    """C1b(i): (the one-sided 95 % lower bound of the identical-list fraction, accepted, gate). The gate passes
+    when the bound reaches C1B_MATCH_MIN, or by the physicist's acceptance (C1B_ACCEPTED) when the fraction is
+    at least the accepted one."""
+    lo = _wilson_lower(identical, n)
+    passed = bool(lo >= C1B_MATCH_MIN)
+    accepted = not passed and n > 0 and identical * C1B_ACCEPTED[1] >= C1B_ACCEPTED[0] * n
+    return lo, accepted, passed or accepted
 
 
 def _kf_on_list(res, nd, jn, key, rows, L, x, y, z, e):
@@ -851,7 +867,9 @@ def truncation(caps_on, caps_off):
     """U, the unemulated truncation (plan sec. 2-3): for each statistic, the caps-on arm's value (census caps on
     against production / no-DR) minus the caps-off arm's (census caps off against the no-truncation siblings),
     i.e. CMSSW's truncation cost minus the census's emulated one; its paired sd from the saved replicas (the
-    same events and bootstrap); MATERIAL when its one-sided 95 % bound exceeds half the margin."""
+    same events and bootstrap) and its one-sided 95 % bound against half the margin. REPORTED, NOT GATED: the
+    tracklet processor's clock-level limits are not ported (physicist, 2026-10-16, plan sec. 11), so the caps-on
+    arm is not certified and U is the measured cost of the unemulated limits."""
     A, B = json.load(open(caps_on)), json.load(open(caps_off))
     if A["census_inputs"] != B["census_inputs"] or A["n_events"] != B["n_events"] \
             or A["excluded_events"] != B["excluded_events"] or A["boot_seed"] != B["boot_seed"]:
@@ -863,9 +881,9 @@ def truncation(caps_on, caps_off):
         u = a["value"] - b["value"]
         bound = float(abs(u) + 1.6449 * np.std(d, ddof=1))
         rows[name] = {"U": u, "paired_sd": float(np.std(d, ddof=1)), "bound95": bound,
-                      "half_margin": a["margin"] / 2, "material": bound > a["margin"] / 2}
+                      "half_margin": a["margin"] / 2, "exceeds_half_margin": bound > a["margin"] / 2}
     return {"stage": "truncation decomposition", "caps_on": caps_on, "caps_off": caps_off, "statistics": rows,
-            "gates": {k: not v["material"] for k, v in rows.items()}}, not any(v["material"] for v in rows.values())
+            "caps_on_arm": "not certified (physicist, 2026-10-16)", "gates": {}}, True
 
 
 # ---- known-bad registration -----------------------------------------------------------------------------

@@ -101,3 +101,12 @@ def test_known_bad_classes():
     assert CV._kb_class(0.4, True) == "below resolution"
     assert CV._min_sample() == min(n for n in range(1, 2000) if CV._wilson_lower(n, n) >= CV.C1B_MATCH_MIN)
     assert math.isclose(CV._wilson_lower(0, 0), 0.0)
+
+
+def test_match_list_gate_physicist_acceptance():
+    # the measured agreement (plan sec. 11) is accepted; below it the 99 % rule decides; above 99 % it passes
+    lo, acc, ok = CV.match_list_gate(2446, 2482)
+    assert lo < CV.C1B_MATCH_MIN and acc and ok
+    assert CV.match_list_gate(2445, 2482)[1:] == (False, False)
+    lo, acc, ok = CV.match_list_gate(2482, 2482)
+    assert lo >= CV.C1B_MATCH_MIN and not acc and ok
