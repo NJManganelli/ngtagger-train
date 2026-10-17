@@ -11,7 +11,7 @@
   c1b-j1    wpc.c1b.j1-shape-fit       C1b J1: the disc shape fits, T0, D0, D2 (c1b/overlap/overlap_summary.json)
   c1b-j2    wpc.c1b.j2-seed-test-smooth  C1b J2 of the smooth seed, A17 (c1b/seed/seedtest_summary.json)
   c1b-seed  wpc.c1b.seed-model-v1      C1b A16: the smooth seed model (seedmodel/seed_model_v1.json, select.json)
-  c1b-j3    wpc.c1b.j3-material-scale  C1b J3: the disc material scale, D3b / D3c, the D3a re-check (c1b/scale/...)
+  c1b-j3    wpc.c1b.j3-material-scale-smooth  C1b J3 with the smooth seed, A18 (c1b/scale/scalefit_summary.json)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
                                   the final verdict (entry/entry_verdict.json, verdict.py) with PD15's rr check, job
@@ -290,18 +290,23 @@ def c1b_seed(job_dir, overwrite):
 
 
 def c1b_j3(job_dir, overwrite):
+    """J3 of the current seed (the A16 smooth seed, judged by A18); the A15 run (v3's seed) was registered as
+    wpc.c1b.j3-material-scale and stands."""
     p = CM.OUT / "c1b" / "scale" / "scalefit_summary.json"
     with open(p) as fh:
         Q = json.load(fh)
-    vals = [{"name": "scale (second-on / third-on)", "value": f"{Q['scale']} / {Q['third_on']}"},
+    vals = [{"name": "scale (second-on / third-on)", "value": f"{Q['scale']:.3f} +- {Q['scale_sd']:.3f} / {Q['third_on']:.3f}"},
             {"name": "NLL over the grid", "value": json.dumps({"grid": Q["grid"], **Q["nll"]})},
-            {"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"}]
-    vals += _width_vals(Q, (("D3b (disc|pT): n, u, v width", "D3b"), ("D3c (surface|first|pT)", "D3c"),
-                            ("D3a re-check", "D3a")))
-    _reg({"id": "wpc.c1b.j3-material-scale", "title": "WP-C C1b J3: the disc material scale (canon_v4, A10, A14, A15)",
-          "status": "exploratory", "status_note": "stopped on its pre-declared rules: " + "; ".join(Q["material"]),
-          "values": vals, "bias": "the scale sits at the grid's upper bound (2.0); judged relative to the barrel (A4)",
-          "sources": [str(p)]}, job_dir, overwrite)
+            {"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"},
+            {"name": "tail fractions beyond 3 sigma", "value": json.dumps(Q["tail_fractions"])}]
+    vals += _width_vals(Q, (("D3a re-check (group|pT): n, u, v scale", "D3a"), ("D3b (disc|pT)", "D3b"),
+                            ("D3c (surface|first|pT)", "D3c"), ("D3d barrel-only (surface|first|pT)", "D3d")))
+    _reg({"id": "wpc.c1b.j3-material-scale-smooth",
+          "title": "WP-C C1b J3: the disc material scale with the smooth seed, judged on the clipped-likelihood scale (A16, A18)",
+          "status": "in-sample", "status_note": "the fit files; " + ("stopped: " + "; ".join(Q["material"]) if Q["material"]
+                                                                     else "passes"),
+          "values": vals, "bias": "a scale above 2 is physically suspect; the barrel-only tracks' IL1 / IL2 later visits "
+                                  "show the same excess as D3c (D3d)", "sources": [str(p)]}, job_dir, overwrite)
 
 
 def main(argv=None):
