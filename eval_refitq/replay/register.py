@@ -342,10 +342,35 @@ def c1b_j5(job_dir, overwrite):
           "bias": "file 4, the rehearsal; judged with A18 / A19's statistic for D3", "sources": [str(p)]}, job_dir, overwrite)
 
 
+def c1b_betasym(job_dir, overwrite):
+    """The read-only disc beta symmetry figure (after J5): the innermost populated key bins, k < 0 (J5's failing bin)
+    and its mirror k > 0, per disc."""
+    p = CM.OUT / "c1b" / "beta_symmetry.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+
+    def w(t):
+        return f"{t['width']:.3f} +- {t['sd_w']:.3f} (n {t['n']})" if t else "-"
+    vals = []
+    for S, d in Q.items():
+        for b, lab in ((8, "k in (-0.2, -0.1)"), (11, "k in (0.1, 0.2)")):
+            vals.append({"name": f"disc {S}, {lab}: pooled / row at the true key / same sign / per facing x side",
+                         "value": " / ".join([w(d["pooled"][b]), w(d["true_key"][b]), w(d["same_sign"][b])]) + "; " +
+                                  json.dumps({k: w(v[b]) for k, v in d["series"].items()})})
+        vals.append({"name": f"disc {S}: wrong-sign / row-change fraction per key bin",
+                     "value": json.dumps({"wrong_sign": d["wrong_sign_fraction"], "row_change": d["row_change_fraction"]})})
+    _reg({"id": "wpc.c1b.beta-symmetry", "title": "WP-C C1b: disc beta pull symmetry (facing x z side, k vs -k, the "
+                                                  "true-key row) after J5",
+          "status": "in-sample", "status_note": "read-only diagnostic on the fit files (no file 4 or 6); no judgement",
+          "values": vals, "bias": "the width is D1's (the table's weighting width), bootstrap sd over 100 event replicas",
+          "sources": [str(p), str(CM.OUT / "c1b" / "beta_symmetry_rows.npz")]}, job_dir, overwrite)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
-                                     "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5"))
+                                     "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
+                                     "c1b-betasym"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -355,7 +380,8 @@ def main(argv=None):
     else:
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
-         "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5}[a.what](a.job_dir, a.overwrite)
+         "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
+         "c1b-betasym": c1b_betasym}[a.what](a.job_dir, a.overwrite)
     return 0
 
 

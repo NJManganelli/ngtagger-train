@@ -119,6 +119,7 @@ def plots(a):
         for e in deg(np.clip(se[1:-1], -3, 3)):
             ax.axvline(e, color=GRID, lw=0.6)
         ax.axvspan(deg(FAIL_BIN[0]), deg(FAIL_BIN[1]), color="#fbe3d6", lw=0, zorder=0)
+        ax.set_xlim(-45, 45)
 
     def table(x, sel):
         out = []
@@ -158,8 +159,7 @@ def plots(a):
                   label="pooled, clipped-likelihood scale")
         ax_c.plot([p[0] for p in pts], [p[1]["centre"] for p in pts], "s-", color=POOL, lw=2, ms=5, label="pooled")
         for x_, t in pts:
-            ax_w.annotate(f"{t['n']}", (x_, t["width"]), textcoords="offset points", xytext=(0, 6), ha="center",
-                          fontsize=6, color=INK2)
+            ax_w.text(x_, 0.62, f"{t['n']}", rotation=90, ha="center", va="bottom", fontsize=6, color=INK2)
         for tab, c_, lab in ((pooled, POOL, "(a) row at the predicted key"), (pb, "#2a78d6", "(b) row at the true key"),
                              (pc, "#eb6834", "(c) predicted and true key of the same sign")):
             q = [(xp[b], t) for b, t in enumerate(tab) if t]
@@ -174,7 +174,7 @@ def plots(a):
         ax_f.bar(ctr, moved, width=0.8 * (hi_d - lo_d), color="#2a78d6", label="row at the true key ≠ row at the predicted key")
         ax_f.plot(ctr, wrong, "o", color="#eb6834", ms=4, label="predicted key of the wrong sign")
         kmin = np.min(np.abs(kp[on & hasb]))
-        ax_f.text(0.02, 0.95, f"wrong sign: {int(np.sum(~same[on & hasb]))} of {int(np.sum(on & hasb))} clusters\n"
+        ax_f.text(0.02, 0.72, f"wrong sign: {int(np.sum(~same[on & hasb]))} of {int(np.sum(on & hasb))} clusters\n"
                   f"smallest |predicted angle| {deg(kmin):.1f}°", transform=ax_f.transAxes, va="top", fontsize=7, color=INK2)
         summary[S]["wrong_sign_fraction"], summary[S]["row_change_fraction"] = wrong, moved
         ax_w.set_ylabel(f"ID{S - 10}\nβ pull width")
@@ -190,9 +190,10 @@ def plots(a):
             ax_c.set_title("centre per facing × z side")
             ax_h.set_title("the wrong-side-of-zero test")
             ax_f.set_title("wrong-sign keys and row changes")
-            for ax_ in (ax_w, ax_h, ax_f):
-                ax_.legend(fontsize=6, frameon=False, loc="upper left")
         if i == 3:
+            for ax_ in (ax_w, ax_h):
+                ax_.legend(fontsize=6, frameon=False, loc="upper left")
+            ax_f.legend(fontsize=6, frameon=False, loc="upper right")
             for ax_ in axs[i]:
                 ax_.set_xlabel("signed local incidence angle atan(k) [deg]")
     fig.text(0.5, 0.005, "canon_v4 AAAA fit files 1, 2, 3, 5, 7-10; the calibrated disc arm (smooth seed, disc material "
@@ -268,11 +269,14 @@ def plots(a):
         for x_, t in q:
             ax.annotate(f"{t['n']}", (x_, t["width"]), textcoords="offset points", xytext=(0, 6), ha="center",
                         fontsize=6, color=INK2)
+        summary[S]["true_angle"] = q
         ax.set_title(f"ID{S - 10}")
         ax.set_xlabel("true β angle atan(cotβ) [deg]")
         ax.set_ylim(0.6, 1.6)
     axs[0].set_ylabel("β pull width, pooled (row at the predicted key)")
-    fig.tight_layout()
+    fig.text(0.5, 0.005, "D1's statistic in 4° bins of the true β angle (bins under 200 clusters left out); grey band 1 ± 0.1; "
+             "numbers: clusters per bin.", ha="center", color=INK2, fontsize=8)
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"beta_vs_true_angle.{ext}", dpi=140, bbox_inches="tight")
     plt.close(fig)
