@@ -158,8 +158,24 @@ def load(p):
     return json.loads(str(z["meta"])), {k: z[k] for k in z.files if k != "meta"}
 
 
+# canon_v3 is deleted (2026-10-17). Its per-entry event identities are kept here, and canon_v4 holds the same events
+# (in another entry order) with identical L1TTP rows (the bridge, closure_vs_cmssw): an extract of a canon_v3 census
+# is re-run by event identity, its identities from this map and its L1TTP truth from the canon_v4 copy.
+CANON_V3_EVENT_MAP = Path("/Volumes/WDMac/smartpixels_scratch/canon_v3_eventmaps/canon_v3_event_ids.npz")
+
+
+def resolve_input(path):
+    """`path`, or for a deleted canon_v3 file its canon_v4 copy (same events and L1TTP rows, bridge-checked)."""
+    if os.path.exists(path):
+        return path
+    v4 = path.replace("/canon_v3/", "/canon_v4/")
+    if v4 != path and os.path.exists(v4):
+        return v4
+    raise SystemExit(f"input {path} is gone and has no canon_v4 copy")
+
+
 def read_event_ids(path, n):
-    """(n, 3) run, luminosityBlock, event of the first n entries of the nano `path`."""
+    """(n, 3) run, luminosityBlock, event of the first n entries of the nano `path` (n None: every entry)."""
     import uproot
     t = uproot.open(f"{path}:Events")
     return np.stack([t[c].array(library="np", entry_stop=n).astype(np.int64)
@@ -167,14 +183,19 @@ def read_event_ids(path, n):
 
 
 def event_ids(meta, Z):
-    """The run's event identities in its entry order: stored by extract, or read from its input for an extract
-    that predates them."""
+    """The run's event identities in its entry order: stored by extract; for an extract that predates them, read
+    from its input, or from CANON_V3_EVENT_MAP for a deleted canon_v3 input."""
     if "event_ids" in Z:
         return Z["event_ids"]
     p = meta["inputs"][0]
-    if not os.path.exists(p):
-        raise SystemExit(f"run {meta['label']}: no stored event identities and its input {p} is gone: re-extract it")
-    return read_event_ids(p, meta["n_events"])
+    if os.path.exists(p):
+        return read_event_ids(p, meta["n_events"])
+    stem = Path(p).stem
+    if "/canon_v3/" in p and CANON_V3_EVENT_MAP.exists():
+        with np.load(CANON_V3_EVENT_MAP) as E:
+            if stem in E.files:
+                return E[stem][:meta["n_events"]]
+    raise SystemExit(f"run {meta['label']}: no stored event identities and its input {p} is gone: re-extract it")
 
 
 def _per_event(name):
@@ -217,7 +238,7 @@ def by_identity(runs):
     same events in different entry orders (multi-threaded productions; canon_v3 against canon_v4), so TPs are
     paired by (event identity, tpIdx) and the per-event counts, hence the bootstrap replicas, by identity:
     index i is the i-th of the sorted identities, for every run. Refuses runs whose event sets differ.
-    Returns ({label: (meta, re-indexed Z)}, the sorted identities, {label: cmap})."""
+    Returns ({label: (meta, re-indexed Z)}, the sorted identities)."""
     ids = {lab: event_ids(m, Z) for lab, (m, Z) in runs.items()}
     first = next(iter(ids))
     ref = np.unique(ids[first], axis=0)
@@ -227,8 +248,8 @@ def by_identity(runs):
         if not np.array_equal(np.unique(x, axis=0), ref):
             raise SystemExit(f"runs {first} and {lab} hold different event sets: they cannot be paired")
     pos = {tuple(r): i for i, r in enumerate(ref.tolist())}
-    cmaps = {lab: np.array([pos[tuple(r)] for r in x.tolist()], np.int64) for lab, x in ids.items()}
-    return {lab: (m, reindex(Z, cmaps[lab])) for lab, (m, Z) in runs.items()}, ref, cmaps
+    cmap = {lab: np.array([pos[tuple(r)] for r in x.tolist()], np.int64) for lab, x in ids.items()}
+    return {lab: (m, reindex(Z, cmap[lab])) for lab, (m, Z) in runs.items()}, ref
 
 
 def formats(runs, cross_format=False):
@@ -274,27 +295,34 @@ def figures(meta, Z, W):
     return out
 
 
-def l1ttp_evt(path, cmap):
-    """(sorted tp_key, event-id) of every L1TTP row of the input's first len(cmap) entries, keyed by event
-    identity (cmap: entry -> identity index, by_identity)."""
+def l1ttp_evt(path, ids):
+    """(sorted tp_key, event-id) of every L1TTP row of the input's events `ids` (the sorted identities,
+    by_identity), keyed by event identity: the file's own entries are matched by (run, lumi, event), so a
+    deleted canon_v3 input is read from its canon_v4 copy (resolve_input)."""
     import awkward as ak
     import uproot
     sys.path.insert(0, str(HERE))
     import tracklet_topology_cost as M
-    A = uproot.open(f"{path}:Events").arrays(["L1TTP_evt"], entry_stop=len(cmap))
+    path = resolve_input(path)
+    pos = {tuple(r): i for i, r in enumerate(ids.tolist())}
+    idx = np.array([pos.get(tuple(r), -1) for r in read_event_ids(path, None).tolist()], np.int64)
+    if np.count_nonzero(idx >= 0) != len(ids):
+        raise SystemExit(f"{path} lacks some of the runs' events")
+    A = uproot.open(f"{path}:Events").arrays(["L1TTP_evt"])
     nt = ak.to_numpy(ak.num(A["L1TTP_evt"]))
-    key = M.tp_key(cmap[np.repeat(np.arange(len(nt)), nt)],
-                   np.arange(int(nt.sum())) - np.repeat(np.cumsum(nt) - nt, nt))
+    ent = np.repeat(np.arange(len(nt)), nt)
+    keep = idx[ent] >= 0
+    key = M.tp_key(idx[ent][keep], (np.arange(int(nt.sum())) - np.repeat(np.cumsum(nt) - nt, nt))[keep])
     o = np.argsort(key, kind="stable")
-    return key[o], ak.to_numpy(ak.flatten(A["L1TTP_evt"]))[o]
+    return key[o], ak.to_numpy(ak.flatten(A["L1TTP_evt"]))[keep][o]
 
 
-def denominators(U, umeta, ucmap, hits=None):
+def denominators(U, umeta, ids, hits=None):
     """The census denominator and the CMSSW-like comparison one over the universe table
-    U (a census of format >= 31; ucmap its entry -> identity index), plus, per pT bin, what counting modules
+    U (a census of format >= 31; ids the sorted event identities), plus, per pT bin, what counting modules
     instead of layers adds, what one hit per module removes from the per-hit count of a format-30
     run `hits` (same TP table), and how many neutral TPs the charge requirement removes."""
-    tkey, tevt = l1ttp_evt(umeta["inputs"][0], ucmap)
+    tkey, tevt = l1ttp_evt(umeta["inputs"][0], ids)
     p = np.clip(np.searchsorted(tkey, U["key"]), 0, len(tkey) - 1)
     hard = (tkey[p] == U["key"]) & (tevt[p] == 0)
     charged = np.isfinite(U["charge"]) & (U["charge"] != 0)
@@ -386,7 +414,7 @@ def compare(paths, pairs, out, universe, per_hit=None, cross_format=False):
         meta, Z = load(p)
         runs[meta["label"]] = (meta, Z)
     fmts = formats(runs, cross_format)
-    runs, ids, cmaps = by_identity(runs)
+    runs, ids = by_identity(runs)
     nev = len(ids)
     umeta, U = runs[universe]
     if umeta.get("findable_count") != "n_mod":
@@ -394,7 +422,7 @@ def compare(paths, pairs, out, universe, per_hit=None, cross_format=False):
     W = np.random.default_rng(SEED).multinomial(nev, np.full(nev, 1.0 / nev), size=N_REP).astype(float)
     sys.path.insert(0, str(HERE))
     import tracklet_topology_cost as M
-    D, hits_report = denominators(U, umeta, cmaps[universe], runs[per_hit][1] if per_hit else None)
+    D, hits_report = denominators(U, umeta, ids, runs[per_hit][1] if per_hit else None)
     F = {lab: figures(m, Z, W) for lab, (m, Z) in runs.items()}
     G = den_figures(runs, U, D, W, nev)
     sd = lambda d: {k: {"value": v, "sd": float(np.std(r, ddof=1))} for k, (v, r) in d.items()}

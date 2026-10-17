@@ -42,7 +42,7 @@ def test_permuted_runs_pair_identically():
     # by entry number the two runs disagree
     assert not np.array_equal(runs["v3"][1]["B/n_dr"], runs["v4"][1]["B/n_dr"])
     assert not np.array_equal(runs["v3"][1]["pt"], runs["v4"][1]["pt"])
-    out, ids, _ = BA.by_identity(runs)
+    out, ids = BA.by_identity(runs)
     assert np.array_equal(ids, np.unique(IDS, axis=0))
     A, B = out["v3"][1], out["v4"][1]
     assert set(A) == set(B) == {"key", "event", "pt", "B/deliv", "B/n_dr", "B/n_fake"}
