@@ -11,6 +11,8 @@
   c1b-j1    wpc.c1b.j1-shape-fit       C1b J1: the disc shape fits, T0, D0, D2 (c1b/overlap/overlap_summary.json)
   c1b-j2    wpc.c1b.j2-seed-test-smooth  C1b J2 of the smooth seed, A17 (c1b/seed/seedtest_summary.json)
   c1b-seed  wpc.c1b.seed-model-v1      C1b A16: the smooth seed model (seedmodel/seed_model_v1.json, select.json)
+  c1b-j4    wpc.c1b.j4-cut-fit         C1b J4: the cut fit (c1b/cuts/cutfit_summary.json)
+  c1b-j5    wpc.c1b.j5-known-good      C1b J5: file 4 with the known-bads (c1b/checks/checks_f04.json)
   c1b-j3    wpc.c1b.j3-material-scale-smooth  C1b J3 with the smooth seed, A18 (c1b/scale/scalefit_summary.json)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
@@ -309,10 +311,41 @@ def c1b_j3(job_dir, overwrite):
                                   "show the same excess as D3c (D3d)", "sources": [str(p)]}, job_dir, overwrite)
 
 
+def c1b_j4(job_dir, overwrite):
+    p = CM.OUT / "c1b" / "cuts" / "cutfit_summary.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": "D5 (barrel-only tracks identical, discs on / off)", "value": json.dumps(Q["D5"])},
+            {"name": "disc material scale", "value": Q["disc_scale"]},
+            {"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"},
+            {"name": "cut file", "value": str(CM.OUT / "c1b" / "cuts" / "wpc_cuts_c1b_v1.json")}]
+    _reg({"id": "wpc.c1b.j4-cut-fit", "title": "WP-C C1b J4: the cut fit with the disc, barrel-visit and barrel-only bins "
+                                               "(smooth seed, scale 2.67; A9, A10, A16-A19)",
+          "status": "in-sample", "status_note": "the fit files", "values": vals,
+          "bias": "the disc material scale 2.67 is physically suspect (A19)", "sources": [str(p)]}, job_dir, overwrite)
+
+
+def c1b_j5(job_dir, overwrite):
+    p = CM.OUT / "c1b" / "checks" / "checks_f04.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"},
+            {"name": "known-bads (fails?)", "value": json.dumps(Q["known_bads"])},
+            {"name": "D1 failing bins", "value": json.dumps([{k: b[k] for k in ("angle", "surface", "keybin", "n", "width")}
+                                                            for b in Q["D1"]["pooled"]["bins"] if b["fail"]])},
+            {"name": "D1 false veto", "value": json.dumps(Q["D1"]["false_veto"])},
+            {"name": "D5", "value": json.dumps(Q["D5"])}]
+    _reg({"id": "wpc.c1b.j5-known-good", "title": "WP-C C1b J5: file 4, the final configuration with the known-bads "
+                                                  "(A16-A19)",
+          "status": "valid" if not Q["material"] else "void",
+          "status_note": "; ".join(Q["material"]) or "no failure", "values": vals,
+          "bias": "file 4, the rehearsal; judged with A18 / A19's statistic for D3", "sources": [str(p)]}, job_dir, overwrite)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
-                                     "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed"))
+                                     "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -322,7 +355,7 @@ def main(argv=None):
     else:
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
-         "c1b-seed": c1b_seed}[a.what](a.job_dir, a.overwrite)
+         "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
