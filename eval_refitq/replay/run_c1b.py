@@ -64,8 +64,9 @@ def core_width(x):
 
 
 def width_table(rows, keys, reps, min_n=200):
-    """Per bin (the tuple of keys): n; per pull axis the A17 width (the variance within a +-5 sigma clip, a unit
-    Gaussian giving 1) with its event-bootstrap sd, and the MAD core width (reported)."""
+    """Per bin (the tuple of keys): n; per pull axis the A18 scale (the clipped-likelihood scale, a unit Gaussian giving
+    1) with its event-bootstrap sd; reported beside it the +-5 sigma clipped variance width (A17), the MAD core and the
+    share of pulls beyond 3 sigma."""
     import seedmodel as SMOD
     out = {}
     combo = np.stack([rows[k] for k in keys], 1)
@@ -77,10 +78,10 @@ def width_table(rows, keys, reps, min_n=200):
         e = {"n": n}
         for ax in ("pu", "pv"):
             x = rows[ax][m]
-            e[ax], e[ax + "_core"] = SMOD.var_width(x), core_width(x)
-            if n >= min_n:
-                idx = np.flatnonzero(m)
-                e[ax + "_sd"] = float(np.nanstd([SMOD.var_width(rows[ax][np.repeat(idx, w[ev[idx]])]) for w in reps]))
+            s, sd = SMOD.clip_scale(x, ev[m], reps) if n >= min_n else (SMOD.clip_scale(x, ev[m], reps[:0])[0], np.nan)
+            fx = x[np.isfinite(x)]
+            e.update({ax: s, ax + "_sd": sd, ax + "_var": SMOD.var_width(x), ax + "_core": core_width(x),
+                      ax + "_tail3": float(np.mean(np.abs(fx) > 3.0)) if len(fx) else np.nan})
         out["|".join(str(int(x)) if np.isfinite(x) else str(x) for x in u)] = e
     return out
 
@@ -124,16 +125,16 @@ def collect(a, disc_scale):
 
 
 def judge_absolute(table, label, min_n=200):
-    """A17: |w - 1| <= 0.1 + t1(N) sd, per bin and axis (bins with >= min_n rows). Returns (failing lines, W, N)."""
+    """A18: |s - 1| <= 0.1 + t1(N) sd, per bin and axis (bins with >= min_n rows). Returns (failing lines, W, N)."""
     jb = [(k, ax) for k, e in table.items() for ax in ("pu", "pv") if e["n"] >= min_n and np.isfinite(e[ax])]
     W = G.t_one(max(len(jb), 1))
-    fails = [f"{label} {k} {ax}: width {table[k][ax]:.3f} (n {table[k]['n']})" for k, ax in jb
+    fails = [f"{label} {k} {ax}: scale {table[k][ax]:.3f} +- {table[k][ax + '_sd']:.3f} (n {table[k]['n']})" for k, ax in jb
              if abs(table[k][ax] - 1.0) > D3_TOL + W * table[k][ax + "_sd"]]
     return fails, W, len(jb)
 
 
 def judge_all(rows, reps):
-    """A17: D3a (first visits of disc-going tracks, per first-met disc x pT bin, with the stub-count sub-bins), D3b
+    """A17 / A18: D3a (first visits of disc-going tracks, per first-met disc x pT bin, with the stub-count sub-bins), D3b
     (later disc visits, per disc x pT bin), D3c (barrel visits of disc-going tracks, per layer x first / later x pT bin)
     and D3d (barrel-only tracks, the same bins; reported only), each judged absolutely."""
     sub = lambda m: {k: v[m] for k, v in rows.items()}
@@ -158,6 +159,39 @@ def judge_all(rows, reps):
     return out
 
 
+def tail_fractions(rows):
+    """A18's finding: the share of pulls beyond 3 sigma per family (D3a / D3b / D3c / D3d first / D3d later) and axis."""
+    fam = {"D3a disc first": rows["dg"] & (rows["step"] == 0),
+           "D3b disc later": rows["dg"] & (rows["surface"] > 10) & (rows["step"] > 0),
+           "D3c barrel visits of disc-going": rows["dg"] & (rows["surface"] <= 4),
+           "D3d barrel-only first": ~rows["dg"] & (rows["surface"] <= 4) & (rows["step"] == 0),
+           "D3d barrel-only later": ~rows["dg"] & (rows["surface"] <= 4) & (rows["step"] > 0)}
+    out = {}
+    for k, m in fam.items():
+        e = {"n": int(m.sum())}
+        for ax in ("pu", "pv"):
+            x = rows[ax][m]
+            x = x[np.isfinite(x)]
+            e[ax] = float(np.mean(np.abs(x) > 3.0)) if len(x) else np.nan
+        out[k] = e
+    return out
+
+
+def rejudge(a):
+    """A18: J2 re-judged from its stored rows (the smooth seed at scale 1) with the clipped-likelihood scale; no rerun.
+    Writes c1b/seed/seedtest_a18.json."""
+    z = np.load(os.path.join(a.out, "seed", "seedtest_rows.npz"))
+    rows = {k: z[k] for k in z.files}
+    J = judge_all(rows, G.replicas(nev=NEV_FILE * len(CM.FIT_FILES)))
+    res = {"plan": "c1b/PLAN.md §8 A16, A18", "source": "c1b/seed/seedtest_rows.npz (J2 under A16, scale 1)",
+           "material": [f"{x} (the smooth seed's D3a: the discs go off, A18)" for x in J["D3a_fail"]], "minor": [],
+           "tail_fractions": tail_fractions(rows), **J}
+    with open(os.path.join(a.out, "seed", "seedtest_a18.json"), "w") as fh:
+        json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
+    print(json.dumps({k: res[k] for k in ("material", "D3d_fail", "tail_fractions")}, indent=1, default=str))
+    return 0
+
+
 def seedtest(a):
     """§1 item 3 with A16 / A17: the seed check of the smooth seed on the fit files (A10) x 3 scenarios, the disc arm
     at material scale 1; D3a judged absolutely (a failure stops the package with the discs off: one attempt); D3b / D3c
@@ -167,9 +201,9 @@ def seedtest(a):
     reps = G.replicas(nev=NEV_FILE * len(CM.FIT_FILES))
     J = judge_all(rows, reps)
     res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §8 A9, A10, A16, A17", "files": CM.FIT_FILES, "seed": "smooth (A16)",
-           "disc_scale": 1.0, "material": [f"{x} (the smooth seed's D3a: the discs go off, A16-A17)" for x in J["D3a_fail"]],
-           "minor": [], **J,
-           "note": "D3b and D3c recorded at scale 1, judged after the material-scale fit; D3d reported only (A17)",
+           "disc_scale": 1.0, "material": [f"{x} (the smooth seed's D3a: the discs go off, A18)" for x in J["D3a_fail"]],
+           "minor": [], "tail_fractions": tail_fractions(rows), **J,
+           "note": "D3b and D3c recorded at scale 1, judged after the material-scale fit; D3d reported only (A17, A18)",
            "seconds": round(time.time() - t0, 1)}
     out_dir = os.path.join(a.out, "seed")
     os.makedirs(out_dir, exist_ok=True)
@@ -250,7 +284,8 @@ def scalefit(a):
     rows = collect(a, res["scale"])
     J = judge_all(rows, reps)
     res.update(J)
-    res["material"] += [f"{x} (after the scale fit: the discs go off, A16-A17)" for x in J["D3a_fail"] + J["D3b_fail"] + J["D3c_fail"]]
+    res["tail_fractions"] = tail_fractions(rows)
+    res["material"] += [f"{x} (after the scale fit: the discs go off, A18)" for x in J["D3a_fail"] + J["D3b_fail"] + J["D3c_fail"]]
     res["seconds"] = round(time.time() - t0, 1)
     out_dir = os.path.join(a.out, "scale")
     os.makedirs(out_dir, exist_ok=True)
@@ -483,7 +518,7 @@ def checks(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("pairs", "il1truth", "fit", "seedtest", "scalefit", "cutfit", "checks"))
+    ap.add_argument("job", choices=("pairs", "il1truth", "fit", "seedtest", "rejudge", "scalefit", "cutfit", "checks"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--files", type=int, nargs="+", default=None, help="pairs / il1truth / fit: files other than the fit files")
     ap.add_argument("--known-bad", action="store_true", help="file 4: the known-bads")
@@ -494,7 +529,7 @@ def main(argv=None):
     ap.add_argument("--chunk", type=int, default=10)
     ap.add_argument("--out", default=str(C1B_OUT))
     a = ap.parse_args(argv)
-    return {"pairs": OV.pairs, "il1truth": OV.il1truth, "fit": OV.fit, "seedtest": seedtest,
+    return {"pairs": OV.pairs, "il1truth": OV.il1truth, "fit": OV.fit, "seedtest": seedtest, "rejudge": rejudge,
             "scalefit": scalefit, "cutfit": c1b_cutfit, "checks": checks}[a.job](a)
 
 

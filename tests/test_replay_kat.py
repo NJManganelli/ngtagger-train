@@ -516,3 +516,18 @@ def test_empty_layer_material_is_charged():
     assert np.allclose(predict(cal, [3]) - predict(no_il4, [3]), il4)
     # and nothing of IL4's is charged before it is crossed
     assert np.allclose(predict(cal, [4]), predict(no_il4, [4]))
+
+
+def test_clip_scale():
+    """C1b A18: the clipped-likelihood scale is 1 for a unit Gaussian, the scale for a scaled one, and matches a direct
+    1-dim minimisation of sum [2 log s + min(z^2 / s^2, 25)] on a heavy-tailed sample."""
+    from scipy import optimize
+    import gates as G
+    import seedmodel as SM
+    rng = np.random.default_rng(3)
+    reps = G.replicas(nev=400, n=10)
+    for x in (rng.standard_normal(100000), 1.3 * rng.standard_normal(100000), rng.standard_t(3, 100000)):
+        s, sd = SM.clip_scale(x, rng.integers(0, 400, len(x)), reps)
+        f = lambda ls: np.sum(2 * ls + np.minimum(x * x * np.exp(-2 * ls), 25.0))
+        assert abs(s - np.exp(optimize.minimize_scalar(f, bounds=(-1, 1.5), method="bounded").x)) < 5e-4
+        assert 0 < sd < 0.02

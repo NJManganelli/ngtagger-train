@@ -385,6 +385,38 @@ def var_width(z):
     return float(np.sqrt(np.mean(np.minimum(z * z, 25.0)) / G25)) if len(z) >= 30 else np.nan
 
 
+S_GRID = np.arange(0.4, 3.0 + 1e-9, 0.002)           # A18: the clipped-likelihood scale's grid
+
+
+def clip_scale(z, ev, reps):
+    """A18: per pull sample z (events ev), the scale s minimising sum [2 log s + min(z^2 / s^2, 25)] (the 1-dim clipped
+    Gaussian likelihood; a unit Gaussian gives 1), on S_GRID with a parabolic refinement, and its event-bootstrap sd
+    (reps: replica weights per event). Per event and grid point the sums are cumulative over |z|, so every replica is
+    one matrix product."""
+    ok = np.isfinite(z)
+    z, ev = np.abs(z[ok]), ev[ok].astype(np.int64)
+    if len(z) < 30:
+        return np.nan, np.nan
+    nev = reps.shape[1]
+    k0 = np.searchsorted(S_GRID, z / 5.0, side="right")          # the first grid point where |z| < 5 s
+    G = len(S_GRID)
+    H2, H1 = np.zeros((G + 1, nev)), np.zeros((G + 1, nev))
+    np.add.at(H2, (k0, ev), z * z)
+    np.add.at(H1, (k0, ev), 1.0)
+    T, Cn = np.cumsum(H2, 0)[:G], np.cumsum(H1, 0)[:G]          # per grid point and event: sum z^2, count, |z| < 5 s
+    Ne = np.bincount(ev, minlength=nev).astype(float)
+    s2 = (S_GRID ** 2)[:, None]
+
+    def best(w):
+        f = (2.0 * np.log(S_GRID)) * (w @ Ne) + (T / s2 + 25.0 * (Ne[None, :] - Cn)) @ w
+        i = int(np.clip(np.argmin(f), 1, G - 2))
+        a, b, c = f[i - 1], f[i], f[i + 1]
+        d = a - 2 * b + c
+        return float(S_GRID[i] + (0.5 * (a - c) / d * (S_GRID[1] - S_GRID[0]) if d > 0 else 0.0))
+
+    return best(np.ones(nev)), float(np.std([best(w.astype(float)) for w in reps]))
+
+
 def pulls_first(D, extra):
     C = D["Cq"] + extra
     V = np.einsum("nij,njk,nlk->nil", D["J"], C, D["J"])
