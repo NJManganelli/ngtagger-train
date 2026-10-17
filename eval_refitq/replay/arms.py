@@ -76,7 +76,7 @@ class Arm:
                                     # INN's, PD20) | "gate99" (the hit-gate statistic <= its 99 % cut, PD18, which
                                     # failed its validation; searched within WINDOW_SEARCH_NSIG)
     metric: str = "producer"        # "producer" | "innovation"
-    seed_cov: str = "reported"      # "reported" | "calibrated"
+    seed_cov: str = "reported"      # "reported" | "calibrated" | "model" (exploratory: Tools.seed_model's correction)
     scattering: str = "producer"    # "producer" | "highland"
     inner_material: bool = False
     pos_err: str = "published"      # "published" | "rtables"
@@ -188,12 +188,13 @@ class Tools:
     """What the arms read besides the event: the producer configuration, the refit calibration (seed,
     material, R tables), the angle table and the cut file (cuts.Cuts)."""
 
-    def __init__(self, cfg, calibration=CALIBRATION, angle_table=AI.TABLE, cuts=None, disc=None):
+    def __init__(self, cfg, calibration=CALIBRATION, angle_table=AI.TABLE, cuts=None, disc=None, seed_model=None):
         self.cfg = cfg
         self.cal = ORP.load_calibration(calibration) if calibration else None
         self.angles = AI.AngleImport(angle_table) if angle_table else None
         self.cuts = cuts
         self.disc = disc                 # C1b's DiscTools (the disc_model arms)
+        self.seed_model = seed_model     # seed_cov="model": (ctx, a, o) -> the seed covariance correction (seedstudy)
         self._folded = None
 
     def folded(self):
@@ -278,13 +279,15 @@ class State:
 
 def seed(ctx, cfg, arm, tools, o):
     """The starting state of tracks o: the OT helix; the reported covariance after the producer's d0
-    floor, plus the calibrated deficit for the calibrated arms."""
+    floor, plus the calibrated deficit for the calibrated arms (or Tools.seed_model's correction)."""
     a = ctx["a"][o].copy()
     C, _ = E.d0_floor(ctx["C"][o], cfg)
     if arm.seed_cov == "calibrated":
         kpt = ORP.pt_constant(ctx["T"])
         C = ORP.seed_cov(tools.cal, C, a[:, 2], ctx["n_disk_stubs"][o], ctx["T"]["nStubs"][o],
                          kpt / np.maximum(np.abs(a[:, 0]), 1e-12))
+    elif arm.seed_cov == "model":
+        C = C + tools.seed_model(ctx, a, o)
     return a, C
 
 

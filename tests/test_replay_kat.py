@@ -478,3 +478,41 @@ def test_overlap_shape_fit():
     assert abs(g[0] * DR.MAD_K - 5.0 * stats.norm.ppf(0.75)) < 1e-6                    # its MAD, exactly
     bu, _ = DR.beam_pipe_sigma(1.0, 0.0, 2.9, 0.0, 0.0)
     assert 3e-4 < bu < 4e-4
+
+
+def test_empty_layer_material_is_charged():
+    """The calibrated arm charges a layer's module material when the track steps past it, per crossing and not per
+    hit (arms._q_step -> ot_refit_projection.add_material: every plane in (R_next, R_last visited]): a visited layer with
+    no cluster and a layer the visit sequence skips both scatter the prediction of the next one."""
+    import types
+    import ot_refit_projection as ORP_
+    geo = {"R": {1: 3.04, 2: 6.17, 3: 10.47, 4: 14.67}}
+    planes = [["IL2", 0.0187, "IL2 module"], [7.29, 0.001, "HV L2"], ["IL3", 0.0148, "IL3 module"],
+              [11.68, 0.0008, "HV L3"], ["IL4", 0.0148, "IL4 module"], [15.84, 0.0009, "HV L4"]]
+    cal = {"planes": planes, "material_scale": 1.0, "ot_inner_r_cm": 22.0}
+    no_il4 = {**cal, "planes": [p if p[0] != "IL4" else ["IL4", 0.0, "IL4 removed"] for p in planes]}
+    arm = AR.inn({})
+    kpt = 0.0057
+    a = np.array([[kpt / 3.0, 0.1, 0.4, 1.0, 0.0]])                  # pT 3 GeV, tanL 0.4
+
+    def predict(c, visits):
+        st = AR.State(a.copy(), np.zeros((1, 5, 5)), np.array([0]), np.zeros((1, 4), np.int64))
+        for S in visits:                                                # no update anywhere: the clusters do not matter
+            AR._q_step(arm, st, np.array([0]), S, None, geo, types.SimpleNamespace(cal=c, disc=None), kpt, {})
+        return st.C[0]
+
+    def kink(r_s, xx0):                                                 # the Highland kink of one plane, as charged
+        tanl = a[0, 2]
+        p = kpt / a[0, 0] * np.sqrt(1 + tanl ** 2)
+        th2 = ORP_._highland_theta2(np.array([xx0]), np.array([p]), np.array([tanl]))[0]
+        sec, sec2 = np.sqrt(1 + tanl ** 2), 1 + tanl ** 2
+        jT = np.array([0, sec, 0, 0, r_s * sec]); jL = np.array([0, 0, sec2, -r_s * sec2, 0])
+        return th2 * (np.outer(jT, jT) + np.outer(jL, jL))
+
+    il4 = kink(geo["R"][4], 0.0148)
+    # IL4 visited without a cluster, then IL3: IL4's module is charged when predicting IL3
+    assert np.allclose(predict(cal, [4, 3]) - predict(no_il4, [4, 3]), il4)
+    # IL4 skipped by the visit sequence (OT -> IL3 directly): charged all the same
+    assert np.allclose(predict(cal, [3]) - predict(no_il4, [3]), il4)
+    # and nothing of IL4's is charged before it is crossed
+    assert np.allclose(predict(cal, [4]), predict(no_il4, [4]))
