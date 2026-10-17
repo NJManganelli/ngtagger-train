@@ -265,23 +265,45 @@ def _records(recs):
     return np.array(recs, np.int64).reshape(-1, len(RECORD_COLS))
 
 
-def _cmssw_tracks(spec, nev=None, collection="L1TTrack"):
-    """The records of a CMSSW track collection's barrel-seeded tracks, events numbered as the census does."""
-    recs = []
-    off = 0
+def _event_ids(spec, nev=None):
+    """(run, lumi, event) of the events of `spec` (files comma-separated, in order), in the census's numbering
+    (a running count over the files), the first `nev` of them."""
+    out = []
     for path in M.expand_inputs(spec):
-        left = None if nev is None else nev - off
+        left = None if nev is None else nev - len(out)
         if left is not None and left <= 0:
             break
-        A = _events(path, (f"{collection}_", f"{collection}Stub_", "L1TOTStub_"), left)
-        for k in range(len(A)):
+        t = uproot.open(f"{path}:Events")
+        out += list(zip(*(t[b].array(library="np", entry_stop=left).tolist()
+                          for b in ("run", "luminosityBlock", "event"))))
+    return out
+
+
+def _cmssw_tracks(spec, ids, collection="L1TTrack"):
+    """The records of a CMSSW track collection's barrel-seeded tracks, each event numbered as the census numbers
+    the SAME event: `ids` the census's event identities (_event_ids of its input). A production holds its events
+    in a scheduling-dependent axis-0 order (a sibling of the census input can hold the same event at another
+    axis-0 index), so events are matched by (run, lumi, event), never by axis-0 index; events the census did not
+    read are skipped, and a census event missing from the production is refused."""
+    pos = {k: i for i, k in enumerate(ids)}
+    recs, seen = [], set()
+    for path in M.expand_inputs(spec):
+        A = _events(path, (f"{collection}_", f"{collection}Stub_", "L1TOTStub_", "run", "luminosityBlock"))
+        idk = zip(ak.to_numpy(A["run"]).tolist(), ak.to_numpy(A["luminosityBlock"]).tolist(),
+                  ak.to_numpy(A["event"]).tolist())
+        for k, ident in enumerate(idk):
+            e = pos.get(ident)
+            if e is None:
+                continue
+            seen.add(e)
             T, S, L = _table(A, k, f"{collection}_"), _table(A, k, f"{collection}Stub_"), _table(A, k, "L1TOTStub_")
-            L["event"] = np.full(len(L["layer"]), off + k, np.int64)
+            L["event"] = np.full(len(L["layer"]), e, np.int64)
             for j in range(len(T["rInv"])):
                 sd = int(T["seedType"][j])
                 if sd in SEED_LAYERS:
-                    recs.append(track_record(L, off + k, sd, S["otStubIdx"][S["trackIdx"] == j]))
-        off += len(A)
+                    recs.append(track_record(L, e, sd, S["otStubIdx"][S["trackIdx"] == j]))
+    if len(seen) != len(ids):
+        raise SystemExit(f"{spec} lacks {len(ids) - len(seen)} of the census's events")
     return _records(recs)
 
 
@@ -318,8 +340,8 @@ def _ot_entries(C):
 
 def l2l3(census_dir, cmssw, nev=None):
     """L2L3 tracks in KF regions 0-3 (plan sec. 2): none in CMSSW, none in the closed arm."""
-    n_cms = int((_judged(_cmssw_tracks(cmssw, nev))[:, 1] == 1).sum())
     C = TF.load(TF.census_dir(census_dir), nev=nev, with_tracks=True, verbose=False)
+    n_cms = int((_judged(_cmssw_tracks(cmssw, _event_ids(_census_inputs(C), C["n_events"])))[:, 1] == 1).sum())
     stubs = _stub_tables(_census_inputs(C), C["n_events"])
     ent = [i for i in _ot_entries(C) if C["seeds"][i].layers == (12, 13)]
     n_cen = sum(len(_judged(R)) for merged in (False, True)
@@ -717,11 +739,12 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_event
     entries = _ot_entries(C)
     entry = {SA.OT_CHAIN_SEED[C["seeds"][i].layers]: i for i in entries}
     stubs = _stub_tables(_census_inputs(C), nevc)
+    ids = _event_ids(_census_inputs(C), nevc)
     key, tev = C["key"], M.tp_key_parts(C["key"])[0].astype(np.int64)
     den = _denominator(C) & keep[tev]
     parts = {}
     if cmssw_nodr:
-        R_cms = _cmssw_tracks(cmssw_nodr, nevc)
+        R_cms = _cmssw_tracks(cmssw_nodr, ids)
         R_cen = _census_tracks(C, entries, False, stubs)
         for sd in JUDGED_SEEDS:
             i = entry[sd]
@@ -736,7 +759,7 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_event
     sheet = {}
     if cmssw_merge:
         R_cen = np.concatenate(list(_census_tracks(C, entries, True, stubs).values()))
-        R_cms = _cmssw_tracks(cmssw_merge, nevc)
+        R_cms = _cmssw_tracks(cmssw_merge, ids)
         f_cen, f_cms = _found(R_cen, key) & den, _found(R_cms, key) & den
         nc, fc, dc, tc, sc = _track_counts(R_cen, nevc)
         nm, fm, dm, tm, sm = _track_counts(R_cms, nevc)

@@ -1214,8 +1214,10 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
             et_all = np.concatenate([np.arcsinh(U["globalZ"][x]
                                                 / np.maximum(U["globalR"][x], 1e-6))
                                      for x in gA])
-            nz = np.clip(((ph_all + np.pi) % (2 * np.pi))
-                         / (2 * np.pi / N_NONANT), 0, N_NONANT - 1e-9).astype(np.int64)
+            # the clip on the integer: in float32 (the azimuth's type) the bound N_NONANT - 1e-9 rounds to
+            # N_NONANT, so an azimuth at +pi gave nonant 9
+            nz = np.clip((((ph_all + np.pi) % (2 * np.pi)) / (2 * np.pi / N_NONANT)).astype(np.int64),
+                         0, N_NONANT - 1)
             es = np.searchsorted(np.asarray(ETA_SECTOR_EDGES), et_all)
             es = np.clip(es, 0, N_ETA_SECTOR - 1).astype(np.int64)
             loc = ev_all - ev0                   # chunk-local event index
