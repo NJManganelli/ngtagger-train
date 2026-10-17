@@ -535,14 +535,16 @@ def _align_nodr(cands, nd):
     return match, 0
 
 
-def c1b(fakefit, nodr=None, nev=None):
+def c1b(fakefit, nodr=None, nev=None, order="dtc"):
     """(i) the emulated candidates against CMSSW's (Fakefit no-DR: every track-builder candidate, its full
     stub list in order and its tracklet's integer parameters); (ii) with the no-DR production of the same
     events, the KF on every CMSSW candidate list (barrel seed and stubs, KF regions 0-3) against CMSSW's
     no-DR output: both reject, or both accept with the same stubs and parameters; the census accepting what
     CMSSW rejected is the fake diagnostic (those tracks' seed truth is reported).
     Ungated, reported: candidates without an emulated tracklet, emulated candidates without a CMSSW one, the
-    tracklet integer parameters."""
+    tracklet integer parameters. order: the emulation's match order, "dtc" or "random:<seed>" (the known-bad
+    that must lower (i))."""
+    kind, _, seed = order.partition(":")
     A = _events(fakefit, ("L1TTrack_", "L1TTrackStub_", "L1TOTStub_", "L1TOTStubDTC_"), nev)
     B = _events(nodr, ("L1TTrack_", "L1TTrackStub_"), nev) if nodr else None
     evB = {int(v): i for i, v in enumerate(ak.to_numpy(B["event"]))} if B is not None else {}
@@ -560,7 +562,7 @@ def c1b(fakefit, nodr=None, nev=None):
         L["event"] = np.full(len(L["layer"]), e, np.int64)
         x, y, z = _positions(L, Dt, "c1b")
         col = {}
-        OC.run_event(L, Dt, collect=col, do_dr=False)
+        OC.run_event(L, Dt, collect=col, do_dr=False, order=kind, seed=int(seed or 0) + e)
         cp = col["copies"]
         trk = {(t.seed, t.sector, int(cp.row[t.inner]), int(cp.row[t.outer])): t for t in col["tracklets"]}
         cand = {}
@@ -942,6 +944,7 @@ def main():
     p = sub.add_parser("l2l3"); p.add_argument("census"); p.add_argument("cmssw")
     p = sub.add_parser("c1"); p.add_argument("nodr")
     p = sub.add_parser("c1b"); p.add_argument("fakefit"); p.add_argument("--nodr", default=None)
+    p.add_argument("--ot-order", default="dtc", help="the emulation's match order: dtc, or random:<seed>")
     for name in ("c23", "floor"):
         p = sub.add_parser(name)
         if name == "c23":
@@ -976,7 +979,7 @@ def main():
     elif a.stage == "c1":
         rep, ok = c1(a.nodr, a.nev)
     elif a.stage == "c1b":
-        rep, ok = c1b(a.fakefit, a.nodr, a.nev)
+        rep, ok = c1b(a.fakefit, a.nodr, a.nev, a.ot_order)
     elif a.stage == "c23":
         pe = [int(x) for x in a.power_events.split(",") if x.strip()]
         rep, ok = c23(a.census, a.nodr, a.merge, a.nev, a.exclude_events, pe)
