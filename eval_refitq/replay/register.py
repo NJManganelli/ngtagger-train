@@ -9,6 +9,8 @@
   cutcheck  wpc.c1a.cutcheck-<ver>   PD20's file-4 check of a cut file (entry/cutcheck_wpc_cuts_<ver>.json)
   c1b-il1   wpc.c1b.il1-truth          C1b A8 / A11: IL1's truth width, reference and findings (c1b/overlap/il1truth_summary.json)
   c1b-j1    wpc.c1b.j1-shape-fit       C1b J1: the disc shape fits, T0, D0, D2 (c1b/overlap/overlap_summary.json)
+  c1b-j2    wpc.c1b.j2-seed-test       C1b J2: the seed test (c1b/seed/seedtest_summary.json)
+  c1b-j3    wpc.c1b.j3-material-scale  C1b J3: the disc material scale, D3b / D3c, the D3a re-check (c1b/scale/...)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
                                   the final verdict (entry/entry_verdict.json, verdict.py) with PD15's rr check, job
@@ -242,10 +244,43 @@ def c1b_j1(job_dir, overwrite):
                                   "identifiable from overlaps", "sources": [str(p)]}, job_dir, overwrite)
 
 
+def _width_vals(Q, keys):
+    return [{"name": f"{k} {key}", "value": json.dumps({b: [e["n"], round(e["pu"], 3), round(e["pv"], 3)]
+                                                         for b, e in Q[key].items() if e["n"] >= 200})[:2000]}
+            for k, key in keys]
+
+
+def c1b_j2(job_dir, overwrite):
+    p = CM.OUT / "c1b" / "seed" / "seedtest_summary.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": "decision", "value": Q["decision"]}, {"name": "D3a failing", "value": "; ".join(Q["D3a_fail"]) or "none"}]
+    vals += _width_vals(Q, (("D3a (group|pT): n, u, v core", "D3a"), ("barrel first-visit reference", "ref_first")))
+    _reg({"id": "wpc.c1b.j2-seed-test", "title": "WP-C C1b J2: the disc seed test at material scale 1 (canon_v4, A10, A14)",
+          "status": "in-sample", "status_note": "the fit files; the seed decision moved after J3 (A15)",
+          "values": vals, "bias": "judged relative to the barrel's own first visits (A4), which are 12-15 % wide in v",
+          "sources": [str(p)]}, job_dir, overwrite)
+
+
+def c1b_j3(job_dir, overwrite):
+    p = CM.OUT / "c1b" / "scale" / "scalefit_summary.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": "scale (second-on / third-on)", "value": f"{Q['scale']} / {Q['third_on']}"},
+            {"name": "NLL over the grid", "value": json.dumps({"grid": Q["grid"], **Q["nll"]})},
+            {"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"}]
+    vals += _width_vals(Q, (("D3b (disc|pT): n, u, v core", "D3b"), ("D3c (surface|step|pT)", "D3c"),
+                            ("D3a re-check", "D3a")))
+    _reg({"id": "wpc.c1b.j3-material-scale", "title": "WP-C C1b J3: the disc material scale (canon_v4, A10, A14, A15)",
+          "status": "exploratory", "status_note": "stopped on its pre-declared rules: " + "; ".join(Q["material"]),
+          "values": vals, "bias": "the scale sits at the grid's upper bound (2.0); judged relative to the barrel (A4)",
+          "sources": [str(p)]}, job_dir, overwrite)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
-                                     "c1b-j1"))
+                                     "c1b-j1", "c1b-j2", "c1b-j3"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -254,7 +289,7 @@ def main(argv=None):
         {"cuts": cuts, "cutcheck": cutcheck}[a.what](a.job_dir, a.overwrite, a.ver)
     else:
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
-         "c1b-il1": c1b_il1, "c1b-j1": c1b_j1}[a.what](a.job_dir, a.overwrite)
+         "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
