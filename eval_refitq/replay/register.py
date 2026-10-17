@@ -255,7 +255,9 @@ def c1b_j2(job_dir, overwrite):
     with open(p) as fh:
         Q = json.load(fh)
     vals = [{"name": "decision", "value": Q["decision"]}, {"name": "D3a failing", "value": "; ".join(Q["D3a_fail"]) or "none"}]
-    vals += _width_vals(Q, (("D3a (group|pT): n, u, v core", "D3a"), ("barrel first-visit reference", "ref_first")))
+    vals += _width_vals(Q, tuple((lab, key) for lab, key in (("D3a (group|pT): n, u, v width", "D3a"),
+                                                             ("barrel first-visit reference", "ref_first"),
+                                                             ("D3d barrel-only (surface|first|pT)", "D3d")) if key in Q))
     _reg({"id": "wpc.c1b.j2-seed-test", "title": "WP-C C1b J2: the disc seed test at material scale 1 (canon_v4, A10, A14)",
           "status": "in-sample", "status_note": "the fit files; the seed decision moved after J3 (A15)",
           "values": vals, "bias": "judged relative to the barrel's own first visits (A4), which are 12-15 % wide in v",
@@ -269,7 +271,7 @@ def c1b_j3(job_dir, overwrite):
     vals = [{"name": "scale (second-on / third-on)", "value": f"{Q['scale']} / {Q['third_on']}"},
             {"name": "NLL over the grid", "value": json.dumps({"grid": Q["grid"], **Q["nll"]})},
             {"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"}]
-    vals += _width_vals(Q, (("D3b (disc|pT): n, u, v core", "D3b"), ("D3c (surface|step|pT)", "D3c"),
+    vals += _width_vals(Q, (("D3b (disc|pT): n, u, v width", "D3b"), ("D3c (surface|first|pT)", "D3c"),
                             ("D3a re-check", "D3a")))
     _reg({"id": "wpc.c1b.j3-material-scale", "title": "WP-C C1b J3: the disc material scale (canon_v4, A10, A14, A15)",
           "status": "exploratory", "status_note": "stopped on its pre-declared rules: " + "; ".join(Q["material"]),

@@ -76,7 +76,7 @@ class Arm:
                                     # INN's, PD20) | "gate99" (the hit-gate statistic <= its 99 % cut, PD18, which
                                     # failed its validation; searched within WINDOW_SEARCH_NSIG)
     metric: str = "producer"        # "producer" | "innovation"
-    seed_cov: str = "reported"      # "reported" | "calibrated" | "model" (exploratory: Tools.seed_model's correction)
+    seed_cov: str = "reported"      # "reported" | "calibrated" (v3's binned deficits) | "smooth" (seedmodel, A16)
     scattering: str = "producer"    # "producer" | "highland"
     inner_material: bool = False
     pos_err: str = "published"      # "published" | "rtables"
@@ -106,7 +106,7 @@ class Arm:
 
     @property
     def cov_model(self) -> str:
-        return "calibrated" if self.seed_cov == "calibrated" else "producer"
+        return "calibrated" if self.seed_cov in ("calibrated", "smooth") else "producer"
 
     def uses(self, consumer, angle, region) -> bool:
         return (consumer, angle, region) in self.use
@@ -126,7 +126,7 @@ def pm_b(cfg, **kw):
 
 def inn(cfg, **kw):
     base = dict(crossing="f64", jac="central", window="ellipse", window_cut="nsig", metric="innovation",
-                seed_cov="calibrated",
+                seed_cov="smooth",
                 scattering="highland", inner_material=True, pos_err="rtables", ang_err="table",
                 use=use_set(("rank", "update"), ANGLE_NAMES, ("barrel",)), discs=False)
     base.update(kw)
@@ -142,9 +142,9 @@ def inn_disc(cfg, **kw):
 
 
 def orp_cal(cfg, **kw):
-    """ORP's calibrated `innovation` arm (the E2 / E3 identity configuration)."""
+    """ORP's calibrated `innovation` arm (the E2 / E3 identity configuration: v3's binned seed deficits)."""
     ang = {"alphaBeta": ANGLE_NAMES, "alpha": ("alpha",)}[cfg["useAngles"]]
-    return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False,
+    return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False, seed_cov="calibrated",
                use=use_set(("rank", "update"), ang, ("barrel",)), **kw)
 
 
@@ -156,7 +156,24 @@ def branches(path):
                               disc_scope="all", cap_angles=False)
     b += SPN.branch_names(keys, "L1TTrack", ["tpIdx"])
     b += SPN.branch_names(keys, SPN.TP_TABLE, list(TP_COLS))
+    b += [c for c in STUB_COLS if c in keys]
     return list(dict.fromkeys(b))
+
+
+STUB_COLS = ("L1TTrackStub_trackIdx", "L1TTrackStub_otStubIdx", "L1TOTStub_isPS", "L1TOTStub_isBarrel")
+
+
+def stub_features(A, ntrk):
+    """Per flattened OT track: the number of PS and 2S stubs and of barrel and disc stubs (the smooth seed's keys)."""
+    nt = ak.to_numpy(ak.num(A["L1TTrack_pt"]))
+    off = np.concatenate([[0], np.cumsum(nt)[:-1]])
+    ti, si = A["L1TTrackStub_trackIdx"], A["L1TTrackStub_otStubIdx"]
+    gi = ak.to_numpy(ak.flatten(ti + ak.Array(off))).astype(np.int64)
+    ps = ak.to_numpy(ak.flatten(A["L1TOTStub_isPS"][si])).astype(np.float64)
+    br = ak.to_numpy(ak.flatten(A["L1TOTStub_isBarrel"][si])).astype(np.float64)
+    out = {"n_ps": np.bincount(gi, ps, ntrk), "n_2s": np.bincount(gi, 1.0 - ps, ntrk),
+           "n_barrel_stubs": np.bincount(gi, br, ntrk), "n_disc_stubs": np.bincount(gi, 1.0 - br, ntrk)}
+    return {k: v.astype(np.int16) for k, v in out.items()}
 
 
 def prepare(A, geo):
@@ -181,6 +198,8 @@ def prepare(A, geo):
     K["mi"] = OP.module_index(geo, K["detId"])
     ctx["coff"] = np.concatenate([[0], np.cumsum(K["_n"])])
     ctx["tpoff"] = tpoff
+    if all(c in A.fields for c in STUB_COLS):
+        ctx.update(stub_features(A, ctx["ntrk"]))
     return ctx
 
 
@@ -194,8 +213,15 @@ class Tools:
         self.angles = AI.AngleImport(angle_table) if angle_table else None
         self.cuts = cuts
         self.disc = disc                 # C1b's DiscTools (the disc_model arms)
-        self.seed_model = seed_model     # seed_cov="model": (ctx, a, o) -> the seed covariance correction (seedstudy)
+        self._seed_model = seed_model    # seed_cov="smooth": seedmodel.SeedModel (default: its model file, loaded once)
         self._folded = None
+
+    @property
+    def seed_model(self):
+        if self._seed_model is None:
+            import seedmodel as SMOD
+            self._seed_model = SMOD.SeedModel()
+        return self._seed_model
 
     def folded(self):
         if self._folded is None:
@@ -279,15 +305,15 @@ class State:
 
 def seed(ctx, cfg, arm, tools, o):
     """The starting state of tracks o: the OT helix; the reported covariance after the producer's d0
-    floor, plus the calibrated deficit for the calibrated arms (or Tools.seed_model's correction)."""
+    floor, plus the calibrated arms' correction: v3's binned deficit or the smooth model (A16)."""
     a = ctx["a"][o].copy()
     C, _ = E.d0_floor(ctx["C"][o], cfg)
     if arm.seed_cov == "calibrated":
         kpt = ORP.pt_constant(ctx["T"])
         C = ORP.seed_cov(tools.cal, C, a[:, 2], ctx["n_disk_stubs"][o], ctx["T"]["nStubs"][o],
                          kpt / np.maximum(np.abs(a[:, 0]), 1e-12))
-    elif arm.seed_cov == "model":
-        C = C + tools.seed_model(ctx, a, o)
+    elif arm.seed_cov == "smooth":
+        C = C + tools.seed_model.dC(ctx, a, o)
     return a, C
 
 

@@ -64,7 +64,9 @@ def core_width(x):
 
 
 def width_table(rows, keys, reps, min_n=200):
-    """Per bin (the tuple of keys): n, the core widths of pu and pv and their event-bootstrap sd."""
+    """Per bin (the tuple of keys): n; per pull axis the A17 width (the variance within a +-5 sigma clip, a unit
+    Gaussian giving 1) with its event-bootstrap sd, and the MAD core width (reported)."""
+    import seedmodel as SMOD
     out = {}
     combo = np.stack([rows[k] for k in keys], 1)
     uniq = np.unique(combo, axis=0)
@@ -75,16 +77,16 @@ def width_table(rows, keys, reps, min_n=200):
         e = {"n": n}
         for ax in ("pu", "pv"):
             x = rows[ax][m]
-            e[ax] = core_width(x)
+            e[ax], e[ax + "_core"] = SMOD.var_width(x), core_width(x)
             if n >= min_n:
                 idx = np.flatnonzero(m)
-                bs = [core_width(rows[ax][np.repeat(idx, w[ev[idx]])]) for w in reps]
-                e[ax + "_sd"] = float(np.nanstd(bs))
+                e[ax + "_sd"] = float(np.nanstd([SMOD.var_width(rows[ax][np.repeat(idx, w[ev[idx]])]) for w in reps]))
         out["|".join(str(int(x)) if np.isfinite(x) else str(x) for x in u)] = e
     return out
 
 
 SCALE_GRID = (0.5, 0.71, 1.0, 1.41, 2.0)              # A5
+SCALE_GRID_EXT = (2.83, 4.0)                          # A17's chain: only if the minimum sits at 2.0
 CLIP = 25.0
 
 
@@ -121,66 +123,60 @@ def collect(a, disc_scale):
     return _concat(parts)
 
 
-def judge_relative(table, ref, refkey, label, min_n=200):
-    """A4: |width - width(reference)| <= 0.1 + t1(N) sqrt(sd^2 + sd_ref^2), per bin and axis; refkey maps a bin
-    key to its reference key. Returns (failing lines, W, N)."""
-    jb = []
-    for k, e in table.items():
-        r = ref.get(refkey(k))
-        for ax in ("pu", "pv"):
-            if e["n"] >= min_n and r and r["n"] >= min_n and np.isfinite(e[ax]) and np.isfinite(r[ax]):
-                jb.append((k, ax, r))
+def judge_absolute(table, label, min_n=200):
+    """A17: |w - 1| <= 0.1 + t1(N) sd, per bin and axis (bins with >= min_n rows). Returns (failing lines, W, N)."""
+    jb = [(k, ax) for k, e in table.items() for ax in ("pu", "pv") if e["n"] >= min_n and np.isfinite(e[ax])]
     W = G.t_one(max(len(jb), 1))
-    fails = [f"{label} {k} {ax}: width {table[k][ax]:.3f} vs reference {r[ax]:.3f} (n {table[k]['n']} / {r['n']})"
-             for k, ax, r in jb
-             if abs(table[k][ax] - r[ax]) > D3_TOL + W * np.hypot(table[k][ax + "_sd"], r[ax + "_sd"])]
+    fails = [f"{label} {k} {ax}: width {table[k][ax]:.3f} (n {table[k]['n']})" for k, ax in jb
+             if abs(table[k][ax] - 1.0) > D3_TOL + W * table[k][ax + "_sd"]]
     return fails, W, len(jb)
 
 
 def judge_all(rows, reps):
-    """D3a, D3b, D3c relative to the barrel-only references (A4), the stub-count test, the absolute widths."""
+    """A17: D3a (first visits of disc-going tracks, per first-met disc x pT bin, with the stub-count sub-bins), D3b
+    (later disc visits, per disc x pT bin), D3c (barrel visits of disc-going tracks, per layer x first / later x pT bin)
+    and D3d (barrel-only tracks, the same bins; reported only), each judged absolutely."""
     sub = lambda m: {k: v[m] for k, v in rows.items()}
+    out = {}
     bo = ~rows["dg"] & (rows["surface"] <= 4)
-    out = {"ref_same": width_table(sub(bo), ("surface", "first", "ptbin"), reps),
-           "ref_first": width_table(sub(bo & (rows["step"] == 0)), ("ptbin",), reps),
-           "ref_later": width_table(sub(bo & (rows["step"] > 0)), ("ptbin",), reps)}
+    out["D3d"] = width_table(sub(bo), ("surface", "first", "ptbin"), reps)
+    out["D3d_fail"], out["D3d_W"], out["D3d_N"] = judge_absolute(out["D3d"], "D3d")
     first = rows["dg"] & (rows["step"] == 0)
     out["D3a"] = width_table(sub(first), ("group", "ptbin"), reps)
-    pt_of = lambda k: k.split("|")[-1]
-    out["D3a_fail"], out["D3a_W"], out["D3a_N"] = judge_relative(out["D3a"], out["ref_first"], pt_of, "D3a")
+    out["D3a_fail"], out["D3a_W"], out["D3a_N"] = judge_absolute(out["D3a"], "D3a")
     out["D3a_masked_only"] = width_table(sub(first & (rows["surface"] <= 4)), ("group",), reps)
     out["D3a_stubs"] = width_table(sub(first), ("group", "ptbin", "stubs"), reps)
-    sf, _, _ = judge_relative(out["D3a_stubs"], out["ref_first"], lambda k: k.split("|")[1], "D3a stub sub-bin")
+    sf, _, _ = judge_absolute(out["D3a_stubs"], "D3a stub sub-bin")
     bad_groups = {f.split()[1] for f in out["D3a_fail"]}
     out["stub_split"] = sorted({f.split()[3].rsplit("|", 1)[0] for f in sf} - bad_groups)
     later_disc = rows["dg"] & (rows["surface"] > 10) & (rows["step"] > 0)
     out["D3b"] = width_table(sub(later_disc), ("surface", "ptbin"), reps)
-    out["D3b_fail"], out["D3b_W"], out["D3b_N"] = judge_relative(out["D3b"], out["ref_later"], pt_of, "D3b")
+    out["D3b_fail"], out["D3b_W"], out["D3b_N"] = judge_absolute(out["D3b"], "D3b")
     bar = rows["dg"] & (rows["surface"] <= 4)
     out["D3c"] = width_table(sub(bar), ("surface", "first", "ptbin"), reps)
-    out["D3c_fail"], out["D3c_W"], out["D3c_N"] = judge_relative(out["D3c"], out["ref_same"], lambda k: k, "D3c")
+    out["D3c_fail"], out["D3c_W"], out["D3c_N"] = judge_absolute(out["D3c"], "D3c")
     return out
 
 
 def seedtest(a):
-    """§1 item 3 with A4: the D3a test-or-fit decision on the fit files (A10) x 3 scenarios, the disc arm with the
-    seed as is (each disc-going track's own v3 deficit) and the material scale fixed at 1; D3b / D3c are recorded,
-    not judged (they are judged after the scale fit). Writes c1b/seed/seedtest_summary.json and the rows."""
+    """§1 item 3 with A16 / A17: the seed check of the smooth seed on the fit files (A10) x 3 scenarios, the disc arm
+    at material scale 1; D3a judged absolutely (a failure stops the package with the discs off: one attempt); D3b / D3c
+    recorded, judged after the scale fit; D3d reported. Writes c1b/seed/seedtest_summary.json and the rows."""
     t0 = time.time()
     rows = collect(a, 1.0)
     reps = G.replicas(nev=NEV_FILE * len(CM.FIT_FILES))
     J = judge_all(rows, reps)
-    res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §8 A4, A9, A10", "files": CM.FIT_FILES,
-           "disc_scale": 1.0, "material": [], "minor": [], **J,
-           "decision": "refit the disc seed groups" if J["D3a_fail"] else "keep the seed (each track's v3 deficit)",
-           "note": "D3b and D3c recorded at scale 1; judged after the material-scale fit (A4)",
+    res = {"plan": "c1b/PLAN.md rev 4 §1 item 3, §8 A9, A10, A16, A17", "files": CM.FIT_FILES, "seed": "smooth (A16)",
+           "disc_scale": 1.0, "material": [f"{x} (the smooth seed's D3a: the discs go off, A16-A17)" for x in J["D3a_fail"]],
+           "minor": [], **J,
+           "note": "D3b and D3c recorded at scale 1, judged after the material-scale fit; D3d reported only (A17)",
            "seconds": round(time.time() - t0, 1)}
     out_dir = os.path.join(a.out, "seed")
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, "seedtest_rows.npz"), **rows)
     with open(os.path.join(out_dir, "seedtest_summary.json"), "w") as fh:
         json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
-    print(json.dumps({k: res[k] for k in ("D3a_fail", "decision")}, indent=1, default=str))
+    print(json.dumps({k: res[k] for k in ("material", "D3d_fail")}, indent=1, default=str))
     return 0
 
 
@@ -206,64 +202,62 @@ def quad_min(logs, y):
 
 
 def scalefit(a):
-    """§1 items 4-5 with A4 / A5: the disc material scale from the scan, its second-on vs third-on check, then
-    one pass at the fitted scale: D3b, D3c (the stop rule) and the D3a re-check, relative to the barrel-only
-    references; the absolute widths reported. Writes c1b/scale/scalefit_summary.json."""
+    """§1 items 4-5 with A5 / A16 / A17: the disc material scale from the scan (extended to SCALE_GRID_EXT only if the
+    minimum sits at 2.0), its second-on vs third-on check, then one pass at the fitted scale: D3a (re-check), D3b and D3c
+    judged absolutely, D3d reported. Writes c1b/scale/scalefit_summary.json."""
     t0 = time.time()
     nev = NEV_FILE * len(CM.FIT_FILES)
     reps = G.replicas(nev=nev)
-    logs = np.log(np.array(SCALE_GRID))
+    grid = list(SCALE_GRID)
     nll = {"second_on": [], "third_on": []}
-    core_ratio = []                     # diagnostic (reported only): the later disc visits' core width over the
-    for s in SCALE_GRID:                # barrel-only later visits', u and v averaged, per grid scale
-        rows = collect(a, s)
-        later = rows["dg"] & (rows["surface"] > 10)
-        nll["second_on"].append(nll_per_event(rows, later & (rows["step"] >= 1), nev))
-        nll["third_on"].append(nll_per_event(rows, later & (rows["step"] >= 2), nev))
-        ref = ~rows["dg"] & (rows["surface"] <= 4) & (rows["step"] > 0)
-        dl = later & (rows["step"] >= 1)
-        core_ratio.append(np.mean([core_width(rows[x][dl]) / core_width(rows[x][ref]) for x in ("pu", "pv")]))
-        print(f"[{time.time() - t0:7.1f}s] scale {s}", flush=True)
-    res = {"plan": "c1b/PLAN.md rev 4 §1 items 4-5, §8 A4 A5 A9 A10", "files": CM.FIT_FILES, "grid": SCALE_GRID,
-           "material": [], "minor": []}
-    fit = {}
-    for k in nll:
-        M = np.array(nll[k])                                     # (grid, nev)
-        s_hat, edge = quad_min(logs, M.sum(1))
-        bs = [quad_min(logs, M @ w)[0] for w in reps]
-        fit[k] = {"scale": s_hat, "at_bound": edge, "nll": M.sum(1), "boot": np.array(bs)}
+
+    def scan(points):
+        for s in points:
+            rows = collect(a, s)
+            later = rows["dg"] & (rows["surface"] > 10)
+            nll["second_on"].append(nll_per_event(rows, later & (rows["step"] >= 1), nev))
+            nll["third_on"].append(nll_per_event(rows, later & (rows["step"] >= 2), nev))
+            print(f"[{time.time() - t0:7.1f}s] scale {s}", flush=True)
+
+    def fit_all():
+        logs = np.log(np.array(grid))
+        out = {}
+        for k in nll:
+            M = np.array(nll[k])                                 # (grid, nev)
+            s_hat, edge = quad_min(logs, M.sum(1))
+            out[k] = {"scale": s_hat, "at_bound": edge, "nll": M.sum(1),
+                      "boot": np.array([quad_min(logs, M @ w)[0] for w in reps])}
+        return out
+
+    scan(grid)
+    fit = fit_all()
+    if fit["second_on"]["at_bound"] and fit["second_on"]["scale"] >= grid[-1]:
+        grid += list(SCALE_GRID_EXT)                             # A17's chain: extend only if the minimum sits at 2.0
+        scan(SCALE_GRID_EXT)
+        fit = fit_all()
+    res = {"plan": "c1b/PLAN.md rev 4 §1 items 4-5, §8 A5, A9, A10, A16, A17", "files": CM.FIT_FILES, "grid": grid,
+           "seed": "smooth (A16)", "material": [], "minor": []}
     d = fit["second_on"]["boot"] - fit["third_on"]["boot"]
     sd_d = float(np.std(d))
-    res["scale"] = fit["second_on"]["scale"]
-    res["scale_sd"] = float(np.std(fit["second_on"]["boot"]))
-    res["third_on"] = fit["third_on"]["scale"]
-    res["paired_sd"] = sd_d
-    res["nll"] = {k: v["nll"] for k, v in fit.items()}
-    cr = np.array(core_ratio)
-    res["diagnostic_core_ratio"] = cr
-    ok = np.flatnonzero(np.diff(np.sign(cr - 1.0)) != 0)
-    res["diagnostic_core_matching_scale"] = (float(np.exp(np.interp(1.0, cr[ok[0]:ok[0] + 2][::-1] if cr[ok[0]] > cr[ok[0] + 1] else cr[ok[0]:ok[0] + 2],
-                                                               logs[ok[0]:ok[0] + 2][::-1] if cr[ok[0]] > cr[ok[0] + 1] else logs[ok[0]:ok[0] + 2])))
-                                             if len(ok) else None)
+    res.update(scale=fit["second_on"]["scale"], scale_sd=float(np.std(fit["second_on"]["boot"])),
+               third_on=fit["third_on"]["scale"], paired_sd=sd_d, nll={k: v["nll"] for k, v in fit.items()})
     if fit["second_on"]["at_bound"]:
         res["material"].append(f"the disc material scale is at a bound of the grid ({res['scale']:.2f})")
     if abs(res["scale"] - res["third_on"]) > 2 * sd_d:
         res["material"].append(f"second-on scale {res['scale']:.3f} vs third-on {res['third_on']:.3f}: beyond 2 paired sd ({sd_d:.3f})")
-    if 1.25 <= res["scale"] <= 1.6:
-        res["note_1p4"] = "a scale near 1.4 is most likely the barrel model's unexplained 1.37x excess, not disc material"
+    if res["scale"] > 2.0:
+        res["minor"].append(f"the disc material scale {res['scale']:.2f} is above 2: physically suspect (A17's chain)")
     rows = collect(a, res["scale"])
     J = judge_all(rows, reps)
     res.update(J)
-    res["material"] += [f"{x} (after the scale fit: a D3c failure stops the package)" for x in J["D3c_fail"]]
-    res["material"] += J["D3b_fail"]
-    res["D3a_recheck"] = "fails: the seed groups are refitted" if J["D3a_fail"] else "passes"
+    res["material"] += [f"{x} (after the scale fit: the discs go off, A16-A17)" for x in J["D3a_fail"] + J["D3b_fail"] + J["D3c_fail"]]
     res["seconds"] = round(time.time() - t0, 1)
     out_dir = os.path.join(a.out, "scale")
     os.makedirs(out_dir, exist_ok=True)
     np.savez_compressed(os.path.join(out_dir, "scalefit_rows.npz"), **rows)
     with open(os.path.join(out_dir, "scalefit_summary.json"), "w") as fh:
         json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
-    print(json.dumps({k: res[k] for k in ("scale", "scale_sd", "third_on", "material", "D3a_recheck")}, indent=1, default=str))
+    print(json.dumps({k: res[k] for k in ("scale", "scale_sd", "third_on", "material", "minor")}, indent=1, default=str))
     return 0
 
 
