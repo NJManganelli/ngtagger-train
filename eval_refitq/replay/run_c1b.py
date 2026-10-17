@@ -133,10 +133,21 @@ def judge_absolute(table, label, min_n=200):
     return fails, W, len(jb)
 
 
+def judge_excess(table, ref, label, min_n=200):
+    """A19: |s - s_ref| <= 0.1 + t1(N) sqrt(sd^2 + sd_ref^2), per bin and axis, the reference at the same bin key (bins
+    with >= min_n rows on both sides). Returns (failing lines, W, N)."""
+    jb = [(k, ax) for k, e in table.items() for ax in ("pu", "pv") if e["n"] >= min_n and k in ref
+          and ref[k]["n"] >= min_n and np.isfinite(e[ax]) and np.isfinite(ref[k][ax])]
+    W = G.t_one(max(len(jb), 1))
+    fails = [f"{label} {k} {ax}: scale {table[k][ax]:.3f} vs barrel-only {ref[k][ax]:.3f} (n {table[k]['n']} / {ref[k]['n']})"
+             for k, ax in jb if abs(table[k][ax] - ref[k][ax]) > D3_TOL + W * np.hypot(table[k][ax + "_sd"], ref[k][ax + "_sd"])]
+    return fails, W, len(jb)
+
+
 def judge_all(rows, reps):
-    """A17 / A18: D3a (first visits of disc-going tracks, per first-met disc x pT bin, with the stub-count sub-bins), D3b
-    (later disc visits, per disc x pT bin), D3c (barrel visits of disc-going tracks, per layer x first / later x pT bin)
-    and D3d (barrel-only tracks, the same bins; reported only), each judged absolutely."""
+    """A17-A19: D3a (first visits of disc-going tracks, per first-met disc x pT bin, with the stub-count sub-bins) and D3b
+    (later disc visits, per disc x pT bin) judged absolutely; D3c (barrel visits of disc-going tracks, per layer x first
+    / later x pT bin) judged as its excess over D3d (barrel-only tracks, the same bins; reported absolutely)."""
     sub = lambda m: {k: v[m] for k, v in rows.items()}
     out = {}
     bo = ~rows["dg"] & (rows["surface"] <= 4)
@@ -155,7 +166,7 @@ def judge_all(rows, reps):
     out["D3b_fail"], out["D3b_W"], out["D3b_N"] = judge_absolute(out["D3b"], "D3b")
     bar = rows["dg"] & (rows["surface"] <= 4)
     out["D3c"] = width_table(sub(bar), ("surface", "first", "ptbin"), reps)
-    out["D3c_fail"], out["D3c_W"], out["D3c_N"] = judge_absolute(out["D3c"], "D3c")
+    out["D3c_fail"], out["D3c_W"], out["D3c_N"] = judge_excess(out["D3c"], out["D3d"], "D3c")   # A19
     return out
 
 
@@ -178,17 +189,27 @@ def tail_fractions(rows):
 
 
 def rejudge(a):
-    """A18: J2 re-judged from its stored rows (the smooth seed at scale 1) with the clipped-likelihood scale; no rerun.
-    Writes c1b/seed/seedtest_a18.json."""
-    z = np.load(os.path.join(a.out, "seed", "seedtest_rows.npz"))
+    """J2 (A18) or J3 (A19) re-judged from its stored rows under the current rules; no rerun. J3 keeps its scale fit and
+    drops the second-on / third-on line, accepted as physically negligible (A19). Writes seed/seedtest_a18.json or
+    scale/scalefit_a19.json."""
+    src = {"seed": ("seed", "seedtest_rows.npz", "seedtest_a18.json"), "scale": ("scale", "scalefit_rows.npz", "scalefit_a19.json")}
+    d, rows_f, out_f = src[a.what]
+    z = np.load(os.path.join(a.out, d, rows_f))
     rows = {k: z[k] for k in z.files}
     J = judge_all(rows, G.replicas(nev=NEV_FILE * len(CM.FIT_FILES)))
-    res = {"plan": "c1b/PLAN.md §8 A16, A18", "source": "c1b/seed/seedtest_rows.npz (J2 under A16, scale 1)",
-           "material": [f"{x} (the smooth seed's D3a: the discs go off, A18)" for x in J["D3a_fail"]], "minor": [],
-           "tail_fractions": tail_fractions(rows), **J}
-    with open(os.path.join(a.out, "seed", "seedtest_a18.json"), "w") as fh:
+    res = {"plan": "c1b/PLAN.md §8 A16, A18" + (", A19" if a.what == "scale" else ""), "source": f"c1b/{d}/{rows_f}",
+           "minor": [], "tail_fractions": tail_fractions(rows), **J}
+    if a.what == "seed":
+        res["material"] = [f"{x} (the smooth seed's D3a: the discs go off, A18)" for x in J["D3a_fail"]]
+    else:
+        with open(os.path.join(a.out, "scale", "scalefit_summary.json")) as fh:
+            S = json.load(fh)
+        res.update({k: S[k] for k in ("grid", "scale", "scale_sd", "third_on", "paired_sd", "nll")})
+        res["minor"] = S["minor"] + [f"second-on {S['scale']:.3f} vs third-on {S['third_on']:.3f}: accepted (A19)"]
+        res["material"] = [f"{x} (after the scale fit: the discs go off)" for x in J["D3a_fail"] + J["D3b_fail"] + J["D3c_fail"]]
+    with open(os.path.join(a.out, d, out_f), "w") as fh:
         json.dump(res, fh, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))
-    print(json.dumps({k: res[k] for k in ("material", "D3d_fail", "tail_fractions")}, indent=1, default=str))
+    print(json.dumps({k: res[k] for k in ("material", "minor", "D3d_fail")}, indent=1, default=str))
     return 0
 
 
@@ -522,6 +543,7 @@ def main(argv=None):
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--files", type=int, nargs="+", default=None, help="pairs / il1truth / fit: files other than the fit files")
     ap.add_argument("--known-bad", action="store_true", help="file 4: the known-bads")
+    ap.add_argument("--what", choices=("seed", "scale"), default="seed", help="rejudge: J2 or J3")
     ap.add_argument("--n-boot", type=int, default=OV.N_BOOT,
                     help="fit: the shape fits' bootstrap replicas (a disc: at most N_BOOT_DISC)")
     ap.add_argument("--n-toy", type=int, default=OV.N_TOY, help="fit: T0's replicas per surface and planted shape")
