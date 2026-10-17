@@ -53,7 +53,7 @@ def summarise(d):
           for k in ("pairs", "cand", "fit", "owned")}
     Q = np.concatenate([v for v in C["qual"].values() if len(v)]) \
         if any(len(v) for v in C["qual"].values()) else np.zeros((0, 5))
-    return {"dir": Path(d).name, "n_events": n,
+    return {"dir": Path(d).name, "format": C["format"], "n_events": n,
             "d0_window_cm": cfg.get("d0_window_cm", 0.0),
             "bench": cfg.get("bench"), "cost": ct, "eff": eff, "den": den,
             "sigma_d0_um": sig(Q[:, 1] * 1e4) if len(Q) else float("nan"),
@@ -67,6 +67,9 @@ def main():
     ap.add_argument("--cache-dir", default="cache-scan")
     ap.add_argument("--mode", choices=["window", "bits"], default="window")
     ap.add_argument("-o", "--out", default=None)
+    ap.add_argument("--cross-format", action="store_true",
+                    help="mark the comparison cross-format: censuses of different formats are allowed "
+                         "(each run's format is reported); refused otherwise")
     a = ap.parse_args()
     ds = sorted(glob.glob(f"{a.cache_dir}/tpcensus_*"))
     if not ds:
@@ -93,6 +96,7 @@ def main():
         head = "alpha/beta bits"
     if not rows:
         raise SystemExit(f"no runs matching mode={a.mode} yet")
+    TF.one_format({r["dir"]: r for r in rows}, a.cross_format)
     # ONE CENSUS PER SETTING. Two under the same knob value (e.g. a stale one
     # beside its rebuild) would print as two rows with one label, and which is
     # which would be the hash order: refused, never picked.

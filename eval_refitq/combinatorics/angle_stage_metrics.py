@@ -172,6 +172,9 @@ def main():
     ap.add_argument("--logs", default=None,
                     help="directory of LABEL.log census logs, for s/event")
     ap.add_argument("--mva", action="store_true")
+    ap.add_argument("--cross-format", action="store_true",
+                    help="mark the comparison cross-format: censuses of different formats are allowed "
+                         "(each run's format is reported); refused otherwise")
     ap.add_argument("-o", "--out", required=True)
     a = ap.parse_args()
     res = {}
@@ -181,7 +184,7 @@ def main():
         col = {c: j for j, c in enumerate(C["track_cols"])}
         P = tp_rows(C)
         nev = C["n_events"]
-        r = {"pos_arb": C["pos_arb"],
+        r = {"format": C["format"], "pos_arb": C["pos_arb"],
              "angles": C["angle_use"].key(), "angle_model": C["angle_model"],
              "angle_cuts": C["angle_cuts"], "angle_notes": C["angle_notes"],
              "n_moved": C["n_moved"],
@@ -203,6 +206,7 @@ def main():
         am = C["angle_model"]
         print(f"{lab}: {r['label']} k alpha {am['k_alpha']:g} beta {am['k_beta']:g} "
               f"({am['mode']}); clusters moved {C['n_moved']}", flush=True)
+    TF.one_format(res, a.cross_format)
     json.dump(res, open(a.out, "w"), indent=1, default=float)
     print(f"wrote {a.out}")
 

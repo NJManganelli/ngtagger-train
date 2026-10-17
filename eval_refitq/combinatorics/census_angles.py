@@ -605,8 +605,8 @@ class CutSet:
             return cls(json.load(f), path)
 
     def check(self, model, run):
-        """Refuse a run the file was not made for. `run`: the run's identity fields (bench,
-        d0_prior_cm, floors, s5 state and key, S6 angle subset, S3 / S4w subsets, builds)."""
+        """Refuse a run the file was not made for. `run`: the run's identity fields (census format,
+        bench, d0_prior_cm, floors, s5 state and key, S6 angle subset, S3 / S4w subsets, builds)."""
         I = self.ident
         bad = []
         if I["table_sha256"] != model.table_sha:
@@ -619,6 +619,11 @@ class CutSet:
         for k in ("bench", "d0_prior_cm", "level"):
             if I.get(k) != run.get(k):
                 bad.append(f"{k} {I.get(k)!r} != {run.get(k)!r}")
+        # the thresholds are quantiles of the calibration census's own candidates: a census format
+        # moves those numbers (e.g. format 35's OT inputs), so a file calibrated on another is refused
+        fmt = I.get("calibration", {}).get("format")
+        if fmt != run.get("format"):
+            bad.append(f"calibration census format {fmt!r} != this census's {run.get('format')!r}")
         miss = [f for f in run["floors"] if f not in I["floors"]]
         if miss:
             bad.append(f"floors {miss} not calibrated")

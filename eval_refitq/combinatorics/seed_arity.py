@@ -51,11 +51,14 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import tracklet_topology_cost as M   # noqa: E402
+import ot_chain as OC                # noqa: E402
 
 IL = (1, 2, 3, 4)
 OT_BARREL = (11, 12, 13, 14, 15, 16)
 # L1L2, L2L3, L3L4, L5L6 -- Settings.h:679. There is deliberately no L4L5.
 OT_DOUBLETS = ((11, 12), (12, 13), (13, 14), (15, 16))
+# the CMSSW seed index (ot_chain.SEEDS) of each prompt OT doublet
+OT_CHAIN_SEED = {tuple(L + 10 for L in lay): sd for sd, lay in OC.SEEDS.items()}
 # L2L3L4 and L4L5L6 -- the design's only barrel triplet seeds, IN CONSTRUCTION
 # ORDER: the pair first, the attached third layer last.
 #
@@ -245,6 +248,18 @@ def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
                             min_it_layers, min_ot_conf)
 
 
+def ot_chain_pairs(U, seed):
+    """A prompt OT doublet's pairs as the CMSSW track finder forms them (A-0, census format 35): from the
+    DTC frames (U["ot_in"]), through ot_chain's seeding (TrackletProcessor wiring, tracklet-engine LUTs,
+    integer tracklet calculator with its rinv, z0 and inSector gates); None for any other seed or a table
+    without the DTC frames (the pair stage then runs as before)."""
+    if seed.layers not in OT_CHAIN_SEED or "ot_in" not in U:
+        return None
+    if "_ot_chain" not in U:
+        U["_ot_chain"] = OC.ChunkChain(U["ot_in"], U["event"], U["ot_row"])
+    return OC.census_pairs(U["_ot_chain"], OT_CHAIN_SEED[seed.layers])
+
+
 def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0,
                 pos_arb="dphi"):
     """Form one seed's objects and project them to every layer in `targets`.
@@ -275,7 +290,7 @@ def follow_seed(U, Q, seed, ptmin, targets, use_angles=True, d0_cm=0.0,
     out, gA, gB, kap, cot, z0p, idx = M.it_pairs(
         U, Q, allidx, la, lb, ptmin, use_angles, False, d0_cm, 0.0,
         z_inner=M.ot_vmr_inner_z(seed.layers),
-        bend_cut=M.ot_bend_cut(seed.layers))
+        bend_cut=M.ot_bend_cut(seed.layers), fixed=ot_chain_pairs(U, seed))
     if gA is None:
         return None
     d0m = None
