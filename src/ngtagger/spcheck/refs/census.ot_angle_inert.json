@@ -1,0 +1,17 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261017T075020Z-wpd-gate35-derive-76375/copy",
+ "derived": "2026-10-17T08:44:54Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+ "item": "census.ot_angle_inert",
+ "job_id": "20261017T075020Z-wpd-gate35-derive-76375",
+ "known_bad": "the same comparison with the second run's match order randomised (--ot-order random:1): a change of the arm's output, which the identity must see",
+ "rule": "two fresh 4-event closed-arm censuses of the gate input (--ot-chain closed, --masks IIII, OT targets), one with --angle-stages none and one with every stage on, cuts open (--calibrate) and k = 0.5 for both angles: their found and found_dr bitmaps, counters and tracks' final stubs are identical; identity of the track and found counts with the reference",
+ "stat": {
+  "events": 4,
+  "identical": true,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+  "n_found": 743,
+  "n_tracks": 993
+ }
+}

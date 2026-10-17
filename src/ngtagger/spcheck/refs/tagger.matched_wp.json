@@ -1,15 +1,15 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261009T152911Z-gate-v3-derive-21583/copy",
- "derived": "2026-10-09T15:30:13Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261017T075020Z-wpd-gate35-derive-76375/copy",
+ "derived": "2026-10-17T08:45:36Z",
  "events": 5,
- "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "tagger.matched_wp",
- "job_id": "20261009T152911Z-gate-v3-derive-21583",
+ "job_id": "20261017T075020Z-wpd-gate35-derive-76375",
  "known_bad": "the current analyze.thresholds / frac_above (jets tied at the threshold dropped)",
  "rule": "stock bTagScore of the file-3 jet caches, all four arms, b vs udsg in the study acceptance; targets: the menu point (IIII udsg fraction above 0.15 on these jets), 10 %, 1 %; 300 event-bootstrap replicas with thresholds re-derived per replica: max |realised - target| <= 1e-9; identity of the nominal efficiencies with the reference",
  "stat": {
   "events": "all 100 (jet caches)",
-  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
   "max_abs_realised_minus_target": 5.551115123125783e-17,
   "method": "definitions.matched_wp (tie split)",
   "nominal": {

@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261009T152911Z-gate-v3-derive-21583/copy",
- "derived": "2026-10-09T15:29:13Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261017T075020Z-wpd-gate35-derive-76375/copy",
+ "derived": "2026-10-17T08:42:38Z",
  "events": 5,
- "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "estimator.units",
- "job_id": "20261009T152911Z-gate-v3-derive-21583",
+ "job_id": "20261017T075020Z-wpd-gate35-derive-76375",
  "known_bad": "the census pull table's original core (drops |x| >= 1e3, absolute 1e-5 tolerance), applied to the same residuals in cm, in um and in 1e-4 cm",
  "rule": "on the OT track z0 and d0 residuals to their TP (L1TTrack, tpIdx >= 0 as the validity mask) of the gate input: core(k x) / k equal for k = 1e-4, 1, 1e4 to 1e-9 relative; identity of the cm widths with the reference",
  "stat": {
@@ -18,7 +18,7 @@
   },
   "estimator": "core",
   "events": 5,
-  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
   "n_valid": 836,
   "z0": {
    "rel_spread": 0.0,

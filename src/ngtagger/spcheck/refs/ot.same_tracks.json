@@ -1,20 +1,20 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261009T152911Z-gate-v3-derive-21583/copy",
- "derived": "2026-10-09T15:29:26Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261017T075020Z-wpd-gate35-derive-76375/copy",
+ "derived": "2026-10-17T08:42:46Z",
  "events": 5,
- "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "ot.same_tracks",
- "job_id": "20261009T152911Z-gate-v3-derive-21583",
+ "job_id": "20261017T075020Z-wpd-gate35-derive-76375",
  "known_bad": "the partner file with one track's z0 moved by 1e-4 cm in event 0",
  "rule": "for every event (matched by run, lumi, event) the sorted L1TTrack rows (pt, eta, phi, z0, d0, chi2s, nStubs, hitPattern) are bit-identical in AAAA and IIII file 3",
  "stat": {
   "events": 5,
-  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_AAAA_f03_100ev.root",
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
   "n_events": 5,
   "n_events_identical": 5,
   "n_events_missing_in_partner": 0,
   "n_tracks": 856,
-  "partner": "/Volumes/WDMac/smartpixels_scratch/canon_v3/spstudy_IIII_f03_100ev.root",
+  "partner": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_IIII_f03_100ev.root",
   "perturbed": false
  }
 }

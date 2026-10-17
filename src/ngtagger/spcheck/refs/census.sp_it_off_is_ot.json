@@ -1,0 +1,17 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261017T075020Z-wpd-gate35-derive-76375/copy",
+ "derived": "2026-10-17T08:45:03Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+ "item": "census.sp_it_off_is_ot",
+ "job_id": "20261017T075020Z-wpd-gate35-derive-76375",
+ "known_bad": "the same comparison with IL1 left on (--masks AIII): the OT seeds then follow into IL1",
+ "rule": "two fresh 4-event censuses of the gate input with the census chain, cuts open (--calibrate): --masks IIII with the default targets (every surface) and --masks IIII with the OT targets only: the prompt OT doublets' found and found_dr bitmaps, counters and tracks' final stubs are identical; identity of the track and found counts with the reference",
+ "stat": {
+  "events": 4,
+  "identical": true,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+  "n_found": 735,
+  "n_tracks": 1029
+ }
+}
