@@ -43,7 +43,7 @@ conversion electron) can be a photon; ~1.8% of the >= 1 GeV TPs with an IT
 cluster in the 5-event PU200 test file are of that kind.
 """
 from __future__ import annotations
-import argparse, hashlib, json, math, os, sys, time, zlib
+import argparse, hashlib, json, math, os, re, sys, time, zlib
 from pathlib import Path
 import numpy as np
 import awkward as ak
@@ -1533,6 +1533,14 @@ def census_dir(path):
     return str(ds[0])
 
 
+def hit_key(name):
+    """(kind, entry) of an exported-track shard key hit_<kind><entry>: kind "", "dr", "m", "s", "sm", "o" or "om"."""
+    m = re.fullmatch(r"hit_([a-z]*)(\d+)", name)
+    if m is None:
+        raise SystemExit(f"unknown shard key {name}")
+    return m.group(1), int(m.group(2))
+
+
 def load(d, nev=None, verbose=True, with_tracks=False):
     meta = json.load(open(os.path.join(d, "manifest.json")))
     # ONLY READ_FORMATS ARE READ. A census of another format means other numbers
@@ -1588,7 +1596,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
                 # hit_<i>: hit rows; hit_dr<i>: census-chain DR survivor flags; hit_o<i>: the final stubs
                 # (OT_STUB_COLS); closed arm: hit_m<i> the merge-DR tracks' rows, hit_s<i> / hit_sm<i> the seed
                 # stubs (census table indices, offset globally), hit_om<i> the merge-DR final stubs
-                kind, num = f[4:].rstrip("0123456789"), int(f[4:].lstrip("dmos"))
+                kind, num = hit_key(f)
                 h = z[f]
                 hts.setdefault(kind, {}).setdefault(num, []).append(
                     h.astype(bool) if kind == "dr" else h.astype(np.int64) if kind in ("o", "om")

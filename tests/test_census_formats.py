@@ -39,3 +39,10 @@ def test_reads_format_34_and_records_it():
     assert C["n_events"] >= 4 and len(C["key"]) and C["tracks"]
     with pytest.raises(SystemExit, match="census formats differ"):
         TF.one_format({"format 34": C, "format 35": {"format": 35}})
+
+
+def test_hit_key_every_kind():
+    for kind in ("", "dr", "m", "s", "sm", "o", "om"):
+        assert TF.hit_key(f"hit_{kind}12") == (kind, 12)
+    with pytest.raises(SystemExit, match="unknown shard key"):
+        TF.hit_key("hit_12x")
