@@ -9,7 +9,8 @@
   cutcheck  wpc.c1a.cutcheck-<ver>   PD20's file-4 check of a cut file (entry/cutcheck_wpc_cuts_<ver>.json)
   c1b-il1   wpc.c1b.il1-truth          C1b A8 / A11: IL1's truth width, reference and findings (c1b/overlap/il1truth_summary.json)
   c1b-j1    wpc.c1b.j1-shape-fit       C1b J1: the disc shape fits, T0, D0, D2 (c1b/overlap/overlap_summary.json)
-  c1b-j2    wpc.c1b.j2-seed-test       C1b J2: the seed test (c1b/seed/seedtest_summary.json)
+  c1b-j2    wpc.c1b.j2-seed-test-smooth  C1b J2 of the smooth seed, A17 (c1b/seed/seedtest_summary.json)
+  c1b-seed  wpc.c1b.seed-model-v1      C1b A16: the smooth seed model (seedmodel/seed_model_v1.json, select.json)
   c1b-j3    wpc.c1b.j3-material-scale  C1b J3: the disc material scale, D3b / D3c, the D3a re-check (c1b/scale/...)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
@@ -251,17 +252,41 @@ def _width_vals(Q, keys):
 
 
 def c1b_j2(job_dir, overwrite):
+    """J2 of the current seed (the A16 smooth seed, judged by A17); the A15 run (v3's seed, the relative MAD rule) was
+    registered as wpc.c1b.j2-seed-test and stands."""
     p = CM.OUT / "c1b" / "seed" / "seedtest_summary.json"
     with open(p) as fh:
         Q = json.load(fh)
-    vals = [{"name": "decision", "value": Q["decision"]}, {"name": "D3a failing", "value": "; ".join(Q["D3a_fail"]) or "none"}]
-    vals += _width_vals(Q, tuple((lab, key) for lab, key in (("D3a (group|pT): n, u, v width", "D3a"),
-                                                             ("barrel first-visit reference", "ref_first"),
-                                                             ("D3d barrel-only (surface|first|pT)", "D3d")) if key in Q))
-    _reg({"id": "wpc.c1b.j2-seed-test", "title": "WP-C C1b J2: the disc seed test at material scale 1 (canon_v4, A10, A14)",
-          "status": "in-sample", "status_note": "the fit files; the seed decision moved after J3 (A15)",
-          "values": vals, "bias": "judged relative to the barrel's own first visits (A4), which are 12-15 % wide in v",
+    vals = [{"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"},
+            {"name": "D3d failing (reported)", "value": "; ".join(Q["D3d_fail"])[:2000] or "none"}]
+    vals += _width_vals(Q, (("D3a (group|pT): n, u, v width (A17)", "D3a"), ("D3d barrel-only (surface|first|pT)", "D3d")))
+    _reg({"id": "wpc.c1b.j2-seed-test-smooth",
+          "title": "WP-C C1b J2: the smooth seed (A16) at material scale 1, judged absolutely on the clipped variance (A17)",
+          "status": "in-sample", "status_note": "the fit files; " + ("stopped: the discs off (A16-A17)" if Q["material"]
+                                                                     else "passes"),
+          "values": vals, "bias": "the clipped variance counts the 2-6 % pull tails beyond 3 sigma that no seed or cluster "
+                                  "model here describes; barrel-only tracks fail the same rule (D3d)",
           "sources": [str(p)]}, job_dir, overwrite)
+
+
+def c1b_seed(job_dir, overwrite):
+    p, q = CM.OUT / "seedmodel" / "seed_model_v1.json", CM.OUT / "seedmodel" / "select.json"
+    with open(p) as fh:
+        M = json.load(fh)
+    with open(q) as fh:
+        S = json.load(fh)
+    vals = [{"name": "keying (held-out -2 log L per track: eta / ps / v3)",
+             "value": f"{S['chosen']} ({S['keyings']['eta']['held_nll']:.4f} / {S['keyings']['ps']['held_nll']:.4f} / "
+                      f"{S['held_nll_v3']:.4f})"},
+            {"name": "H->tautau check", "value": json.dumps({k: S["htt"][k] for k in ("nll_minus_ttbar_held", "width_diff",
+                                                                                     "include")})},
+            {"name": "fit", "value": json.dumps(M["fit"])[:2000]},
+            {"name": "parameters", "value": str(len(M["theta"]) * len(M["theta"][0]))}]
+    _reg({"id": "wpc.c1b.seed-model-v1", "title": "WP-C C1b A16: the smooth two-surface seed model (barrel and discs)",
+          "status": "in-sample", "status_note": "fitted on canon_v4 TTbar fit files and H->tautau x 3 scenarios",
+          "values": vals, "bias": "material at scale 1 (an under-charge would sit in B); the clipped-likelihood fit leaves "
+                                  "the pulls' clipped variance above 1 where the tails are heavy",
+          "sources": [str(p), str(q)]}, job_dir, overwrite)
 
 
 def c1b_j3(job_dir, overwrite):
@@ -282,7 +307,7 @@ def c1b_j3(job_dir, overwrite):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
-                                     "c1b-j1", "c1b-j2", "c1b-j3"))
+                                     "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -291,7 +316,8 @@ def main(argv=None):
         {"cuts": cuts, "cutcheck": cutcheck}[a.what](a.job_dir, a.overwrite, a.ver)
     else:
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
-         "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3}[a.what](a.job_dir, a.overwrite)
+         "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
+         "c1b-seed": c1b_seed}[a.what](a.job_dir, a.overwrite)
     return 0
 
 

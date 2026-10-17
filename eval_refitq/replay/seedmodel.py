@@ -598,10 +598,18 @@ def plots(a):
             if v3x:
                 ax.step(v3x + [v3x[-1] + 0.05], v3y[k] + [v3y[k][-1]], where="post", color=C_V3, lw=1.5,
                         label="v3 binned, at pT = p_mid / cosh η")
-            if pts:
-                ax.errorbar([0.5 * (r["eta"][0] + r["eta"][1]) for r in pts], [r[k] for r in pts],
-                            yerr=[r[k + "_sd"] for r in pts], fmt="o", ms=4, color=C_MEAS, ecolor=C_MEAS, elinewidth=1,
+            # a slice fit with no constraint on this element (a central value or an sd beyond 3x the model's and v3's
+            # range in the panel) is left out of the panel and counted in its corner
+            ref = np.nanmax(np.abs(np.r_[mod[k], v3y[k]])) if k != "corr_z0_tanL" else 1.0
+            good = [r for r in pts if np.isfinite(r[k]) and np.isfinite(r[k + "_sd"]) and abs(r[k]) <= 3 * ref
+                    and r[k + "_sd"] <= 3 * ref]
+            if good:
+                ax.errorbar([0.5 * (r["eta"][0] + r["eta"][1]) for r in good], [r[k] for r in good],
+                            yerr=[r[k + "_sd"] for r in good], fmt="o", ms=4, color=C_MEAS, ecolor=C_MEAS, elinewidth=1,
                             capsize=2, label="per-slice two-surface fit, bootstrap sd")
+            if len(good) < len(pts):
+                ax.text(0.98, 0.04, f"{len(pts) - len(good)} unconstrained slice(s) not drawn", transform=ax.transAxes,
+                        ha="right", color=INK2, fontsize=7)
             if k == "corr_z0_tanL":
                 ax.set_ylim(-1.05, 1.05)
             ax.set_xlim(0, 2.55)
@@ -612,9 +620,10 @@ def plots(a):
                 ax.set_xlabel("|η| (OT track)")
     h, l = axs[-1, 0].get_legend_handles_labels()
     fig.legend(h, l, loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.0))
-    fig.text(0.5, 0.005, "dashed: segment edges (PS keying: where the modal PS class changes); shaded: outside the populated domain (p frozen to the nearest populated "
-             "cell, A16); curves end where pT reaches 2 GeV; ΔC adds to the OT track's reported covariance",
-             ha="center", color=INK2, fontsize=8)
+    fig.text(0.5, 0.005, ("dashed: segment edges" if SM.seg["kind"] == "eta" else
+                          "dashed: where the modal PS class changes") + "; shaded: outside the populated domain (p frozen to "
+             "the nearest populated cell, A16); curves end where pT reaches 2 GeV; ΔC adds to the OT track's reported "
+             "covariance", ha="center", color=INK2, fontsize=8)
     fig.tight_layout(rect=(0, 0.02, 1, 0.96))
     for ext in ("png", "pdf"):
         fig.savefig(OUT / f"seed_correction_vs_eta.{ext}", dpi=150, bbox_inches="tight")
