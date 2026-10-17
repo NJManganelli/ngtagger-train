@@ -8,9 +8,10 @@ cd "${0:A:h}/../.."
 SAMPLES=(${@:-ttbar htt})
 SEEDS=(0 1 2 3 4 5 6 7 8 9)
 export OMP_NUM_THREADS=2
-LOG=/Volumes/WDMac/smartpixels_scratch/tagger_sp/logs
+OUT=$(pixi run python -c "import sys; sys.path.insert(0, 'eval_refitq/tagger_sp'); import common as C; print(C.OUT)")
+LOG=$OUT/logs
 mkdir -p $LOG
-rm -f /Volumes/WDMac/smartpixels_scratch/tagger_sp/preds/*.npz
+rm -f $OUT/preds/*.npz
 pixi run python -c "import sys; sys.path.insert(0, 'eval_refitq/tagger_sp'); import common as C; \
 print('frozen file set:', C.freeze_fileset(sys.argv[1:]))" $SAMPLES > $LOG/fileset.log 2>&1
 for m in IIII AAAA AAAI IAAA; do

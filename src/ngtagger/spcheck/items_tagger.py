@@ -1,17 +1,21 @@
 """Fast-gate items on the jet-tagging study (plan App. D.1: join uniqueness, the files 1-2
 split guard, the label mask; C.4: working points not matched). They import
 eval_refitq/tagger_sp from THIS code root and read the study's jet caches of file 3
-(tagger_sp/build.py outputs, one per mask) and the event identities of the TTbar files."""
+(tagger_sp/build.py outputs, one per mask) and the event identities of the TTbar files.
+The study reads canon_v4 since 2026-10-17; until its jet caches exist (build.py, after the
+track-MVA heads are trained) every item is n/a (WAITING)."""
 from __future__ import annotations
 
 import os
 
 import numpy as np
 
-from .core import Item, event_replicas, identity, same_input
+from .core import Item, NotApplicable, event_replicas, identity, same_input
 
 TAGGER_DIR = "eval_refitq/tagger_sp"
-JETS = "/Volumes/WDMac/smartpixels_scratch/tagger_sp/cache/jets"
+JETS = "/Volumes/WDMac/smartpixels_scratch/tagger_sp_canon_v4/cache/jets"   # tagger_sp common.OUT (canon_v4)
+WAITING = ("no canon_v4 jet cache yet: tagger_sp/build.py trains the track-MVA heads before it writes them; "
+           "waiting for the tagger-recipe package")
 MASKS = ("IIII", "AAAA", "AAAI", "IAAA")
 STOCK_B_CUT = 0.15
 
@@ -24,7 +28,10 @@ def _file_no(path: str) -> int:
 
 
 def _jets(mask: str, n: int) -> dict:
-    d = np.load(os.path.join(JETS, f"ttbar_{mask}_f{n:02d}.npz"))
+    p = os.path.join(JETS, f"ttbar_{mask}_f{n:02d}.npz")
+    if not os.path.exists(p):
+        raise NotApplicable(WAITING)
+    d = np.load(p)
     return {k: d[k] for k in d.files}
 
 

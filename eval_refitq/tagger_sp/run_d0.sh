@@ -7,14 +7,14 @@
 # 2 threads, ~3.5 h:
 #   caffeinate -i eval_refitq/tagger_sp/run_d0.sh
 #   RESUME=1 caffeinate -i eval_refitq/tagger_sp/run_d0.sh     (skip cells whose 10 predictions exist)
-# Outputs: /Volumes/WDMac/smartpixels_scratch/tagger_sp/d0_upper_bound/ (d0_upper_bound.pdf, summary.json).
+# Outputs: <common.OUT>/d0_upper_bound/ (d0_upper_bound.pdf, summary.json).
 # One heavy job at a time on the shared host: every heavy step waits (60 s polls) while a census run
 # (tp_findability.py, which has priority) or another tagger_sp training is active; waits -> logs/gate_wait.log.
 set -e
 cd "${0:A:h}/../.."
 SEEDS=(0 1 2 3 4 5 6 7 8 9)
 export OMP_NUM_THREADS=2
-OUTD=/Volumes/WDMac/smartpixels_scratch/tagger_sp/d0_upper_bound
+OUTD=$(pixi run python -c "import sys; sys.path.insert(0, 'eval_refitq/tagger_sp'); import common as C; print(C.OUT)")/d0_upper_bound
 LOG=$OUTD/logs
 mkdir -p $LOG
 

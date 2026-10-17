@@ -578,7 +578,7 @@ def main():
     pdfp = os.path.join(a.out, "tagger_sp.pdf")
     with PdfPages(pdfp) as pdf:
         text_page(pdf, "SmartPixels L1 jet tagging: factorisation ladder vs the OT baseline", [
-            "Scenarios: canonical coopt nanos (build 92bad91b2ba, disc refit), PU200. The tracks feeding the L1 vertex, PF, PUPPI",
+            "Scenarios: canonical coopt nanos (canon_v4, build C_v4 b85da0c18cd), PU200. The tracks feeding the L1 vertex, PF, PUPPI",
             "and SC4 NG jets are the SmartPixels (SP) tracks of each IT active-layer mask (A/I = IT layer group active/inactive);",
             "IIII = passthrough (SP track = OT track): the OT-only baseline through the identical pipeline.",
             f"Samples: {samples} combined (TTbar RelVal; QQ->H->tautau RelVal adds taus). Split by event, identical in all",

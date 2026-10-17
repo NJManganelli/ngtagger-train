@@ -1,12 +1,12 @@
 """Shared definitions of the SmartPixels jet-tagging study (eval_refitq/tagger_sp).
 
-Scenarios = canonical (coopt) nanos, build 92bad91b2ba (disc refit): the whole
+Scenarios = canonical (coopt) nanos, canon_v4 (build C_v4 b85da0c18cd; canon_v2's events): the whole
 downstream L1 chain (GTT vertex, PF, PUPPI, SC4 NG jets) is re-emulated from the
 SmartPixels (SP) tracks of each IT active-layer mask. IIII = passthrough (SP track ==
 its OT track), i.e. the OT-only baseline through the identical pipeline.
 
-Samples (PU200): ttbar = canon_v2 spstudy_<mask>_f01..f10_100ev.root (1000 ev),
-htt = canon_v2_htt spstudy_<mask>_htt_f<NN>.root (QQ -> H -> tautau RelVal; every file
+Samples (PU200): ttbar = canon_v4 spstudy_<mask>_f01..f10_100ev.root (1000 ev),
+htt = canon_v4/htt spstudy_<mask>_htt_f<NN>.root (QQ -> H -> tautau RelVal; every file
 file number finished for ALL masks is used -- `study_files` -- so every scenario sees the
 same events and adding tau files is a rerun of run_all.sh). Files younger than MIN_AGE_S
 are skipped (may still be being copied). build.py freezes the set it used in a per-mask
@@ -29,13 +29,15 @@ import os
 
 import numpy as np
 
-OUT = "/Volumes/WDMac/smartpixels_scratch/tagger_sp"
+# canon_v4's study writes beside the canon_v2 one (tagger_sp: its caches, heads, models, predictions; kept as
+# they are), so a rerun never mixes or overwrites the two eras
+OUT = "/Volumes/WDMac/smartpixels_scratch/tagger_sp_canon_v4"
 MASKS = ["IIII", "AAAA", "AAAI", "IAAA"]       # IIII = OT baseline (passthrough)
 BASELINE_MASK = "IIII"
 SAMPLES = {
-    "ttbar": ("/Volumes/WDMac/smartpixels_scratch/canon_v2", "spstudy_{mask}_f{n:02d}_100ev.root",
+    "ttbar": ("/Volumes/WDMac/smartpixels_scratch/canon_v4", "spstudy_{mask}_f{n:02d}_100ev.root",
               range(1, 11)),
-    "htt": ("/Volumes/WDMac/smartpixels_scratch/canon_v2_htt", "spstudy_{mask}_htt_f{n:02d}.root",
+    "htt": ("/Volumes/WDMac/smartpixels_scratch/canon_v4/htt", "spstudy_{mask}_htt_f{n:02d}.root",
             None),                              # None: every file number present
 }
 MIN_AGE_S = 180
