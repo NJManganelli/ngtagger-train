@@ -833,7 +833,8 @@ def _tree2_commit(arm, st, idx, x2):
 
 
 def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
-    """One (visit step, surface) of tree2: Q; the candidates and their chi2 (the rank consumer's dims); the windows
+    """One (visit step, surface) of tree2: Q; the candidates and their chi2 (the rank consumer's dims); P is the
+    calibrated model's 99 % gate cut in those dims for every arm, so an element's leave-one-out keeps the skip price; the windows
     opened at the tracks' previous visit are committed with this surface as their second layer; then a window opens
     here on every surviving track with a candidate: best (applied to the track), runner-up (applied to a copy) and
     skip (a copy), pending until the next visit."""
@@ -869,7 +870,7 @@ def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
     alive = ~np.isin(t, drop)
     h1, h2 = alive & (kb >= 0), alive & (kr >= 0)
     if h1.any():
-        P = tools.cuts.chi2("gate", arm.dims_key("rank"), arm.cov_model,
+        P = tools.cuts.chi2("gate", arm.dims_key("rank"), "calibrated",     # one skip price for every arm (A1)
                             cut_surface(arm, st, t[h1], np.full(h1.sum(), S, np.int64)), np.full(h1.sum(), j == 0))
         P2 = P[np.isin(t[h1], t[h2])]
         n0 = len(st.o)
