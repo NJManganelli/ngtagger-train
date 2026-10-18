@@ -4,7 +4,8 @@
   twice   C0  run-twice determinism: two productions of one configuration are bit identical
   l2l3    C0  L2L3 tracks in KF regions 0-3: none in CMSSW and none in the closed arm
   c1          the KF unit: cmssw_kf forced onto every CMSSW no-DR track's own stubs at the KF's own positions
-              (barrel seeds, barrel-only tracks, KF regions 0-3), quantised as HybridFit / Track
+              (with the discs on: every seed, stub and KF region; off: barrel seeds, barrel-only tracks, KF
+              regions 0-3), quantised as HybridFit / Track
   c1b         the match lists against CMSSW's track-builder candidates, from a no-DR production with
               Fakefit (every candidate with its full stub list and its tracklet's integer parameters):
               (i) per tracklet, the emulated candidate against CMSSW's, and its integer parameters;
@@ -60,10 +61,46 @@ import tracklet_topology_cost as M    # noqa: E402
 
 FAIL_EXIT = 2
 N_BOOT, BOOT_SEED = 400, 20261015
-JUDGED_SEEDS = (0, 2, 3)                       # L1L2, L3L4, L5L6 (L2L3 is a C0 identity)
-SEED_LAYERS = {0: (1, 2), 1: (2, 3), 2: (3, 4), 3: (5, 6)}
-MAX_KF_REGION = 3
-ETA_MAX, PT_MIN = 0.9, 2.0
+# THE SCOPE (WP-Disc, census format 36): with the discs on (ot_chain.DISCS) the 8 prompt seeds, disc stubs, all
+# 8 KF eta regions and |eta| < 2.4; with them off WP-D's (format 35): the barrel seeds, barrel-only tracks in C1 /
+# C1b, KF regions 0-3, |eta| < 0.9. L2L3 is judged only with the discs on (WP-D: a C0 identity, no tracks in KF
+# regions 0-3). Each seed's two stubs as L1TOTStub_layer codes (barrel 1-6, discs 11-15 on either side).
+SEED_LAYERS_ALL = {0: (1, 2), 1: (2, 3), 2: (3, 4), 3: (5, 6), 4: (11, 12), 5: (13, 14), 6: (1, 11), 7: (2, 11)}
+MAX_KF_REGION_BARREL, MAX_KF_REGION_DISCS = 3, 7
+ETA_MAX_BARREL, ETA_MAX_DISCS, PT_MIN = 0.9, 2.4, 2.0
+
+
+def seed_layers():
+    """{seed: its two stubs' L1TOTStub_layer codes} of the seeds the chain runs (ot_chain.active_seeds)."""
+    return {sd: SEED_LAYERS_ALL[sd] for sd in OC.active_seeds()}
+
+
+def judged_seeds():
+    """The seeds C2 judges: the 8 with the discs on, L1L2 / L3L4 / L5L6 with them off."""
+    return tuple(OC.active_seeds()) if OC.DISCS else (0, 2, 3)
+
+
+def max_kf_region():
+    return MAX_KF_REGION_DISCS if OC.DISCS else MAX_KF_REGION_BARREL
+
+
+def eta_max():
+    return ETA_MAX_DISCS if OC.DISCS else ETA_MAX_BARREL
+
+
+def _in_scope(L, rows):
+    """A CMSSW track's stubs inside the scope: any with the discs on, barrel-only with them off."""
+    return OC.DISCS or bool(L["isBarrel"][rows].all())
+
+
+def _kf_stub(L, i, x, y, z):
+    """The KF's stub (cmssw_kf.make_stub) for L1TOTStub index i at the KF's positions x, y, z: a barrel stub by its
+    layer; a disc stub by its disc number, with innerStrip and isFlipped for the 2S alpha."""
+    lay, ps, tilt = int(L["layer"][i]), bool(L["isPS"][i]), bool(L["isTilted"][i])
+    if L["isBarrel"][i]:
+        return KF.make_stub(int(i), x[i], y[i], z[i], lay, ps, tilt)
+    return KF.make_stub(int(i), x[i], y[i], z[i], lay - 10, ps, tilt, barrel=False,
+                        strip=float(L["innerStrip"][i]), flipped=bool(L["isFlipped"][i]))
 # the margins (plan sec. 3, "decision arithmetic")
 MARGIN = {"d_eff": 0.01, "disc": 0.02, "ln_cand": math.log(1.05), "ln_fake": math.log(1.25), "d_dup": 0.01}
 SIGNED = ("d_eff", "ln_cand", "ln_fake", "d_dup")   # equivalence on both sides; disc is one-sided
@@ -76,6 +113,7 @@ C1B_MATCH_MIN = 0.99
 # GOOD-ENOUGH", at the agreement measured on the Fakefit copy (f01 events 0-9): 2,446 of 2,482 tracklets' lists
 # identical. A C1b(i) at or above that fraction is accepted, and the order floor then takes the passed branch.
 C1B_ACCEPTED = (2446, 2482)
+C1B_SHORTFALL_MATERIAL = 0.01   # WP-Disc plan sec. 3: a forward C1b(i) shortfall of 1 % or more is MATERIAL
 NODR_SHARE_MIN = 0.5        # a no-DR production: most tracks share >= 3 stubs with another of their sector
                             # (canon_v4 test, merge DR: 0.10; modecmp no-DR: 0.96)
 # record columns (track_record): event, CMSSW seed type, seed TP key (-1 none), seed-truthful, KF eta region
@@ -241,15 +279,15 @@ def _stub_tables(spec, nev=None):
 
 
 def track_record(L, e, sd, rows):
-    """RECORD_COLS of one track of seed type sd (0-3) with fitted stubs `rows` (L1TOTStub rows of event e,
+    """RECORD_COLS of one track of seed type sd (0-7) with fitted stubs `rows` (L1TOTStub indices of event e,
     L its stub table): the record rule of the module docstring."""
     rows = np.asarray(rows, np.int64)
-    by = {int(L["layer"][x]): x for x in rows if L["isBarrel"][x]}
+    by = {int(L["layer"][x]): x for x in rows}
     tps = M.credits_of(L, rows)[None]
     own, _, owned, right, _ = KFE.credited_owner(tps, np.ones((1, len(rows)), bool))
     own_key = int(M.tp_key(np.array([e]), own)[0]) if owned[0] else -1
     n_wrong = int((~right[0]).sum())
-    la, lb = SEED_LAYERS[sd]
+    la, lb = SEED_LAYERS_ALL[sd]
     if la not in by or lb not in by:
         return (e, sd, -1, 0, -1, len(rows), own_key, n_wrong)
     a, b = by[la], by[lb]
@@ -300,7 +338,7 @@ def _cmssw_tracks(spec, ids, collection="L1TTrack"):
             L["event"] = np.full(len(L["layer"]), e, np.int64)
             for j in range(len(T["rInv"])):
                 sd = int(T["seedType"][j])
-                if sd in SEED_LAYERS:
+                if sd in seed_layers():
                     recs.append(track_record(L, e, sd, S["otStubIdx"][S["trackIdx"] == j]))
     if len(seen) != len(ids):
         raise SystemExit(f"{spec} lacks {len(ids) - len(seen)} of the census's events")
@@ -324,7 +362,7 @@ def _census_inputs(C):
 
 
 def _judged(R):
-    return R[(R[:, 4] >= 0) & (R[:, 4] <= MAX_KF_REGION)]
+    return R[(R[:, 4] >= 0) & (R[:, 4] <= max_kf_region())]
 
 
 def _found(R, key, col=2):
@@ -412,7 +450,8 @@ def _f32_ulps_to_edge(v_lsb, lsb, native):
 def c1(nodr, nev=None):
     """The KF unit (plan sec. 3, C1) on a CMSSW no-DR production with the KF's stub positions.
 
-    Every judged CMSSW track (barrel seed, barrel stubs, KF regions 0-3) is one of: identical; a predicted
+    Every judged CMSSW track (in scope: every seed, stub and KF region with the discs on; barrel seeds and stubs,
+    KF regions 0-3 with them off) is one of: identical; a predicted
     edge (every differing parameter differs by exactly 1 LSB and its census value lies within 1e-6 LSB of
     that bin edge); a float32 edge (one parameter, 1 LSB, census value within C1_F32_EDGE_ULP float32 ulps of
     the edge: MINOR, reported, not gated); or a disagreement: different parameters, no forced fit, two stubs
@@ -423,6 +462,13 @@ def c1(nodr, nev=None):
            "no_forced_fit": 0, "two_stubs_in_a_layer": 0, "census_not_consistent_sector": 0,
            "seed_stub_skipped": 0, "chi2_outside": 0, "state_gate_fails": 0}
     examples, shared = [], [0, 0]
+    brk = {"seed": {}, "kf_region": {}}
+
+    def tally(sd, kreg, cls):
+        for part, k in (("seed", OC.SEED_NAME[sd]), ("kf_region", str(kreg))):
+            c = brk[part].setdefault(k, {})
+            c[cls] = c.get(cls, 0) + 1
+
     for e in range(len(A)):
         T, S = _table(A, e, "L1TTrack_"), _table(A, e, "L1TTrackStub_")
         L, Dt = _table(A, e, "L1TOTStub_"), _table(A, e, "L1TOTStubDTC_")
@@ -433,12 +479,13 @@ def c1(nodr, nev=None):
         for j in range(len(T["rInv"])):
             sd = int(T["seedType"][j])
             r = S["otStubIdx"][S["trackIdx"] == j].astype(np.int64)
-            if sd not in SEED_LAYERS or not L["isBarrel"][r].all():
-                continue                      # disk / overlap seeds, disk stubs: outside C1 (WP-F)
-            stubs = [KF.make_stub(int(i), x[i], y[i], z[i], int(L["layer"][i]), bool(L["isPS"][i]),
-                                  bool(L["isTilted"][i])) for i in r]
-            by = {s.layer: s for s in stubs}
-            la, lb = SEED_LAYERS[sd]
+            if sd not in seed_layers() or not _in_scope(L, r):
+                continue
+            stubs = [_kf_stub(L, i, x, y, z) for i in r]
+            by = {}
+            for s in stubs:
+                by.setdefault(int(L["layer"][s.idx]), s)
+            la, lb = SEED_LAYERS_ALL[sd]
             if la not in by or lb not in by:
                 res["seed_stub_skipped"] += 1     # before the region cut: conservative (no seed, no region)
                 continue
@@ -447,15 +494,19 @@ def c1(nodr, nev=None):
             geo = (math.hypot(x[ga.idx], y[ga.idx]), float(z[ga.idx]), math.atan2(y[ga.idx], x[ga.idx]),
                    math.hypot(x[gb.idx], y[gb.idx]), float(z[gb.idx]), math.atan2(y[gb.idx], x[gb.idx]))
             seed = KF.make_seed(*KF.exact_tracklet(*geo, isec), isec, len(stubs))
-            if KF.kf_eta_region(seed.eta_reg) > MAX_KF_REGION:
+            kreg = KF.kf_eta_region(seed.eta_reg)
+            if kreg > max_kf_region():
                 continue
             res["judged"] += 1
-            if len(by) != len(stubs):
+            tally(sd, kreg, "judged")
+            if len({s.layer for s in stubs}) != len(stubs):
                 res["two_stubs_in_a_layer"] += 1
+                tally(sd, kreg, "two_stubs_in_a_layer")
                 continue
             state, gates, why = KF.forced_fit(seed, stubs)
             if state is None:
                 res["no_forced_fit"] += 1
+                tally(sd, kreg, "no_forced_fit")
                 if len(examples) < 20:
                     examples.append({"event": e, "track": j, "seed": sd, "class": f"no forced fit: {why}"})
                 continue
@@ -464,14 +515,17 @@ def c1(nodr, nev=None):
             out = KF.fitted_output(state, seed)
             if not out.consistent_sector:
                 res["census_not_consistent_sector"] += 1
+                tally(sd, kreg, "census_not_consistent_sector")
                 continue
             mine = np.array(out.track, np.float32)
             theirs = np.array([T["rInv"][j], T["phi"][j], T["tanL"][j], T["z0"][j], T["d0"][j]], np.float32)
             if np.array_equal(mine, theirs):
                 res["identical"] += 1
+                tally(sd, kreg, "identical")
             else:
                 cls, dint = _c1_class(out, T, j, isec)
                 res[cls] += 1
+                tally(sd, kreg, cls)
                 if cls == "mismatch" and len(examples) < 20:
                     examples.append({"event": e, "track": j, "seed": sd, "class": cls,
                                      "int_lsb_diff_irinv_iphi0_id0_it_iz0": dint})
@@ -489,8 +543,9 @@ def c1(nodr, nev=None):
              "two_stubs_in_a_layer": res["two_stubs_in_a_layer"] == 0,
              "consistent_sector": res["census_not_consistent_sector"] == 0, "chi2": res["chi2_outside"] == 0,
              "state_gates": res["state_gate_fails"] == 0, "seed_stub_skipped": bool(frac_skip <= C1_MAX_SKIPPED)}
-    return {"stage": "C1", "input": nodr, "positions": "stubPosTT", "nodr_share": share, **res,
-            "seed_stub_skipped_fraction": frac_skip, "examples": examples, "gates": gates}, all(gates.values())
+    return {"stage": "C1", "input": nodr, "positions": "stubPosTT", "discs": OC.DISCS, "nodr_share": share, **res,
+            "seed_stub_skipped_fraction": frac_skip, "by_seed": brk["seed"], "by_kf_region": brk["kf_region"],
+            "examples": examples, "gates": gates}, all(gates.values())
 
 
 def _c1_class(out, T, j, isec):
@@ -512,7 +567,7 @@ def _c1_class(out, T, j, isec):
 
 # ---- C1b ------------------------------------------------------------------------------------------
 def _candidate_key(sd, sec, rows, L):
-    la, lb = SEED_LAYERS[sd]
+    la, lb = SEED_LAYERS_ALL[sd]
     by = {}
     for x in rows:
         by.setdefault(int(L["layer"][x]), x)
@@ -560,7 +615,7 @@ def _align_nodr(cands, nd):
 def c1b(fakefit, nodr=None, nev=None, order="dtc"):
     """(i) the emulated candidates against CMSSW's (Fakefit no-DR: every track-builder candidate, its full
     stub list in order and its tracklet's integer parameters); (ii) with the no-DR production of the same
-    events, the KF on every CMSSW candidate list (barrel seed and stubs, KF regions 0-3) against CMSSW's
+    events, the KF on every CMSSW candidate list in c1's scope against CMSSW's
     no-DR output: both reject, or both accept with the same stubs and parameters; the census accepting what
     CMSSW rejected is the fake diagnostic (those tracks' seed truth is reported).
     Ungated, reported: candidates without an emulated tracklet, emulated candidates without a CMSSW one, the
@@ -578,6 +633,7 @@ def c1b(fakefit, nodr=None, nev=None, order="dtc"):
            "kf_census_accepts_cmssw_rejects": 0, "kf_census_rejects_cmssw_accepts": 0,
            "kf_census_only_fakes": 0, "nodr_tracks_unaligned": 0}
     examples = []
+    group = {g: {"n": 0, "identical": 0} for g in ("barrel", "forward")}
     for e in range(len(A)):
         T, S = _table(A, e, "L1TTrack_"), _table(A, e, "L1TTrackStub_")
         L, Dt = _table(A, e, "L1TOTStub_"), _table(A, e, "L1TOTStubDTC_")
@@ -599,11 +655,11 @@ def c1b(fakefit, nodr=None, nev=None, order="dtc"):
             nd = (_table(B, eb, "L1TTrack_"), _table(B, eb, "L1TTrackStub_"))
             match, left = _align_nodr(cms, nd)
             res["nodr_tracks_unaligned"] += left
-        # every CMSSW barrel-seed candidate's key, before the barrel-stub cut: an emulated candidate (barrel
-        # targets only) of a CMSSW candidate that also holds disc stubs is not "without CMSSW"
-        seen = {_candidate_key(sd, sec, r, L) for sd, sec, r in cms if sd in SEED_LAYERS}
+        # every CMSSW candidate's key, before the scope's stub cut: with the discs off, an emulated candidate
+        # (barrel targets only) of a CMSSW candidate that also holds disc stubs is not "without CMSSW"
+        seen = {_candidate_key(sd, sec, r, L) for sd, sec, r in cms if sd in seed_layers()}
         for j, (sd, sec, r) in enumerate(cms):
-            if sd not in SEED_LAYERS or not L["isBarrel"][r].all():
+            if sd not in seed_layers() or not _in_scope(L, r):
                 continue
             key = _candidate_key(sd, sec, r, L)
             if key is None:
@@ -615,6 +671,13 @@ def c1b(fakefit, nodr=None, nev=None, order="dtc"):
                 res["no_emulated_tracklet"] += 1
                 continue
             res["same_tracklet"] += 1
+            # the forward group (WP-Disc C1b(i), pooled): the 4 new seeds' lists and the barrel seeds' lists with
+            # a disc stub on either side; the barrel group: the barrel seeds' other lists (WP-D's C1b(i))
+            em = cand.get(key, [])
+            fwd = sd not in OC.BARREL_SEEDS or not L["isBarrel"][np.r_[r, em].astype(np.int64)].all()
+            grp = group["forward" if fwd else "barrel"]
+            grp["n"] += 1
+            grp["identical"] += int(key in cand and set(em) == set(r))
             tr = trk[key]
             _, tpars = KF.track_from_ipars(tr.ipars[0], tr.ipars[1], 0, tr.ipars[3], tr.ipars[2], tr.sector)
             theirs = np.array([T["rInv"][j], T["phi"][j], T["tanL"][j], T["z0"][j], T["d0"][j]], np.float32)
@@ -637,15 +700,31 @@ def c1b(fakefit, nodr=None, nev=None, order="dtc"):
         res["emulated_candidates"] += len(cand)
         res["emulated_without_cmssw"] += len(set(cand) - seen)
     n = res["same_tracklet"]
-    lo, accepted, ok_lists = match_list_gate(res["identical_list"], n)
     nmin = _min_sample()
-    gates = {"match_lists": ok_lists, "match_list_sample": n >= nmin}
+    if OC.DISCS:
+        # WP-Disc C1b(i): the forward group pooled; its shortfall (99 % minus the one-sided bound) below 1 % is
+        # MINOR (classified, reported), 1 % or more MATERIAL (the order floor re-run for the new seeds); the
+        # barrel group by WP-D's rule
+        for v in group.values():
+            v["fraction"] = v["identical"] / max(v["n"], 1)
+            v["lower95"], v["accepted_by_physicist"], v["passes"] = match_list_gate(v["identical"], v["n"])
+        fw = group["forward"]
+        fw["shortfall"] = max(C1B_MATCH_MIN - fw["lower95"], 0.0)
+        fw["class"] = ("pass" if fw["shortfall"] == 0 else
+                       "MINOR" if fw["shortfall"] < C1B_SHORTFALL_MATERIAL else "MATERIAL")
+        lo, accepted = fw["lower95"], fw["accepted_by_physicist"]
+        gates = {"match_lists": group["barrel"]["passes"] and fw["class"] != "MATERIAL",
+                 "match_list_sample": fw["n"] >= nmin and group["barrel"]["n"] >= nmin}
+    else:
+        lo, accepted, ok_lists = match_list_gate(res["identical_list"], n)
+        gates = {"match_lists": ok_lists, "match_list_sample": n >= nmin}
     if nodr:
         bad = (res["kf_both_accept_different"] + res["kf_census_accepts_cmssw_rejects"]
                + res["kf_census_rejects_cmssw_accepts"])
         gates["kf_on_cmssw_list"] = bad == 0 and res["kf_judged"] > 0
         gates["nodr_aligned"] = res["nodr_tracks_unaligned"] == 0
-    return {"stage": "C1b", "fakefit": fakefit, "nodr": nodr, **res,
+    return {"stage": "C1b", "fakefit": fakefit, "nodr": nodr, "discs": OC.DISCS, **res,
+            "groups": group if OC.DISCS else None,
             "identical_list_fraction": res["identical_list"] / max(n, 1), "identical_list_lower95": lo,
             "match_lists_accepted_by_physicist": accepted,
             "match_list_min_sample": nmin, "examples": examples, "gates": gates}, all(gates.values())
@@ -664,15 +743,14 @@ def match_list_gate(identical, n):
 def _kf_on_list(res, nd, jn, key, rows, L, x, y, z, e):
     """The census KF on CMSSW's candidate list `rows` (in its order; the prior exacttracklet on its two seed
     stubs at the KF's positions, as HybridFit's) against CMSSW's no-DR track jn of that candidate (None:
-    CMSSW's KF rejected it), for candidates in KF regions 0-3; counts into res."""
+    CMSSW's KF rejected it), for candidates in the scope's KF regions; counts into res."""
     T, S = nd
     sd, sec, a, b = key
     geo = (math.hypot(x[a], y[a]), float(z[a]), math.atan2(y[a], x[a]),
            math.hypot(x[b], y[b]), float(z[b]), math.atan2(y[b], x[b]))
-    stubs = [KF.make_stub(i, x[i], y[i], z[i], int(L["layer"][i]), bool(L["isPS"][i]), bool(L["isTilted"][i]))
-             for i in rows]
+    stubs = [_kf_stub(L, i, x, y, z) for i in rows]
     seed = KF.make_seed(*KF.exact_tracklet(*geo, sec), sec, len(stubs))
-    if KF.kf_eta_region(seed.eta_reg) > MAX_KF_REGION:
+    if KF.kf_eta_region(seed.eta_reg) > max_kf_region():
         return
     out = KF.fitted_output(KF.do_kf(seed, stubs), seed)
     acc = bool(out.accepted and out.consistent_sector)
@@ -738,7 +816,7 @@ INJECT_SEED = 20261018
 def _inject_records(R, stat, m, margin, rng):
     """Census records with extra copies: ln_cand, of judged tracks (exp(m margin) - 1 of them); ln_fake, of judged
     fakes (no seed TP); d_dup, of judged seed-truthful tracks (m margin per seed TP)."""
-    J = np.flatnonzero((R[:, 4] >= 0) & (R[:, 4] <= MAX_KF_REGION))
+    J = np.flatnonzero((R[:, 4] >= 0) & (R[:, 4] <= max_kf_region()))
     if stat == "ln_cand":
         pool, k = J, len(J) * (math.exp(m * margin) - 1)
     elif stat == "ln_fake":
@@ -1053,7 +1131,11 @@ def main():
         p.add_argument("--known-bad", default=None,
                        help="run the stage with a known-bad variant of the chain or the fit switched on "
                             "(c1, c1b; the censuses of c23 / floor carry their own)")
+        p.add_argument("--discs", choices=("on", "off"), default="on",
+                       help="on: the 8 seeds, disc stubs, every KF region (census format 36); off: format 35's "
+                            "barrel scope and chain (the discs and the WP-Disc corrections off; gate G0)")
     a = ap.parse_args()
+    OC.set_discs(a.discs == "on", fixes=a.discs == "on")
     OC.set_known_bad(a.known_bad)
     if a.stage == "bridge":
         rep, ok = bridge(a.v4, a.v3, a.nev, a.stub_shift)

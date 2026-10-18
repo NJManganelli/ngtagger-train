@@ -38,7 +38,7 @@ def test_record_rule_seed_tp_owner_and_region():
     rec = dict(zip(CV.RECORD_COLS, CV.track_record(L, 0, 0, [0, 1, 2, 3])))   # L1L2 seed: stubs 0, 1
     assert rec["tp_key"] == int(M.tp_key(np.array([0]), np.array([7]))[0]) and rec["real"] == 1
     assert rec["own_key"] == rec["tp_key"] and rec["n_wrong"] == 1 and rec["nstub"] == 4
-    assert 0 <= rec["kfreg"] <= CV.MAX_KF_REGION                               # cot 0.2: central
+    assert 0 <= rec["kfreg"] <= CV.MAX_KF_REGION_BARREL                              # cot 0.2: central
     # a fake seed (the two seed stubs credit different TPs) is not seed-truthful
     L2 = _stubs([1, 2, 3, 4], _line(RS[:4]), [7, 8, 7, 7])
     rec2 = dict(zip(CV.RECORD_COLS, CV.track_record(L2, 0, 0, [0, 1, 2, 3])))

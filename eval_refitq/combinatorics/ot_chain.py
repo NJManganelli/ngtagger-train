@@ -69,18 +69,20 @@ BARREL_SEEDS, DISK_SEEDS, OVERLAP_SEEDS = (0, 1, 2, 3), (4, 5), (6, 7)
 TARGETS = {0: (3, 4, 5, 6, 7, 8, 9, 10), 1: (1, 4, 5, 7, 8, 9, 10), 2: (1, 2, 5, 6, 7, 8), 3: (1, 2, 3, 4),
            4: (1, 2, 9, 10, 11), 5: (1, 7, 8, 11), 6: (8, 9, 10, 11), 7: (1, 8, 9, 10)}
 DISCS = True
-# THE WIRING CORRECTIONS found in WP-Disc, on the barrel too (format 35 lacked them): projections go only to the
+# THE CORRECTIONS found in WP-Disc that apply to the barrel too (format 35 lacked them): projections go only to the
 # wired targets (format 35 sent L2L3 to L6, which TrackletConfigBuilder does not wire) and only into the merged
-# projection memories that exist (buildProjections' emptyProjCombined). Off, with the discs off, the chain is
-# census format 35's, bit for bit (gate G0).
-WIRING_FIXES = True
+# projection memories that exist (buildProjections' emptyProjCombined); the projection calculator's 108-tracklet
+# cap; the KF's state and stub sorts as libstdc++'s std::sort (cmssw_kf.STD_SORT: its order of equal keys). Off,
+# with the discs off, the chain is census format 35's, bit for bit (gate G0).
+FIXES = True
 
 
-def set_discs(on, wiring_fixes=True):
-    """The disc and overlap seeds and every projection to a disc on (census format 36) or off; with both off,
-    format 35's barrel chain, bit for bit."""
-    global DISCS, WIRING_FIXES
-    DISCS, WIRING_FIXES = bool(on), bool(wiring_fixes)
+def set_discs(on, fixes=True):
+    """The disc and overlap seeds and every projection to a disc on (census format 36) or off, and the WP-Disc
+    corrections (FIXES) on or off; with both off, format 35's barrel chain, bit for bit."""
+    global DISCS, FIXES
+    DISCS, FIXES = bool(on), bool(fixes)
+    KF.STD_SORT = FIXES
 
 
 def active_seeds():
@@ -88,7 +90,7 @@ def active_seeds():
 
 
 def targets(seed):
-    if not WIRING_FIXES and seed == 1:
+    if not FIXES and seed == 1:
         return (1, 4, 5, 6) + ((7, 8, 9, 10) if DISCS else ())        # format 35's L2L3 targets, L6 included
     return tuple(L for L in TARGETS[seed] if DISCS or L <= 6)
 
@@ -1397,8 +1399,8 @@ def proj_memory_exists(seed, pc, layer, region):
 
 def wired_projections(tracklets):
     """ProjectionCalculator writes a projection only into a memory that exists (proj_memory_exists); the others
-    are lost. Off with WIRING_FIXES off (format 35)."""
-    if not WIRING_FIXES:
+    are lost. Off with FIXES off (format 35)."""
+    if not FIXES:
         return
     for tr in tracklets:
         pc = tr.tcid[1] // PC_PAGES[tr.seed]
@@ -1414,8 +1416,9 @@ PC_MAX = 108                  # maxStep("PC")
 def pc_cap(tracklets, caps=True):
     """ProjectionCalculator's step cap (caps on; ProjectionCalculator::execute nPar1 / nPar2): a merged
     projection calculator forwards the first 108 tracklets of its TPs (TP order, then each TP's tracklet order) to
-    the track builder and projects them; later ones are lost. Returns the kept tracklets."""
-    if not caps or not WIRING_FIXES:
+    the track builder and projects them; later ones are lost. Returns the kept tracklets. Off with FIXES off
+    (format 35)."""
+    if not caps or not FIXES:
         return list(tracklets)
     count = {}
     kept = []
