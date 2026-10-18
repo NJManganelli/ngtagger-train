@@ -1706,7 +1706,7 @@ R_STRIDE = 400.0        # > the r span of a disc (< 120 cm) plus every window
 
 def build_disc_r_index(cidx, event, z, r, sig, nzbins=DISC_ZBINS):
     """Per side and z bin of one disc layer: (sorted (event, r) key, the global cluster indices in that order, the
-    bin's mid z (signed), its half thickness, the worst r sigma in it)."""
+    bin's mid z (signed), its half thickness, the worst r sigma in it, the bin's (r min, r max))."""
     out = []
     for side in (-1.0, 1.0):
         m = np.flatnonzero(np.sign(z) == side)
@@ -1722,7 +1722,8 @@ def build_disc_r_index(cidx, event, z, r, sig, nzbins=DISC_ZBINS):
             k = event[sel].astype(np.float64) * R_STRIDE + r[sel]
             o = np.argsort(k, kind="stable")
             out.append((k[o], cidx[sel[o]], side * 0.5 * (edges[ib] + edges[ib + 1]),
-                        0.5 * (edges[ib + 1] - edges[ib]), float(sig[sel].max())))
+                        0.5 * (edges[ib + 1] - edges[ib]), float(sig[sel].max()),
+                        (float(r[sel].min()), float(r[sel].max()))))
     return out
 
 
@@ -1741,11 +1742,14 @@ def disc_r_sigma(sig_c, rpred, cot, sct, ms):
 
 def candidates_by_r(ev_p, z0p, cot, kap, sct, ms, ridx, ceiling=DEFAULT_TRIPLET_CEILING):
     """Yield (pair index, disc cluster index) for r-consistent candidates, one interval search per (side, z bin);
-    a pair appears in several yields (arbitrate after collecting all)."""
+    a pair appears in several yields (arbitrate after collecting all). A pair whose prediction falls outside the
+    bin's radial extent (beyond NSIG of its worst r sigma) reaches nothing there: a flat seed (|cot| small) would
+    otherwise predict a far radius with an error as large, and match every cluster of the disc."""
     total = 0
-    for kr, cidx, zmid, zhalf, sgmax in ridx:
+    for kr, cidx, zmid, zhalf, sgmax, (rlo, rhi) in ridx:
         rpred, sp = disc_r_pred(zmid, z0p, cot, kap)
-        ok = sp > 0
+        slack = NSIG * sgmax + zhalf / np.maximum(np.abs(cot), 1e-6)
+        ok = (sp > 0) & (rpred >= rlo - slack) & (rpred <= rhi + slack)
         half = np.where(ok, NSIG * disc_r_sigma(sgmax, rpred, cot, sct, ms)
                         + zhalf / np.maximum(np.abs(cot), 1e-6), -1.0)
         ka = ev_p.astype(np.float64) * R_STRIDE + rpred
@@ -1960,6 +1964,16 @@ def alpha_veto(D, Q, idxL, kmax, displaced, ang=None):
     # Before 2026-09-27 such clusters entered with a direction built from the
     # capped or absent angle.
     k &= Q["dir_ok"][idxL]
+    # S1 ON THE DISCS (census format 36): the module-frame test (census_angles.Model.s1d) on IT disc clusters,
+    # which the barrel test above passes as wildcards; a disc cluster without a usable module-frame direction is
+    # dropped as a barrel one is
+    dsk = np.isin(D["layer"][idxL], IT_DISC_CODES)
+    if dsk.any() and ang is not None and ang.model is not None:
+        g = idxL[dsk]
+        std, rows = ang.model.s1d(Q, g, 1.0 / kmax)
+        ang.count_nonfinite("S1", std[Q["ldir_ok"][g]])
+        kd = np.ones(len(g), bool) if ang.cuts_open else std <= ang.cuts.s1d_thr(1.0 / kmax, rows)
+        k[dsk] = kd & Q["ldir_ok"][g]
     return idxL[k]
 
 
@@ -2281,7 +2295,7 @@ def _disc_pairs(D, Q, ang, idx, out, none, la, lb, ptmin, displaced, d0_cm, kap_
     dr_exp = np.abs(rA * (zB / zA - 1.0))
     half_w = C_BEND * dr_exp * kmax + ms + 5e-4 + d0_eff / np.maximum(rA, 1e-3)
     keepA, keepB, keepK, keepC, keepZ = [], [], [], [], []
-    n_phi = n_kap = n_z0l = 0
+    n_phi = n_kap = n_z0l = n_aok = 0
     for ia, ib in pairs_in_window_slices(D["event"][idx[la]], D["globalPhi"][idx[la]],
                                          D["event"][idx[lb]], D["globalPhi"][idx[lb]], half_w):
         rss_check()
@@ -2294,6 +2308,10 @@ def _disc_pairs(D, Q, ang, idx, out, none, la, lb, ptmin, displaced, d0_cm, kap_
         n_kap += int(steps["kappa"].sum())
         if "z0lumi" in steps:
             n_z0l += int(steps["z0lumi"].sum())
+        if (ang("pair_alpha") or ang("pair_z0")) and ang.model is not None and ok.any():
+            pa_, pz_ = _disc_pair_angle_gates(D, Q, ang, gA, gB, kap, cot, ok, ptmin, la, lb)
+            ok &= (pa_ if ang("pair_alpha") else True) & (pz_ if ang("pair_z0") else True)
+            n_aok += int(ok.sum())
         if ok.any():
             keepA.append(gA[ok]); keepB.append(gB[ok])
             keepK.append(kap[ok]); keepC.append(cot[ok]); keepZ.append(z0p[ok])
@@ -2303,6 +2321,8 @@ def _disc_pairs(D, Q, ang, idx, out, none, la, lb, ptmin, displaced, d0_cm, kap_
     if not displaced:
         out["pairs_z0lumi"] = n_z0l
     out["pairs_bend_ok"] = 0
+    if ang("pair_alpha") or ang("pair_z0"):
+        out["pairs_angle_ok"] = n_aok
     out["tracklets"] = int(sum(len(x) for x in keepA))
     if not keepA:
         return none
@@ -2310,14 +2330,26 @@ def _disc_pairs(D, Q, ang, idx, out, none, la, lb, ptmin, displaced, d0_cm, kap_
             np.concatenate(keepZ), idx)
 
 
-def _project_disc(D, out, gA, gB, kap, cot, z0p, idx, lc, displaced, kmax, d0_max, d0_meas, seed_layers, pos_arb,
-                  skap, sct, ms, d0_allow):
+def _project_disc(D, Q, ang, out, gA, gB, kap, cot, z0p, idx, lc, ptmin, displaced, kmax, d0_max, d0_meas,
+                  seed_layers, pos_arb, skap, sct, ms, d0_allow, role, sid, seed_c):
     """it_project to a DISC target (census format 36), the barrel's projection with the roles of r and z exchanged:
     each candidate on the pair's side of disc lc is predicted at its own z (disc_r_pred, along the arc) and kept
     inside NSIG of its r sigma (disc_r_sigma) and of the barrel's phi sigma at its radius; an OT disc caps both at
     the seed's tabulated disc window (ot_disc_match_window, PS or 2S by the stub's module), as an OT barrel layer
-    does. One hit per pair by the position arbitration (pos_arb: dphi, or the (phi, r) pulls). The disc angle stages
-    act here too (census_angles, module frame); S3 / S4w / S4a of the barrel do not."""
+    does. One hit per pair by the position arbitration (pos_arb: dphi, or the (phi, r) pulls). On an IT disc the
+    module-frame angle stages act (census_angles.Model.disc_window): S4w (role follow) cuts each candidate's
+    (alpha, beta) pulls against the seed's prediction at the cut file's disc thresholds of its bin (open in the
+    calibration run; the correct candidates recorded before the cut), S4a adds those pulls, the seed's prediction
+    error included, to the position score; a candidate without a usable module-frame direction is a wildcard.
+    A triplet's attach (S3) has no disc target in the menu."""
+    win_on = ang("proj_window") and role == "follow" and lc in IT_DISC_CODES
+    arb_on = ang("proj_arb") and lc in IT_DISC_CODES
+    model, rec = ang.model, ang.rec
+    if (win_on or arb_on) and model is None:
+        raise ValueError("the disc angle stages need the census angle model (census_angles)")
+    sub = ang.subset("proj_window") if win_on else None
+    seed_hits = (gA, gB) if seed_c is None else (gA, gB, seed_c)
+    n_ang_rej = 0
     cC = idx[lc]
     rC, zC = D["globalR"][cC], D["globalZ"][cC]
     sgC = np.maximum(D["sigY"][cC], 1e-6)
@@ -2351,9 +2383,37 @@ def _project_disc(D, out, gA, gB, kap, cot, z0p, idx, lc, displaced, kmax, d0_ma
         else:
             good &= dphi <= pwin
         score = dphi if pos_arb != "rphiz" else np.square(dphi / sph) + np.square(dr / sr)
+        if (win_on or arb_on) and good.any():
+            u_ = Q["ldir_ok"][gC]
+            if win_on:
+                qa, qb = model.disc_window(Q, gC, kap[ja], cot[ja], dm[ja])
+                ang.count_nonfinite("S4w", np.r_[qa[good & u_], qb[good & u_]])
+                ptb = model.ptbin(kap[ja])
+                if ang.cuts_open:
+                    inw = np.ones(len(gC), bool)
+                else:
+                    ta, tb = ang.cuts.wind_thr(sub, 1, sid, lc, ptmin, ptb)
+                    inw = (np.abs(qa) <= ta) & (np.abs(qb) <= tb)
+                passed = ~u_ | inw
+                if rec is not None:
+                    rec.window_disc(1, sid, lc, ptmin, ja, gC, seed_hits, kap[ja], cot[ja], dm[ja], qa, qb, passed,
+                                    ptb, good & u_)
+                g0 = int(good.sum())
+                good &= passed
+                n_ang_rej += g0 - int(good.sum())
+            if arb_on:
+                qa2, qb2 = model.disc_window(Q, gC, kap[ja], cot[ja], dm[ja],
+                                             skap if np.ndim(skap) == 0 else skap[ja], sct[ja])
+                t = ((qa2 * qa2 if ang.uses("proj_arb", "alpha") else 0.0)
+                     + (qb2 * qb2 if ang.uses("proj_arb", "beta") else 0.0))
+                ang.count_nonfinite("S4a", np.broadcast_to(t, u_.shape)[good & u_])
+                base = np.square(dphi / sph) if pos_arb != "rphiz" else score
+                score = base + ang.arb_weight * np.where(u_, t, 0.0)
         if not good.any():
             continue
         sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(score[good])
+    if win_on:
+        out["angle_window_rejected"] = n_ang_rej
     out["match_cand"] = n_cand
     if not sv_p:
         out["match_cand_z"] = 0
@@ -2367,6 +2427,29 @@ def _project_disc(D, out, gA, gB, kap, cot, z0p, idx, lc, displaced, kmax, d0_ma
     out["_trip"] = (gA[pa[pk]], gB[pa[pk]], pc[pk])
     out["_pairidx"] = pa[pk]
     return out
+
+
+def _disc_pair_angle_gates(D, Q, ang, gA, gB, kap, cot, ok, ptmin, la, lb):
+    """(S2a pass, S2z pass) of disc pairs (census format 36): each IT disc cluster's module-frame alpha / beta
+    pull against the pair's prediction, the larger of the pair's (census_angles.Model.s2d), cut at the cut
+    file's disc thresholds (open in the calibration run); the correct pairs the position gates kept (`ok`) are
+    recorded before the cuts. A cluster without a usable module-frame direction, or an OT stub, is a wildcard."""
+    useA = np.isin(D["layer"][gA], IT_DISC_CODES) & Q["ldir_ok"][gA]
+    useB = np.isin(D["layer"][gB], IT_DISC_CODES) & Q["ldir_ok"][gB]
+    st_a, st_z, row_a = ang.model.s2d(Q, gA, gB, kap, cot, useA, useB)
+    use = useA | useB
+    ang.count_nonfinite("S2a", st_a[use])
+    ang.count_nonfinite("S2z", st_z[use])
+    if ang.cuts_open:
+        pass_a = pass_z = np.ones(len(gA), bool)
+    else:
+        pass_a = ~use | (st_a <= ang.cuts.s2ad_thr(ptmin, la, lb))
+        pass_z = ~use | (st_z <= ang.cuts.s2zd_thr(ptmin, la, lb, row_a))
+    if ang.rec is not None and ok.any():
+        sel = np.flatnonzero(ok & use)
+        ang.rec.pairs_disc(gA[sel], gB[sel], kap[sel], cot[sel], ptmin, la, lb, st_a[sel], st_z[sel],
+                           row_a[sel], pass_a[sel], pass_z[sel])
+    return pass_a, pass_z
 
 
 def _seed_errors(D, gA, gB, cot, la, lb, rA, rB):
@@ -2486,8 +2569,9 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     sph = np.hypot(5e-4, C_BEND * rCmed * skap) + ms + d0_allow
     out["projections"] = int(len(gA))
     if is_disc(lc):
-        return _project_disc(D, out, gA, gB, kap, cot, z0p, idx, lc, displaced, kmax, d0_max,
-                             d0_meas, seed_layers or (la, lb), pos_arb, skap, sct, ms, d0_allow)
+        return _project_disc(D, Q, ang, out, gA, gB, kap, cot, z0p, idx, lc, ptmin, displaced, kmax, d0_max,
+                             d0_meas, seed_layers or (la, lb), pos_arb, skap, sct, ms, d0_allow, role,
+                             seed_code(seed_layers or (la, lb)) if seed_id is None else seed_id, seed_c)
     # ---- the ANGLE window and arbitration (S3 / S4w / S4a) ------------------
     # Each candidate's alpha and beta against the seed's prediction at its own
     # radius: kappa_alpha = kappa - d0/(c r^2) (d0 = the triplet's solved d0, 0

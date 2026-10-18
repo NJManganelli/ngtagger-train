@@ -84,10 +84,7 @@ def run_config(man):
 
 def model_of(man):
     am = man["config"]["angle_model"]
-    m = CA.Model(am["table_path"], am["k_alpha"], am["k_beta"], am["mode"])
-    if m.table_sha != am["table_sha256"]:
-        raise SystemExit("the table changed since the census ran")
-    return m
+    return CA.Model.from_identity(am)
 
 
 def n_events(man):

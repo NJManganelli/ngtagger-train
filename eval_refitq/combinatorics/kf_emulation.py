@@ -738,11 +738,14 @@ def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
     dsk = M.is_disc(lay)
     if dsk.any():
         # a disc hit's r sigma (the IT cluster's sigY, the OT stub's sigmaPar) as a z error: x cot^2, the seed
-        # pair's cot as the hybrid KF takes its tanL from the candidate (KFParamsComb::matrixV, endcap)
+        # pair's cot as the hybrid KF takes its tanL from the candidate (KFParamsComb::matrixV, endcap), at least
+        # the cot a track from the luminous region needs to reach the hit, (|z| - Z_LUMI) / r: a flat seed with a
+        # wrong disc hit would otherwise give it a vanishing z error and drive the filter away
         ga, gb = trip[0], trip[1]
         drs = U["globalR"][gb] - U["globalR"][ga]
         cot0 = (U["globalZ"][gb] - U["globalZ"][ga]) / np.where(np.abs(drs) > 0.5, drs, 1e9)
-        v1 = np.where(dsk, v1 * np.square(cot0)[:, None], v1)
+        cmin = np.maximum(np.abs(T["Z"]) - M.Z_LUMI, 0.0) / np.maximum(T["R"], 1e-3)
+        v1 = np.where(dsk, v1 * np.square(np.maximum(np.abs(cot0)[:, None], cmin)), v1)
     # azimuth relative to each track's own first hit, so no 2pi wrap enters
     ref = np.where(T["VALID"], T["PH"], 0.0)
     first = np.argmax(T["VALID"], axis=1)
@@ -786,10 +789,13 @@ def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
     # that the stages reading it (S6 acceptance, S7 rank, S8 features) see one
     # definition and switching S5 changes the state, not the yardstick. Its
     # alpha and beta parts are kept apart for S6's per-angle sets.
+    # THE DISC HITS' ANGLES (census format 36): module-frame pulls against the final state (disc_angle_pulls),
+    # in the same chi2 and counts; never fed to the update (S5 reads the barrel's only)
+    T["DANG"], T["DPA"], T["DPB"] = disc_angle_pulls(Q, T, fit, model)
     c2a, na, c2b, nb = angle_chi2_parts(T, fit)
     fit["chi2_a"], fit["n_a"], fit["chi2_b"], fit["n_b"] = c2a, na, c2b, nb
     fit["chi2_angle"] = c2a + c2b
-    fit["n_angle"] = (T["VALID"] & T["ANG"]).sum(axis=1).astype(np.int32)
+    fit["n_angle"] = (T["VALID"] & (T["ANG"] | T["DANG"])).sum(axis=1).astype(np.int32)
     fit["n_angle_meas"] = (na + nb).astype(np.int32)
     return fit
 
@@ -821,8 +827,9 @@ def angle_chi2_parts(T, fit):
     statistic, which contains it).
     """
     pa, pb = angle_pulls(T, fit)
-    ma = T["VALID"] & T["ANG_A"]
-    mb = T["VALID"] & T["ANG_B"]
+    dang = T.get("DANG", False)
+    ma = T["VALID"] & (T["ANG_A"] | dang)
+    mb = T["VALID"] & (T["ANG_B"] | dang)
     return (np.where(ma, pa * pa, 0.0).sum(axis=1), ma.sum(axis=1).astype(np.int32),
             np.where(mb, pb * pb, 0.0).sum(axis=1), mb.sum(axis=1).astype(np.int32))
 
@@ -852,7 +859,31 @@ def angle_pulls(T, fit):
     sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9)
     res_b = T["CT"] - fit["cot"][:, None]
     sig_b = np.maximum(T["SCT"], 1e-9)
-    return res_a / sig_a, res_b / sig_b
+    if "DANG" not in T:
+        return res_a / sig_a, res_b / sig_b
+    return np.where(T["DANG"], T["DPA"], res_a / sig_a), np.where(T["DANG"], T["DPB"], res_b / sig_b)
+
+
+def disc_angle_pulls(Q, T, fit, model):
+    """(use, alpha pull, beta pull) per (track, layer) of the IT disc hits with a usable module-frame direction:
+    the census angle model's module-frame pulls (census_angles.Model.disc_window) against the fitted helix
+    (kappa, cot, d0) at each hit; use is False everywhere without the model or a disc hit."""
+    use = np.zeros(T["VALID"].shape, bool)
+    pa, pb = np.zeros(use.shape), np.zeros(use.shape)
+    if model is None or "ldir_ok" not in Q:
+        return use, pa, pb
+    G = T["GIDX"]
+    lay = np.asarray(T["layers"])
+    cols = np.flatnonzero(np.isin(lay, M.IT_DISC_CODES))
+    for j in cols:
+        t = np.flatnonzero(T["VALID"][:, j])
+        g = G[t, j]
+        ok = Q["ldir_ok"][g]
+        t, g = t[ok], g[ok]
+        if len(t):
+            qa, qb = model.disc_window(Q, g, fit["kappa"][t], fit["cot"][t], fit["d0"][t])
+            use[t, j], pa[t, j], pb[t, j] = True, qa, qb
+    return use, pa, pb
 
 
 ANGLE_COLS = ("track_row", "layer", "res_a", "pred_a", "res_b", "pred_b",
@@ -1221,8 +1252,9 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank):
     is_it = use & (lay <= 10)                 # IL1-IL4 and the discs ID1-ID4
     is_ot = use & (lay > 10)
     pa, pb = angle_pulls(T, fit)
-    apull = np.maximum(np.where(use & T["ANG_A"], np.abs(pa), 0.0),
-                       np.where(use & T["ANG_B"], np.abs(pb), 0.0))
+    dang = T.get("DANG", False)
+    apull = np.maximum(np.where(use & (T["ANG_A"] | dang), np.abs(pa), 0.0),
+                       np.where(use & (T["ANG_B"] | dang), np.abs(pb), 0.0))
     srt = np.sort(apull, axis=1)[:, ::-1]
     r = np.maximum(T["R"], 1e-3)
     dz = T["Z"] - (fit["cot"][:, None] * r + fit["z0"][:, None])

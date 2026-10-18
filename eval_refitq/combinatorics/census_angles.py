@@ -24,11 +24,21 @@ predicted cot theta).
 Every function here that turns components into a statistic is used BOTH by the census (in-run) and
 by the offline cut fitting and gate (records), so the two cannot drift.
 
-DISCS (decision 7) are not exercised: the census is barrel-only (M.it_barrel_codes), no disc cluster
-enters it, and no figure it makes says anything about disc angles.
+THE DISCS (census format 36, wpdisc/PLAN.md sec. 1 B): the SmartPixels disc clusters (ID1-ID4) carry no barrel
+quantity (prepare: a wildcard in every barrel field; on a disc one cluster's beta gives z0 to ~54 cm and its alpha
+curvature to ~9 /GeV, so neither is routed there). Their stages are LOCAL COMPATIBILITY TESTS: each predicts the
+cluster's module-frame (cotAlpha, cotBeta) on its own module (the D121 frames, spdefs.disc_frames) from the
+hypothesis' helix, reads the disc table (registry p03.table.v1a1e-disclocal, its true_local rows, facings pooled) at
+the PREDICTED key, and takes the pulls in cot units: m' = m_k - k c sigma_pub, sigma' = w sigma_k, with the knob on
+the module-frame cots of class T. S1 (the cluster's cotAlpha against the pT band C r kappa_floor / |cot| about the
+straight track's), S2a / S2z (each disc cluster's cotAlpha / cotBeta against the pair's prediction, the larger of
+the pair's), S4w (a follow candidate's pulls against the seed's), S4a (those pulls, the prediction error added)
+and S6 (the final state's pulls) act on them; S3 has no disc target in the menu and S5 does not feed disc angles
+to the fit.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -61,11 +71,13 @@ MIN_TP = 200                              # merge minimum, in distinct TPs (stat
 # S5 states recorded for S6 (four angle sets x two keys; "off" has no key)
 S5_STATES = ("ab", "a", "b", "off")
 S5_REFITS = tuple((s, k) for s in ("ab", "a", "b") for k in KEYS) + (("off", "emitted"),)
-DISC_NOTE = ("disc angles not exercised: the census is barrel-only (no disc cluster enters it, "
-             "neither position nor angle), so decision 7's 'on by default' is vacuous here; the "
-             "site's forward |eta| bins hold particles that still cross barrel layers and measure "
-             "barrel-angle effects only; disc consumers will read the table's facing-keyed rows, on "
-             "by default and labelled unvalidated, when disc seeding arrives")
+DISC_NOTE = ("disc angles (census format 36): module-frame compatibility tests at the predicted key of the "
+             "disc table p03.table.v1a1e-disclocal (facings pooled); S1, S2a, S2z, S4w cut, S4a and S6 weigh, S3 "
+             "has no disc target, S5 feeds no disc angle; the emulated response is a placeholder, so findings "
+             "about the angles' value are traced to it only by the plan's pre-declared test")
+DISC_TABLE_DEFAULT = "/Volumes/WDMac/smartpixels_scratch/p03_angles/angle_table_v1a1e_disclocal_canon_v3.json"
+DISC_TABLE_REGISTRY = "p03.table.v1a1e-disclocal"
+DISC_KEY = "true_local"                  # the disc table at the predicted key (the true key stands in for it)
 CLASS_C_NOTE = ("the table describes class T (tpEmuClass == 1); class-C clusters (CNN angles, "
                 "~30 %) get the same row and are not calibrated; their efficiencies are reported, "
                 "not gated; scaled-mode rejection is an upper bound")
@@ -86,15 +98,29 @@ class Model:
     """The table, the knob (k per angle, sigma mode) and the weighting keys of one census run."""
 
     def __init__(self, table_path=TABLE_DEFAULT, k_alpha=1.0, k_beta=1.0, mode="fixed",
-                 registry=TABLE_REGISTRY):
+                 registry=TABLE_REGISTRY, disc_table_path=DISC_TABLE_DEFAULT):
         self.table_path = os.path.realpath(table_path)
         self.table = SD.AngleTable.load(self.table_path)
         self.table_sha = sha256(self.table_path)
         self.registry = registry
+        self.disc_table_path = os.path.realpath(disc_table_path)
+        self.disc_table = SD.AngleTable.load(self.disc_table_path)
+        self.disc_table_sha = sha256(self.disc_table_path)
         self.k = {"alpha": SD.check_k(k_alpha), "beta": SD.check_k(k_beta)}
         if mode not in SD.K_MODES:
             raise ValueError(f"k mode {mode!r} not in {SD.K_MODES}")
         self.mode = mode
+
+    @classmethod
+    def from_identity(cls, am):
+        """The model a census manifest's angle_model names, refusing a table that changed since (either one)."""
+        m = cls(am["table_path"], am["k_alpha"], am["k_beta"], am["mode"],
+                disc_table_path=am.get("disc_table_path", DISC_TABLE_DEFAULT))
+        if m.table_sha != am["table_sha256"]:
+            raise SystemExit("the angle table changed since the census ran")
+        if "disc_table_sha256" in am and m.disc_table_sha != am["disc_table_sha256"]:
+            raise SystemExit("the disc angle table changed since the census ran")
+        return m
 
     def identity(self):
         d = self.table.doc
@@ -102,7 +128,17 @@ class Model:
                 "table_registry": self.registry, "schema": d.get("schema"),
                 "definition_sheet": d.get("definition_sheet"), "era": d.get("era"),
                 "fit_sample": d.get("fit_sample"), "k_alpha": self.k["alpha"],
-                "k_beta": self.k["beta"], "mode": self.mode}
+                "k_beta": self.k["beta"], "mode": self.mode,
+                "disc_table_path": self.disc_table_path, "disc_table_sha256": self.disc_table_sha,
+                "disc_table_registry": DISC_TABLE_REGISTRY}
+
+    def at_k(self, k_alpha, k_beta, mode):
+        """This model (its tables) at another knob and sigma mode: the offline recomputation of a disc
+        statistic (angle_cuts), whose table centre scales with k at the stage itself."""
+        m = copy.copy(self)
+        m.k = {"alpha": SD.check_k(k_alpha), "beta": SD.check_k(k_beta)}
+        m.mode = mode
+        return m
 
     def calib_k(self):
         """(k_alpha, k_beta) at which a cutting consumer's quantile is measured: k in scaled mode,
@@ -171,6 +207,77 @@ class Model:
             KA[t, j], SKA[t, j], CT[t, j], SCT[t, j] = ka, sk, ct, sc
         return KA, SKA, CT, SCT
 
+    # ---- the discs (module frame; census format 36) ----------------------
+    def disc_rows(self, Q, g, pa, pb):
+        """The disc table's row per disc cluster g at the predicted module-frame key of (pa, pb)."""
+        key = SD.local_incidence_key(pa, pb)
+        sf = np.asarray(Q["lcode"][g]) + M.DISC_CODE_OFFSET
+        return self.disc_table.rows_of(DISC_KEY, sf, key, np.zeros(len(sf), np.int8))
+
+    def disc_pulls(self, Q, g, pa, pb, rows=None, s_pa=0.0, s_pb=0.0):
+        """(alpha pull, beta pull) in cot units of disc clusters g against predicted module-frame cots (pa, pb):
+        the cluster's knobbed cots less the table's centre (k c sigma_pub) at the predicted key, over its width
+        times sigma_k; s_pa / s_pb a prediction error added once (S4a)."""
+        rows = self.disc_rows(Q, g, pa, pb) if rows is None else rows
+        out = []
+        for a, m, sp, pred in (("alpha", "lca", s_pa, pa), ("beta", "lcb", s_pb, pb)):
+            c = self.disc_table.get(DISC_KEY, a, "centre", rows)
+            w = self.disc_table.get(DISC_KEY, a, "width", rows)
+            bad = ~(np.isfinite(c) & np.isfinite(w))
+            c, w = np.where(bad, 0.0, c), np.where(bad, 1.0, w)
+            ka = self.k[a]
+            m2 = Q[f"{m}_k"][g] - SD.centre_k(c * Q[f"{m}_pub"][g], ka)
+            sk = w * Q[f"{m}_sk"][g]
+            out.append((m2 - pred) / np.maximum(np.hypot(sk, sp), 1e-12))
+        return out[0], out[1]
+
+    def s1d(self, Q, g, floor):
+        """S1 on disc clusters g: (statistic, the disc table row it is binned by). The straight prompt track
+        through the cluster (kappa 0, z0 0) predicts (pa0, pb0); the statistic is |alpha pull| less the pT band
+        C r kappa_floor / |cot| in the same units (negative inside the band)."""
+        r, z = Q["lr"][g], Q["lz"][g]
+        cot0 = z / np.maximum(r, 1e-6)
+        pa0, pb0 = disc_predict(Q, g, np.zeros(len(g)), cot0)
+        rows = self.disc_rows(Q, g, pa0, pb0)
+        pa, _ = self.disc_pulls(Q, g, pa0, pb0, rows)
+        band = M.C_BEND * r / (np.asarray(floor, np.float64) * np.maximum(np.abs(cot0), 1e-6))
+        c = self.disc_table.get(DISC_KEY, "alpha", "width", rows)
+        w = np.where(np.isfinite(c), c, 1.0)
+        return np.abs(pa) - band / np.maximum(w * Q["lca_sk"][g], 1e-12), rows
+
+    def disc_window(self, Q, g, kap, cot, d0=None, skap=None, sct=None):
+        """(alpha pull, beta pull) of disc candidates g against a helix's module-frame prediction (S4w; with
+        skap / sct, the seed's kappa and cot errors propagated into the prediction and added once: S4a)."""
+        pa, pb = disc_predict(Q, g, kap, cot, d0)
+        if skap is None:
+            return self.disc_pulls(Q, g, pa, pb)
+        r = Q["lr"][g]
+        c = np.maximum(np.abs(cot), 1e-9)
+        d = Q["lphi"][g] - np.arcsin(np.clip(M.C_BEND * np.asarray(kap) * r, -1.0, 1.0)) - Q["lphim"][g]
+        dk = M.C_BEND * r * np.asarray(skap) / c          # d(cot alpha, cot beta) / d kappa, times sigma(kappa)
+        s_pa = np.hypot(dk * np.abs(np.cos(d)), np.abs(pa) * sct / c)
+        s_pb = np.hypot(dk * np.abs(np.sin(d)), np.abs(pb) * sct / c)
+        return self.disc_pulls(Q, g, pa, pb, s_pa=s_pa, s_pb=s_pb)
+
+    def s2d(self, Q, gA, gB, kap, cot, useA, useB):
+        """S2a / S2z on a pair with disc clusters: each used disc cluster's alpha / beta pull against the pair's
+        prediction, the larger of the two (0 where neither is used); and the inner cluster's disc table row."""
+        n = len(gA)
+        st_a, st_z = np.zeros(n), np.zeros(n)
+        row_a = np.full(n, -1, np.int64)
+        for g, use, first in ((gA, useA, True), (gB, useB, False)):
+            i = np.flatnonzero(use)
+            if not len(i):
+                continue
+            pa, pb = disc_predict(Q, g[i], kap[i], cot[i])
+            rows = self.disc_rows(Q, g[i], pa, pb)
+            qa, qb = self.disc_pulls(Q, g[i], pa, pb, rows)
+            st_a[i] = np.maximum(st_a[i], np.abs(qa))
+            st_z[i] = np.maximum(st_z[i], np.abs(qb))
+            if first:
+                row_a[i] = rows
+        return st_a, st_z, row_a
+
 
 def corrected(angle, a_e, a_t, is_T, sig_pub, c, w, k, mode):
     """(a', sigma') of one angle: the knob on class T, then the table's centre and width."""
@@ -238,6 +345,13 @@ def prepare(D, model, bench=None):
         out = np.full(len(disc), fill[k], dtype=v.dtype)
         out[b] = v
         Q[k] = out
+    d = np.flatnonzero(disc)
+    Cd = disc_components({k: np.asarray(v)[d] for k, v in D.items()})
+    Cd.update(dict(zip(DISC_K_FILL, disc_knob(Cd, model.k["alpha"], model.k["beta"], model.mode))))
+    for k, v in Cd.items():
+        out = np.full(len(disc), {**DISC_FILL, **DISC_K_FILL}[k], dtype=np.asarray(v).dtype)
+        out[d] = v
+        Q[k] = out
     return Q
 
 
@@ -273,6 +387,55 @@ def _prepare_barrel(D, model, bench=None):
     return Q
 
 
+def disc_predict(Q, g, kap, cot, d0=None):
+    """The module-frame (cotAlpha, cotBeta) a helix (kappa, cot theta, d0; TTTrack conventions) predicts at disc
+    clusters g: its direction at the cluster has azimuth phi - half, sin(half) = c kappa r - d0 / r (the census's
+    alpha), and dip cot theta; rotated into the module's D121 frame (spdefs.disc_local_from_global's relation:
+    cotAlpha = sin(dir - phi_m) / cot, cotBeta = -sx cos(dir - phi_m) / cot)."""
+    r = Q["lr"][g]
+    s = M.C_BEND * np.asarray(kap, np.float64) * r - (0.0 if d0 is None else np.asarray(d0) / r)
+    d = Q["lphi"][g] - np.arcsin(np.clip(s, -1.0, 1.0)) - Q["lphim"][g]
+    c = np.where(np.abs(cot) > 1e-9, cot, 1e-9)
+    return np.sin(d) / c, -Q["lsx"][g] * np.cos(d) / c
+
+
+def disc_components(D):
+    """Per IT disc cluster (codes 5-8): the inputs of every disc statistic: its code, position, module frame
+    (sx, phi_m from the D121 table), emitted and true module-frame cots, published cot sigmas, class T, and
+    whether its module-frame direction is usable (SPN.direction_usable)."""
+    sx, phm = SD.disc_frame_lookup(D["detId"])
+    is_T = SD.class_T(D["tpEmuClass"]) & np.isfinite(np.asarray(D["tpLocalCotAlpha"], np.float64)) \
+        & np.isfinite(np.asarray(D["tpLocalCotBeta"], np.float64))
+    return {"lcode": np.asarray(D["layer"]).astype(np.int8), "lr": np.asarray(D["globalR"], np.float64),
+            "lz": np.asarray(D["globalZ"], np.float64), "lphi": np.asarray(D["globalPhi"], np.float64),
+            "lsx": sx.astype(np.float64), "lphim": phm,
+            "lca_e": np.asarray(D["localCotAlpha"], np.float64), "lcb_e": np.asarray(D["localCotBeta"], np.float64),
+            "lca_t": np.where(is_T, np.asarray(D["tpLocalCotAlpha"], np.float64), np.nan),
+            "lcb_t": np.where(is_T, np.asarray(D["tpLocalCotBeta"], np.float64), np.nan),
+            "lca_pub": np.asarray(D["sigAlpha"], np.float64), "lcb_pub": np.asarray(D["sigBeta"], np.float64),
+            "lis_T": is_T, "ldir_ok": M.SPN.direction_usable(D) & (sx != 0)}
+
+
+def disc_knob(C, k_alpha, k_beta, mode):
+    """(lca_k, lcb_k, lca_sk, lcb_sk) of disc components C at (k, mode): the knob on the module-frame cots of
+    class T (truth + k (emitted - truth), no wrap: cot units) and sigma_k."""
+    out = []
+    for m, k in (("lca", k_alpha), ("lcb", k_beta)):
+        e, t = C[f"{m}_e"], C[f"{m}_t"]
+        v = np.where(C["lis_T"] & np.isfinite(t), t + SD.check_k(k) * (e - t), e) if k < 1.0 else np.array(e)
+        out.append(v)
+    out += [SD.sigma_k(C["lca_pub"], k_alpha, mode), SD.sigma_k(C["lcb_pub"], k_beta, mode)]
+    return tuple(out)
+
+
+# the disc components carried in Q (and their value elsewhere), and the knobbed values
+DISC_FILL = {"lcode": 0, "lr": np.nan, "lz": np.nan, "lphi": np.nan, "lsx": 0.0, "lphim": np.nan,
+             "lca_e": np.nan, "lcb_e": np.nan, "lca_t": np.nan, "lcb_t": np.nan, "lca_pub": np.nan,
+             "lcb_pub": np.nan, "lis_T": False, "ldir_ok": False}
+DISC_KEYS = tuple(DISC_FILL)
+DISC_K_FILL = {"lca_k": np.nan, "lcb_k": np.nan, "lca_sk": np.nan, "lcb_sk": np.nan}
+
+
 # per-cluster component arrays carried in Q (and their value on an OT stub)
 COMP_FILL = {"r": np.nan, "z": np.nan, "layer": 0, "cot_e": np.nan, "is_T": False,
              "half_e": np.nan, "lam_e": np.nan, "half_t": np.nan, "lam_t": np.nan,
@@ -284,9 +447,11 @@ CORR_FILL = {"half_c": 0.0, "s_half_c": 1e9, "lam_c": 0.0, "s_lam_c": 1e9}
 
 def with_ot_stubs(QI, n):
     """The model's Q extended by n trailing OT stubs: M.OT_STUB_ANGLES for the stage fields (huge
-    sigmas: a wildcard everywhere), no components."""
+    sigmas: a wildcard everywhere), no components (barrel or disc)."""
     Q = M.q_with_ot_stubs(QI, n)
-    for k, v in {**COMP_FILL, **CORR_FILL}.items():
+    for k, v in {**COMP_FILL, **CORR_FILL, **DISC_FILL, **DISC_K_FILL}.items():
+        if k not in QI:                       # a chunk without disc clusters (discs off: format 35's Q)
+            continue
         Q[k] = np.r_[QI[k], np.full(n, v, dtype=np.asarray(QI[k]).dtype)]
     Q["n_moved"] = QI["n_moved"]
     return Q
@@ -400,6 +565,76 @@ class Recorder:
         """Component columns of clusters g (and whether each has a usable direction)."""
         Q = self.Q
         return {**{f"{prefix}{k}": Q[k][g] for k in COMP_KEYS}, f"{prefix}dir_ok": Q["dir_ok"][g]}
+
+    def _cld(self, g, prefix=""):
+        """Disc component columns of clusters g (census format 36)."""
+        return {f"{prefix}{k}": self.Q[k][g] for k in DISC_KEYS}
+
+    def _truthful(self, g):
+        """(indices, tp_key, tp pT, genealogy) of clusters g with a credited TP that has an L1TTP row."""
+        U = self.U
+        i = np.flatnonzero(M.SPN.tp_matched(U["tpIdx"][g]))
+        key, pt, gen = tp_info(U, U["event"][g[i]], U["tpIdx"][g[i]])
+        keep = gen != GEN_NONE
+        return i[keep], key[keep], pt[keep], gen[keep]
+
+    # ---- the disc consumers (census format 36) -------------------------
+    def s1d(self, floor, cuts=None):
+        """S1 on every IT disc cluster with a usable module-frame direction and a credited TP, once per chunk
+        and floor; cuts: the run's cut set (None: the calibration run)."""
+        U, Q = self.U, self.Q
+        g = np.flatnonzero(np.isin(U["layer"], M.IT_DISC_CODES) & Q["ldir_ok"])
+        if not len(g):
+            return
+        i, key, pt, gen = self._truthful(g)
+        g = g[i]
+        st, rows = self.model.s1d(Q, g, floor)
+        ok = np.ones(len(g), bool) if cuts is None else st <= cuts.s1d_thr(floor, rows)
+        self._add("s1d", event=U["event"][g], tp_key=key, tp_pt=pt, gen=gen, floor=np.full(len(g), floor),
+                  row=rows.astype(np.int64), stat=st, passed=ok, **self._cld(g))
+
+    def pairs_disc(self, gA, gB, kap, cot, floor, la, lb, stat_a, stat_z, row_a, pass_a, pass_z):
+        """Correct disc pairs (both hits credited to one TP, at least one an IT disc cluster)."""
+        U = self.U
+        dA = np.isin(U["layer"][gA], M.IT_DISC_CODES)
+        tp = np.where(dA, U["tpIdx"][gA], U["tpIdx"][gB])
+        g_other = np.where(dA, gB, gA)
+        m = M.SPN.tp_matched(tp)
+        idx = np.flatnonzero(m)
+        idx = idx[credited_to(U, g_other[idx], tp[idx])] if len(idx) else idx
+        if not len(idx):
+            return
+        key, pt, gen = tp_info(U, U["event"][gA[idx]], tp[idx])
+        keep = gen != GEN_NONE
+        idx, key, pt, gen = idx[keep], key[keep], pt[keep], gen[keep]
+        n = len(idx)
+        self._add("paird", event=U["event"][gA[idx]], tp_key=key, tp_pt=pt, gen=gen,
+                  floor=np.full(n, floor), la=np.full(n, la, np.int8), lb=np.full(n, lb, np.int8),
+                  kap_pair=kap[idx], cot_pair=cot[idx], stat_a=stat_a[idx], stat_z=stat_z[idx],
+                  A_row=row_a[idx].astype(np.int64), passed_a=pass_a[idx], passed_z=pass_z[idx],
+                  **self._cld(gA[idx], "A_"), **self._cld(gB[idx], "B_"))
+
+    def window_disc(self, role, scode, lc, floor, ja, gC, seed_hits, kap_pred, cot_pred, d0_pred, pa, pb, passed,
+                    ptb, survived):
+        """Correct candidates of one disc projection slice (S4w on an IT disc target)."""
+        U = self.U
+        tp = U["tpIdx"][gC]
+        m = survived & M.SPN.tp_matched(tp)
+        for g in seed_hits:
+            if not m.any():
+                return
+            m[m] = credited_to(U, g[ja[m]], tp[m])
+        idx = np.flatnonzero(m)
+        if not len(idx):
+            return
+        key, pt, gen = tp_info(U, U["event"][gC[idx]], tp[idx])
+        keep = gen != GEN_NONE
+        idx, key, pt, gen = idx[keep], key[keep], pt[keep], gen[keep]
+        n = len(idx)
+        self._add("wind", event=U["event"][gC[idx]], tp_key=key, tp_pt=pt, gen=gen,
+                  floor=np.full(n, floor), role=np.full(n, role, np.int8), seed=np.full(n, scode, np.int64),
+                  lc=np.full(n, lc, np.int8), ptbin=ptb[idx], kap_pred=kap_pred[idx], cot_pred=cot_pred[idx],
+                  d0_pred=d0_pred[idx], pa=pa[idx], pb=pb[idx], passed=passed[idx], **self._cld(gC[idx]))
 
     # ---- S1 ----------------------------------------------------------
     def s1(self, floor, thr=None):
@@ -540,7 +775,11 @@ def record_s6(rec, U, Q, fit, keep, passed, G, trip, floor, build, entry, c2, n6
         return
     T = fit["hits"]
     use = T["VALID"][idx] & T["ANG"][idx]
-    all_T = (~use | Q["is_T"][np.clip(T["GIDX"][idx], 0, None)]).all(axis=1)
+    gi = np.clip(T["GIDX"][idx], 0, None)
+    all_T = (~use | Q["is_T"][gi]).all(axis=1)
+    if "lis_T" in Q:                              # the disc hits' angles too (format 36)
+        dang = T["DANG"][idx]
+        all_T &= (~dang | Q["lis_T"][gi]).all(axis=1)
     trip_c = tuple(x[idx] for x in trip)
     n = len(idx)
     cols = {"event": ev, "tp_key": key, "tp_pt": pt, "gen": gen, "all_T": all_T,
@@ -600,6 +839,12 @@ def _k(*parts):
     return "|".join(str(p) for p in parts)
 
 
+def _bins_thr(doc, consumer):
+    """(bins, thresholds) of a cut file's consumer section ((), () when absent)."""
+    sec = doc.get(consumer)
+    return (sec["bins"], sec["thr"]) if sec else ((), ())
+
+
 class CutSet:
     """A census angle cut file: per consumer, per bin, the threshold of its own statistic at the
     cut level, with the identity it was made under. Lookups refuse a configuration the file was
@@ -620,6 +865,14 @@ class CutSet:
             for b, t in zip(doc["win"]["bins"], rows):
                 self.win[_k(sub, *b)] = t
         self.s6 = {_k(*b): t for b, t in zip(doc["s6"]["bins"], doc["s6"]["thr"])}
+        # the disc consumers (census format 36; a format-35 file has none)
+        self.s1d = {_k(*b): t for b, t in zip(*_bins_thr(doc, "s1d"))}
+        self.s2ad = {_k(*b): t for b, t in zip(*_bins_thr(doc, "s2ad"))}
+        self.s2zd = {_k(*b): t for b, t in zip(*_bins_thr(doc, "s2zd"))}
+        self.wind = {}
+        for sub, rows in doc.get("wind", {}).get("thr", {}).items():
+            for b, t in zip(doc["wind"]["bins"], rows):
+                self.wind[_k(sub, *b)] = t
 
     @classmethod
     def load(cls, path):
@@ -656,6 +909,11 @@ class CutSet:
         for sub in run.get("win_subsets", ()):
             if not any(k.startswith(sub + "|") for k in self.win):
                 bad.append(f"S3/S4w not calibrated for angle set {sub!r}")
+        for c in run.get("disc_stages", ()):
+            tab = getattr(self, c)
+            if not tab or (c == "wind" and not any(k.startswith(sub + "|") for sub in run.get("win_subsets", ())
+                                                   for k in tab)):
+                bad.append(f"no disc thresholds ({c}) for a run with the IT discs on")
         if bad:
             raise SystemExit(f"angle cut file {self.path} refused for this run: " + "; ".join(bad))
 
@@ -688,6 +946,34 @@ class CutSet:
         qb = np.full(len(ptb), np.inf)
         for b in np.unique(ptb):
             t = self._get(self.win, _k(sub, role, scode, lc, b, floor), "S3/S4w")
+            qa[ptb == b], qb[ptb == b] = t
+        return qa, qb
+
+    def s1d_thr(self, floor, rows):
+        """S1 on the discs: the threshold per disc table row (inf where none)."""
+        rows = np.asarray(rows)
+        out = np.full(len(rows), np.inf)
+        for r in np.unique(rows[rows >= 0]):
+            out[rows == r] = self._get(self.s1d, _k(floor, int(r)), "S1 disc")
+        return out
+
+    def s2ad_thr(self, floor, la, lb):
+        return self._get(self.s2ad, _k(floor, la, lb), "S2a disc")
+
+    def s2zd_thr(self, floor, la, lb, rowsA):
+        rows = np.asarray(rowsA)
+        out = np.full(len(rows), np.inf)
+        for r in np.unique(rows[rows >= 0]):
+            out[rows == r] = self._get(self.s2zd, _k(floor, la, lb, int(r)), "S2z disc")
+        return out
+
+    def wind_thr(self, sub, role, scode, lc, floor, ptb):
+        """S4w on a disc target: (q_alpha, q_beta) per candidate (inf for an angle not in the subset)."""
+        ptb = np.asarray(ptb)
+        qa = np.full(len(ptb), np.inf)
+        qb = np.full(len(ptb), np.inf)
+        for b in np.unique(ptb):
+            t = self._get(self.wind, _k(sub, role, scode, lc, b, floor), "S4w disc")
             qa[ptb == b], qb[ptb == b] = t
         return qa, qb
 

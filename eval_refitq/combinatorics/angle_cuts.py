@@ -87,6 +87,39 @@ def stat_win(R, ka, kb, mode):
         return CA.cand_pulls(kap, skap, cot, scot, R["kap_pred"], R["cot_pred"])
 
 
+# ---- the disc consumers (census format 36): module-frame statistics, the disc table at the predicted key
+def _dq(R, p, ka, kb, mode):
+    """A Q-like dict of the disc components of records R (prefix p) with the knob at (ka, kb, mode)."""
+    C = {k: R[p + k] for k in CA.DISC_KEYS}
+    C.update(dict(zip(CA.DISC_K_FILL, CA.disc_knob(C, ka, kb, mode))))
+    return C
+
+
+def stat_s1d(R, model, ka, kb, mode):
+    """(S1 statistic, disc table row) of disc S1 records at (ka, kb, mode)."""
+    with np.errstate(all="ignore"):
+        return model.at_k(ka, kb, mode).s1d(_dq(R, "", ka, kb, mode), np.arange(len(R["floor"])), R["floor"])
+
+
+def stat_paird(R, model, ka, kb, mode):
+    """(S2a, S2z, inner cluster's disc table row) of disc pair records."""
+    QA, QB = _dq(R, "A_", ka, kb, mode), _dq(R, "B_", ka, kb, mode)
+    n = len(R["la"])
+    Qc = {k: np.r_[QA[k], QB[k]] for k in QA}
+    useA = np.isin(R["A_lcode"], M.IT_DISC_CODES) & R["A_ldir_ok"].astype(bool)
+    useB = np.isin(R["B_lcode"], M.IT_DISC_CODES) & R["B_ldir_ok"].astype(bool)
+    with np.errstate(all="ignore"):
+        return model.at_k(ka, kb, mode).s2d(Qc, np.arange(n), n + np.arange(n), R["kap_pair"], R["cot_pair"],
+                                            useA, useB)
+
+
+def stat_wind(R, model, ka, kb, mode):
+    """(alpha pull, beta pull) of disc window records against their recorded prediction."""
+    with np.errstate(all="ignore"):
+        return model.at_k(ka, kb, mode).disc_window(_dq(R, "", ka, kb, mode), np.arange(len(R["floor"])),
+                                                    R["kap_pred"], R["cot_pred"], R["d0_pred"])
+
+
 def s6_parts(T, s5, key, sub):
     """(chi2, n) of S6 records under S5 state `s5` and key `key`, over angle subset `sub`."""
     c2 = np.zeros(len(T["n_a"]))
@@ -107,10 +140,19 @@ def _it(layer):
     return (layer >= 1) & (layer <= 4)
 
 
+def _disc_T(R, p):
+    """A record's disc cluster (prefix p) is not an IT disc cluster, or is class T with a usable direction."""
+    return ~np.isin(R[p + "lcode"], M.IT_DISC_CODES) | (R[p + "lis_T"].astype(bool) & R[p + "ldir_ok"].astype(bool))
+
+
 def population(R, kind):
     """The calibration population of a record table (class T, born inside 2.5 cm, the TP above
-    the stage's floor); `kind` s1 | pair | win | trk."""
+    the stage's floor); `kind` s1 | pair | win | trk, or a disc table s1d | paird | wind."""
     pop = (R["gen"] >= 0) & (R["gen"] <= 2) & (R["tp_pt"] >= R["floor"])
+    if kind in ("s1d", "wind"):
+        return pop & R["lis_T"].astype(bool) & R["ldir_ok"].astype(bool)
+    if kind == "paird":
+        return pop & _disc_T(R, "A_") & _disc_T(R, "B_")
     if kind in ("s1", "win"):
         pop &= R["is_T"].astype(bool) & R["dir_ok"].astype(bool)
     elif kind == "pair":
@@ -125,6 +167,13 @@ def class_c(R, kind):
     """The class-C reporting population: as population(), with some angle-bearing IT cluster of
     class C (reported, never fitted)."""
     pop = (R["gen"] >= 0) & (R["gen"] <= 2) & (R["tp_pt"] >= R["floor"])
+    if kind in ("s1d", "wind"):
+        return pop & ~R["lis_T"].astype(bool) & R["ldir_ok"].astype(bool)
+    if kind == "paird":
+        c = np.zeros(len(pop), bool)
+        for p in ("A_", "B_"):
+            c |= np.isin(R[p + "lcode"], M.IT_DISC_CODES) & ~R[p + "lis_T"].astype(bool)
+        return pop & c
     if kind in ("s1", "win"):
         return pop & ~R["is_T"].astype(bool) & R["dir_ok"].astype(bool)
     if kind == "pair":
@@ -181,11 +230,12 @@ def cdf_inv(xs, F, p):
 # ==========================================================================
 # merging
 # ==========================================================================
-def merge_rows(units, counts, table):
+def merge_rows(units, counts, table, key="emitted"):
     """S1 / S2z: within each (prefix, surface) the units' table rows, in signed-key order, merged
     by spdefs.merge_bins. units: list of tuples whose last element is the row; returns group id
-    per unit (the smallest member index)."""
-    rows = table.doc["keys"]["emitted"]["rows"]
+    per unit (the smallest member index). `key`: the table key the rows are of (the disc consumers:
+    the disc table's CA.DISC_KEY)."""
+    rows = table.doc["keys"][key]["rows"]
     grp = np.arange(len(units))
     doms = {}
     for i, u in enumerate(units):
@@ -246,8 +296,10 @@ def merge_axis(counts, domains, positions, start=None):
 # ==========================================================================
 # the menu's bins
 # ==========================================================================
-def menu_units(man, table):
-    """Every bin the census of manifest `man` can apply, per consumer."""
+def menu_units(man, table, disc_table=None):
+    """Every bin the census of manifest `man` can apply, per consumer (with `disc_table` and the census's IT
+    discs on, the disc consumers' too: s1d per floor x disc table row, s2ad per floor x seed pair, s2zd per
+    floor x pair x the inner disc cluster's row, wind as win on the IT disc follow layers)."""
     cfg = man["config"]
     ptmin = float(cfg["ptmin"])
     ipt = cfg.get("it_ptmin")
@@ -278,6 +330,27 @@ def menu_units(man, table):
             for L in follow:
                 if L <= 4:
                     U["win"].add((1, code, L, pb, fl))
+    if disc_table is not None and cfg.get("it_discs"):
+        drows = disc_table.doc["keys"][CA.DISC_KEY]["rows"]
+        drows_of = {L: [i for i, r in enumerate(drows) if r["surface"] == L + M.DISC_CODE_OFFSET]
+                    for L in M.IT_DISC_CODES}
+        U.update({"s1d": [], "s2ad": set(), "s2zd": set(), "wind": set()})
+        for fl in floors:
+            for L in M.IT_DISC_CODES:
+                U["s1d"] += [(fl, i) for i in drows_of[L]]
+        for e, (lay, soft, follow) in enumerate(zip(man["seeds"], man["seed_soft"], man["seed_follow"])):
+            fl = float(ipt) if (soft and ipt is not None) else ptmin
+            la, lb = lay[0], lay[1]
+            if la in M.IT_DISC_CODES or lb in M.IT_DISC_CODES:
+                U["s2ad"].add((fl, la, lb))
+            if la in M.IT_DISC_CODES:
+                for i in drows_of[la]:
+                    U["s2zd"].add((fl, la, lb, i))
+            code = M.seed_code(lay, soft)
+            for pb in range(CA.N_PTBIN):
+                for L in follow:
+                    if L in M.IT_DISC_CODES:
+                        U["wind"].add((1, code, L, pb, fl))
     bkeys = sorted({"+".join(sorted(v)) for v in builds_of.values()})
     for b in bkeys:
         for s5, key in CA.S5_REFITS:
@@ -395,11 +468,16 @@ def _s6_cell(c2, n, tp, ev_w, level, n_max):
     return thr, grp, ntp
 
 
-def statistics(R, k=(1.0, 1.0), mode="fixed"):
+def statistics(R, k=(1.0, 1.0), mode="fixed", model=None):
     """The cutting consumers' statistics of records R at (k, mode), computed once (fit, evaluate and
-    the bootstrap reuse them)."""
-    return {"s1": stat_s1(R["s1"], *k, mode), "pair": stat_pair(R["pair"], *k, mode),
-            "win": stat_win(R["win"], *k, mode)}
+    the bootstrap reuse them); with the census angle model, the disc consumers' records too."""
+    out = {"s1": stat_s1(R["s1"], *k, mode), "pair": stat_pair(R["pair"], *k, mode),
+           "win": stat_win(R["win"], *k, mode)}
+    if model is not None:
+        for kind, fn in (("s1d", stat_s1d), ("paird", stat_paird), ("wind", stat_wind)):
+            if kind in R:
+                out[kind] = fn(R[kind], model, *k, mode)
+    return out
 
 
 def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6_R=None,
@@ -409,8 +487,8 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
     records to use (a calibration census at the file's k, scaled mode); default R's. only: restrict
     to {consumer: config} for the bootstrap (win subset, S6 cells). stats: statistics(R, k, mode),
     when already computed. Returns the cut-file body."""
-    units, floors = menu_units(man, model.table)
-    S = statistics(R, k, mode) if stats is None else stats
+    units, floors = menu_units(man, model.table, model.disc_table)
+    S = statistics(R, k, mode, model) if stats is None else stats
     out = {}
 
     def evw(T):
@@ -489,6 +567,62 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
             thr = {s: thr[s] for s in only["win"]}
         out["win"] = {"bins": U_, "thr": {s: [list(x) for x in v] for s, v in thr.items()},
                       "s_star": sstar, "n_tp": cnt.tolist(), "group": grp.tolist(), "fallback": fb}
+    # ---- the disc consumers (census format 36): the barrel's bins and merging on the disc table's rows
+    if "s1d" in units and want("s1d") and "s1d" in R:
+        T = R["s1d"]
+        st = S["s1d"][0]
+        ui = np.where(population(T, "s1d"),
+                      _unit_index(units["s1d"], list(zip(T["floor"].tolist(), T["row"].tolist()))), -1)
+        cnt = n_tp(T["tp_key"][ui >= 0], ui[ui >= 0], len(units["s1d"]))
+        grp = merge_rows(units["s1d"], cnt, model.disc_table, CA.DISC_KEY)
+        thr, fb = _fit_simple(units["s1d"], ui, st, T["tp_key"], evw(T), grp, level, lambda u: u[0])
+        out["s1d"] = {"bins": units["s1d"], "thr": thr.tolist(), "n_tp": cnt.tolist(),
+                      "group": grp.tolist(), "fallback": fb.tolist()}
+    if "s2ad" in units and (want("s2ad") or want("s2zd")) and "paird" in R:
+        T = R["paird"]
+        st_a, st_z, _ = S["paird"]
+        pop = population(T, "paird")
+        if want("s2ad"):
+            ui = np.where(pop, _unit_index(units["s2ad"], list(zip(T["floor"].tolist(), T["la"].tolist(),
+                                                                    T["lb"].tolist()))), -1)
+            cnt = n_tp(T["tp_key"][ui >= 0], ui[ui >= 0], len(units["s2ad"]))
+            grp = np.arange(len(units["s2ad"]))
+            thr, fb = _fit_simple(units["s2ad"], ui, st_a, T["tp_key"], evw(T), grp, level, lambda u: u[0])
+            out["s2ad"] = {"bins": units["s2ad"], "thr": thr.tolist(), "n_tp": cnt.tolist(),
+                           "group": grp.tolist(), "fallback": fb.tolist()}
+        if want("s2zd"):
+            keys = list(zip(T["floor"].tolist(), T["la"].tolist(), T["lb"].tolist(), T["A_row"].tolist()))
+            ui = np.where(pop & np.isin(T["A_lcode"], M.IT_DISC_CODES), _unit_index(units["s2zd"], keys), -1)
+            cnt = n_tp(T["tp_key"][ui >= 0], ui[ui >= 0], len(units["s2zd"]))
+            grp = merge_rows(units["s2zd"], cnt, model.disc_table, CA.DISC_KEY)
+            thr, fb = _fit_simple(units["s2zd"], ui, st_z, T["tp_key"], evw(T), grp, level,
+                                  lambda u: (u[0], u[1], u[2]))
+            out["s2zd"] = {"bins": units["s2zd"], "thr": thr.tolist(), "n_tp": cnt.tolist(),
+                           "group": grp.tolist(), "fallback": fb.tolist()}
+    if "wind" in units and want("wind") and "wind" in R:
+        T = R["wind"]
+        pa, pb = S["wind"]
+        U_ = units["wind"]
+        keys = list(zip(T["role"].tolist(), T["seed"].tolist(), T["lc"].tolist(), T["ptbin"].tolist(),
+                        T["floor"].tolist()))
+        ui = np.where(population(T, "wind"), _unit_index(U_, keys), -1)
+        cnt = n_tp(T["tp_key"][ui >= 0], ui[ui >= 0], len(U_))
+        g1 = merge_axis(cnt, [(u[0], u[1], u[2], u[4]) for u in U_], [u[3] for u in U_])
+        grp = merge_axis(cnt, [(u[0], u[2], u[4]) for u in U_], [u[1] for u in U_], start=g1)
+        thr, sstar = _fit_joint(U_, ui, pa, pb, T["tp_key"], evw(T), grp, level)
+        fb = [i for i in range(len(U_)) if not np.isfinite(thr["ab"][i][0])]
+        if fb:
+            m = (ui >= 0) & np.isfinite(pa) & np.isfinite(pb)
+            for i in fb:
+                pm = m & np.isin(ui, [j for j, u in enumerate(U_) if (u[0], u[4]) == (U_[i][0], U_[i][4])])
+                pt, _ = _fit_joint([(0,)], np.where(pm if pm.any() else m, 0, -1), pa, pb, T["tp_key"], evw(T),
+                                   np.zeros(1, np.int64), level)
+                for s_ in SUBS:
+                    thr[s_][i] = pt[s_][0]
+        if only is not None and "wind" in only:
+            thr = {s: thr[s] for s in only["wind"]}
+        out["wind"] = {"bins": U_, "thr": {s: [list(x) for x in v] for s, v in thr.items()},
+                       "s_star": sstar, "n_tp": cnt.tolist(), "group": grp.tolist(), "fallback": fb}
     if want("s6"):
         T = (R if s6_R is None else s6_R)["trk"]
         pop = population(T, "trk")
@@ -515,11 +649,14 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
     return out, floors
 
 
-def evaluate(R, doc, k=(1.0, 1.0), mode="fixed"):
+def evaluate(R, doc, k=(1.0, 1.0), mode="fixed", model=None):
     """Per consumer: (unit index, statistic, pass) of the records under cut-file body `doc`, at the
-    file's k (records' statistics recomputed from components)."""
+    file's k (records' statistics recomputed from components); with the census angle model, the disc
+    consumers too (s1d, s2ad, s2zd, wind_<subset>)."""
     ka, kb = k
     res = {}
+    if model is not None:
+        res.update(_evaluate_discs(R, doc, model, ka, kb, mode))
     if "s1" in doc and "s1" in R:
         T = R["s1"]
         st = stat_s1(T, ka, kb, mode)
@@ -557,6 +694,43 @@ def evaluate(R, doc, k=(1.0, 1.0), mode="fixed"):
     return res
 
 
+def _evaluate_discs(R, doc, model, ka, kb, mode):
+    """evaluate()'s disc consumers."""
+    res = {}
+
+    def thr_of(name, keys):
+        ui = _unit_index([tuple(u) for u in doc[name]["bins"]], keys)
+        return ui, np.where(ui >= 0, np.asarray(doc[name]["thr"], np.float64)[np.maximum(ui, 0)], np.inf)
+    if "s1d" in doc and "s1d" in R:
+        T = R["s1d"]
+        st, rows = stat_s1d(T, model, ka, kb, mode)
+        ui, thr = thr_of("s1d", list(zip(T["floor"].tolist(), rows.tolist())))
+        res["s1d"] = (ui, st, st <= thr)
+    if "paird" in R:
+        T = R["paird"]
+        st_a, st_z, row_a = stat_paird(T, model, ka, kb, mode)
+        if "s2ad" in doc:
+            ui, thr = thr_of("s2ad", list(zip(T["floor"].tolist(), T["la"].tolist(), T["lb"].tolist())))
+            res["s2ad"] = (ui, st_a, st_a <= thr)
+        if "s2zd" in doc:
+            ui, thr = thr_of("s2zd", list(zip(T["floor"].tolist(), T["la"].tolist(), T["lb"].tolist(),
+                                              row_a.tolist())))
+            res["s2zd"] = (ui, st_z, st_z <= thr)
+    if "wind" in doc and "wind" in R:
+        T = R["wind"]
+        pa, pb = stat_wind(T, model, ka, kb, mode)
+        ui = _unit_index([tuple(u) for u in doc["wind"]["bins"]],
+                         list(zip(T["role"].tolist(), T["seed"].tolist(), T["lc"].tolist(),
+                                  T["ptbin"].tolist(), T["floor"].tolist())))
+        for sub, q in doc["wind"]["thr"].items():
+            q = np.asarray(q, np.float64)
+            qa = np.where(ui >= 0, q[np.maximum(ui, 0), 0], np.inf)
+            qb = np.where(ui >= 0, q[np.maximum(ui, 0), 1], np.inf)
+            res[f"wind_{sub}"] = (ui, np.maximum(np.abs(pa) / qa, np.abs(pb) / qb),
+                                  (np.abs(pa) <= qa) & (np.abs(pb) <= qb))
+    return res
+
+
 def save(path, body, floors, R_man, model, k, mode, cal_dir, s6_dir=None, level=CA.LEVEL):
     """Write a cut file (atomic) with its identity."""
     cfg = R_man["config"]
@@ -564,6 +738,7 @@ def save(path, body, floors, R_man, model, k, mode, cal_dir, s6_dir=None, level=
            "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
            "identity": {"table_path": model.table_path, "table_sha256": model.table_sha,
                         "table_registry": model.registry, "level": level,
+                        "disc_table_path": model.disc_table_path, "disc_table_sha256": model.disc_table_sha,
                         "k_alpha": float(k[0]), "k_beta": float(k[1]), "mode": mode,
                         "bench": cfg.get("bench"),
                         "d0_prior_cm": float(cfg["kf_opts"].get("d0_prior_cm",
@@ -605,14 +780,15 @@ def main():
     if man["config"].get("angle_cuts") != "open":
         raise SystemExit(f"{d} is not a calibration census (angle_cuts {man['config'].get('angle_cuts')!r})")
     am = man["config"]["angle_model"]
-    model = CA.Model(am["table_path"], am["k_alpha"], am["k_beta"], am["mode"])
-    if model.table_sha != am["table_sha256"]:
-        raise SystemExit("the table changed since the calibration census ran")
+    model = CA.Model.from_identity(am)
     R = CA.load_records(d)
     # at the census's own k the recomputed statistics are the recorded ones
     kc = (am["k_alpha"], am["k_beta"])
-    for kind, fn, cols in (("s1", stat_s1, ("stat",)), ("pair", stat_pair, ("stat_a", "stat_z")),
-                           ("win", stat_win, ("pa", "pb"))):
+    checks = [("s1", stat_s1, ("stat",)), ("pair", stat_pair, ("stat_a", "stat_z")), ("win", stat_win, ("pa", "pb"))]
+    checks += [(kind, (lambda T, ka, kb, md, f=fn: f(T, model, ka, kb, md)), cols) for kind, fn, cols in (
+        ("s1d", stat_s1d, ("stat",)), ("paird", stat_paird, ("stat_a", "stat_z")), ("wind", stat_wind, ("pa", "pb")))
+        if kind in R]
+    for kind, fn, cols in checks:
         got = fn(R[kind], *kc, am["mode"])
         got = got if isinstance(got, tuple) else (got,)
         for g_, c in zip(got, cols):

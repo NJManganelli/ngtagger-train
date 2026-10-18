@@ -589,7 +589,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None, it_discs=Fa
     srcs = [f"{p}:Events" for p in paths]
     # class T and its truth direction: the knob's reference and the records'
     # population (truth only: never a decision input)
-    itc = M.IT_COLS + [IT_MODULE_COL] + list(IT_TRUTH_COLS)
+    itc = M.IT_COLS + [IT_MODULE_COL] + list(IT_TRUTH_COLS) + list(IT_DISC_COLS)
     itk = M.table_branches(paths[0], M.IT_TABLE, itc, discs=OC.DISCS)
     otk = M.table_branches(paths[0], M.OT_TABLE, OT_COLS)
     keys0 = uproot.open(f"{paths[0]}:Events").keys()
@@ -641,7 +641,11 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None, it_discs=Fa
 # class T (tpEmuClass == 1) and its truth direction, the knob's reference
 # (census_angles); the L1TTP genealogy (truth.genealogy) of the cut calibration
 # population
-IT_TRUTH_COLS = ("tpEmuClass", "tpGlobalClusterPhi", "tpGlobalClusterCotTheta")
+IT_TRUTH_COLS = ("tpEmuClass", "tpGlobalClusterPhi", "tpGlobalClusterCotTheta",
+                 # the module-frame truth of a disc cluster (the knob's reference on the discs, format 36)
+                 "tpLocalCotAlpha", "tpLocalCotBeta")
+# the disc stages' published module-frame sigmas (census_angles.disc_components; format 36)
+IT_DISC_COLS = ("sigAlpha", "sigBeta")
 TP_GENEALOGY_COLS = ("genFromB", "genFromC", "evt")
 
 
@@ -744,7 +748,8 @@ def _unify(I, O, Dt, sigz_ot, bench=None, model=None, it_discs=False):
     # huge sigmas make every angle gate pass, and the joint (z0,phi) pairing then
     # treats the stub as a phi-only wildcard (M.OT_STUB_ANGLES).
     if model is not None:
-        Q = CA.with_ot_stubs(CA.prepare({c: I[c] for c in M.IT_COLS + list(IT_TRUTH_COLS)},
+        Q = CA.with_ot_stubs(CA.prepare({c: I[c] for c in M.IT_COLS + list(IT_TRUTH_COLS) + list(IT_DISC_COLS)
+                                         + [IT_MODULE_COL]},
                                         model, bench), n)
     else:
         Q = M.q_with_ot_stubs(M.it_prepare({c: I[c] for c in M.IT_COLS}, bench), n)
@@ -1110,6 +1115,8 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         floors = {float(ptmin)} | ({float(it_ptmin)} if it_ptmin is not None else set())
         for fl in sorted(floors):
             ang.rec.s1(fl, None if ang.cuts_open else ang.cuts.s1_thr(fl, Q["row"]))
+            if "ldir_ok" in Q:                          # the IT discs (format 36)
+                ang.rec.s1d(fl, None if ang.cuts_open else ang.cuts)
     cen = chunk_census(U["truth"])
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
     # TWO BITMAPS, and the distinction is not bookkeeping.
@@ -1413,7 +1420,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     if cut_stages and cuts is None and not cuts_open:
         raise SystemExit(f"angle cutting stages {cut_stages} need --angle-cuts (or --calibrate)")
     if cuts is not None:
-        cuts.check(model, cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks))
+        cuts.check(model, cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks,
+                                       bool(it_discs and ot_chain["discs"])))
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
            "chunk": chunk, "calib_events": calib_events, "masks": masks,
            "kf_opts": dict(sorted((kf_opts or {}).items())),
@@ -1581,9 +1589,12 @@ def entry_build_key(masks):
     return "+".join(sorted(masks))
 
 
-def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks):
-    """The run's identity an angle cut file is checked against (census_angles.CutSet.check)."""
+def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks, it_discs=False):
+    """The run's identity an angle cut file is checked against (census_angles.CutSet.check); `it_discs`: the
+    builds' IT discs are on, so the disc consumers of the stages the run cuts with need thresholds."""
     s5 = ang.subset("kf") if ang("kf") else "off"
+    disc_stages = [c for c, st in (("s1d", "veto"), ("s2ad", "pair_alpha"), ("s2zd", "pair_z0"),
+                                   ("wind", "proj_window")) if it_discs and ang(st)]
     return {"format": FORMAT_VERSION,
             "bench": list(bench) if bench else None,
             "d0_prior_cm": float((kf_opts or {}).get("d0_prior_cm", KF.D0_PRIOR_CM)),
@@ -1592,6 +1603,7 @@ def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks):
             "s6": ((s5, ang.keys["kf"] if s5 != "off" else "emitted", ang.subset("accept"))
                    if ang("accept") else None),
             "win_subsets": sorted({ang.subset(s) for s in ("attach", "proj_window") if ang(s)}),
+            "disc_stages": disc_stages,
             "builds": [entry_build_key([m]) for m in (masks or ["AAAA"])]}
 
 
@@ -1961,6 +1973,9 @@ def main():
     ap.add_argument("--angle-table", default=CA.TABLE_DEFAULT,
                     help="the angle-uncertainty table (sheet angle.error_table; "
                          f"registry {CA.TABLE_REGISTRY})")
+    ap.add_argument("--angle-table-disc", default=CA.DISC_TABLE_DEFAULT,
+                    help="the disc module-frame angle table (registry "
+                         f"{CA.DISC_TABLE_REGISTRY}; the disc stages, format 36)")
     ap.add_argument("--angle-cuts", default=None,
                     help="the angle cut file the cutting stages read "
                          "(census_angles.CutSet; refused if made for another "
@@ -2017,7 +2032,7 @@ def main():
                            a.angle_keys, arb_weight=a.arb_weight)
     if a.calibrate and a.angle_cuts:
         raise SystemExit("--calibrate runs with every cut open: no --angle-cuts")
-    model = CA.Model(a.angle_table, a.k_alpha, a.k_beta, a.k_mode)
+    model = CA.Model(a.angle_table, a.k_alpha, a.k_beta, a.k_mode, disc_table_path=a.angle_table_disc)
     cuts = CA.CutSet.load(a.angle_cuts) if a.angle_cuts else None
     print(f"angle stages: {ang.label()}; keys {ang.keys}; k alpha {a.k_alpha:g}, "
           f"beta {a.k_beta:g} ({a.k_mode}); cuts "
