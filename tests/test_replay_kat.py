@@ -533,6 +533,34 @@ def test_tree2_identity(data, monkeypatch):
     assert set(np.unique(t2["rec"]["kchoice"])) <= {-1, 0}
 
 
+def test_angle_steps(data):
+    """Scan plan B1: angles at the first visited surface only share the all-angle arm's first-step choices and the
+    no-angle arm's choices after a common first step; angles at later visits only share the no-angle arm's first-step
+    choices; "all" is the arm itself."""
+    cfg = data["cfg"]
+    both, none = run(data, AR.inn(cfg)), run(data, AR.inn(cfg, name="none", use=frozenset()))
+    first = run(data, AR.inn(cfg, name="first", angle_steps="first"))
+    later = run(data, AR.inn(cfg, name="later", angle_steps="later"))
+    assert np.array_equal(_first_choice(first), _first_choice(both))
+    assert np.array_equal(_first_choice(later), _first_choice(none))
+    assert not np.array_equal(first["rec"]["ci"], both["rec"]["ci"]) or not np.array_equal(first["a"], both["a"])
+    same = run(data, AR.inn(cfg, name="all", angle_steps="all"))
+    assert np.array_equal(same["a"], both["a"]) and np.array_equal(same["rec"]["ci"], both["rec"]["ci"])
+
+
+def test_tail_robust_term(data):
+    """Scan plan B1 "t9": sigma x sqrt(1 + z^2 / 9): the core is untouched to first order, the chi2 of one angle
+    saturates at 9; positions are untouched; the arm runs and moves angle-bearing results."""
+    z = np.array([0.0, 1.0, 3.0, 30.0, np.nan])
+    s = AR.tail_robust_scale(z)
+    assert np.allclose(s[:4], np.sqrt(1 + z[:4] ** 2 / 9)) and s[4] == 1.0
+    chi = (z[:4] / s[:4]) ** 2
+    assert chi[0] == 0 and abs(chi[2] - 4.5) < 1e-12 and chi[3] < 9 and np.all(np.diff(chi) > 0)
+    cfg = data["cfg"]
+    g, t = run(data, AR.inn(cfg)), run(data, AR.inn(cfg, name="t9", angle_term="t9"))
+    assert np.isfinite(t["a"][t["refit"]]).all() and not np.array_equal(g["a"], t["a"])
+
+
 def _toy6(d, r, n, seed, score):
     """Scan plan A3 toy 6: the committed first-layer (correct, wrong, skip) rates of a score rule and K = 1's wrong rate
     on two coupled surfaces (a wrong first choice shifts the second layer's prediction by 0.5 r u1)."""

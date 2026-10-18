@@ -27,7 +27,7 @@ plus, for each visited surface it leaves empty, that bin's hit-gate 99 % cut.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import awkward as ak
 import numpy as np
@@ -108,6 +108,10 @@ class Arm:
                                     # "all_tracks" (the disc model's charging on barrel-only tracks too)
     inner_material_rule: str = "path"   # scan plan B-pre: "path" (disc-going tracks along their path) | "radius" (the
                                         # pre-fix rule, every track by radius: the known-bad)
+    angle_steps: str = "all"        # scan plan B1: the visit steps whose consumers use angles: "all" | "first" (the
+                                    # first visited surface only) | "later" (every visit but the first)
+    angle_term: str = "gauss"       # scan plan B1: "gauss" | "t9" (the tail-robust term: each angle's sigma scaled by
+                                    # sqrt(1 + z^2 / 9), z its residual over sigma, so its chi2 saturates at 9)
 
     @property
     def cov_model(self) -> str:
@@ -386,7 +390,21 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
             sig[:, i] = np.where(disc, sig[:, i], SA.sigma_k(sig[:, i], k, arm.k_mode))
     if arm.disc_model:
         _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig)
+    if arm.angle_term == "t9":
+        for i, pred in ((2, cot_a_pred), (3, cot_b_pred)):
+            sig[:, i] = sig[:, i] * tail_robust_scale((meas[:, i] - pred) / sig[:, i])
     return meas, sig, has
+
+
+T9_NU = 9.0
+
+
+def tail_robust_scale(z, nu=T9_NU):
+    """The "t9" angle term (scan plan B1): the factor on an angle's sigma, sqrt(1 + z^2 / nu), so that its chi2
+    (z^2 / (1 + z^2 / nu)) stays z^2 in the core and saturates at nu. The prediction's angle variance is left out of
+    z: it is ~1e-6 of the cluster's (C1b's decomposition). Non-finite z: unchanged."""
+    z = np.asarray(z, np.float64)
+    return np.where(np.isfinite(z), np.sqrt(1.0 + z * z / nu), 1.0)
 
 
 def _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig):
@@ -706,10 +724,19 @@ def _choose_apply(arm, st, j, X, cands, pick, ctx, geo, tools, path, S, kpt):
            ctx, geo, tools, path, S)
 
 
+def arm_at_step(arm, j):
+    """The arm as it acts at visit step j: angle_steps "first" drops every angle use after the first step, "later" at
+    the first step."""
+    if (arm.angle_steps == "first" and j > 0) or (arm.angle_steps == "later" and j == 0):
+        return replace(arm, use=frozenset())
+    return arm
+
+
 def step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path, own_rows=None):
     """One (visit step, surface): Q, crossings, candidates, (K), gate, update; with own_rows (a list),
     the own-cluster diagnostics are taken after Q and before the update. Returns the State (K adds
     virtual tracks)."""
+    arm = arm_at_step(arm, j)
     _q_step(arm, st, t, S, path, geo, tools, kpt, cfg)
     if own_rows is not None:
         import diagnostics as DG
@@ -873,6 +900,8 @@ def run_arm(ctx, geo, cfg, mask, arm, tools, tracks=None, own=False, loo=False):
         raise ValueError("the own-cluster diagnostics are recorded with K = 1")
     if arm.K == "tree2" and arm.gate:
         raise ValueError("tree2 prices a skip at the 99 % gate cut itself; the forward gate is off (scan plan A1)")
+    if arm.angle_steps != "all" and (arm.rr or loo):
+        raise ValueError("per-step angle use is defined for the forward pass only (no rr / leave-one-out)")
     if tracks is None:
         tracks = np.trace(ctx["C"], axis1=1, axis2=2) > 0
     o = np.flatnonzero(tracks)
