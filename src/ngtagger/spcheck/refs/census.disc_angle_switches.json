@@ -1,0 +1,21 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
+ "derived": "2026-10-18T17:38:57Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+ "item": "census.disc_angle_switches",
+ "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "known_bad": "S4a told to use beta only, scored with the disc alpha term still added",
+ "rule": "one ID1+ID2 doublet seed followed into ID3 and ID4 on the gate input's first events with the SmartPixels discs, weighting stages only (no cut file needed): S4a with no angle == S4a off; S4a with beta only == S4a with both angles and the disc alpha sigma infinite (the same hits); every stage off: hits bit-identical under two knobs (k = 1 fixed; k = 0.3 scaled); the fit of the followed tracks identical with S5 on and off (S5 feeds no disc angle); S6's alpha part unchanged and its beta part changed when the disc beta sigma is infinite; identity of the track count with the reference",
+ "stat": {
+  "all_off_reads_no_angle": true,
+  "bad": false,
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+  "n_tracks": 95131,
+  "s4a_empty_is_off": true,
+  "s4a_one_angle_is_other_removed": true,
+  "s5_reads_no_disc_angle": true,
+  "s6_parts_separate": true
+ }
+}

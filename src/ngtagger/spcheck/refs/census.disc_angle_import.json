@@ -1,0 +1,73 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
+ "derived": "2026-10-18T17:38:51Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+ "item": "census.disc_angle_import",
+ "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "known_bad": "three variants, each of which must be red: (key) the table read at the emitted incidence key instead of the predicted one; (sign) the centre added instead of subtracted; (width) the table's width not applied",
+ "rule": "on the first events of the gate input with the SmartPixels discs, every usable class-T IT disc cluster's census-path module-frame pulls (census_angles.Model.disc_pulls, k = 1) against its true local cots as the prediction equal spdefs' (the disc table, key true_local at the predicted incidence key: its centre subtracted, its width applied) to 1e-12 relative; the disc table is p03.table.v1a1e-disclocal and its sha256 the reference's; per disc and angle the class-T (pT >= 1 GeV) pull centre (25 %-trimmed mean) within 0 +- 0.25 and width (95 %-trimmed) within 1 +- 0.1, each widened by t(N = 8) event-bootstrap sd; identity of the cluster counts with the reference",
+ "stat": {
+  "band": {
+   "alpha/ID1": {
+    "centre": -0.00013349832604990565,
+    "n": 4431,
+    "ok": true,
+    "width": 0.9957213226607899
+   },
+   "alpha/ID2": {
+    "centre": -0.004737173677215805,
+    "n": 4455,
+    "ok": true,
+    "width": 1.0078701954102074
+   },
+   "alpha/ID3": {
+    "centre": -0.021985661536567003,
+    "n": 4382,
+    "ok": true,
+    "width": 0.9807270824321421
+   },
+   "alpha/ID4": {
+    "centre": -0.01126327908037922,
+    "n": 4448,
+    "ok": true,
+    "width": 0.9952692425445143
+   },
+   "beta/ID1": {
+    "centre": -0.014739365722775495,
+    "n": 4431,
+    "ok": true,
+    "width": 0.9879853385843227
+   },
+   "beta/ID2": {
+    "centre": -0.009442513813052783,
+    "n": 4455,
+    "ok": true,
+    "width": 1.0032989138352741
+   },
+   "beta/ID3": {
+    "centre": 0.013510342588668043,
+    "n": 4382,
+    "ok": true,
+    "width": 0.9857904808537936
+   },
+   "beta/ID4": {
+    "centre": -1.6878009882979275e-05,
+    "n": 4448,
+    "ok": true,
+    "width": 0.9716208004099511
+   }
+  },
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+  "max_diff": {
+   "alpha": 0.0,
+   "beta": 0.0
+  },
+  "n_disc_clusters": 222299,
+  "n_usable_T": 158438,
+  "table_registry": "p03.table.v1a1e-disclocal",
+  "table_sha256": "8e9bf57aab7bb9a9b093e4a29ae91e330d3b120957c39a5e72c2b3e4ba439ab6",
+  "variant": null
+ }
+}
