@@ -4,6 +4,10 @@
           against barrel-only prompt tracks per pT bin, INN-D (K = 1), per scenario; they must agree within
           0.1 + t1(N) x the combined bootstrap sigma (N = pT bins x scenarios), else MATERIAL. Reported beside it: the
           pre-fix rule (inner_material_rule="radius", the known-bad). Output: WPC_OUT/scan/bpre/dcheck_f04.json
+  nonprompt  B4 step 3 on file 4: D3a's first-visit innovation calibration (A18's clipped-likelihood scale of the
+          u / v pulls of own primaries with a clean history, INN-D, K = 1) for prompt tracks, heavy-flavour daughters
+          (100 um < |d0_TP| < 2 mm) and particles born beyond IL1, per first-visited region (barrel, disc) and scenario;
+          |s - 1| <= 0.1 + t1(N) sd, a failure being a known limitation. Output: WPC_OUT/scan/nonprompt_f04.json
   run     the B1 arms (and the null control) on --files x every scenario, with K from Part A (--K); per OT track
           (axis 0 = the file's tracks) the figures of merit of B2. Output: WPC_OUT/scan/arms/<scen>_f<NN>.npz
   table   B3: per arm, scenario and track class (barrel-only, disc-going) the figures of merit and their paired
@@ -93,6 +97,52 @@ def dcheck(a):
     with open(OUT / "bpre" / "dcheck_f04.json", "w") as fh:
         json.dump(res, fh, indent=1)
     print(json.dumps({"material": res["material"]}, indent=1))
+    return 0
+
+
+def nonprompt(a):
+    import diagnostics as DG
+    import seedmodel as SMOD
+    with open(C1B / "scale" / "scalefit_summary.json") as fh:
+        scale = float(json.load(fh)["scale"])
+    geo = OP.load_geometry(CM.GEOMETRY)
+    parts = []
+    for scen in a.scen:
+        path = CM.input_path(scen, CM.PRED_FILE)
+        cfg = CM.producer_config(path)
+        tools = AR.Tools(cfg, disc=AR.DiscTools(disc_scale=scale))
+        for start, A in CM.iterate(path, AR.branches(path), chunk=a.chunk, nev=a.nev):
+            ctx = AR.prepare(A, geo)
+            tr = FM.track_truth(ctx)
+            R = DG.mark_primary(AR.run_arm(ctx, geo, cfg, scen, AR.inn_disc(cfg), tools, own=True)["own"])
+            m = R["primary"] & R["clean"] & (R["step"] == 0)
+            o = R["o"][m]
+            cls = np.full(m.sum(), -1)
+            cls[tr["origin"][o] == 0] = 0
+            cls[(tr["origin"][o] == 1) & (np.abs(tr["d0"][o]) > 0.01) & (np.abs(tr["d0"][o]) < 0.2)] = 1
+            cls[tr["origin"][o] == 3] = 3
+            parts.append({"scen": np.full(m.sum(), CM.SCENARIOS.index(scen)), "ev": (R["ev"][m] + start),
+                          "disc": R["surface"][m] > 10, "cls": cls, "pu": R["pu"][m], "pv": R["pv"][m]})
+    P = CM.concat(parts)
+    reps = G.replicas(nev=100)
+    names = {0: "prompt", 1: "HF daughters (100 um < |d0| < 2 mm)", 3: "born beyond IL1"}
+    rows_ = []
+    for si, scen in enumerate(a.scen):
+        for reg, rm in (("barrel", ~P["disc"]), ("disc", P["disc"])):
+            for c, nm in names.items():
+                m = (P["scen"] == si) & rm & (P["cls"] == c)
+                for ax in ("pu", "pv"):
+                    s_, sd = SMOD.clip_scale(P[ax][m], P["ev"][m], reps) if m.sum() >= 30 else (np.nan, np.nan)
+                    rows_.append({"scen": scen, "region": reg, "class": nm, "axis": ax, "n": int(m.sum()), "scale": s_,
+                                  "sd": sd})
+    judged = [e for e in rows_ if e["n"] >= 30 and np.isfinite(e["sd"])]
+    t = G.t_one(max(len(judged), 1))
+    limits = [f"{e['scen']} {e['region']} {e['class']} {e['axis']}: scale {e['scale']:.3f} +- {e['sd']:.3f} (n {e['n']})"
+              for e in judged if abs(e["scale"] - 1) > 0.1 + t * e["sd"]]
+    res = {"plan": "wpc/scan/PLAN.md §3 B4 step 3", "t1": t, "known_limitations": limits, "bins": rows_}
+    with open(OUT / "nonprompt_f04.json", "w") as fh:
+        json.dump(res, fh, indent=1, default=float)
+    print(json.dumps({"known_limitations": limits}, indent=1))
     return 0
 
 
@@ -403,7 +453,7 @@ def table(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("dcheck", "run", "table"))
+    ap.add_argument("job", choices=("dcheck", "nonprompt", "run", "table"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--files", type=int, nargs="+", default=[CM.PRED_FILE])
     ap.add_argument("--K", choices=("1", "tree2"), default="1")
@@ -412,7 +462,7 @@ def main(argv=None):
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--chunk", type=int, default=10)
     a = ap.parse_args(argv)
-    return {"dcheck": dcheck, "run": run, "table": table}[a.job](a)
+    return {"dcheck": dcheck, "nonprompt": nonprompt, "run": run, "table": table}[a.job](a)
 
 
 if __name__ == "__main__":
