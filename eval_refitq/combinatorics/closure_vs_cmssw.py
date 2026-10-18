@@ -77,13 +77,14 @@ ETA_MAX_BARREL, ETA_MAX_DISCS, PT_MIN = 0.9, 2.4, 2.0
 
 
 def seed_layers():
-    """{seed: its two stubs' L1TOTStub_layer codes} of the seeds the chain runs (ot_chain.active_seeds)."""
-    return {sd: SEED_LAYERS_ALL[sd] for sd in OC.active_seeds()}
+    """{seed: its two stubs' L1TOTStub_layer codes} of the scope's seeds: the 8 with the discs on, the barrel's
+    off (whatever a known-bad variant of the chain runs: the closure judges it against CMSSW's seeds)."""
+    return {sd: v for sd, v in SEED_LAYERS_ALL.items() if OC.DISCS or sd in OC.BARREL_SEEDS}
 
 
 def judged_seeds():
     """The seeds C2 judges: the 8 with the discs on, L1L2 / L3L4 / L5L6 with them off."""
-    return tuple(OC.active_seeds()) if OC.DISCS else (0, 2, 3)
+    return tuple(seed_layers()) if OC.DISCS else (0, 2, 3)
 
 
 def max_kf_region():
@@ -1212,10 +1213,18 @@ def register(good, bad, gross=False):
         rows["identity"] = {"shift": n, "shift_margins": float(n), "known_bad_passes": B["gates"]["identity"],
                             "class": _kb_class(float(n) if n else 0.0, B["gates"]["identity"])}
     elif G["stage"] == "C1b":
-        u = (G["identical_list_fraction"] - B["identical_list_fraction"]) / (1 - C1B_MATCH_MIN)
-        rows["match_lists"] = {"shift": G["identical_list_fraction"] - B["identical_list_fraction"],
-                               "shift_margins": u, "known_bad_passes": B["gates"]["match_lists"],
+        # with the discs on, (i) is the forward group's (its 1 % shortfall the unit), and (ii) is registered too
+        g, b = (G["groups"]["forward"]["fraction"], B["groups"]["forward"]["fraction"]) if G.get("groups") \
+            else (G["identical_list_fraction"], B["identical_list_fraction"])
+        u = (g - b) / (1 - C1B_MATCH_MIN)
+        rows["match_lists"] = {"shift": g - b, "shift_margins": u, "known_bad_passes": B["gates"]["match_lists"],
                                "class": _kb_class(abs(u), B["gates"]["match_lists"])}
+        if "kf_on_cmssw_list" in B["gates"]:
+            n = sum(B[k] - G[k] for k in ("kf_both_accept_different", "kf_census_accepts_cmssw_rejects",
+                                          "kf_census_rejects_cmssw_accepts"))
+            rows["kf_on_cmssw_list"] = {"shift": n, "shift_margins": float(n),
+                                        "known_bad_passes": B["gates"]["kf_on_cmssw_list"],
+                                        "class": _kb_class(float(n), B["gates"]["kf_on_cmssw_list"])}
     else:
         raise SystemExit(f"no registration rule for stage {G['stage']}")
     defects = [k for k, r in rows.items() if r["class"] == "gate defect"]

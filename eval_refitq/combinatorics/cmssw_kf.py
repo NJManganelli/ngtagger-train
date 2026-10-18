@@ -48,6 +48,11 @@ KF_KNOWN_BADS = {
     "no_skips": "doKF with no layer skips",
     "hard_budget_2": "a skip budget of 2 for hard tracks",
     "keep_first_overflow": "the per-layer cap keeps the first stubs instead of replacing the last",
+    # WP-Disc (wpdisc/PLAN.md sec. 4)
+    "zref_float32": "the KF eta region's reference z0 + 50 t from the float32 z0 and t (HybridFit uses double)",
+    "alpha_no_flip": "the 2S disc alpha without the isFlipped sign",
+    "strip_not_truncated": "the 2S disc alpha from innerStrip as stored, not truncated to an unsigned int",
+    "kf_regions_0_3": "the KF fits only tracks in KF eta regions 0-3",
 }
 KNOWN_BAD = None
 # THE ORDER OF EQUAL KEYS (WP-Disc): KFbase sorts its stubs by layer and its states by chi2 with std::sort, which is
@@ -252,9 +257,9 @@ def l1tstub_alpha(strip, flipped, x, y, z, ps):
     +-((int)strip - 509.5) * pitch * flip / r^2, the sign set by z and the flip flag."""
     if ps:
         return 0.0
-    flip = -1 if flipped else 1
+    flip = -1 if flipped and KNOWN_BAD != "alpha_no_flip" else 1
     r2 = x * x + y * y
-    v = (int(strip) - 509.5) * PITCH[False] * flip / r2
+    v = ((strip if KNOWN_BAD == "strip_not_truncated" else int(strip)) - 509.5) * PITCH[False] * flip / r2
     return v if z > 0.0 else -v
 
 
@@ -331,7 +336,7 @@ def make_seed(rinv, phi0_rel, t, z0, isector, n_input, k=K):
     kfz0, kft = f32(z0), f32(t)
     # float kfzRef = kfz0 + chosenRofZ * kft, the tracklet's DOUBLE z0 and t (HybridFit.cc:161); zRefMax:
     # etaMax float, exp and atan in float, 2.0 * atan and tan in double, stored as float (:164-165)
-    kfzref = f32(z0 + CHOSEN_R_OF_Z * t)
+    kfzref = f32(z0 + CHOSEN_R_OF_Z * t) if KNOWN_BAD != "zref_float32" else f32(kfz0 + f32(CHOSEN_R_OF_Z) * kft)
     eta_reg = 0
     for i in range(1, len(ETA_REGIONS) - 1):
         a = f32(np.arctan(f32(np.exp(f32(-ETA_REGIONS[i])))))
@@ -632,6 +637,8 @@ def _heap_sort(v, first, last, k):
 def do_kf(seed, stubs):
     """KFbase::doKF. stubs: the input list (tmtt::Stub order = HybridFit's trackstublist order), sorted by layerId
     as KFbase::fit does (std_sort). Returns the finished State or None."""
+    if KNOWN_BAD == "kf_regions_0_3" and kf_eta_region(seed.eta_reg) > 3:
+        return None
     order = list(range(len(stubs)))
     std_sort(order, key=lambda i: stubs[i].layer)
     layer_stubs = {}

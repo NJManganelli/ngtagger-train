@@ -86,7 +86,7 @@ def set_discs(on, fixes=True):
 
 
 def active_seeds():
-    return tuple(sd for sd in SEEDS if DISCS or sd in BARREL_SEEDS)
+    return tuple(sd for sd in SEEDS if (DISCS and KNOWN_BAD != "disc_seeds_dropped") or sd in BARREL_SEEDS)
 
 
 def targets(seed):
@@ -134,7 +134,8 @@ TP_INNER_NONE = (1 << (2 * NFINERZ + 1 + ME_BINS_BITS)) - 1
 # 4: the inner tables' "no tracklet" entries (written as 1023) reject the inner stub.
 # 5: the TrackletProcessor wiring is CMSSW_20_1's own (TrackletConfigBuilder's table; L1L2 differs from the
 #    cms-data wires file the earlier versions read).
-CHAIN_VERSION = 5
+# 6: WP-Disc: the 8 prompt seeds and the disc match processors (set_discs), the corrections (FIXES).
+CHAIN_VERSION = 6
 # KNOWN-BAD VARIANTS of the chain (WP-D plan sec. 3), like cmssw_kf.KF_KNOWN_BADS: None in every real run;
 # set_known_bad() switches one on (a chain variant here, a fit variant in cmssw_kf) for a known-bad run.
 CHAIN_KNOWN_BADS = {
@@ -150,6 +151,14 @@ CHAIN_KNOWN_BADS = {
     "score_dr": "the census's score DR on the fitted no-DR tracks instead of merge DR",
     "l2l3_no_z52": "the L2L3 seed without its |z| >= 50 / 52 cm inner-stub cuts",
     "dtc_acceptance_ignored": "the census table keeps the stubs the DTC dropped (census chain only)",
+    # WP-Disc (wpdisc/PLAN.md sec. 4)
+    "disc_seeds_dropped": "the disc and overlap seeds (D1D2, D3D4, L1D1, L2D1) not run",
+    "disc_improving_chain": "the barrel's improving chain applied to the disc matches",
+    "hidden_gates_omitted": "the disc and overlap seeds without VMRouterCM's inner-stub cuts and the calculator's "
+                            "r2 >= r1 + 2.0 / 1.5 cm protections",
+    "no_alpha_correction": "the disc match without the 2S strip-orientation (alpha) correction",
+    "ps_cuts_on_2s": "the PS cut tables on 2S disc stubs",
+    "dr_barrel_only": "merge duplicate removal comparing the barrel seeds' candidates only",
 }
 KNOWN_BAD = None
 
@@ -721,6 +730,8 @@ def _inner_ok(cp, idx, seed):
     2 N_DSS_MOD <= r_value <= 55 cm / kr (the lower cut drops the 2S stubs, whose r_value is a ring index); L1 of the barrel seeds, L3, L5 |z| <= 95 cm; L1 of the overlap seeds |z| >= 70 cm;
     L2 |z| >= 50 cm, and L2L3's |z| >= 52 cm (TrackletLUT zcutL2L3)."""
     L = SEEDS[seed][0]
+    if KNOWN_BAD == "hidden_gates_omitted" and seed not in BARREL_SEEDS:
+        return np.ones(len(idx), bool)
     if L >= 7:
         return (cp.ir[idx] <= VMR_RMAX_D1D3 / D.kr()) & (cp.ir[idx] >= 2 * D.N_DSS_MOD)
     absz = np.abs(cp.iz[idx])
@@ -864,9 +875,10 @@ def seed_sector(cp, sector, seed, k=KF.K, work=None):
             for a, b in zip(*np.nonzero(acc)):
                 i, j = int(inn[a]), int(out[b])
                 g1, g2 = _float_geom(cp, i), _float_geom(cp, j)
-                if seed in DISK_SEEDS and g2[0] < g1[0] + R_PROT_DISK:
+                prot = KNOWN_BAD != "hidden_gates_omitted"
+                if prot and seed in DISK_SEEDS and g2[0] < g1[0] + R_PROT_DISK:
                     continue
-                if seed in OVERLAP_SEEDS and g2[0] < g1[0] + R_PROT_OVERLAP:
+                if prot and seed in OVERLAP_SEEDS and g2[0] < g1[0] + R_PROT_OVERLAP:
                     continue
                 ipars = calc_pars(cp, i, j, seed, k)
                 if ipars is None:
@@ -1121,11 +1133,10 @@ def _proj_temp_disc(tr, layer, mem, ivm_minus, ivm_plus, shift, ps_seed):
     return ProjTemp(tr, slot, projrinv, projfinerz, projfinephi, ivm_minus, shift, use, ps_seed)
 
 
-def disc_match(cp, tr, c, layer, icorrshift, icorzshift):
+def disc_residuals(cp, tr, c, layer, icorrshift, icorzshift):
     """MatchProcessor::matchCalculator on a disc (MatchProcessor.cc:776-912), in integers: the projection moved
-    to the stub's z, the 2S stub's r from its ring table and its phi corrected by dr x alpha x ialphafact; the
-    stub matches iff |dphi * r_stub| < the seed's rphi cut and |dr| < its r cut (PS or 2S tables). Every stub
-    inside the cuts is kept: no improving chain on discs (the best values are updated but never read)."""
+    to the stub's z, the 2S stub's r from its ring table and its phi corrected by dr x alpha x ialphafact.
+    Returns (|dphi * r_stub|, |dr|, the seed's rphi cut, its r cut) with the PS or 2S tables."""
     iphiproj, irproj, iphider, irder = tr.projs[layer]
     iz = int(cp.iz[c])
     iphi = iphiproj + ((iz * iphider) >> icorrshift)
@@ -1139,11 +1150,17 @@ def disc_match(cp, tr, c, layer, icorrshift, icorzshift):
         ialphafact = int(tabs["alphainner" if inner else "alphaouter"][irstub])
         irstub = int(tabs["rDSSinner" if inner else "rDSSouter"][irstub])
     ideltar = irstub - ir
-    if not ps:
+    if not ps and KNOWN_BAD != "no_alpha_correction":
         ideltaphi += (ideltar * int(cp.alpha[c]) * ialphafact) >> ALPHA_SHIFT
-    t = "PS" if ps else "2S"
-    return (abs(ideltaphi * irstub) < int(tabs[t + "phicut"][tr.seed])
-            and abs(ideltar) < int(tabs[t + "rcut"][tr.seed]))
+    t = "PS" if ps or KNOWN_BAD == "ps_cuts_on_2s" else "2S"
+    return abs(ideltaphi * irstub), abs(ideltar), int(tabs[t + "phicut"][tr.seed]), int(tabs[t + "rcut"][tr.seed])
+
+
+def disc_match(cp, tr, c, layer, icorrshift, icorzshift):
+    """The disc match rule: |dphi * r_stub| < the seed's rphi cut and |dr| < its r cut (disc_residuals). Every
+    stub inside the cuts is kept: no improving chain on discs (the best values are updated but never read)."""
+    aphi, ar, phicut, rcut = disc_residuals(cp, tr, c, layer, icorrshift, icorzshift)
+    return aphi < phicut and ar < rcut
 
 
 def match_processor(cp, layer, pages, mem, fields, matches, k=KF.K, max_steps=MP_MAX):
@@ -1169,7 +1186,15 @@ def match_processor(cp, layer, pages, mem, fields, matches, k=KF.K, max_steps=MP
         for m in meus:
             m.afs = m.cand.near(3)
         best = min(range(N_MEU), key=lambda i: meus[i].tcid())
-        if cand is not None and layer >= 7:                    # matchCalculator, disc
+        if cand is not None and layer >= 7 and KNOWN_BAD == "disc_improving_chain":
+            tr, c = cand
+            aphi, ar, phicut, rcut = disc_residuals(cp, tr, c, layer, icorrshift, icorzshift)
+            if tr is not prev:
+                best_phi, best_z, prev = phicut, rcut, tr
+            if aphi < phicut and ar < rcut and aphi <= best_phi and ar <= best_z:
+                best_phi, best_z = aphi, ar
+                matches.setdefault((id(tr), layer), []).append(c)
+        elif cand is not None and layer >= 7:                  # matchCalculator, disc
             tr, c = cand
             if disc_match(cp, tr, c, layer, icorrshift, icorzshift):
                 matches.setdefault((id(tr), layer), []).append(c)
@@ -1375,6 +1400,8 @@ def merge_dr(cp, cands, caps=True, k=KF.K):
         if caps and cm > DR_COMPARED and KNOWN_BAD != "comparators_unlimited":
             continue
         for j in range(i + 1, n):
+            if KNOWN_BAD == "dr_barrel_only" and not {srt[i].tracklet.seed, srt[j].tracklet.seed} <= set(BARREL_SEEDS):
+                continue
             share = sum(1 for L, pi in best[i].items() if L in best[j] and ids[i][pi] == ids[j][best[j][L]])
             if share >= (2 if KNOWN_BAD == "nshare_2" else MIN_SHARE):
                 dup[i, j] = dup[j, i] = True
