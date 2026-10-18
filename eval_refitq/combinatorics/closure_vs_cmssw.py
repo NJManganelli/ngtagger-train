@@ -298,8 +298,12 @@ def _g0_array(name, a35, a36):
     """'' when shard array `name` of a format-36 census with the discs off equals format 35's, else why not.
     Format 36's additions must be empty: its census columns (cen_ + TF.FORMAT36_COLS) all 0; the disc columns of a
     track's hit row (hit_<i>, hit_m<i>: _G0_HIT_DISC_COLS) and of its final stubs (hit_o / hit_om: the trailing
-    OD1-OD5) all -1; the per-seed counters' kf_diverged 0."""
+    OD1-OD5) all -1; the per-seed counters' kf_diverged 0; S6's records without a disc track or group."""
     if a35 is None:
+        if name == "rec_trk__disc":                # S6's disc group (census_angles.s6_group): empty
+            return "" if not np.any(a36) else "S6 disc tracks with the discs off"
+        if name == "rec_trk__s6g":
+            return "" if not any(str(g).endswith(TF.CA.S6_DISC) for g in a36) else "S6 disc group with the discs off"
         return "" if name[4:] in TF.FORMAT36_COLS and name.startswith("cen_") and not np.any(a36) else "new array"
     if name == "counters":                        # per seed: format 36 adds kf_diverged, which must be 0
         c35, c36 = json.loads(str(a35)), json.loads(str(a36))

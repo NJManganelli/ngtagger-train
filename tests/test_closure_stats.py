@@ -154,6 +154,9 @@ def test_g0_array_rule():
     assert CV._g0_array("cen_hit_otd", None, np.ones(4, np.uint8)) == "new array"
     assert CV._g0_array("cen_n_mod_itd", None, np.zeros(4, np.int16)) == ""     # every format-36 census column
     assert CV._g0_array("rec_s1d__stat", None, np.zeros(0)) == "new array"
+    assert CV._g0_array("rec_trk__disc", None, np.zeros(3, bool)) == ""
+    assert CV._g0_array("rec_trk__s6g", None, np.array(["AAAA", "AAAA"])) == ""
+    assert CV._g0_array("rec_trk__s6g", None, np.array(["AAAA", "AAAA/disc"])) != ""
     assert CV._g0_array("cen_pt", np.ones(3), np.r_[1.0, 1.0, 2.0]) == "values differ"
     # a track's hit row: format 36 inserts ID1-ID4 after IL4 and appends OD1-OD5 (KF.LAYER_ORDER)
     rows35 = np.arange(20).reshape(2, 10)
