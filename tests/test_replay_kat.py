@@ -518,6 +518,45 @@ def test_empty_layer_material_is_charged():
     assert np.allclose(predict(cal, [4]), predict(no_il4, [4]))
 
 
+def test_inner_material_disc_going():
+    """Scan plan B-pre: the inner material of a disc-going track whose innermost update is a disc (ID2) charges only the
+    planes it crosses between the POCA and ID2 (beam pipe, IL1 module, ID1, ID2's own plane), never the barrel planes
+    by radius; a barrel-only track is bit-identical to the barrel rule (ORP.add_material with the IL1 module and the
+    beam pipe)."""
+    import types
+    kpt = 0.0057
+    geo = {"R": {1: 3.04, 2: 6.17, 3: 10.47, 4: 14.67}, "Z": {11: 25.18, 12: 32.18}}
+    cal_planes = [["IL2", 0.0187, "IL2 module"], [7.29, 0.001, "HV L2"], ["IL3", 0.0148, "IL3 module"]]
+    cal = {"planes": cal_planes, "material_scale": 1.0, "ot_inner_r_cm": 22.0}
+    cyl = lambda r, hz, x: {"kind": "cyl", "r": r, "half_z": hz, "xx0": x}
+    disc = lambda z, x: {"kind": "disc", "z": z, "r_ext": [3.1, 16.0], "xx0": x}
+    crossed = [cyl(3.04, 19.94, 0.0185), disc(25.18, 0.02), disc(32.18, 0.02)]
+    uncrossed = [cyl(6.17, 20.07, 0.0187), cyl(7.29, 20.03, 0.001), cyl(10.47, 20.07, 0.0148)]
+    a = np.array([[kpt / 3.0, 0.1, 0.5, 0.0, 0.0],                     # barrel-only, innermost update IL2
+                  [kpt / 3.0, 0.1, np.sinh(2.2), 0.0, 0.0]])          # disc-going (|eta| 2.2), innermost update ID2
+    arm = AR.inn_disc({})
+
+    def charged(planes, disc_scale=1.0):
+        st = AR.State(a.copy(), np.zeros((2, 5, 5)), np.array([0, 1]), np.zeros((2, 3), np.int64), dg=[False, True])
+        st.rec["acc"][:, 0] = True
+        st.rec["surface"][:, 0] = [2, 12]
+        tools = types.SimpleNamespace(cal=cal, disc=types.SimpleNamespace(planes=planes, disc_scale=disc_scale))
+        AR.inner_material(arm, st, geo, tools, kpt)
+        return st.C
+
+    full = charged(crossed + uncrossed)
+    # the uncrossed barrel modules and supports are not charged; the crossed planes are, the disc scale on the discs
+    assert np.array_equal(full[1], charged(crossed)[1])
+    assert not np.allclose(full[1], charged(crossed[:1] + crossed[2:] + uncrossed)[1])
+    assert (charged(crossed, 2.0)[1, 3, 3] > full[1, 3, 3]) and full[1, 4, 4] > 0
+    # the barrel-only track: exactly the barrel rule
+    ref = np.zeros((2, 5, 5))
+    geo0 = {**geo, "R": {**geo["R"], 0: 0.0}}
+    ORP.add_material(a.copy(), ref, np.array([0]), 0, np.array([2, 5]), geo0,
+                     {**cal, "planes": cal_planes + [AR.IL1_MODULE, AR.BEAM_PIPE]}, kpt)
+    assert np.array_equal(full[0], ref[0])
+
+
 def test_clip_scale():
     """C1b A18: the clipped-likelihood scale is 1 for a unit Gaussian, the scale for a scaled one, and matches a direct
     1-dim minimisation of sum [2 log s + min(z^2 / s^2, 25)] on a heavy-tailed sample."""

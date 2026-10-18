@@ -44,6 +44,8 @@ CONSUMERS = ("window", "rank", "gate", "rr", "update")
 REGIONS = ("barrel", "disc")
 # inner material (PLAN §1 item 4): planes in the calibration's [r_cm or "ILj", x/X0, what] format
 BEAM_PIPE = [2.3, 0.0022761, "beam pipe: tkLayout global_constants.hh:71 (x/X0), Analyzer.cc:224 (r = 23 mm)"]
+BEAM_PIPE_PLANE = {"kind": "cyl", "r": BEAM_PIPE[0], "half_z": np.inf, "xx0": BEAM_PIPE[1], "what": BEAM_PIPE[2]}
+                                    # disc_material's form; every track from the beam line crosses it
 IL1_MODULE = ["IL1", 0.018519, "TBPX L1 module: trackerRecoMaterial.xml (tkLayout RL)"]
 EXTRA_CL_COLS = ("tpEmuClass", "tpLocalCotAlpha", "tpLocalCotBeta") + tuple(
     c for c in AI.GLOBAL_COLS if c != "tpEmuClass" and c not in OP.CL_COLS)      # beyond prepare_chunk's
@@ -900,7 +902,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
             for k in ("acc", "chi2"):
                 st.rec[k][hit] = R.rec[k]
     if arm.inner_material:
-        inner_material(st, geo, tools, kpt)
+        inner_material(arm, st, geo, tools, kpt)
     nacc = st.rec["acc"].sum(1)
     fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan}
     out = {"a": ctx["a"].copy(), "C": ctx["C"].copy(), "nacc": np.zeros(ntrk, np.int64),
@@ -950,12 +952,15 @@ def resolve_k(arm, st, geo, tools):
     return o[first]
 
 
-def inner_material(st, geo, tools, kpt):
+def inner_material(arm, st, geo, tools, kpt):
     """The material between the innermost update and the beam line, charged to C only (PLAN §1 item 4):
     every calibration plane at r <= R of the innermost updated layer (its own module included: the
     kink there separates the inner segment from the outer measurements, as the forward pass charges a
     layer's module when predicting the next one), the IL1 module (absent from the calibration's list)
-    and the beam pipe. A helix state is unchanged by material."""
+    and the beam pipe. A helix state is unchanged by material. Disc-going tracks of the disc_model arms (scan
+    plan B-pre): the path-ordered, extent-aware planes of disc_material (C1b's, at the disc scale) crossed between
+    the POCA and the innermost update (its own plane included), plus the beam pipe; never the barrel planes by
+    radius."""
     acc = st.rec["acc"]
     t = np.flatnonzero(acc.any(1))
     if not len(t):
@@ -963,9 +968,20 @@ def inner_material(st, geo, tools, kpt):
     last_j = np.array([np.flatnonzero(acc[x])[-1] for x in t])
     Lv = np.full(len(st.o), 5, np.int64)
     Lv[t] = st.rec["surface"][t, last_j]
+    dg = st.dg[t] if arm.disc_model else np.zeros(len(t), bool)
+    tb, td = t[~dg], t[dg]
     geo0 = dict(geo)
     geo0["R"] = dict(geo["R"])
     geo0["R"][0] = 0.0
     cal = dict(tools.cal)
     cal["planes"] = list(tools.cal["planes"]) + [IL1_MODULE, BEAM_PIPE]
-    ORP.add_material(st.a, st.C, t, 0, Lv, geo0, cal, kpt)
+    ORP.add_material(st.a, st.C, tb, 0, Lv, geo0, cal, kpt)
+    if len(td):
+        import disc_material as DM
+        s_in = np.empty(len(td))
+        for L in np.unique(Lv[td]):
+            k = Lv[td] == L
+            s_in[k] = OP.surface_s(st.a[td[k]], geo, int(L))
+        planes = list(tools.disc.planes) + [BEAM_PIPE_PLANE]
+        DM.charge(st.a, st.C, td, np.zeros(len(td)), s_in, planes, tools.disc.disc_scale, tools.cal["material_scale"],
+                  kpt)
