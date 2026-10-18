@@ -57,8 +57,20 @@ IL = (1, 2, 3, 4)
 OT_BARREL = (11, 12, 13, 14, 15, 16)
 # L1L2, L2L3, L3L4, L5L6 -- Settings.h:679. There is deliberately no L4L5.
 OT_DOUBLETS = ((11, 12), (12, 13), (13, 14), (15, 16))
-# the CMSSW seed index (ot_chain.SEEDS) of each prompt OT doublet
-OT_CHAIN_SEED = {tuple(L + 10 for L in lay): sd for sd, lay in OC.SEEDS.items()}
+# the OT discs OD1-OD5 (census codes: L1TOTStub_layer 11-15 + 10; tp_findability); the chain's disc codes 7-11
+OT_DISCS = (21, 22, 23, 24, 25)
+
+
+def ot_census_code(chain_code):
+    """The census code of an ot_chain layer / disk code: barrel 1-6 -> OL1-OL6 (11-16), discs 7-11 -> OD1-OD5."""
+    return chain_code + 10 if chain_code <= 6 else chain_code + 14
+
+
+# the CMSSW seed index (ot_chain.SEEDS) of each prompt OT seed, by its census layers
+OT_CHAIN_SEED = {tuple(ot_census_code(L) for L in lay): sd for sd, lay in OC.SEEDS.items()}
+# the disc (D1D2, D3D4) and overlap (L1D1, L2D1) seeds: the closed arm's entries with the discs on (format 36;
+# not in the census chain's menu, whose geometry is the barrel's)
+OT_DISC_SEEDS = tuple(lay for lay, sd in OT_CHAIN_SEED.items() if sd not in OC.BARREL_SEEDS)
 # L2L3L4 and L4L5L6 -- the design's only barrel triplet seeds, IN CONSTRUCTION
 # ORDER: the pair first, the attached third layer last.
 #
@@ -122,7 +134,8 @@ class Seed:
 
 
 NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
-        11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
+        11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6",
+        21: "OD1", 22: "OD2", 23: "OD3", 24: "OD4", 25: "OD5"}
 
 
 def soft_seeds(seeds):

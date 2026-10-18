@@ -352,8 +352,9 @@ def event_copies(stub, dtc):
     if len(d):
         ir[d] = D.disc_rvalue(ir[d], ps[d])                      # the disc stubs' r as Stub::rvalue() reads it
         r[d] = D.disc_physical(layer[d] - 6, nd[d] == 1, ps[d], iphi[d], iz[d], ir[d], region[d])[2]
-    strip = np.asarray(stub["innerStrip"], np.float64)[row] if "innerStrip" in stub else np.zeros(len(row))
-    flipped = np.asarray(stub["isFlipped"], bool)[row] if "isFlipped" in stub else np.zeros(len(row), bool)
+    # the 2S disc stubs' strip and orientation (the KF's alpha): required with the discs on
+    strip = np.asarray(stub["innerStrip"], np.float64)[row] if DISCS else np.zeros(len(row))
+    flipped = np.asarray(stub["isFlipped"], bool)[row] if DISCS else np.zeros(len(row), bool)
     return Copies(row, region, order, layer, ps, np.asarray(stub["isTilted"], bool)[row], iphi, iz, ir, bend,
                   phicorr, r,
                   np.asarray(stub["x"], np.float64)[row], np.asarray(stub["y"], np.float64)[row],

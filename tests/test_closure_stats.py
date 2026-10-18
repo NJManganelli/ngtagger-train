@@ -123,3 +123,32 @@ def test_injected_known_bads_shift_by_their_margins():
     f = CV._inject_found(f_cen, f_cms, den, "disc", 1.5, CV.MARGIN["disc"], rng)
     assert f.sum() == f_cen.sum() and (f ^ f_cms).sum() / 1000 == pytest.approx(0.03, abs=2e-3)
     assert CV._injection(["C2 L1L2: d_eff=1.5", "C3 delivered: d_dup=10"], "C2 L1L2") == {"d_eff": 1.5}
+
+
+# ---- WP-Disc (format 36) ---------------------------------------------------------------------------
+def test_tp_kf_index_on_the_kf_edges():
+    eta = np.array([0.0, 0.19, -0.2, 0.89, 0.9, 1.67, 1.68, -2.39, 2.4, np.nan])
+    assert CV.tp_kf_index(eta).tolist() == [0, 0, 1, 3, 4, 5, 6, 7, 8, 8]
+    assert [CV.BANDS[b] for b in ("barrel", "overlap", "forward")] == [(0, 3), (4, 5), (6, 7)]
+
+
+def test_record_rule_disc_seed():
+    """A D1D2 track (L1TOTStub disc codes 11, 12): its seed stubs are its disc stubs, its KF region forward."""
+    rs = [40.0, 45.0, 52.0, 60.0]
+    xyz = [(r, 0.001 * r * r, 0.5 + 3.0 * r) for r in rs]           # cot 3: |eta| ~ 1.8
+    L = _stubs([11, 12, 13, 14], xyz, [5, 5, 5, 5])
+    L["isBarrel"][:] = False
+    rec = dict(zip(CV.RECORD_COLS, CV.track_record(L, 0, 4, [0, 1, 2, 3])))
+    assert rec["real"] == 1 and rec["tp_key"] >= 0 and rec["kfreg"] in (6, 7)
+
+
+def test_g0_array_rule():
+    a = np.arange(14).reshape(2, 7)
+    assert CV._g0_array("hit_o0", a, a.copy()) == ""
+    wide = np.c_[a, np.full((2, 5), -1)]
+    assert CV._g0_array("hit_o0", a, wide) == ""
+    wide[1, 9] = 3
+    assert CV._g0_array("hit_o0", a, wide) == "disc columns filled"
+    assert CV._g0_array("cen_hit_otd", None, np.zeros(4, np.uint8)) == ""
+    assert CV._g0_array("cen_hit_otd", None, np.ones(4, np.uint8)) == "new array"
+    assert CV._g0_array("cen_pt", np.ones(3), np.r_[1.0, 1.0, 2.0]) == "values differ"

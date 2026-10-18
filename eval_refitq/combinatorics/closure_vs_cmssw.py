@@ -1,4 +1,5 @@
-"""closure_vs_cmssw: the census OT chain closed against CMSSW, stage by stage (WP-D; wpd/PLAN.md sec. 2-4).
+"""closure_vs_cmssw: the census OT chain closed against CMSSW, stage by stage (WP-D, wpd/PLAN.md sec. 2-4; WP-Disc,
+wpdisc/PLAN.md sec. 3: the discs, --discs on|off).
 
   bridge  C0  canon_v4 against canon_v3, branch by branch: equal, or in the declared lists (BRIDGE_*)
   twice   C0  run-twice determinism: two productions of one configuration are bit identical
@@ -11,8 +12,13 @@
               (i) per tracklet, the emulated candidate against CMSSW's, and its integer parameters;
               (ii) the KF on every CMSSW candidate list against CMSSW's no-DR output: accepted or rejected
               alike, and when both accept, the same stubs and parameters
-  c23         C2 per candidate (no DR, per seed) and C3 delivered (merge DR, pooled): a closed-arm census
-              against CMSSW, with the paired event bootstrap and equivalence at the plan's margins
+  g0          a format-36 census with the discs off against format 35's: shard by shard identical, format
+              36's additions empty
+  acceptance  each seed's acceptance (its KF eta indices) from a CMSSW no-DR production: C2's denominators
+              with the discs on, frozen on the known-good file
+  c23         C2 per candidate (no DR, per seed) and C3 delivered (merge DR; with the discs on per band and
+              pooled): a closed-arm census against CMSSW, with the paired event bootstrap and equivalence at
+              the plan's margins
   floor       the order floor: D_order and Delta_dtc from one dtc and ten random closed-arm censuses
   truncation  U, the unemulated truncation: the caps-on arm's statistics minus the caps-off arm's (paired);
               reported, not gated (the caps-on arm is not certified, plan sec. 11)
@@ -26,14 +32,14 @@ becomes a record from its FITTED stubs and the input's own L1TOTStub table (trac
 single TP credited by both of its final stubs in the seed type's two layers (tracklet_topology_cost.seed_tp;
 an OT stub credits its tpIdx and its clusters' owners; none on a tie); the KF eta region is HybridFit's on
 exacttracklet of those two stubs; a track without a stub in a seed layer is not judged. A track is a fake when
-it has no seed TP; a TP is found by a side when one of its judged tracks (KF regions 0-3) has it. The census
+it has no seed TP; a TP is found by a side when one of its judged tracks (the scope's KF regions) has it. The census
 exports its tracks' final stubs as L1TOTStub rows (tp_findability OT_STUB_COLS), so the rule runs on the same
 code and the same stub table for both. The census's own physics (its found bitmaps) keeps the tracklet-seed
 rule; the closure validates the chain under the final-stub rule.
 The sheet's definitions (the majority owner of all final stubs, a fake = 2 or more stubs not crediting the
 owner) are reported beside, ungated, from the same records.
-The efficiency denominator is the census's: findable (>= 4 credited modules, charged), |eta| < 0.9,
-pT >= 2 GeV.
+The efficiency denominator is the census's: findable (>= 4 credited modules, charged), pT >= 2 GeV, |eta| < 0.9
+(discs off, WP-D) or < 2.4 (discs on, WP-Disc: C2 per seed inside its acceptance, C3 per band and pooled).
 
 THE GATED SAMPLE (plan sec. 3 with the statistics review's R1, pre-declared 2026-10-15): C2 / C3 are judged
 on f01 events 10-99 (plus f03 if the power rule calls for it): f01 events 0-9 were used in development, so
@@ -86,6 +92,23 @@ def max_kf_region():
 
 def eta_max():
     return ETA_MAX_DISCS if OC.DISCS else ETA_MAX_BARREL
+
+
+# THE BANDS (WP-Disc plan sec. 3, C3 gated per band and pooled; pre-declared 2026-10-18): KF eta indices 0-3
+# (|eta| < 0.9), 4-5 (0.9-1.68) and 6-7 (1.68-2.4), the KF's own region edges (the plan's 1.6 is the KF's
+# 1.68). A TP's index is its truth |eta| on those edges; a track's is its KF eta region (record column kfreg).
+KF_ETA_EDGES = (0.0, 0.2, 0.41, 0.62, 0.9, 1.26, 1.68, 2.08, 2.4)
+BANDS = {"barrel": (0, 3), "overlap": (4, 5), "forward": (6, 7)}
+# C2's denominators (plan sec. 3 with the statistics review's B1): per seed, the findable TPs inside its own
+# acceptance, the KF eta indices holding >= ACCEPTANCE_MIN of that seed's CMSSW no-DR tracks on the known-good
+# file (closure acceptance, frozen on f04 before f03 is read)
+ACCEPTANCE_MIN = 0.01
+
+
+def tp_kf_index(eta):
+    """A TP's KF eta index: its truth |eta| on KF_ETA_EDGES (0-7; 8 beyond 2.4, NaN eta too)."""
+    a = np.abs(np.asarray(eta, np.float64))
+    return np.where(np.isfinite(a), np.searchsorted(np.asarray(KF_ETA_EDGES[1:]), a, side="right"), 8)
 
 
 def _in_scope(L, rows):
@@ -259,6 +282,58 @@ def twice(f1, f2, nev=None):
     return {"stage": "C0 run twice", "files": [f1, f2], "same_events": True,
             "same_event_order": bool(np.array_equal(order, np.arange(len(order)))), "branch_sets_equal": k1 == k2,
             "differences": diff, "gates": {"determinism": ok}}, ok
+
+
+# ---- G0: format 36 with the discs off against format 35 ------------------------------------------------
+def _g0_array(name, a35, a36):
+    """'' when shard array `name` of a format-36 census with the discs off equals format 35's, else why not.
+    Format 36's additions must be empty: cen_hit_otd all 0; the final stubs' OD1-OD5 columns (hit_o / hit_om)
+    and the closed arm's OD1-OD5 hit-row columns all -1."""
+    if a35 is None:
+        return "" if name == "cen_hit_otd" and not np.any(a36) else "new array"
+    if a36.shape == a35.shape:
+        return "" if np.array_equal(a35, a36, equal_nan=a35.dtype.kind == "f") else "values differ"
+    if a36.ndim == 2 and a35.ndim == 2 and a36.shape[0] == a35.shape[0] and a36.shape[1] > a35.shape[1]:
+        k = a35.shape[1]
+        if not np.array_equal(a36[:, :k], a35):
+            return "values differ"
+        return "" if np.all(a36[:, k:] == -1) else "disc columns filled"
+    return f"shape {a35.shape} -> {a36.shape}"
+
+
+def g0(c35, c36, nev=None):
+    """G0 (WP-Disc plan sec. 3): a format-36 census with the discs off (--discs off) against format 35's on the
+    same inputs and configuration, shard by shard: every array identical apart from format 36's additions, which
+    must be empty (_g0_array); the counters, the entries and the configuration identical apart from the format
+    and the discs key."""
+    d35, d36 = TF.census_dir(c35), TF.census_dir(c36)
+    m35, m36 = (json.load(open(Path(d) / "manifest.json")) for d in (d35, d36))
+    cfg35, cfg36 = dict(m35["config"]), dict(m36["config"])
+    oc36 = dict(cfg36.pop("ot_chain"))
+    disc_on = oc36.pop("discs", None)
+    same_cfg = cfg35.pop("ot_chain") == oc36 and cfg35 == cfg36
+    head = {"formats": [m35.get("format"), m36.get("format")], "discs": disc_on,
+            "inputs_equal": m35["inputs"] == m36["inputs"], "config_equal": same_cfg,
+            "entries_equal": (m35["seeds"], m35["seed_follow"]) == (m36["seeds"], m36["seed_follow"])}
+    sh35, sh36 = sorted(Path(d35).glob("chunk_*.npz")), sorted(Path(d36).glob("chunk_*.npz"))
+    diffs, nread = [], 0
+    for a, b in zip(sh35, sh36):
+        if nev is not None and nread >= nev:
+            break
+        z35, z36 = np.load(a, allow_pickle=False), np.load(b, allow_pickle=False)
+        nread += int(z35["n_events"])
+        for name in sorted(set(z35.files) | set(z36.files)):
+            if name not in z36.files:
+                diffs.append(f"{b.name}: {name} missing")
+                continue
+            why = _g0_array(name, z35[name] if name in z35.files else None, z36[name])
+            if why:
+                diffs.append(f"{b.name}: {name} {why}")
+    ok = (head["formats"] == [35, 36] and disc_on is False and head["inputs_equal"] and same_cfg
+          and head["entries_equal"] and len(sh35) == len(sh36) and not diffs)
+    return {"stage": "G0", "format35": d35, "format36_discs_off": d36, **head, "n_shards": [len(sh35), len(sh36)],
+            "n_events_compared": nread, "differences": diffs[:50], "n_differences": len(diffs),
+            "gates": {"g0_identical": ok}}, ok
 
 
 # ---- the per-track records, one rule for both sides ---------------------------------------------------
@@ -774,8 +849,8 @@ def _kf_on_list(res, nd, jn, key, rows, L, x, y, z, e):
 
 # ---- C2 / C3 --------------------------------------------------------------------------------------
 def _denominator(C):
-    """The census's efficiency denominator: findable, |eta| < 0.9, pT >= 2 GeV."""
-    return TF.findable(C) & np.isfinite(C["eta"]) & (np.abs(C["eta"]) < ETA_MAX) & (C["pt"] >= PT_MIN)
+    """The census's efficiency denominator: findable, pT >= 2 GeV, |eta| < 2.4 with the discs on (0.9 off)."""
+    return TF.findable(C) & np.isfinite(C["eta"]) & (np.abs(C["eta"]) < eta_max()) & (C["pt"] >= PT_MIN)
 
 
 def _per_event(nev, ev, w=None):
@@ -855,12 +930,58 @@ def _injection(inject, name):
     return out
 
 
-def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_events=(), inject=()):
+def _census_discs(C):
+    """SystemExit unless the census ran with the discs as this closure does (ot_chain.DISCS): its scope, its
+    population and its chain must be the closure's (a format-35 census has the discs off)."""
+    on = bool(json.load(open(Path(C["cache_dir"]) / "manifest.json"))["config"]["ot_chain"].get("discs", False))
+    if on != OC.DISCS:
+        raise SystemExit(f"the census ran with the discs {'on' if on else 'off'}, the closure with them "
+                         f"{'on' if OC.DISCS else 'off'}: run the closure with --discs {'on' if on else 'off'}")
+
+
+def acceptance(cmssw_nodr, nev=None):
+    """Each seed's acceptance (C2's denominator, ACCEPTANCE_MIN): the KF eta indices holding at least that
+    fraction of the seed's CMSSW no-DR tracks of `cmssw_nodr` (run on the known-good file and frozen)."""
+    recs = []
+    for path in M.expand_inputs(cmssw_nodr):
+        A = _events(path, ("L1TTrack_", "L1TTrackStub_", "L1TOTStub_"), nev)
+        for e in range(len(A)):
+            T, S, L = _table(A, e, "L1TTrack_"), _table(A, e, "L1TTrackStub_"), _table(A, e, "L1TOTStub_")
+            for j in range(len(T["rInv"])):
+                sd = int(T["seedType"][j])
+                if sd in seed_layers():
+                    recs.append(track_record(L, e, sd, S["otStubIdx"][S["trackIdx"] == j]))
+    R = _records(recs)
+    out = {}
+    for sd in judged_seeds():
+        r = R[(R[:, 1] == sd) & (R[:, 4] >= 0)][:, 4]
+        frac = np.bincount(r, minlength=8)[:8] / max(len(r), 1)
+        out[OC.SEED_NAME[sd]] = {"kf_indices": [int(k) for k in np.flatnonzero(frac >= ACCEPTANCE_MIN)],
+                                 "fractions": [round(float(f), 5) for f in frac], "n_tracks": int(len(r))}
+    return {"stage": "C2 acceptance", "input": cmssw_nodr, "min_fraction": ACCEPTANCE_MIN, "seeds": out,
+            "gates": {}}, True
+
+
+def _band_records(R, band):
+    lo, hi = BANDS[band]
+    return R[(R[:, 4] >= lo) & (R[:, 4] <= hi)]
+
+
+def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_events=(), inject=(), acc=None):
     """C2 (per seed, no DR) and C3 (delivered, merge DR) of a closed-arm census against CMSSW; `exclude` the
     events left out on both sides; `power_events` the gated sizes the joint power is also computed at; `inject` the
-    injected known-bads ("C2 L1L2: d_eff=1.5": that statistic shifted by 1.5 margins on the census side)."""
+    injected known-bads ("C2 L1L2: d_eff=1.5": that statistic shifted by 1.5 margins on the census side).
+    With the discs on (format 36): C2 per seed over its own acceptance (`acc`, an acceptance report: its KF eta
+    indices), C3 per band (BANDS: the TPs by truth index, the tracks by KF eta region) and pooled; off: WP-D's
+    (C2 over the whole denominator, C3 delivered pooled)."""
     rng = np.random.default_rng(INJECT_SEED)
     C = TF.load(TF.census_dir(census_dir), nev=nev, with_tracks=True, verbose=False)
+    _census_discs(C)
+    if OC.DISCS and cmssw_nodr and acc is None:
+        raise SystemExit("C2 with the discs on needs --acceptance (the seeds' acceptance, frozen on the "
+                         "known-good file: closure_vs_cmssw.py acceptance)")
+    seed_acc = None if acc is None else {sd: set(acc["seeds"][OC.SEED_NAME[sd]]["kf_indices"])
+                                          for sd in judged_seeds()}
     nevc = int(C["n_events"])
     keep = _event_mask(nevc, exclude)
     entries = _ot_entries(C)
@@ -869,47 +990,60 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_event
     ids = _event_ids(_census_inputs(C), nevc)
     key, tev = C["key"], M.tp_key_parts(C["key"])[0].astype(np.int64)
     den = _denominator(C) & keep[tev]
+    tpk = tp_kf_index(C["eta"])
     parts = {}
     if cmssw_nodr:
         R_cms = _cmssw_tracks(cmssw_nodr, ids)
         R_cen = _census_tracks(C, entries, False, stubs)
-        for sd in JUDGED_SEEDS:
+        for sd in judged_seeds():
             i = entry[sd]
+            dsd = den & np.isin(tpk, sorted(seed_acc[sd])) if OC.DISCS else den
             inj = _injection(inject, f"C2 {OC.SEED_NAME[sd]}")
             for st, m in inj.items():
                 R_cen[i] = _inject_records(R_cen[i], st, m, MARGIN[st], rng)
-            f_cen = _found(R_cen[i], key) & den
-            f_cms = _found(R_cms[R_cms[:, 1] == sd], key) & den
+            f_cen = _found(R_cen[i], key) & dsd
+            f_cms = _found(R_cms[R_cms[:, 1] == sd], key) & dsd
             for st, m in inj.items():
-                f_cen = _inject_found(f_cen, f_cms, den, st, m, MARGIN[st], rng)
+                f_cen = _inject_found(f_cen, f_cms, dsd, st, m, MARGIN[st], rng)
             nc = _track_counts(R_cen[i], nevc)[0]
             nm = _track_counts(R_cms[R_cms[:, 1] == sd], nevc)[0]
             parts[f"C2 {OC.SEED_NAME[sd]}"] = {
-                "den": _per_event(nevc, tev[den]), "cen": _per_event(nevc, tev[f_cen]),
+                "den": _per_event(nevc, tev[dsd]), "cen": _per_event(nevc, tev[f_cen]),
                 "cms": _per_event(nevc, tev[f_cms]), "disc": _per_event(nevc, tev[f_cen ^ f_cms]),
                 "ncen": nc, "ncms": nm}
     sheet = {}
     if cmssw_merge:
-        R_cen = np.concatenate(list(_census_tracks(C, entries, True, stubs).values()))
-        R_cms = _cmssw_tracks(cmssw_merge, ids)
-        inj = _injection(inject, "C3 delivered")
-        for st, m in inj.items():
-            R_cen = _inject_records(R_cen, st, m, MARGIN[st], rng)
-        f_cen, f_cms = _found(R_cen, key) & den, _found(R_cms, key) & den
-        for st, m in inj.items():
-            f_cen = _inject_found(f_cen, f_cms, den, st, m, MARGIN[st], rng)
-        nc, fc, dc, tc, sc = _track_counts(R_cen, nevc)
-        nm, fm, dm, tm, sm = _track_counts(R_cms, nevc)
-        parts["C3 delivered"] = {"den": _per_event(nevc, tev[den]), "cen": _per_event(nevc, tev[f_cen]),
-                                 "cms": _per_event(nevc, tev[f_cms]), "disc": _per_event(nevc, tev[f_cen ^ f_cms]),
-                                 "fcen": fc, "fcms": fm, "dcen": dc, "tcen": tc, "dcms": dm, "tcms": tm,
-                                 "ncen": nc, "ncms": nm}
-        o_cen, o_cms = _found(R_cen, key, 6) & den, _found(R_cms, key, 6) & den
-        sheet = {"owner_found_census": int(o_cen.sum()), "owner_found_cmssw": int(o_cms.sum()),
-                 "owner_d_eff": float((o_cen.sum() - o_cms.sum()) / max(den.sum(), 1)),
-                 "sheet_fakes_census": float(sc[keep].sum()), "sheet_fakes_cmssw": float(sm[keep].sum()),
-                 "seed_fakes_census": float(fc[keep].sum()), "seed_fakes_cmssw": float(fm[keep].sum()),
-                 "judged_census": float(nc[keep].sum()), "judged_cmssw": float(nm[keep].sum())}
+        R_cen0 = np.concatenate(list(_census_tracks(C, entries, True, stubs).values()))
+        R_cms0 = _cmssw_tracks(cmssw_merge, ids)
+        bands = {"delivered": None} if not OC.DISCS else {"pooled": None, **{b: b for b in BANDS}}
+        for name, band in bands.items():
+            R_cen = R_cen0 if band is None else _band_records(R_cen0, band)
+            R_cms = R_cms0 if band is None else _band_records(R_cms0, band)
+            dband = den if band is None else den & (tpk >= BANDS[band][0]) & (tpk <= BANDS[band][1])
+            inj = _injection(inject, f"C3 {name}")
+            for st, m in inj.items():
+                R_cen = _inject_records(R_cen, st, m, MARGIN[st], rng)
+            # found: a TP with a judged track anywhere (a band's efficiency counts its TPs, wherever the track's
+            # KF region lies; the injected copies of records add no found TP); fakes, duplicates and candidates:
+            # the band's tracks
+            f_cen = _found(R_cen0, key) & dband
+            f_cms = _found(R_cms0, key) & dband
+            for st, m in inj.items():
+                f_cen = _inject_found(f_cen, f_cms, dband, st, m, MARGIN[st], rng)
+            nc, fc, dc, tc, sc = _track_counts(R_cen, nevc)
+            nm, fm, dm, tm, sm = _track_counts(R_cms, nevc)
+            parts[f"C3 {name}"] = {"den": _per_event(nevc, tev[dband]), "cen": _per_event(nevc, tev[f_cen]),
+                                   "cms": _per_event(nevc, tev[f_cms]),
+                                   "disc": _per_event(nevc, tev[f_cen ^ f_cms]),
+                                   "fcen": fc, "fcms": fm, "dcen": dc, "tcen": tc, "dcms": dm, "tcms": tm,
+                                   "ncen": nc, "ncms": nm}
+            if band is None:
+                o_cen, o_cms = _found(R_cen, key, 6) & dband, _found(R_cms, key, 6) & dband
+                sheet = {"owner_found_census": int(o_cen.sum()), "owner_found_cmssw": int(o_cms.sum()),
+                         "owner_d_eff": float((o_cen.sum() - o_cms.sum()) / max(dband.sum(), 1)),
+                         "sheet_fakes_census": float(sc[keep].sum()), "sheet_fakes_cmssw": float(sm[keep].sum()),
+                         "seed_fakes_census": float(fc[keep].sum()), "seed_fakes_cmssw": float(fm[keep].sum()),
+                         "judged_census": float(nc[keep].sum()), "judged_cmssw": float(nm[keep].sum())}
     parts = {name: {k: v[keep] for k, v in p.items()} for name, p in parts.items()}
     nkeep = int(keep.sum())
     stats = {name: _stats(p, name.startswith("C3")) for name, p in parts.items()}
@@ -926,7 +1060,8 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_event
     power = {str(nkeep): _joint_power(stats, boot)}
     for n_g in power_events:
         power[str(n_g)] = _joint_power(stats, boot, n_g / nkeep)
-    return {"stage": "C2 / C3", "census": census_dir, "census_inputs": _census_inputs(C),
+    return {"stage": "C2 / C3", "census": census_dir, "census_inputs": _census_inputs(C), "discs": OC.DISCS,
+            "acceptance": None if acc is None else {k: v["kf_indices"] for k, v in acc["seeds"].items()},
             "cmssw_nodr": cmssw_nodr, "cmssw_merge": cmssw_merge, "n_events": nevc, "excluded_events": exclude,
             "n_events_judged": nkeep, "n_boot": N_BOOT, "boot_seed": BOOT_SEED, "statistics": table,
             "joint_power_by_events": power, "sheet_definitions_ungated": sheet, "injected": list(inject or ()),
@@ -979,7 +1114,8 @@ def _joint_power(stats, boot, k=1.0):
 
 
 # ---- the order floor --------------------------------------------------------------------------------
-def floor(dtc_dir, random_dirs, cmssw_nodr=None, cmssw_merge=None, nev=None, exclude=None, c1b_report=None):
+def floor(dtc_dir, random_dirs, cmssw_nodr=None, cmssw_merge=None, nev=None, exclude=None, c1b_report=None,
+          acc=None):
     """D_order (the mean delivered discordance over the random pairs, jackknifed over runs, with its 80 %
     upper bound) and Delta_dtc (each gated statistic of the dtc run minus the random runs' mean, against
     CMSSW, with the error of that mean) (plan sec. 3, the order floor). Found as the gate counts it (judged
@@ -1008,7 +1144,8 @@ def floor(dtc_dir, random_dirs, cmssw_nodr=None, cmssw_merge=None, nev=None, exc
            "D_order": mean, "D_order_se_jk": se, "D_order_upper80": mean + 0.8416 * se,
            "half_margin_disc": MARGIN["disc"] / 2}
     if cmssw_nodr or cmssw_merge:
-        rep = {d: c23(d, cmssw_nodr, cmssw_merge, nev, exclude)[0]["statistics"] for d in [dtc_dir] + list(random_dirs)}
+        rep = {d: c23(d, cmssw_nodr, cmssw_merge, nev, exclude, acc=acc)[0]["statistics"]
+               for d in [dtc_dir] + list(random_dirs)}
         dd = {}
         for s in rep[dtc_dir]:
             r = np.array([rep[d][s]["value"] for d in random_dirs])
@@ -1103,6 +1240,8 @@ def main():
     p = sub.add_parser("twice"); p.add_argument("first"); p.add_argument("second")
     p = sub.add_parser("l2l3"); p.add_argument("census"); p.add_argument("cmssw")
     p = sub.add_parser("c1"); p.add_argument("nodr")
+    p = sub.add_parser("acceptance"); p.add_argument("nodr")
+    p = sub.add_parser("g0"); p.add_argument("format35"); p.add_argument("format36_discs_off")
     p = sub.add_parser("c1b"); p.add_argument("fakefit"); p.add_argument("--nodr", default=None)
     p.add_argument("--ot-order", default="dtc", help="the emulation's match order: dtc, or random:<seed>")
     for name in ("c23", "floor"):
@@ -1122,6 +1261,9 @@ def main():
         p.add_argument("--exclude-events", default=None,
                        help="events left out on both sides, 'a-b[,c-d]' in the census's numbering (the gated "
                             "f01 run: 0-9)")
+        p.add_argument("--acceptance", default=None,
+                       help="the seeds' acceptance report (acceptance -o, frozen on the known-good file): C2's "
+                            "per-seed denominators with the discs on")
     p = sub.add_parser("truncation"); p.add_argument("caps_on"); p.add_argument("caps_off")
     p = sub.add_parser("register"); p.add_argument("good"); p.add_argument("bad")
     p.add_argument("--gross", action="store_true", help="the gate's gross known-bad")
@@ -1145,13 +1287,19 @@ def main():
         rep, ok = l2l3(a.census, a.cmssw, a.nev)
     elif a.stage == "c1":
         rep, ok = c1(a.nodr, a.nev)
+    elif a.stage == "acceptance":
+        rep, ok = acceptance(a.nodr, a.nev)
+    elif a.stage == "g0":
+        rep, ok = g0(a.format35, a.format36_discs_off, a.nev)
     elif a.stage == "c1b":
         rep, ok = c1b(a.fakefit, a.nodr, a.nev, a.ot_order)
     elif a.stage == "c23":
         pe = [int(x) for x in a.power_events.split(",") if x.strip()]
-        rep, ok = c23(a.census, a.nodr, a.merge, a.nev, a.exclude_events, pe, a.inject)
+        acc = json.load(open(a.acceptance)) if a.acceptance else None
+        rep, ok = c23(a.census, a.nodr, a.merge, a.nev, a.exclude_events, pe, a.inject, acc)
     elif a.stage == "floor":
-        rep, ok = floor(a.dtc, a.random, a.nodr, a.merge, a.nev, a.exclude_events, a.c1b_report)
+        acc = json.load(open(a.acceptance)) if a.acceptance else None
+        rep, ok = floor(a.dtc, a.random, a.nodr, a.merge, a.nev, a.exclude_events, a.c1b_report, acc)
     elif a.stage == "truncation":
         rep, ok = truncation(a.caps_on, a.caps_off)
     else:

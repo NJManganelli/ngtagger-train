@@ -1,5 +1,5 @@
-"""The census formats the loader reads (tp_findability.READ_FORMATS): the current one and 34, the last census
-built from canon_v3. load() records the format it read and refuses any other; a comparison or aggregation of
+"""The census formats the loader reads (tp_findability.READ_FORMATS): the current one (36), 35 (WP-D's) and 34,
+the last census built from canon_v3. load() records the format it read and refuses any other; a comparison or aggregation of
 censuses (one_format) refuses a mix of formats unless it is marked cross-format."""
 import json
 import sys
@@ -15,17 +15,19 @@ F34 = Path("/Volumes/WDMac/smartpixels_scratch/wpd0b/census/OFF34")
 
 
 def test_read_formats():
-    assert TF.READ_FORMATS == (34, 35) and TF.FORMAT_VERSION == 35
+    assert TF.READ_FORMATS == (34, 35, 36) and TF.FORMAT_VERSION == 36
 
 
 def test_other_format_refused(tmp_path):
     (tmp_path / "manifest.json").write_text(json.dumps({"format": 33}))
-    with pytest.raises(SystemExit, match="census format 33; this code reads 34, 35 only"):
+    with pytest.raises(SystemExit, match="census format 33; this code reads 34, 35, 36 only"):
         TF.load(str(tmp_path), verbose=False)
 
 
 def test_one_format():
-    assert TF.one_format({"a": {"format": 35}, "b": {"format": 35}}) == (35,)
+    assert TF.one_format({"a": {"format": 36}, "b": {"format": 36}}) == (36,)
+    with pytest.raises(SystemExit, match=r"census formats differ \(wpd: 35, wpdisc: 36\)"):
+        TF.one_format({"wpd": {"format": 35}, "wpdisc": {"format": 36}})
     mix = {"canon_v3": {"format": 34}, "canon_v4": {"format": 35}}
     with pytest.raises(SystemExit, match=r"census formats differ \(canon_v3: 34, canon_v4: 35\)"):
         TF.one_format(mix)
