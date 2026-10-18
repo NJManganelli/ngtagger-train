@@ -644,7 +644,7 @@ def cmd_report(a):
         C = TF.load(d, with_tracks=True, verbose=False)
         runs[lab] = C
     Cg, Co = runs["angles"], runs["off"]
-    out["formats"] = TF.one_format(runs, a.cross_format)
+    formats = TF.one_format(runs, a.cross_format)
     if not np.array_equal(Cg["key"], Co["key"]):
         raise SystemExit("the two censuses' TP tables differ")
     keys = Cg["key"]
@@ -687,7 +687,7 @@ def cmd_report(a):
                                               "lost": int((m & ho & ~hg).sum()), "gained": int((m & hg & ~ho).sum()),
                                               "survival": float((m & ho & hg).sum() / max(n_off, 1))}
         out[b] = row
-    json.dump(out, open(a.out, "w"), indent=1)
+    json.dump({"formats": formats, **out}, open(a.out, "w"), indent=1)
     for b, row in out.items():
         for k, v in row.items():
             if v["correct_off"]:
