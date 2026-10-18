@@ -17,6 +17,7 @@
   c1b-j6    wpc.c1b.j6-gate            C1b J6 under A20: file 6, the gate (c1b/checks/checks_f06.json)
   c1b-betasym wpc.c1b.beta-symmetry    C1b after J5: the disc beta symmetry figure (c1b/beta_symmetry.json)
   scan-tree2-kg wpc.scan.tree2-e7-known-good  scan A4: E7 of tree2 on file 4 (scan/tree2/e7_f04.json)
+  scan-bpre wpc.scan.bpre-d0-pull       scan B-pre: d0 pull cores, disc-going vs barrel-only, file 4
   c1b-verdict wpc.c1b.verdict          C1b closed with the discs ON and its known limitations; updates the J2 / J3 / J6
                                        statuses (job dir of J6)
   c1b-j3    wpc.c1b.j3-material-scale-smooth  C1b J3 with the smooth seed, A18 (c1b/scale/scalefit_summary.json)
@@ -433,6 +434,25 @@ def scan_tree2_kg(job_dir, overwrite):
           "bias": "file 4, the known-good; P from c1b v1 (fit files)", "sources": [str(p)]}, job_dir, overwrite)
 
 
+def scan_bpre(job_dir, overwrite):
+    """Scan B-pre: the d0 pull core of disc-going against barrel-only prompt tracks on file 4, with the fixed inner
+    material and the pre-fix rule (the known-bad) (wpc/scan/bpre/dcheck_f04.json)."""
+    p = CM.OUT / "scan" / "bpre" / "dcheck_f04.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"},
+            {"name": "known-bad (pre-fix rule) bins disagreeing",
+             "value": json.dumps([k for k, e in Q["bins"].items() if k.startswith("radius|") and e.get("agrees") is False])}]
+    vals += [{"name": f"{k} d0 pull core disc-going / barrel-only",
+              "value": f"{e['disc_going']['core']:.3f} +- {e['disc_going']['sd']:.3f} / "
+                       f"{e['barrel_only']['core']:.3f} +- {e['barrel_only']['sd']:.3f}"}
+             for k, e in Q["bins"].items() if "agrees" in e]
+    _reg({"id": "wpc.scan.bpre-d0-pull", "title": "WP-C scan B-pre: the inner material of disc-going tracks, d0 pull "
+                                                  "cores on file 4",
+          "status": "valid", "status_note": "; ".join(Q["material"]) or "passes; the pre-fix rule fails in IAAA",
+          "values": vals, "bias": "file 4; prompt tracks only", "sources": [str(p)]}, job_dir, overwrite)
+
+
 def c1b_betasym(job_dir, overwrite):
     """The read-only disc beta symmetry figure (after J5): the innermost populated key bins, k < 0 (J5's failing bin)
     and its mirror k > 0, per disc."""
@@ -461,7 +481,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
-                                     "c1b-j6", "c1b-verdict", "c1b-betasym", "scan-tree2-kg"))
+                                     "c1b-j6", "c1b-verdict", "c1b-betasym", "scan-tree2-kg",
+                                     "scan-bpre"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -473,7 +494,7 @@ def main(argv=None):
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
          "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
          "c1b-j6": c1b_j6, "c1b-verdict": c1b_verdict, "c1b-betasym": c1b_betasym,
-         "scan-tree2-kg": scan_tree2_kg}[a.what](a.job_dir, a.overwrite)
+         "scan-tree2-kg": scan_tree2_kg, "scan-bpre": scan_bpre}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
