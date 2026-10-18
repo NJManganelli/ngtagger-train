@@ -87,7 +87,8 @@ class Arm:
     k_alpha: float = 1.0
     k_beta: float = 1.0
     k_mode: str = "fixed"
-    K: int = 1                      # 1 | 2 (best, runner-up, skip at the first-visited surface)
+    K: int | str = 1                # 1 | 2 (PD2: best, runner-up, skip at the first-visited surface) | "tree2" (PD14:
+                                    # the two-layer branching hit choice with rolling commitment, scan plan A1)
     gate: bool = False
     rr: bool = False
     rr_max_iter: int = 2
@@ -283,13 +284,18 @@ class State:
         self.prevNT = np.zeros(n, np.int64)
         self.Lv = np.full(n, 5, np.int64)                  # calibrated material: last visited (5 = the OT)
         self.branch = np.zeros(n, np.int8)                 # K: 0 best, 1 runner-up, 2 skip
+        self.pend = np.zeros(n, bool)                      # tree2: a first-layer choice awaiting its lookahead
+        self.s1 = np.zeros(n)                              # tree2: its first-layer chi2 (0 for the skip)
+        self.P1 = np.zeros(n)                              # tree2: the window's skip penalty
+        self.j1 = np.zeros(n, np.int64)                    # tree2: the window's first visit step
         self.rec = {"mi": np.full((n, ns), -1, np.int64), "ci": np.full((n, ns), -1, np.int64),
                     "acc": np.zeros((n, ns), bool), "visited": np.zeros((n, ns), bool),
                     "chi2": np.zeros((n, ns, 4)), "gstat": np.full((n, ns), np.nan),
                     "ncand": np.zeros((n, ns), np.int16), "trunc": np.zeros((n, ns), bool),
-                    "gated": np.zeros((n, ns), bool), "surface": np.full((n, ns), -1, np.int64)}
+                    "gated": np.zeros((n, ns), bool), "surface": np.full((n, ns), -1, np.int64),
+                    "kchoice": np.full((n, ns), -1, np.int8)}      # tree2: the committed choice per visit step
 
-    ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch", "dg")
+    ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch", "dg", "pend", "s1", "P1", "j1")
 
     def take(self, idx):
         s = State.__new__(State)
@@ -708,6 +714,8 @@ def step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path, own_rows=None):
         own_rows.append(DG.own_rows(arm, st, j, t, S, ctx, geo, tools, kpt))
     st.rec["visited"][t, j] = True
     st.rec["surface"][t, j] = S
+    if arm.K == "tree2":
+        return _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path)
     got = _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg)
     if got is None:
         return st
@@ -731,6 +739,129 @@ def step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path, own_rows=None):
     return st
 
 
+# ---------------------------------------------------------------- tree2 (PD14) ----
+def tree2_scores(x1, x2, P, k_score="penalty", p_first=None):
+    """Scan plan A1: the score of each first-layer choice (best, runner-up, skip) of n windows, the lower the better.
+    x1 (n, 2): the first layer's chi2 of best and runner-up (inf: none); x2 (n, 3, 2): the second layer's chi2 of best
+    and runner-up from each first choice's own prediction (inf: none), or None for a one-layer window (no next visit);
+    P (n,): the window's skip penalty, the same at both layers. "penalty": chi2 sum plus P per skip, at most one
+    chosen skip; an empty second layer costs P but is not a chosen skip. "tailprob" (the PD2 known-bad): -log of the
+    chi2 tail probability of the pair's sum for 2 dof per hit. p_first: a different first-layer skip penalty (PD2's
+    asymmetric known-bad)."""
+    P = np.asarray(P, np.float64)
+    zero = np.zeros(len(P))
+    chi1 = np.stack([x1[:, 0], x1[:, 1], zero], 1)
+    h1 = np.array([1, 1, 0])
+    if k_score == "tailprob":
+        from scipy import stats
+
+        def tp(chi, hits):
+            with np.errstate(invalid="ignore"):
+                return np.where(np.isfinite(chi), -stats.chi2.logsf(chi, np.maximum(2 * hits, 1)), np.inf)
+        if x2 is None:
+            return np.stack([tp(chi1[:, c], h1[c]) for c in range(3)], 1)
+        out = np.full((len(P), 3), np.inf)
+        for c in range(3):
+            empty = ~np.isfinite(x2[:, c]).any(1)
+            opts = [tp(chi1[:, c] + x2[:, c, 0], h1[c] + 1), tp(chi1[:, c] + x2[:, c, 1], h1[c] + 1)]
+            if c < 2:
+                opts.append(tp(chi1[:, c], h1[c]))
+            else:
+                opts.append(np.where(empty, tp(zero, 0), np.inf))
+            out[:, c] = np.min(opts, 0)
+        return out
+    s1 = np.stack([x1[:, 0], x1[:, 1], P if p_first is None else np.asarray(p_first, np.float64)], 1)
+    if x2 is None:
+        return s1
+    cand = np.minimum(x2[:, :, 0], x2[:, :, 1])
+    empty = ~np.isfinite(cand)
+    L2 = np.where(empty, P[:, None], cand)
+    L2[:, :2] = np.where(empty[:, :2], P[:, None], np.minimum(cand[:, :2], P[:, None]))
+    return s1 + L2
+
+
+def _tree2_commit(arm, st, idx, x2):
+    """Commit the open windows of the virtual tracks idx (every copy of their OT tracks): per OT track the copy of the
+    lowest-scoring first choice (ties: best, runner-up, skip). x2 (len(idx), 2): each copy's second-layer chi2 of best
+    and runner-up (inf: none), or None (one layer). Records the choice at the window's first step; returns the kept
+    mask over idx."""
+    ug, gi = np.unique(st.o[idx], return_inverse=True)
+    c = st.branch[idx].astype(np.int64)
+    X1 = np.full((len(ug), 2), np.inf)
+    hit = c < 2
+    X1[gi[hit], c[hit]] = st.s1[idx[hit]]
+    P = np.zeros(len(ug))
+    P[gi] = st.P1[idx]
+    X2 = None
+    if x2 is not None:
+        X2 = np.full((len(ug), 3, 2), np.inf)
+        X2[gi, c] = x2
+    win = np.argmin(tree2_scores(X1, X2, P, arm.k_score), 1)
+    keep = c == win[gi]
+    st.rec["kchoice"][idx[keep], st.j1[idx[keep]]] = c[keep]
+    st.pend[idx] = False
+    return keep
+
+
+def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
+    """One (visit step, surface) of tree2: Q; the candidates and their chi2 (the rank consumer's dims); the windows
+    opened at the tracks' previous visit are committed with this surface as their second layer; then a window opens
+    here on every surviving track with a candidate: best (applied to the track), runner-up (applied to a copy) and
+    skip (a copy), pending until the next visit."""
+    _q_step(arm, st, t, S, path, geo, tools, kpt, cfg)
+    st.rec["visited"][t, j] = True
+    st.rec["surface"][t, j] = S
+    got = _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg)
+    kb = np.full(len(t), -1, np.int64)
+    kr = np.full(len(t), -1, np.int64)
+    xb = np.full(len(t), np.inf)
+    xr = np.full(len(t), np.inf)
+    if got is not None:
+        X, cands = got
+        st.rec["ncand"][X["t"], j] = X["ncand"]
+        st.rec["trunc"][X["t"], j] = X["trunc"]
+        best, runner = _ranked(cands, len(X["t"]))
+        pos = np.searchsorted(t, X["t"])
+        kb[pos], kr[pos] = best, runner
+        for k_, x_ in ((kb, xb), (kr, xr)):
+            m = k_ >= 0
+            if m.any():
+                q = k_[m]
+                x_[m] = gate_stat(arm, "rank", ctx, geo, cands["ci"][q], cands["mi"][q], cands["h0"][q], cands["Sz"][q],
+                                  tools)
+    drop = np.zeros(0, np.int64)
+    if st.pend[t].any():
+        allp = np.flatnonzero(st.pend & np.isin(st.o, st.o[t[st.pend[t]]]))
+        x2 = np.full((len(allp), 2), np.inf)                      # a copy not at this visit: an empty layer
+        pos = np.minimum(np.searchsorted(t, allp), len(t) - 1)
+        here = t[pos] == allp
+        x2[here, 0], x2[here, 1] = xb[pos[here]], xr[pos[here]]
+        drop = allp[~_tree2_commit(arm, st, allp, x2)]
+    alive = ~np.isin(t, drop)
+    h1, h2 = alive & (kb >= 0), alive & (kr >= 0)
+    if h1.any():
+        P = tools.cuts.chi2("gate", arm.dims_key("rank"), arm.cov_model,
+                            cut_surface(arm, st, t[h1], np.full(h1.sum(), S, np.int64)), np.full(h1.sum(), j == 0))
+        P2 = P[np.isin(t[h1], t[h2])]
+        n0 = len(st.o)
+        ru = st.take(t[h2])
+        ru.branch[:] = 1
+        sk = st.take(t[h1])
+        sk.branch[:] = 2
+        st.extend(ru)
+        st.extend(sk)
+        ir = np.arange(n0, n0 + h2.sum())
+        isk = np.arange(n0 + h2.sum(), n0 + h2.sum() + h1.sum())
+        st.branch[t[h1]] = 0
+        for idx, s1, p in ((t[h1], xb[h1], P), (ir, xr[h2], P2), (isk, np.zeros(h1.sum()), P)):
+            st.pend[idx], st.s1[idx], st.P1[idx], st.j1[idx] = True, s1, p, j
+        _choose_apply(arm, st, j, {"t": ir}, cands, kr[h2], ctx, geo, tools, path, S, kpt)
+        _choose_apply(arm, st, j, {"t": t[h1]}, cands, kb[h1], ctx, geo, tools, path, S, kpt)
+    if len(drop):
+        st = st.take(np.setdiff1d(np.arange(len(st.o)), drop))
+    return st
+
+
 # ---------------------------------------------------------------- the run ----
 def run_arm(ctx, geo, cfg, mask, arm, tools, tracks=None, own=False, loo=False):
     """One arm on one chunk (free selection). tracks: bool per track (default: a covariance, as the
@@ -738,6 +869,8 @@ def run_arm(ctx, geo, cfg, mask, arm, tools, tracks=None, own=False, loo=False):
     loo: also the leave-one-out chi2 of every accepted hit for all angle-dims sets (the rr cut fit)."""
     if own and arm.K != 1:
         raise ValueError("the own-cluster diagnostics are recorded with K = 1")
+    if arm.K == "tree2" and arm.gate:
+        raise ValueError("tree2 prices a skip at the 99 % gate cut itself; the forward gate is off (scan plan A1)")
     if tracks is None:
         tracks = np.trace(ctx["C"], axis1=1, axis2=2) > 0
     o = np.flatnonzero(tracks)
@@ -854,6 +987,11 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     """K resolution, reject-and-refit (with the scenario mask's rr cuts, PD15; never removing a track's
     only remaining SmartPixels cluster, PD19), inner material, passthrough; the per-track output."""
     ntrk = ctx["ntrk"]
+    if arm.K == "tree2":                                         # windows still open: one layer
+        p = np.flatnonzero(st.pend)
+        if len(p):
+            keep = _tree2_commit(arm, st, p, None)
+            st = st.take(np.setdiff1d(np.arange(len(st.o)), p[~keep]))
     if arm.K == 2:
         st = st.take(resolve_k(arm, st, geo, tools))
     loo_out = None
@@ -904,7 +1042,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     if arm.inner_material:
         inner_material(arm, st, geo, tools, kpt)
     nacc = st.rec["acc"].sum(1)
-    fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan}
+    fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan, "kchoice": -1}
     out = {"a": ctx["a"].copy(), "C": ctx["C"].copy(), "nacc": np.zeros(ntrk, np.int64),
            "refit": np.zeros(ntrk, bool), "branch": np.full(ntrk, -1, np.int8),
            "rec": {k: np.full((ntrk,) + v.shape[1:], fill.get(k, 0), v.dtype) for k, v in st.rec.items()},
@@ -914,7 +1052,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     out["a"][o[ok]], out["C"][o[ok]] = st.a[ok], st.C[ok]
     out["nacc"][o] = nacc
     out["refit"][o[ok]] = True
-    out["branch"][o] = st.branch
+    out["branch"][o] = st.rec["kchoice"][:, 0] if arm.K == "tree2" else st.branch
     for k, v in st.rec.items():
         out["rec"][k][o] = v
     out["removed"][o] = removed

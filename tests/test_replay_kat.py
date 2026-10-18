@@ -518,6 +518,71 @@ def test_empty_layer_material_is_charged():
     assert np.allclose(predict(cal, [4]), predict(no_il4, [4]))
 
 
+def test_tree2_identity(data, monkeypatch):
+    """Scan plan A3: with the skip priced at infinity (the constant cut) and no runner-up, tree2 commits the best hit
+    at every surface: bit-identical to K = 1."""
+    cfg = data["cfg"]
+    k1 = run(data, AR.inn(cfg))
+    ranked = AR._ranked
+    monkeypatch.setattr(AR, "_ranked", lambda cands, nx: (ranked(cands, nx)[0], np.full(nx, -1, np.int64)))
+    t2 = run(data, AR.inn(cfg, name="tree2", K="tree2"))
+    for k in ("a", "C", "nacc", "refit"):
+        assert np.array_equal(k1[k], t2[k], equal_nan=True), k
+    for k in ("ci", "mi", "acc", "chi2"):
+        assert np.array_equal(k1["rec"][k], t2["rec"][k]), k
+    assert set(np.unique(t2["rec"]["kchoice"])) <= {-1, 0}
+
+
+def _toy6(d, r, n, seed, score):
+    """Scan plan A3 toy 6: the committed first-layer (correct, wrong, skip) rates of a score rule and K = 1's wrong rate
+    on two coupled surfaces (a wrong first choice shifts the second layer's prediction by 0.5 r u1)."""
+    from scipy import stats
+    rng = np.random.default_rng(seed)
+    unit = lambda: (lambda u: u / np.linalg.norm(u, axis=1, keepdims=True))(rng.standard_normal((n, d)))
+    u1, u2 = unit(), unit()
+    c1, w1 = rng.standard_normal((n, d)), rng.standard_normal((n, d)) + r * u1
+    c2, w2 = rng.standard_normal((n, d)), rng.standard_normal((n, d)) + r * u2
+    q = lambda v: (v ** 2).sum(1)
+    P = np.full(n, stats.chi2.ppf(0.99, d))
+    wrong_best = q(w1) < q(c1)
+    x1 = np.stack([np.minimum(q(c1), q(w1)), np.maximum(q(c1), q(w1))], 1)
+    shift = 0.5 * r * u1
+    after = {"correct": np.stack([q(c2), q(w2)], 1), "wrong": np.stack([q(c2 - shift), q(w2 - shift)], 1)}
+    lay2 = lambda s: np.sort(after[s], 1)
+    first_is_wrong = np.stack([wrong_best, ~wrong_best], 1)          # (best, runner-up) is the wrong hit
+    x2 = np.stack([np.where(first_is_wrong[:, [c]], lay2("wrong"), lay2("correct")) for c in (0, 1)]
+                  + [lay2("correct")], 1)
+    ch = np.argmin(score(x1, x2, P), 1)
+    wrong = np.where(ch == 2, False, first_is_wrong[np.arange(n), np.minimum(ch, 1)])
+    return {"wrong": wrong.mean(), "skip": (ch == 2).mean(), "k1_wrong": wrong_best.mean(), "n": n}
+
+
+def _wilson_upper(p, n, z=1.645):
+    return (p + z * z / (2 * n) + z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n))) / (1 + z * z / n)
+
+
+def _toy6_passes(res):
+    ok = []
+    for (d, r), x in res.items():
+        wu, su = _wilson_upper(x["wrong"], x["n"]), _wilson_upper(x["skip"], x["n"])
+        ok.append((wu <= 0.5 * x["k1_wrong"] if r < 6 else wu <= x["k1_wrong"] + 5e-4) and su <= 0.015)
+    return all(ok)
+
+
+@pytest.mark.xfail(strict=True, reason="scan plan A3 criterion 1 fails as pre-declared (2026-10-18): tree2 cuts K = 1's "
+                   "wrong commits by 30-39 % at r = 4 (needed 50 %); skip <= 1.04 %; known-bads fail. Decision pending")
+def test_toy6_tree2():
+    """Scan plan A3 (amended before it ran): tree2's scores halve K = 1's committed wrong rate at r = 4, 5 (no worse at
+    r = 6) with a skip rate <= 1.5 %; PD2's asymmetric penalty and the tail-probability rule fail."""
+    n = 200_000
+    grid = [(d, r) for d in (2, 4) for r in (4, 5, 6)]
+    run6 = lambda score: {(d, r): _toy6(d, r, n, 100 * d + r, score) for d, r in grid}
+    good = run6(AR.tree2_scores)
+    assert _toy6_passes(good), good
+    assert not _toy6_passes(run6(lambda x1, x2, P: AR.tree2_scores(x1, x2, P, p_first=0.5 * P)))
+    assert not _toy6_passes(run6(lambda x1, x2, P: AR.tree2_scores(x1, x2, P, "tailprob")))
+
+
 def test_inner_material_disc_going():
     """Scan plan B-pre: the inner material of a disc-going track whose innermost update is a disc (ID2) charges only the
     planes it crosses between the POCA and ID2 (beam pipe, IL1 module, ID1, ID2's own plane), never the barrel planes
