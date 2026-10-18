@@ -16,6 +16,8 @@
                                        supersedes wpc.c1b.j5-known-good (the A19 run, kept at c1b/checks/a19/)
   c1b-j6    wpc.c1b.j6-gate            C1b J6 under A20: file 6, the gate (c1b/checks/checks_f06.json)
   c1b-betasym wpc.c1b.beta-symmetry    C1b after J5: the disc beta symmetry figure (c1b/beta_symmetry.json)
+  c1b-verdict wpc.c1b.verdict          C1b closed with the discs ON and its known limitations; updates the J2 / J3 / J6
+                                       statuses (job dir of J6)
   c1b-j3    wpc.c1b.j3-material-scale-smooth  C1b J3 with the smooth seed, A18 (c1b/scale/scalefit_summary.json)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
@@ -363,6 +365,53 @@ def c1b_j6(job_dir, overwrite):
                 "file 6, judged once; D3 on A18 / A19's statistic; D1 without A20's exempt bins", job_dir, overwrite)
 
 
+C1B_LIMITATIONS = [
+    "J6 (file 6): D3b ID1 later visits at pT 10-20 GeV, u: predicted errors too large, scale 0.700 +- 0.043 (n 343); "
+    "file 4 0.76, fit files 0.87; safe for efficiency, some wrong-cluster rejection lost in that bin",
+    "D1 exemption (A20): beta in the innermost populated disc angle bin, 9.5-11.3 deg (|eta| 2.3-2.5), both signs, ID1-ID4: "
+    "widths 1.11-1.27; a stand-in artefact of the shared response's small-|beta| plateau; the table's beta width, not the "
+    "prediction",
+    "the disc material scale 2.67 +- 0.06: physically suspect (unmodelled forward material, or standing in for the barrel "
+    "excess)",
+    "the barrel's shared IL1 / IL2 later-visit excess: errors 9-19 % too small for every track (barrel-only and disc-going)",
+    "tails: 1.6-5.8 % of the innovation pulls beyond 3 sigma per family; core-width judging does not cover them",
+    "the seed model above |eta| 2.25 at |p| 10-15 GeV rises faster than the data (sqrt dC(z0) ~12 mm vs ~7.5 mm at |eta| 2.5)",
+    "power: D3 does not catch a 1.3x material scale, nor radius-only disc material (D3b shift median 0.02, max 0.13)",
+]
+
+
+def c1b_verdict(job_dir, overwrite):
+    """C1b's verdict (the physicist's decision, 2026-10-18): closed with the discs ON, with the known limitations; the
+    statuses of J2 / J3 (re-judged under A18 / A19) and J6 follow."""
+    out = CM.OUT / "c1b"
+    with open(out / "checks" / "checks_f04.json") as fh:
+        J5 = json.load(fh)
+    with open(out / "checks" / "checks_f06.json") as fh:
+        J6 = json.load(fh)
+    with open(out / "scale" / "scalefit_summary.json") as fh:
+        S = json.load(fh)
+    vals = [{"name": "verdict", "value": "closed, discs ON (INN-D: smooth seed v1, path-ordered disc material at the fitted "
+                                         "scale, v3's position errors, the module-frame disc angle entries, cuts c1b v1)"},
+            {"name": "disc material scale", "value": f"{S['scale']:.3f} +- {S['scale_sd']:.3f}"},
+            {"name": "J5 (file 4) MATERIAL", "value": "; ".join(J5["material"]) or "none"},
+            {"name": "J6 (file 6) MATERIAL, accepted as a known limitation", "value": "; ".join(J6["material"]) or "none"},
+            {"name": "waivers", "value": "A18 (clipped-likelihood scale), A19 (D3c relative to D3d), A20 (D1 beta edge "
+                                         "exemption; radius-only known-bad as a power statement)"}]
+    vals += [{"name": f"known limitation {i + 1}", "value": t} for i, t in enumerate(C1B_LIMITATIONS)]
+    _reg({"id": "wpc.c1b.verdict", "title": "WP-C C1b: the replay's disc calibration, verdict (discs ON)",
+          "status": "valid", "status_note": "closed by the physicist's decision of 2026-10-18 with the known limitations "
+                                            "listed; the gate's one failure is limitation 1",
+          "values": vals, "bias": "the angles are placeholders (the shared response); see the known limitations",
+          "sources": [str(out / "checks" / "checks_f04.json"), str(out / "checks" / "checks_f06.json"),
+                      str(out / "scale" / "scalefit_summary.json"), str(out / "PLAN.md")]}, job_dir, overwrite)
+    R.set_status("wpc.c1b.j6-gate", "valid", "one MATERIAL (D3b ID1 later, pT 10-20 GeV, u 0.700) accepted as a known "
+                 "limitation; the package closed with the discs ON (wpc.c1b.verdict)", by=BY)
+    R.set_status("wpc.c1b.j2-seed-test-smooth", "in-sample", "re-judged under A18 (c1b/seed/seedtest_a18.json): D3a "
+                 "passes on the clipped-likelihood scale; the A17 stop is withdrawn", by=BY)
+    R.set_status("wpc.c1b.j3-material-scale-smooth", "in-sample", "re-judged under A19 (c1b/scale/scalefit_a19.json): "
+                 "passes; D3c judged relative to D3d; second-on 2.671 / third-on 2.705 accepted", by=BY)
+
+
 def c1b_betasym(job_dir, overwrite):
     """The read-only disc beta symmetry figure (after J5): the innermost populated key bins, k < 0 (J5's failing bin)
     and its mirror k > 0, per disc."""
@@ -391,7 +440,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
-                                     "c1b-j6", "c1b-betasym"))
+                                     "c1b-j6", "c1b-verdict", "c1b-betasym"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -402,7 +451,7 @@ def main(argv=None):
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
          "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
-         "c1b-j6": c1b_j6, "c1b-betasym": c1b_betasym}[a.what](a.job_dir, a.overwrite)
+         "c1b-j6": c1b_j6, "c1b-verdict": c1b_verdict, "c1b-betasym": c1b_betasym}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
