@@ -774,16 +774,32 @@ def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
             mb = CT
             vb = np.maximum(SCT, 1e-9) ** 2
             angb = T["ANG_B"]
-    out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb,
-                 ang if ang is not None else angb, d0_prior_cm, ms_scale, it_ot_scale,
-                 pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse,
-                 has_beta=angb)
+    # A DIVERGED FIT (census format 36): finite inputs, a non-finite state or position chi2. The batch filter
+    # has no per-step isGoodState, and the third-order terms ((d0/r)^3 above all) feed a wild state back into
+    # its own prediction: a hit list that is no helix (an OT seed's IT disc attachments of more than one
+    # particle) can overflow. Such a fit is not a track (ok False, counted per seed by the census as
+    # kf_diverged); the overflow warnings it raises are expected. A non-finite INPUT is not divergence: its fit
+    # stays ok and its NaN reaches the NaN guard.
+    with np.errstate(over="ignore", invalid="ignore"):
+        out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb,
+                     ang if ang is not None else angb, d0_prior_cm, ms_scale, it_ot_scale,
+                     pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse,
+                     has_beta=angb)
     (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
      c2p, c2z, vphi) = out
+    fin_in = np.ones(len(ok), bool)
+    for x, u in ((T["R"], T["VALID"]), (m0, T["VALID"]), (T["Z"], T["VALID"]), (v0, T["VALID"]),
+                 (v1, T["VALID"]), (ma, ang), (va, ang), (mb, angb), (vb, angb)):
+        if x is not None and u is not None:
+            fin_in &= ~(u & T["VALID"] & ~np.isfinite(x)).any(axis=1)
+    fin_out = np.isfinite(kappa) & np.isfinite(phi0) & np.isfinite(d0) & np.isfinite(cot) & np.isfinite(z0) \
+        & np.isfinite(c2p) & np.isfinite(c2z)
+    diverged = ok & fin_in & ~fin_out
+    ok = ok & ~diverged
     fit = {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,
            "cot": cot, "z0": z0, "var_kappa": vk, "var_d0": vd,
            "var_cot": vc, "var_z0": vz, "var_phi0": vphi,
-           "nhit": nhit, "ok": ok, "hits": T,
+           "nhit": nhit, "ok": ok, "diverged": diverged, "hits": T,
            "chi2_rphi": c2p, "chi2_rz": c2z}
     # THE FINAL-STATE ANGLE CHI2, whether or not the angles entered the fit, so
     # that the stages reading it (S6 acceptance, S7 rank, S8 features) see one
@@ -791,8 +807,10 @@ def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
     # alpha and beta parts are kept apart for S6's per-angle sets.
     # THE DISC HITS' ANGLES (census format 36): module-frame pulls against the final state (disc_angle_pulls),
     # in the same chi2 and counts; never fed to the update (S5 reads the barrel's only)
-    T["DANG"], T["DPA"], T["DPB"] = disc_angle_pulls(Q, T, fit, model)
-    c2a, na, c2b, nb = angle_chi2_parts(T, fit)
+    # (a diverged state's pulls overflow too; the NaN guard counts the non-finite ones of every fit that is ok)
+    with np.errstate(over="ignore", invalid="ignore"):
+        T["DANG"], T["DPA"], T["DPB"] = disc_angle_pulls(Q, T, fit, model)
+        c2a, na, c2b, nb = angle_chi2_parts(T, fit)
     fit["chi2_a"], fit["n_a"], fit["chi2_b"], fit["n_b"] = c2a, na, c2b, nb
     fit["chi2_angle"] = c2a + c2b
     fit["n_angle"] = (T["VALID"] & (T["ANG"] | T["DANG"])).sum(axis=1).astype(np.int32)

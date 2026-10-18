@@ -291,12 +291,22 @@ def twice(f1, f2, nev=None):
 _G0_HIT_DISC_COLS = [i for i, L in enumerate(KFE.LAYER_ORDER) if M.is_disc(L)]
 
 
+_G0_NEW_COUNTERS = ("kf_diverged",)
+
+
 def _g0_array(name, a35, a36):
     """'' when shard array `name` of a format-36 census with the discs off equals format 35's, else why not.
     Format 36's additions must be empty: cen_hit_otd / cen_hit_itd all 0; the disc columns of a track's hit row
-    (hit_<i>, hit_m<i>: _G0_HIT_DISC_COLS) and of its final stubs (hit_o / hit_om: the trailing OD1-OD5) all -1."""
+    (hit_<i>, hit_m<i>: _G0_HIT_DISC_COLS) and of its final stubs (hit_o / hit_om: the trailing OD1-OD5) all -1;
+    the per-seed counters' kf_diverged 0."""
     if a35 is None:
         return "" if name in ("cen_hit_otd", "cen_hit_itd") and not np.any(a36) else "new array"
+    if name == "counters":                        # per seed: format 36 adds kf_diverged, which must be 0
+        c35, c36 = json.loads(str(a35)), json.loads(str(a36))
+        if any(c.get("kf_diverged", 0.0) for c in c36.values()):
+            return "kf_diverged nonzero"
+        trim = {k: {kk: vv for kk, vv in c.items() if kk not in _G0_NEW_COUNTERS} for k, c in c36.items()}
+        return "" if trim == c35 else "values differ"
     if a36.shape == a35.shape:
         return "" if np.array_equal(a35, a36, equal_nan=a35.dtype.kind == "f") else "values differ"
     if not (a36.ndim == 2 and a35.ndim == 2 and a36.shape[0] == a35.shape[0] and a36.shape[1] > a35.shape[1]):

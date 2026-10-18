@@ -1,6 +1,7 @@
 """Unit tests of the WP-D closure's bookkeeping and statistics (eval_refitq/combinatorics/closure_vs_cmssw):
 the shared record rule, the event exclusion, the no-DR alignment, bit-level branch comparison, the joint
 power at another sample size and the known-bad classification."""
+import json
 import math
 import sys
 from pathlib import Path
@@ -160,3 +161,11 @@ def test_g0_array_rule():
     assert CV._g0_array("hit_3", rows35, rows36) == ""
     rows36[0, 5] = 7
     assert CV._g0_array("hit_m3", rows35, rows36) == "disc columns filled"
+    # the per-seed counters: format 36 adds kf_diverged, which must be 0
+    c35 = np.array(json.dumps({"0": {"fit": 3.0, "before_chi2": 5.0}}))
+    c36 = np.array(json.dumps({"0": {"before_chi2": 5.0, "kf_diverged": 0.0, "fit": 3.0}}))
+    assert CV._g0_array("counters", c35, c36) == ""
+    assert CV._g0_array("counters", c35, np.array(json.dumps({"0": {"before_chi2": 5.0, "kf_diverged": 1.0,
+                                                                     "fit": 3.0}}))) == "kf_diverged nonzero"
+    assert CV._g0_array("counters", c35, np.array(json.dumps({"0": {"before_chi2": 4.0, "kf_diverged": 0.0,
+                                                                     "fit": 3.0}}))) == "values differ"

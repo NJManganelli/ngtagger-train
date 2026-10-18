@@ -2,6 +2,7 @@
 disc projection's geometry (r on a z plane), the OT disc windows, and the census KF on disc hits."""
 import math
 import sys
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -106,6 +107,55 @@ def test_kf_fits_a_forward_track_on_disc_hits():
             V["sigY"][i] = sig
         fit2 = KF.fit_tracks(V, Q, (np.array([1]), np.array([2]), None), use_angles=False, gidx=G)
         assert 0.8 * want < fit2["chi2_rz"][0] < 1.25 * want
+
+
+# an OL1+OD1 seed's hit list in f01 event 0-3 (CAL36's first chunk, 2026-10-18): IT hits of more than one particle
+# (IL2 and ID1 at r 6.44 / 6.47, z 19.1 / 24.4), on which the batch filter's third-order terms overflow
+DIVERGED_HITS = {
+    "layer": [1, 2, 5, 6, 7, 8, 11, 21],
+    "globalR": [3.250701665878296, 6.4434494972229, 6.467482566833496, 8.440054893493652, 9.463529586791992,
+                12.030579566955566, 23.527034759521484, 25.269975662231445],
+    "globalZ": [3.6375732421875, 19.1328125, 24.39990234375, 31.39501953125, 41.5732421875, 51.72021484375,
+                119.080322265625, 129.04949951171875],
+    "globalPhi": [2.8497707843780518, 2.846801280975342, 2.8325722217559814, 2.831813097000122, 2.8189592361450195,
+                  2.8332488536834717, 2.8113152980804443, 2.8080945014953613],
+    "sigY": [0.0011501312255859375, 0.0012502670288085938, 0.0028896331787109375, 0.0028896331787109375,
+             0.00025010108947753906, 0.0028896331787109375, 0.0734582504272461, 0.04234864224505905],
+    "sigX": [0.0002999305725097656, 0.00034999847412109375, 0.0007200241088867188, 0.0007200241088867188,
+             0.00025010108947753906, 0.0007200241088867188, 0.0734582504272461, 0.04234864224505905],
+    "ot_ps": [False] * 6 + [True, True], "ot_tilted": [False] * 6 + [True, False]}
+
+
+def test_kf_diverged_fit_is_not_a_track():
+    """A diverged fit (finite inputs, a non-finite state) is not ok and is flagged; a non-finite INPUT is not
+    divergence (the fit stays ok, its NaN left to the NaN guard); a good track is neither."""
+    U = {k: np.asarray(v) for k, v in DIVERGED_HITS.items()}
+    n = len(U["layer"])
+    U["event"] = np.zeros(n, np.int64)
+    Q = {"dir_ok": np.zeros(n, bool), "ovf_a": np.zeros(n, bool), "ovf_z": np.zeros(n, bool),
+         "kap_a": np.zeros(n), "s_kap": np.ones(n), "cot_b": np.zeros(n), "s_cot": np.ones(n)}
+    G = np.full((1, len(KF.LAYER_ORDER)), -1, np.int64)
+    for i, L in enumerate(U["layer"]):
+        G[0, KF.LAYER_ORDER.index(L)] = i
+    trip = (np.array([6]), np.array([7]), None)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                 # the expected overflow raises no warning
+        fit = KF.fit_tracks(U, Q, trip, use_angles=False, gidx=G)
+    assert fit["diverged"].tolist() == [True] and fit["ok"].tolist() == [False]
+    assert not np.isfinite(fit["chi2_rphi"][0])
+    V = dict(U, globalPhi=U["globalPhi"].copy())
+    V["globalPhi"][0] = np.nan
+    fit = KF.fit_tracks(V, Q, trip, use_angles=False, gidx=G)
+    assert fit["diverged"].tolist() == [False] and fit["ok"].tolist() == [True] and np.isnan(fit["kappa"][0])
+    keep = np.ones(n, bool)
+    keep[[1, 2]] = False                                # without the second particle's IL2 / ID1
+    W = {k: v[keep] for k, v in U.items()}
+    G2 = np.full((1, len(KF.LAYER_ORDER)), -1, np.int64)
+    for i, L in enumerate(W["layer"]):
+        G2[0, KF.LAYER_ORDER.index(L)] = i
+    Q2 = {k: v[keep] for k, v in Q.items()}
+    fit = KF.fit_tracks(W, Q2, (np.array([4]), np.array([5]), None), use_angles=False, gidx=G2)
+    assert fit["diverged"].tolist() == [False] and np.isfinite(fit["kappa"][0])
 
 
 # ---- the disc angle stages (module frame) -----------------------------------------------------------

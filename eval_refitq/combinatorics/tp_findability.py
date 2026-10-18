@@ -1169,9 +1169,11 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         trip0 = (o["_gA"], o["_gB"], gc0 if gc0 is not None else o["_gB"])
         fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, **fopt)
         keep, chi2s = KF.good_state(fit0, pt_s)
-        # the NaN guard on S6's statistic, cut or feature (the exported chi2_angle_per_meas)
-        ang.count_nonfinite("S6", fit0["chi2_angle"][fit0["n_angle_meas"] > 0])
+        # the NaN guard on S6's statistic, cut or feature (the exported chi2_angle_per_meas), among the fits
+        # that are tracks: a diverged fit (KF.fit_tracks) is rejected as such and counted apart
+        ang.count_nonfinite("S6", fit0["chi2_angle"][fit0["ok"] & (fit0["n_angle_meas"] > 0)])
         base = {"arity": float(sd.arity), "before_chi2": float(n_pre),
+                "kf_diverged": float(fit0["diverged"].sum()),
                 "seed_objects": float(o.get("seed_objects", 0)),
                 "pairs": float(o.get("tracklets", 0)),
                 # cluster pairs EXAMINED (after the S2j pre-gate, before the
@@ -2113,6 +2115,13 @@ def main():
     if C["angle_nonfinite"] and any(C["angle_nonfinite"].values()):
         print(f"\nWARNING: non-finite angle statistics (the NaN guard; a NaN vetoes silently): "
               f"{C['angle_nonfinite']}")
+    diverged = {}
+    for i, c in C["counters"].items():
+        if c.get("kf_diverged"):
+            diverged[C["seed_tags"][i]] = diverged.get(C["seed_tags"][i], 0) + int(c["kf_diverged"])
+    if diverged:
+        print(f"\nNOTE: KF fits that diverged (finite inputs, a non-finite state; rejected, not tracks), per seed "
+              f"over its builds: {diverged}")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "n_tp": int(len(C["key"])),
@@ -2120,7 +2129,7 @@ def main():
                    "pos_arb": C["pos_arb"],
                    "angles": C["angle_use"].key(), "angle_model": C["angle_model"],
                    "angle_cuts": C["angle_cuts"], "angle_notes": C["angle_notes"],
-                   "n_moved": C["n_moved"], "angle_nonfinite": C["angle_nonfinite"],
+                   "n_moved": C["n_moved"], "angle_nonfinite": C["angle_nonfinite"], "kf_diverged": diverged,
                    "truncation": trunc,
                    "seeds": seed_table(C)}, open(a.out, "w"), indent=1)
         print(f"\nwrote {a.out}")

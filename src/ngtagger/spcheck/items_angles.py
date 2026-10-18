@@ -367,7 +367,8 @@ class AngleNonFinite(Item):
                       "statistics must be counted")
     rule_desc = ("the 4-event AAAI+IAAA census with the cut file (census.cut_entries' cut run): the census's NaN-guard "
                  "counts (non-finite S1, S2a, S2z, S3, S4w, S4a and S6 statistics among IT inputs with a usable "
-                 "direction, M.NONFINITE_STAGES) are present for every stage and all 0; n/a without the cut file")
+                 "direction, M.NONFINITE_STAGES; S6 among the fits that did not diverge, KF.fit_tracks) are present "
+                 "for every stage and all 0; n/a without the cut file")
     trees = (CENSUS_DIR,)
 
     def compute(self, ctx):
