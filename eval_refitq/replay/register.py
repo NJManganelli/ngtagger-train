@@ -16,6 +16,7 @@
                                        supersedes wpc.c1b.j5-known-good (the A19 run, kept at c1b/checks/a19/)
   c1b-j6    wpc.c1b.j6-gate            C1b J6 under A20: file 6, the gate (c1b/checks/checks_f06.json)
   c1b-betasym wpc.c1b.beta-symmetry    C1b after J5: the disc beta symmetry figure (c1b/beta_symmetry.json)
+  scan-tree2-kg wpc.scan.tree2-e7-known-good  scan A4: E7 of tree2 on file 4 (scan/tree2/e7_f04.json)
   c1b-verdict wpc.c1b.verdict          C1b closed with the discs ON and its known limitations; updates the J2 / J3 / J6
                                        statuses (job dir of J6)
   c1b-j3    wpc.c1b.j3-material-scale-smooth  C1b J3 with the smooth seed, A18 (c1b/scale/scalefit_summary.json)
@@ -412,6 +413,26 @@ def c1b_verdict(job_dir, overwrite):
                  "passes; D3c judged relative to D3d; second-on 2.671 / third-on 2.705 accepted", by=BY)
 
 
+def scan_tree2_kg(job_dir, overwrite):
+    """Scan Part A: E7 of tree2 (PD14 with the discs) on its file-4 known-good (wpc/scan/tree2/e7_f04.json)."""
+    p = CM.OUT / "scan" / "tree2" / "e7_f04.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"}]
+    for scen, e in Q["scenarios"].items():
+        pl = e["e7"]["pooled"]
+        vals += [{"name": f"{scen} pooled skip-loss (sd, n)", "value": f"{pl['loss']:.4f} ({pl['sd']:.4f}, {pl['n']})"},
+                 {"name": f"{scen} known-bads: P at 95 % / tail probability (shift in 1.5 % margins)",
+                  "value": f"{e['known_bad_p95']['loss']:.4f} ({e['known_bad_p95']['shift_in_margins']:.2f}) / "
+                           f"{e['known_bad_tailprob']['loss']:.4f} ({e['known_bad_tailprob']['shift_in_margins']:.1f})"},
+                 {"name": f"{scen} wrong-hit rejection gained; first-step window report",
+                  "value": json.dumps({"rejection": e["e7"]["wrong_hit_rejection_gained"], "window": e["window_report"]})}]
+    _reg({"id": "wpc.scan.tree2-e7-known-good", "title": "WP-C scan A4: E7 skip-loss of the two-layer hit choice on "
+                                                         "file 4 (known-good)",
+          "status": "valid", "status_note": "; ".join(Q["material"]) or "passes", "values": vals,
+          "bias": "file 4, the known-good; P from c1b v1 (fit files)", "sources": [str(p)]}, job_dir, overwrite)
+
+
 def c1b_betasym(job_dir, overwrite):
     """The read-only disc beta symmetry figure (after J5): the innermost populated key bins, k < 0 (J5's failing bin)
     and its mirror k > 0, per disc."""
@@ -440,7 +461,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
-                                     "c1b-j6", "c1b-verdict", "c1b-betasym"))
+                                     "c1b-j6", "c1b-verdict", "c1b-betasym", "scan-tree2-kg"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -451,7 +472,8 @@ def main(argv=None):
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
          "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
-         "c1b-j6": c1b_j6, "c1b-verdict": c1b_verdict, "c1b-betasym": c1b_betasym}[a.what](a.job_dir, a.overwrite)
+         "c1b-j6": c1b_j6, "c1b-verdict": c1b_verdict, "c1b-betasym": c1b_betasym,
+         "scan-tree2-kg": scan_tree2_kg}[a.what](a.job_dir, a.overwrite)
     return 0
 
 

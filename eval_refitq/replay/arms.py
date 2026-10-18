@@ -106,6 +106,8 @@ class Arm:
     disc_material: str = "path"     # C1b known-bads: "radius" (the barrel planes by radius only on disc-going
                                     # tracks), "barrel_factor" (the barrel path factor on disc planes),
                                     # "all_tracks" (the disc model's charging on barrel-only tracks too)
+    inner_material_rule: str = "path"   # scan plan B-pre: "path" (disc-going tracks along their path) | "radius" (the
+                                        # pre-fix rule, every track by radius: the known-bad)
 
     @property
     def cov_model(self) -> str:
@@ -1106,7 +1108,7 @@ def inner_material(arm, st, geo, tools, kpt):
     last_j = np.array([np.flatnonzero(acc[x])[-1] for x in t])
     Lv = np.full(len(st.o), 5, np.int64)
     Lv[t] = st.rec["surface"][t, last_j]
-    dg = st.dg[t] if arm.disc_model else np.zeros(len(t), bool)
+    dg = st.dg[t] if (arm.disc_model and arm.inner_material_rule == "path") else np.zeros(len(t), bool)
     tb, td = t[~dg], t[dg]
     geo0 = dict(geo)
     geo0["R"] = dict(geo["R"])
