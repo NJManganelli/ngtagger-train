@@ -520,7 +520,10 @@ _MAIN = None
 # ==========================================================================
 # assembling a track: the seed's three clusters plus one projection per layer
 # ==========================================================================
-LAYER_ORDER = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
+# the hit columns of a track (census format 36: the discs too): IL1-IL4, ID1-ID4, OL1-OL6, OD1-OD5. A disc hit is
+# measured in (phi, r) on a plane of fixed z; it enters the fit at its radius, its z exact and its r error carried
+# as the z error |cot| sigma_r (KFParamsComb::matrixV's endcap vz = sigmaPar^2 tan^2 lambda; fit_tracks)
+LAYER_ORDER = (1, 2, 3, 4) + M.IT_DISC_CODES + (11, 12, 13, 14, 15, 16) + M.OT_DISC_CODES
 
 
 def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
@@ -732,6 +735,14 @@ def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
     i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
     v0 = np.where(is_ot, o0, i0)
     v1 = np.where(is_ot, o1, i1)
+    dsk = M.is_disc(lay)
+    if dsk.any():
+        # a disc hit's r sigma (the IT cluster's sigY, the OT stub's sigmaPar) as a z error: x cot^2, the seed
+        # pair's cot as the hybrid KF takes its tanL from the candidate (KFParamsComb::matrixV, endcap)
+        ga, gb = trip[0], trip[1]
+        drs = U["globalR"][gb] - U["globalR"][ga]
+        cot0 = (U["globalZ"][gb] - U["globalZ"][ga]) / np.where(np.abs(drs) > 0.5, drs, 1e9)
+        v1 = np.where(dsk, v1 * np.square(cot0)[:, None], v1)
     # azimuth relative to each track's own first hit, so no 2pi wrap enters
     ref = np.where(T["VALID"], T["PH"], 0.0)
     first = np.argmax(T["VALID"], axis=1)
@@ -1189,8 +1200,8 @@ def numerics_key():
 
 
 def sysclass_of(layers):
-    """0 = IT-only seed, 1 = OT-only, 2 = spans both."""
-    it = any(L <= 4 for L in layers)
+    """0 = IT-only seed, 1 = OT-only, 2 = spans both (IT: IL1-IL4 and the discs ID1-ID4)."""
+    it = any(L <= 10 for L in layers)
     ot = any(L > 10 for L in layers)
     return SYS_MIX if (it and ot) else (SYS_IT if it else SYS_OT)
 
@@ -1207,7 +1218,7 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank):
     lay = np.asarray(T["layers"])[None, :]
     use = T["VALID"]
     nhit = use.sum(axis=1).astype(np.float64)
-    is_it = use & (lay <= 4)
+    is_it = use & (lay <= 10)                 # IL1-IL4 and the discs ID1-ID4
     is_ot = use & (lay > 10)
     pa, pb = angle_pulls(T, fit)
     apull = np.maximum(np.where(use & T["ANG_A"], np.abs(pa), 0.0),
@@ -1215,12 +1226,20 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank):
     srt = np.sort(apull, axis=1)[:, ::-1]
     r = np.maximum(T["R"], 1e-3)
     dz = T["Z"] - (fit["cot"][:, None] * r + fit["z0"][:, None])
-    ppos = np.where(use, np.abs(dz) / np.maximum(T["SY"], 1e-6), 0.0)
-    idx = np.arange(use.shape[1])[None, :]
-    lo = np.where(use, idx, 99).min(axis=1)
-    hi = np.where(use, idx, -1).max(axis=1)
-    span = (idx >= lo[:, None]) & (idx <= hi[:, None])
-    n_miss = (span & ~use).sum(axis=1).astype(np.float64)
+    # a disc hit's longitudinal sigma is its r sigma times |cot| (fit_tracks)
+    dsk = M.is_disc(lay)
+    szl = np.maximum(T["SY"], 1e-6) * np.where(dsk, np.abs(fit["cot"])[:, None], 1.0)
+    ppos = np.where(use, np.abs(dz) / np.maximum(szl, 1e-6), 0.0)
+    # interior misses along the barrel layers and along the discs, each in its own order (a forward track's barrel
+    # hits and disc hits are two sequences; LAYER_ORDER lists the discs after each system's barrel layers)
+    n_miss = np.zeros(use.shape[0])
+    for part in (~dsk[0], dsk[0]):
+        u = use[:, part]
+        idx = np.arange(u.shape[1])[None, :]
+        lo = np.where(u, idx, 99).min(axis=1)
+        hi = np.where(u, idx, -1).max(axis=1)
+        span = (idx >= lo[:, None]) & (idx <= hi[:, None])
+        n_miss += (span & ~u).sum(axis=1)
     c2a, nang = fit["chi2_angle"], fit["n_angle"]
     chi2s = fit["chi2_rphi"] / CHI2_RPHI_SCALE + fit["chi2_rz"]
     # ---- truth, referenced to the MAJORITY OWNER of the hits -------------

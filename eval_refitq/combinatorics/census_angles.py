@@ -220,7 +220,29 @@ def corrected_of(C, k_alpha, k_beta, mode, key_cw=None):
 
 def prepare(D, model, bench=None):
     """The census's per-IT-cluster angle quantities (M.it_prepare's fields, from the model), plus the
-    components the records and the prediction key need. The per-layer scales are not used."""
+    components the records and the prediction key need. The per-layer scales are not used.
+    IT DISC CLUSTERS (codes 5-8, census format 36) carry the OT stubs' values in the barrel stages' fields (a
+    wildcard everywhere: on a disc the global alpha and beta are never routed through curvature or z0, plan sec. 1
+    B) and no components; their angles enter as module-frame quantities (the disc stages)."""
+    disc = np.asarray(D["layer"]) > 4
+    if not disc.any():
+        return _prepare_barrel(D, model, bench)
+    b = np.flatnonzero(~disc)
+    Qb = _prepare_barrel({k: np.asarray(v)[b] for k, v in D.items()}, model, bench)
+    fill = {**M.OT_STUB_ANGLES, **COMP_FILL, **CORR_FILL}
+    Q = {"n_moved": Qb["n_moved"]}
+    for k, v in Qb.items():
+        if k == "n_moved":
+            continue
+        v = np.asarray(v)
+        out = np.full(len(disc), fill[k], dtype=v.dtype)
+        out[b] = v
+        Q[k] = out
+    return Q
+
+
+def _prepare_barrel(D, model, bench=None):
+    """prepare on IT barrel clusters."""
     C = components(D, model)
     h, sh, lam, sl = corrected_of(C, model.k["alpha"], model.k["beta"], model.mode)
     kap_a, s_kap, cot, s_cot, z0, s_z0 = represent(C["r"], C["z"], h, sh, lam, sl)

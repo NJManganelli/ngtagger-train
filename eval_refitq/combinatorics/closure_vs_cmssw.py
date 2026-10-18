@@ -286,20 +286,29 @@ def twice(f1, f2, nev=None):
 
 
 # ---- G0: format 36 with the discs off against format 35 ------------------------------------------------
+# format 36's new columns: a track's hit row gains ID1-ID4 and OD1-OD5 (KF.LAYER_ORDER), the final stubs OD1-OD5
+# (TF.OT_STUB_COLS, at the end)
+_G0_HIT_DISC_COLS = [i for i, L in enumerate(KFE.LAYER_ORDER) if M.is_disc(L)]
+
+
 def _g0_array(name, a35, a36):
     """'' when shard array `name` of a format-36 census with the discs off equals format 35's, else why not.
-    Format 36's additions must be empty: cen_hit_otd all 0; the final stubs' OD1-OD5 columns (hit_o / hit_om)
-    and the closed arm's OD1-OD5 hit-row columns all -1."""
+    Format 36's additions must be empty: cen_hit_otd / cen_hit_itd all 0; the disc columns of a track's hit row
+    (hit_<i>, hit_m<i>: _G0_HIT_DISC_COLS) and of its final stubs (hit_o / hit_om: the trailing OD1-OD5) all -1."""
     if a35 is None:
-        return "" if name == "cen_hit_otd" and not np.any(a36) else "new array"
+        return "" if name in ("cen_hit_otd", "cen_hit_itd") and not np.any(a36) else "new array"
     if a36.shape == a35.shape:
         return "" if np.array_equal(a35, a36, equal_nan=a35.dtype.kind == "f") else "values differ"
-    if a36.ndim == 2 and a35.ndim == 2 and a36.shape[0] == a35.shape[0] and a36.shape[1] > a35.shape[1]:
-        k = a35.shape[1]
-        if not np.array_equal(a36[:, :k], a35):
-            return "values differ"
-        return "" if np.all(a36[:, k:] == -1) else "disc columns filled"
-    return f"shape {a35.shape} -> {a36.shape}"
+    if not (a36.ndim == 2 and a35.ndim == 2 and a36.shape[0] == a35.shape[0] and a36.shape[1] > a35.shape[1]):
+        return f"shape {a35.shape} -> {a36.shape}"
+    kind = TF.hit_key(name)[0] if name.startswith("hit_") else None
+    new = _G0_HIT_DISC_COLS if kind in ("", "m") else list(range(a35.shape[1], a36.shape[1]))
+    old = [i for i in range(a36.shape[1]) if i not in new]
+    if len(old) != a35.shape[1]:
+        return f"shape {a35.shape} -> {a36.shape}"
+    if not np.array_equal(a36[:, old], a35):
+        return "values differ"
+    return "" if np.all(a36[:, new] == -1) else "disc columns filled"
 
 
 def g0(c35, c36, nev=None):

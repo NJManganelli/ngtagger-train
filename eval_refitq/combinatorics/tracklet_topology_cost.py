@@ -167,6 +167,34 @@ OT_Z_CUT = np.array([
     [3.0, 3.0, 8.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.5, 0.0, 0.0, 0.0],
     [4.0, 0.0, 9.5, 0.0, 0.0, 0.0, 0.0, 0.0, 4.5, 0.0, 0.0, 0.0]])
 
+# the disc match cuts (Settings rphicutPS_ / rcutPS_ / rphicut2S_ / rcut2S_ [cm]), indexed [disk][seed]; a seed
+# whose PS and 2S entries are both 0 does not project to the disk (census format 36)
+OT_RPHI_CUT_PS_D = np.array([
+    [0.2, 0.2, 0.0, 0.0, 0.0, 0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [0.2, 0.2, 0.0, 0.0, 0.0, 0.1, 0.1, 0.1, 0.0, 0.0, 0.15, 0.0],
+    [0.25, 0.2, 0.0, 0.0, 0.15, 0.0, 0.2, 0.15, 0.0, 0.0, 0.0, 0.2],
+    [0.5, 0.2, 0.0, 0.0, 0.2, 0.0, 0.3, 0.5, 0.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 0.25, 0.1, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0]])
+OT_R_CUT_PS_D = np.array([
+    [0.5, 0.5, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    [0.5, 0.5, 0.0, 0.0, 0.0, 0.5, 0.5, 0.5, 0.0, 0.0, 0.5, 0.0],
+    [0.5, 0.5, 0.0, 0.0, 0.5, 0.0, 0.6, 0.8, 0.0, 0.0, 0.0, 0.4],
+    [0.5, 0.5, 0.0, 0.0, 0.8, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
+    [0.0, 0.0, 0.0, 0.0, 1.0, 0.5, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0]])
+OT_RPHI_CUT_2S_D = np.array([
+    [0.5, 0.5, 0.8, 0.0, 0.0, 0.0, 0.0, 0.0, 0.2, 0.0, 0.0, 0.0],
+    [0.5, 0.5, 0.8, 0.0, 0.0, 0.0, 0.5, 0.15, 0.3, 0.0, 0.68, 0.0],
+    [0.5, 0.5, 0.0, 0.0, 0.15, 0.0, 0.2, 0.25, 0.0, 0.0, 0.8, 0.1],
+    [0.5, 0.5, 0.0, 0.0, 0.2, 0.0, 0.25, 0.5, 0.0, 0.0, 0.6, 0.4],
+    [0.0, 0.0, 0.0, 0.0, 0.4, 0.2, 0.4, 0.0, 0.0, 0.0, 0.0, 0.8]])
+OT_R_CUT_2S_D = np.array([
+    [3.6, 3.6, 3.6, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0],
+    [3.6, 3.6, 3.6, 0.0, 0.0, 0.0, 3.6, 3.4, 3.0, 0.0, 3.0, 0.0],
+    [3.6, 3.6, 0.0, 0.0, 3.6, 0.0, 3.6, 3.6, 0.0, 0.0, 3.6, 3.0],
+    [3.6, 3.6, 0.0, 0.0, 3.6, 0.0, 3.5, 3.6, 0.0, 0.0, 3.0, 3.0],
+    [0.0, 0.0, 0.0, 0.0, 3.6, 3.4, 3.7, 0.0, 0.0, 0.0, 0.0, 3.0]])
+
+
 def ot_numerics_key():
     """OT-side numbers that move a hit assignment without moving a column.
 
@@ -181,6 +209,7 @@ def ot_numerics_key():
             "triplet_d0_max_cm": float(TRIPLET_D0_MAX_CM),
             "d0_displaced_cm": float(D0_DISPLACED_CM),
             "rphi_cut": OT_RPHI_CUT.tolist(), "z_cut": OT_Z_CUT.tolist(),
+            "disc_cuts": [t.tolist() for t in (OT_RPHI_CUT_PS_D, OT_R_CUT_PS_D, OT_RPHI_CUT_2S_D, OT_R_CUT_2S_D)],
             "seed_order": list(OT_SEED_ORDER),
             "it_widen": float(OT_IT_SEED_WIDEN),
             "it_proj_z_widen": float(OT_IT_PROJ_Z_WIDEN),
@@ -500,17 +529,23 @@ def ot_lut_accept(la, lb, phiA, rA, bA, phiB, rB, bB):
 
 
 def ot_seed_name(seed_layers):
-    """'L1L2' / 'L2L3L4' for an all-OT seed, else None.
+    """'L1L2' / 'L2L3L4' / 'D1D2' / 'L1D1' for an all-OT seed, else None.
 
     Accepts layers in CONSTRUCTION order (pair first) and sorts for the name,
     which is how CMSSW labels them too: the enum is Seed::L2L3L4 while the
-    module is TPD_L3L4L2.
+    module is TPD_L3L4L2. OT barrel codes 11-16 are L1-L6, OT disc codes 21-25
+    D1-D5 (census format 36); the name lists the layers, then the discs (L1D1),
+    or the discs first where CMSSW does (D1D2L2).
     """
-    ls = [int(L) - 10 for L in seed_layers]
-    if not ls or any(L < 1 or L > 6 for L in ls):
+    ls = [int(L) for L in seed_layers]
+    if not ls or any(not (11 <= L <= 16 or OT_DISC_CODES[0] <= L <= OT_DISC_CODES[-1]) for L in ls):
         return None
-    nm = "".join(f"L{L}" for L in sorted(ls))
-    return nm if nm in OT_SEED_ORDER else None
+    bar = "".join(f"L{L - 10}" for L in sorted(L for L in ls if L <= 16))
+    dsk = "".join(f"D{L - 20}" for L in sorted(L for L in ls if L > 16))
+    for nm in (bar + dsk, dsk + bar):
+        if nm in OT_SEED_ORDER:
+            return nm
+    return None
 
 
 def ot_vmr_inner_z(seed_layers):
@@ -573,6 +608,26 @@ def ot_match_window(proj_layer, seed_layers):
         return None
     return (float(r_vals.max()) * OT_IT_SEED_WIDEN,
             float(z_vals.max()) * OT_IT_SEED_WIDEN)
+
+def ot_disc_match_window(disk, seed_layers):
+    """Match window for attaching a stub on OT disc 1-5 to a track: ((rphi_PS, r_PS), (rphi_2S, r_2S)) in cm, as
+    ot_match_window does for the barrel: an OT seed's own column of the disc tables (OT_PROJ_FORBIDDEN where both its
+    PS and 2S entries are 0), an IT or joint seed the most generous configured window of the disc widened by
+    OT_IT_SEED_WIDEN (a ceiling only)."""
+    i = int(disk) - 1
+    if not 0 <= i < OT_RPHI_CUT_PS_D.shape[0]:
+        return None
+    name = ot_seed_name(seed_layers)
+    tabs = (OT_RPHI_CUT_PS_D, OT_R_CUT_PS_D, OT_RPHI_CUT_2S_D, OT_R_CUT_2S_D)
+    if name is not None:
+        si = OT_SEED_ORDER.index(name)
+        v = [float(t[i][si]) for t in tabs]
+        if max(v) <= 0:
+            return OT_PROJ_FORBIDDEN
+        return (v[0], v[1]), (v[2], v[3])
+    mx = [float(t[i].max()) * OT_IT_SEED_WIDEN for t in tabs]
+    return (mx[0], mx[1]), (mx[2], mx[3])
+
 
 # ---- sensor word quantization benchmarks -------------------------------------
 # Reserve 3 codes: two SIGNED overflow (sign carries charge for alpha, and
@@ -988,13 +1043,37 @@ def cand_purity(D, ga, gb, gc):
     return len(real), int(real.sum())
 
 
-# THE COMBINED IT+OT HIT CODE SPACE of these studies: 1-4 = IL1-IL4 and
-# 11-16 = OL1-OL6 (OT barrel stub layer + 10). The nano's cluster `surface`
-# ALSO uses 11-14, for the discs ID1-ID4, so an IT disc cluster that reached a
-# combined array would silently be read as an OT barrel stub. Disc clusters are
-# kept out of the census and the combinatorics altogether until a disc-seeding
-# extension gives them their own codes; it_barrel_codes is the guard every
-# combined array's IT half goes through.
+# THE COMBINED IT+OT HIT CODE SPACE of these studies: 1-4 = IL1-IL4, 5-8 = ID1-ID4 (the SmartPixels discs, nano
+# surfaces 11-14 less 6; census format 36), 11-16 = OL1-OL6 (L1TOTStub barrel layer + 10) and 21-25 = OD1-OD5
+# (L1TOTStub disc layer 11-15 + 10). The nano's cluster `surface` ALSO uses 11-14, for the discs, so a disc cluster
+# that reached a combined array under its surface code would silently be read as an OT barrel stub: the IT half of
+# every combined array goes through it_barrel_codes (barrel-only users) or it_codes (the census with its discs),
+# and table_columns(..., discs=True) hands disc rows their own codes.
+IT_BARREL_CODES, IT_DISC_CODES = (1, 2, 3, 4), (5, 6, 7, 8)
+OT_DISC_CODES = (21, 22, 23, 24, 25)
+DISC_CODE_OFFSET = 6                     # an IT disc's code: its nano surface (11-14) less 6
+
+
+def is_it(layer):
+    """IT codes (IL1-IL4, ID1-ID4)."""
+    return np.asarray(layer) <= 10
+
+
+def is_disc(layer):
+    """Disc codes, IT (ID1-ID4) or OT (OD1-OD5)."""
+    L = np.asarray(layer)
+    return ((L >= IT_DISC_CODES[0]) & (L <= IT_DISC_CODES[-1])) | (L >= OT_DISC_CODES[0])
+
+
+def it_codes(layer, where):
+    """`layer` unchanged, after asserting every IT code is a barrel layer 1-4 or a disc 5-8."""
+    layer = np.asarray(layer)
+    if layer.size and not ((layer >= 1) & (layer <= IT_DISC_CODES[-1])).all():
+        bad = np.unique(layer[(layer < 1) | (layer > IT_DISC_CODES[-1])])
+        raise AssertionError(f"{where}: IT cluster codes {bad.tolist()} outside 1-8")
+    return layer
+
+
 def it_barrel_codes(layer, where):
     """`layer` unchanged, after asserting every IT code is a barrel layer 1-4."""
     layer = np.asarray(layer)
@@ -1011,23 +1090,32 @@ def it_barrel_codes(layer, where):
 # The IT studies here are TBPX-only (IT_CONFIGS are layer triples), so the
 # cluster table is read barrel-only: on a unified nano the disc rows that follow
 # the barrel would otherwise enter every per-layer count with layer = 0.
-def table_branches(path, table, cols):
+def table_branches(path, table, cols, discs=False):
+    """The branches table_columns reads; `discs` (the IT table): the SmartPixels discs ID1-ID4 too."""
     keys = uproot.open(f"{path}:Events").keys()
     if table == IT_TABLE:
-        return SPN.cluster_branches(keys, list(cols) + ["surface"], surfaces=SPN.BARREL)
+        return SPN.cluster_branches(keys, list(cols) + ["surface"], surfaces=None if discs else SPN.BARREL)
     return SPN.branch_names(keys, table, cols)
 
 
-def table_columns(A, table, cols):
+def table_columns(A, table, cols, discs=False):
+    """{col: jagged array}. The IT table: TBPX only, or with `discs` the discs ID1-ID4 too, every row's "layer"
+    then its census code (barrel: the layer; disc: the surface less DISC_CODE_OFFSET)."""
     if table == IT_TABLE:
-        J = SPN.cluster_columns(A, list(cols) + ["surface"], surfaces=SPN.BARREL)
-        it_barrel_codes(ak.to_numpy(ak.flatten(J["surface"])), "table_columns")
-        return {c: J[c] for c in cols}
+        J = SPN.cluster_columns(A, list(cols) + ["surface"], surfaces=None if discs else SPN.BARREL)
+        sf = J["surface"]
+        if not discs:
+            it_barrel_codes(ak.to_numpy(ak.flatten(sf)), "table_columns")
+            return {c: J[c] for c in cols}
+        code = ak.where(sf > SPN.DISC_SURFACE_OFFSET, sf - DISC_CODE_OFFSET, sf)
+        it_codes(ak.to_numpy(ak.flatten(code)), "table_columns")
+        return {c: (code if c == "layer" else J[c]) for c in cols}
     return SPN.table_columns(A, table, cols)
 
 
-def load_flat(spec, table, cols, nev=None, tp=()):
-    """Flatten `cols` of `table` across every input file into one dict.
+def load_flat(spec, table, cols, nev=None, tp=(), discs=False):
+    """Flatten `cols` of `table` across every input file into one dict (`discs`: the IT table's discs ID1-ID4 too,
+    table_columns).
 
     Stops once nev events have been read. Streams rather than concatenating
     whole files, so the footprint stays bounded on the full ttbar set.
@@ -1040,7 +1128,7 @@ def load_flat(spec, table, cols, nev=None, tp=()):
         if "tpIdx" not in cols:
             raise ValueError("joining TP truth needs tpIdx among cols")
         require_tp_table(paths)
-    keys = table_branches(paths[0], table, cols)
+    keys = table_branches(paths[0], table, cols, discs)
     parts, counts, seen = [], [], 0
     for A in uproot.iterate([f"{p}:Events" for p in paths],
                             keys + (tp_branches(paths[0]) if tp else []), step_size=200):
@@ -1049,7 +1137,7 @@ def load_flat(spec, table, cols, nev=None, tp=()):
             if keep <= 0:
                 break
             A = A[:keep]
-        J = table_columns(A, table, cols)
+        J = table_columns(A, table, cols, discs)
         n = ak.to_numpy(ak.num(J[cols[0]]))
         ev = np.arange(seen, seen + len(n))
         P = {c: ak.to_numpy(ak.flatten(J[c])) for c in cols}
@@ -1608,6 +1696,72 @@ def candidates_by_z(ev_p, z0p, cot, sct, ms, zidx, ceiling=DEFAULT_TRIPLET_CEILI
             yield ja, jb
 
 
+# ---- the discs (census format 36): planes at fixed |z|, searched on r ----------------------------------------
+# A disc target's clusters are binned per side and in z (its modules sit at a few distinct z, front and back of
+# the disc) and indexed by (event, r); a pair predicts r at each bin's z along its straight r-z line, its arc
+# correction applied (as the barrel's z prediction), and the exact residual is taken at each candidate's own z.
+DISC_ZBINS = 6
+R_STRIDE = 400.0        # > the r span of a disc (< 120 cm) plus every window
+
+
+def build_disc_r_index(cidx, event, z, r, sig, nzbins=DISC_ZBINS):
+    """Per side and z bin of one disc layer: (sorted (event, r) key, the global cluster indices in that order, the
+    bin's mid z (signed), its half thickness, the worst r sigma in it)."""
+    out = []
+    for side in (-1.0, 1.0):
+        m = np.flatnonzero(np.sign(z) == side)
+        if not len(m):
+            continue
+        za = np.abs(z[m])
+        edges = np.linspace(za.min(), za.max() + 1e-9, nzbins + 1)
+        b = np.clip(np.searchsorted(edges, za, "right") - 1, 0, nzbins - 1)
+        for ib in range(nzbins):
+            sel = m[b == ib]
+            if not len(sel):
+                continue
+            k = event[sel].astype(np.float64) * R_STRIDE + r[sel]
+            o = np.argsort(k, kind="stable")
+            out.append((k[o], cidx[sel[o]], side * 0.5 * (edges[ib] + edges[ib + 1]),
+                        0.5 * (edges[ib + 1] - edges[ib]), float(sig[sel].max())))
+    return out
+
+
+def disc_r_pred(z, z0p, cot, kap):
+    """(r, path length s) of a d0 = 0 helix at plane z: s = (z - z0) / cot, r = s (1 - (s c kappa)^2 / 6) (the
+    inverse of the barrel's arc s = r (1 + (r c kappa)^2 / 6)); s <= 0 is the other side."""
+    s = (z - z0p) / np.where(np.abs(cot) > 1e-9, cot, 1e-9)
+    return s * (1.0 - np.square(s * C_BEND * kap) / 6.0), s
+
+
+def disc_r_sigma(sig_c, rpred, cot, sct, ms):
+    """The r road of a disc projection: the candidate's r sigma and the prediction's longitudinal error (the
+    barrel's z terms, r sct + r ms) divided by |cot|."""
+    return np.hypot(sig_c, (np.abs(rpred) * sct + np.abs(rpred) * ms) / np.maximum(np.abs(cot), 1e-6))
+
+
+def candidates_by_r(ev_p, z0p, cot, kap, sct, ms, ridx, ceiling=DEFAULT_TRIPLET_CEILING):
+    """Yield (pair index, disc cluster index) for r-consistent candidates, one interval search per (side, z bin);
+    a pair appears in several yields (arbitrate after collecting all)."""
+    total = 0
+    for kr, cidx, zmid, zhalf, sgmax in ridx:
+        rpred, sp = disc_r_pred(zmid, z0p, cot, kap)
+        ok = sp > 0
+        half = np.where(ok, NSIG * disc_r_sigma(sgmax, rpred, cot, sct, ms)
+                        + zhalf / np.maximum(np.abs(cot), 1e-6), -1.0)
+        ka = ev_p.astype(np.float64) * R_STRIDE + rpred
+        lo = np.searchsorted(kr, ka - half, "left")
+        hi = np.searchsorted(kr, ka + half, "right")
+        cnt = np.where(ok, np.maximum(hi - lo, 0), 0).astype(np.int64)
+        total += int(cnt.sum())
+        if total > ceiling:
+            raise TooWide(total, ceiling)
+        if not cnt.sum():
+            continue
+        for a0, a1 in _slices(cnt, _MAX_SLICE):
+            ja, jb = _expand(cidx, lo[a0:a1], cnt[a0:a1], a0)
+            yield ja, jb
+
+
 _EXHAUSTIVE = False
 
 
@@ -2001,6 +2155,8 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
                     "pairs_outside_census": int(work.get("pairs_outside_census", 0)),
                     "tracklets": int(len(gA))})
         return (out, gA, gB, kap, cot, z0p, idx) if len(gA) else none
+    if is_disc(la) or is_disc(lb):
+        return _disc_pairs(D, Q, ang, idx, out, none, la, lb, ptmin, displaced, d0_cm, kap_min, bend_cut)
     dr = abs(rB - rA)
     ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
     # d0 allowance: prompt seeds assume d0=0; displaced must open the window by
@@ -2111,6 +2267,122 @@ def it_pairs(D, Q, ev_idx, la, lb, ptmin, use_angles, displaced=False,
 
 
 
+def _disc_pairs(D, Q, ang, idx, out, none, la, lb, ptmin, displaced, d0_cm, kap_min, bend_cut):
+    """it_pairs' stage 1 for a pair of discs (census format 36): phi windows per inner cluster from the radius a
+    prompt track reaches on the outer disc (rB = rA zB / zA, the outer disc's median |z|), then the position gates
+    of _pair_geometry (curvature, the luminous region, which also rejects pairs across the two sides). The disc
+    angle stages act on the pairs afterwards (census_angles, module frame)."""
+    kmax = 1.0 / ptmin
+    ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
+    d0_eff = D0_DISPLACED_CM if displaced else d0_cm
+    rA = D["globalR"][idx[la]]
+    zA = np.maximum(np.abs(D["globalZ"][idx[la]]), 1e-3)
+    zB = float(np.median(np.abs(D["globalZ"][idx[lb]])))
+    dr_exp = np.abs(rA * (zB / zA - 1.0))
+    half_w = C_BEND * dr_exp * kmax + ms + 5e-4 + d0_eff / np.maximum(rA, 1e-3)
+    keepA, keepB, keepK, keepC, keepZ = [], [], [], [], []
+    n_phi = n_kap = n_z0l = 0
+    for ia, ib in pairs_in_window_slices(D["event"][idx[la]], D["globalPhi"][idx[la]],
+                                         D["event"][idx[lb]], D["globalPhi"][idx[lb]], half_w):
+        rss_check()
+        n_phi += len(ia)
+        gA, gB = idx[la][ia], idx[lb][ib]
+        ra, rb = D["globalR"][gA], D["globalR"][gB]
+        kap_slack = np.abs(1.0 / ra - 1.0 / rb) / (C_BEND * np.maximum(np.abs(rb - ra), 0.1)) * d0_eff
+        kap, cot, z0p, ok, steps = _pair_geometry(D, gA, gB, kmax, kap_slack, kap_min, displaced, la, lb,
+                                                  bend_cut)
+        n_kap += int(steps["kappa"].sum())
+        if "z0lumi" in steps:
+            n_z0l += int(steps["z0lumi"].sum())
+        if ok.any():
+            keepA.append(gA[ok]); keepB.append(gB[ok])
+            keepK.append(kap[ok]); keepC.append(cot[ok]); keepZ.append(z0p[ok])
+    out["pairs_phi"] = n_phi
+    out["pairs_kappa"] = n_kap
+    out["kappa_slack"] = 0.0 if not d0_eff else float("nan")
+    if not displaced:
+        out["pairs_z0lumi"] = n_z0l
+    out["pairs_bend_ok"] = 0
+    out["tracklets"] = int(sum(len(x) for x in keepA))
+    if not keepA:
+        return none
+    return (out, np.concatenate(keepA), np.concatenate(keepB), np.concatenate(keepK), np.concatenate(keepC),
+            np.concatenate(keepZ), idx)
+
+
+def _project_disc(D, out, gA, gB, kap, cot, z0p, idx, lc, displaced, kmax, d0_max, d0_meas, seed_layers, pos_arb,
+                  skap, sct, ms, d0_allow):
+    """it_project to a DISC target (census format 36), the barrel's projection with the roles of r and z exchanged:
+    each candidate on the pair's side of disc lc is predicted at its own z (disc_r_pred, along the arc) and kept
+    inside NSIG of its r sigma (disc_r_sigma) and of the barrel's phi sigma at its radius; an OT disc caps both at
+    the seed's tabulated disc window (ot_disc_match_window, PS or 2S by the stub's module), as an OT barrel layer
+    does. One hit per pair by the position arbitration (pos_arb: dphi, or the (phi, r) pulls). The disc angle stages
+    act here too (census_angles, module frame); S3 / S4w / S4a of the barrel do not."""
+    cC = idx[lc]
+    rC, zC = D["globalR"][cC], D["globalZ"][cC]
+    sgC = np.maximum(D["sigY"][cC], 1e-6)
+    dm = np.zeros(len(gA)) if d0_meas is None else d0_meas
+    phi0 = wrap(D["globalPhi"][gA] + dm / D["globalR"][gA] + C_BEND * D["globalR"][gA] * kap)
+    cap = ot_disc_match_window(lc - 20, seed_layers) if lc in OT_DISC_CODES else None
+    ridx = build_disc_r_index(cC, D["event"][cC], zC, rC, sgC)
+    n_cand = 0
+    sv_p, sv_c, sv_res = [], [], []
+    for ja, gC in candidates_by_r(D["event"][gA], z0p, cot, kap, sct, ms, ridx):
+        rss_check()
+        n_cand += len(ja)
+        rc = D["globalR"][gC]
+        rpred, sp = disc_r_pred(D["globalZ"][gC], z0p[ja], cot[ja], kap[ja])
+        sr = disc_r_sigma(np.maximum(D["sigY"][gC], 1e-6), rpred, cot[ja], sct[ja], ms)
+        dr = np.abs(rc - rpred)
+        phiC = wrap(phi0[ja] - dm[ja] / rc - C_BEND * rc * kap[ja])
+        dphi = np.abs(wrap(D["globalPhi"][gC] - phiC))
+        sph = np.hypot(5e-4, C_BEND * rc * (skap if np.ndim(skap) == 0 else skap[ja])) + ms + d0_allow
+        rwin, pwin = NSIG * sr, NSIG * sph
+        if cap is not None:
+            ps = D["ot_ps"][gC]
+            (rphi_ps, r_ps), (rphi_2s, r_2s) = cap
+            rwin = np.minimum(rwin, np.where(ps, r_ps, r_2s))
+            pwin = np.minimum(pwin, np.where(ps, rphi_ps, rphi_2s) / np.maximum(rc, 1e-6))
+        good = (sp > 0) & (dr <= rwin)
+        if displaced:
+            _, d0_3, kap_3, ok3 = solve3(D["globalR"][gA[ja]], D["globalPhi"][gA[ja]],
+                                         D["globalR"][gB[ja]], D["globalPhi"][gB[ja]], rc, D["globalPhi"][gC])
+            good &= ok3 & (np.abs(kap_3) <= kmax) & (np.abs(d0_3) <= d0_max)
+        else:
+            good &= dphi <= pwin
+        score = dphi if pos_arb != "rphiz" else np.square(dphi / sph) + np.square(dr / sr)
+        if not good.any():
+            continue
+        sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(score[good])
+    out["match_cand"] = n_cand
+    if not sv_p:
+        out["match_cand_z"] = 0
+        out["tracks_to_fit"] = 0
+        return out
+    pa, pc, pr = np.concatenate(sv_p), np.concatenate(sv_c), np.concatenate(sv_res)
+    out["match_cand_z"] = int(len(pa))
+    o = np.lexsort((pr, pa))
+    pk = o[np.r_[True, pa[o][1:] != pa[o][:-1]]]
+    out["tracks_to_fit"] = int(len(pk))
+    out["_trip"] = (gA[pa[pk]], gB[pa[pk]], pc[pk])
+    out["_pairidx"] = pa[pk]
+    return out
+
+
+def _seed_errors(D, gA, gB, cot, la, lb, rA, rB):
+    """(skap, sct) of a seed's pairs: sigma(kappa) and sigma(cot theta) of the two-point helix. A barrel seed keeps
+    the layer-median lever arm for kappa (a scalar) and its pairs' z sigmas; a seed with a disc layer takes each
+    pair's own lever arm, a disc hit's longitudinal error being its r sigma times |cot| (census format 36)."""
+    if not (is_disc(la) or is_disc(lb)):
+        dr = abs(rB - rA)
+        return (np.sqrt(2.0) * 1e-3 / (C_BEND * max(dr, 0.1)),
+                np.hypot(np.maximum(D["sigY"][gA], 1e-6), np.maximum(D["sigY"][gB], 1e-6)) / max(dr, 0.1))
+    drp = np.maximum(np.abs(D["globalR"][gB] - D["globalR"][gA]), 0.1)
+    eA = np.maximum(D["sigY"][gA], 1e-6) * np.where(is_disc(la), np.abs(cot), 1.0)
+    eB = np.maximum(D["sigY"][gB], 1e-6) * np.where(is_disc(lb), np.abs(cot), 1.0)
+    return np.sqrt(2.0) * 1e-3 / (C_BEND * drp), np.hypot(eA, eB) / drp
+
+
 def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                displaced=False, d0_cm=0.0, d0_max=TRIPLET_D0_MAX_CM,
                use_angles=True, d0_meas=None, seed_layers=None, role="follow",
@@ -2155,7 +2427,6 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     if len(idx[lc]) < 1:
         return out
     rA, rB = idx["r_med"][la], idx["r_med"][lb]
-    dr = abs(rB - rA)
     ms = (THETA_MS_MRAD * 1e-3 / ptmin) * np.sqrt(2.0)
     d0_eff = D0_DISPLACED_CM if displaced else d0_cm
     d0_allow = d0_eff / min(rA, rB)
@@ -2193,12 +2464,13 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     # so it can only ever TIGHTEN: if physics already says the window is
     # narrower than the firmware's, physics wins and we do not widen to match.
     ot_cap = (ot_match_window(lc - 10, seed_layers or (la, lb))
-              if lc > 10 else None)
+              if 10 < lc <= 16 else None)
     # widen the z road only for an IT/joint seed reaching into the OT
     z_widen = (OT_IT_PROJ_Z_WIDEN
                if (lc > 10 and ot_seed_name(seed_layers or (la, lb)) is None)
                else 1.0)
-    if ot_cap is OT_PROJ_FORBIDDEN:
+    if ot_cap is OT_PROJ_FORBIDDEN or (lc in OT_DISC_CODES and ot_disc_match_window(
+            lc - 20, seed_layers or (la, lb)) is OT_PROJ_FORBIDDEN):
         # Not in this seed's projlayers_. Report the layer as looked-at-and-empty
         # rather than returning early, so the cost counters still show that the
         # real menu declines to pay for it.
@@ -2208,13 +2480,14 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
         return out
     cap_phi = None if ot_cap is None else ot_cap[0] / max(rCmed, 1e-6)
     cap_z = None if ot_cap is None else ot_cap[1]
-    skap = np.sqrt(2.0) * 1e-3 / (C_BEND * max(dr, 0.1))
+    # sigma(kappa) and sigma(cot theta) of the pair (_seed_errors): for a barrel seed, the layers' lever arm and
+    # the MEASURED per-cluster CPE sigma (sigY ~ 12.5 um) rather than an assumed 30 um
+    skap, sct = _seed_errors(D, gA, gB, cot, la, lb, rA, rB)
     sph = np.hypot(5e-4, C_BEND * rCmed * skap) + ms + d0_allow
-    # sigma(cot theta) from the pair's two z measurements, using the MEASURED
-    # per-cluster CPE sigma (sigY ~ 12.5 um) rather than an assumed 30 um.
-    sct = np.hypot(np.maximum(D["sigY"][gA], 1e-6),
-                   np.maximum(D["sigY"][gB], 1e-6)) / max(dr, 0.1)
     out["projections"] = int(len(gA))
+    if is_disc(lc):
+        return _project_disc(D, out, gA, gB, kap, cot, z0p, idx, lc, displaced, kmax, d0_max,
+                             d0_meas, seed_layers or (la, lb), pos_arb, skap, sct, ms, d0_allow)
     # ---- the ANGLE window and arbitration (S3 / S4w / S4a) ------------------
     # Each candidate's alpha and beta against the seed's prediction at its own
     # radius: kappa_alpha = kappa - d0/(c r^2) (d0 = the triplet's solved d0, 0
@@ -2246,13 +2519,16 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     zidx = build_layer_z_index(cC, D["event"][cC], rC, zC, sgC)
     n_cand = 0
     sv_p, sv_c, sv_res = [], [], []
-    sv_pos, sv_kp, sv_cp, sv_sct = [], [], [], []
+    sv_pos, sv_kp, sv_cp, sv_sct, sv_skap = [], [], [], [], []
     gen = (candidates_exhaustive(D["event"][gA], D["event"][cC], cC) if _EXHAUSTIVE
            else candidates_by_z(D["event"][gA], z0p, cot, sct, ms, zidx))
     for ja, gC in gen:
         rss_check()
         n_cand += len(ja)
         rc_i = D["globalR"][gC]
+        # a seed with a disc layer has a per-pair kappa error (_seed_errors); a barrel seed's is one number
+        skap_c = skap if np.ndim(skap) == 0 else skap[ja]
+        sph_c = sph if np.ndim(sph) == 0 else sph[ja]
         # PROJECT ALONG THE ARC, NOT THE RADIUS. z advances with PATH LENGTH,
         # and for a curved track the path to radius r exceeds r:
         #     s = 2R asin(r/2R) ~ r (1 + (r/2R)^2/6)
@@ -2291,17 +2567,17 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                 rc_i, D["globalPhi"][gC])
             good &= ok3 & (np.abs(kap_3) <= kmax) & (np.abs(d0_3) <= d0_max)
         else:
-            pwin = NSIG * sph if cap_phi is None else min(NSIG * sph, cap_phi)
+            pwin = NSIG * sph_c if cap_phi is None else np.minimum(NSIG * sph_c, cap_phi)
             good &= dphi <= pwin
         # THE POSITION TERM of the arbitration, the same for every angle
         # configuration; S4a adds its angle pulls to it below
-        pos = (np.square(dphi / sph) + np.square(dz / szp_i)) if pos_arb == "rphiz" \
+        pos = (np.square(dphi / sph_c) + np.square(dz / szp_i)) if pos_arb == "rphiz" \
             else None
         score = dphi if pos is None else pos
         # under "dphi" the term S4a adds to is (dphi / sigma_phi)^2, which ranks
         # exactly as dphi does, so with no usable angle the choice is the
         # position-only one either way
-        base = np.square(dphi / sph) if pos is None else pos
+        base = np.square(dphi / sph_c) if pos is None else pos
         if (win_on or arb_on) and good.any():
             kp = kap[ja] - dm[ja] / (C_BEND * rc_i * rc_i)
             cp = cot[ja]
@@ -2320,12 +2596,12 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
                 passed = ~u_ | inw
                 if rec is not None:
                     rec.window(role_i, sid, lc, ptmin, ja, gC, seed_hits, kp, cp, pa_, pb_,
-                               passed, ptb, skap, sct[ja], good & u_)
+                               passed, ptb, skap_c, sct[ja], good & u_)
                 g0 = int(good.sum())
                 good &= passed
                 n_ang_rej += g0 - int(good.sum())
             if arb_on:
-                pa2, pb2 = model.arb_pulls(Q, gC, kp, cp, skap, sct[ja], ang.keys["proj_arb"])
+                pa2, pb2 = model.arb_pulls(Q, gC, kp, cp, skap_c, sct[ja], ang.keys["proj_arb"])
                 t = ((pa2 * pa2 if ang.uses("proj_arb", "alpha") else 0.0)
                      + (pb2 * pb2 if ang.uses("proj_arb", "beta") else 0.0))
                 ang.count_nonfinite("S4a", np.broadcast_to(t, u_.shape)[good & u_])
@@ -2335,7 +2611,7 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
         sv_p.append(ja[good]); sv_c.append(gC[good]); sv_res.append(score[good])
         if rec_arb:
             sv_pos.append(base[good]); sv_kp.append(kp[good]); sv_cp.append(cp[good])
-            sv_sct.append(sct[ja][good])
+            sv_sct.append(sct[ja][good]); sv_skap.append(np.broadcast_to(skap_c, len(ja))[good])
     if win_on:
         out["angle_window_rejected"] = n_ang_rej
     out["match_cand"] = n_cand
@@ -2349,7 +2625,7 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
         # S4a's decisions holding a correct candidate, every candidate of each, for
         # the paired comparison of the two table keys (census_angles.Recorder)
         rec.decisions(lc, pa, pc, seed_hits, np.concatenate(sv_kp), np.concatenate(sv_cp),
-                      skap, np.concatenate(sv_sct), np.concatenate(sv_pos))
+                      np.concatenate(sv_skap), np.concatenate(sv_sct), np.concatenate(sv_pos))
     # ARBITRATE ONCE, over every radial bin together: a cluster pair's candidates
     # are spread across bins, so a per-yield argmin would pick a different winner.
     # The score is the position term (pos_arb), plus the angle pulls^2 under S4a.
