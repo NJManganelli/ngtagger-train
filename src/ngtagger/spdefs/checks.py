@@ -25,6 +25,7 @@ COLS = ("surface", "detId", "tpEmuClass", "tpIdx", "hasAlpha", "hasBeta", "globa
         "tpGlobalClusterPhi", "tpGlobalClusterCotTheta", "localCotAlpha", "localCotBeta", "tpLocalCotAlpha",
         "tpLocalCotBeta", "tpPt")
 K_TESTED = (0.0, 0.05, 0.3, 0.67, 0.999)
+DISC_FRAME_TOL = 1e-3           # disc frame check: relative cot difference (the 12-bit storage gives ~1e-4)
 FRAME_RATIO_BAND = (0.5, 1.5)   # frame-sign check: median p_loc / map(p_glob) per group (P0.3 amendment 1e; widened
                                 # from [0.8, 1.2] on 2026-10-14, statistics review 02 round 5 note 2: a sign flip gives -1)
 FRAME_PULL_RANGE = (1.0, 10.0)  # ... over the clusters with 1 < |p_glob| < 10
@@ -49,8 +50,10 @@ def clusters(ctx: Ctx) -> dict:
         D["ok"] = SA.usable(D)
         D["T"] = SA.class_T(D["tpEmuClass"]) & D["ok"]
         D["C"] = (D["tpEmuClass"] == 0) & D["ok"]
+        # the module orientation: barrel modules by the cluster vote, disc modules from the D121 frames (the vote
+        # is exact on canon_v3 only; WP-Disc D-frame)
         ids, sg = SA.orientation_from_clusters(D["detId"], D["localCotBeta"], D["globalClusterCotTheta"], D["ok"])
-        D["orient"] = SA.orientation_lookup(D["detId"], ids, sg)
+        D["orient"] = SA.orientation_geometric(D["surface"], D["detId"], ids, sg)
         ctx.cache[key] = D
     return ctx.cache[key]
 
@@ -262,6 +265,7 @@ class FrameSign(Item):
 
     def _stat(self, ctx, bad=False):
         D = clusters(ctx)
+        sense = SA.disc_sense(D["surface"], D["globalZ"], D["globalClusterCotTheta"])
         pg = SA.residual("beta", SA.emitted("beta", D), SA.truth("beta", D)) / SA.sigma_of("beta", D)
         row, est = _fit_rows(D, D["tpGlobalClusterCotTheta"], {"beta": pg}, D["T"])
         c, w = est["beta"][row, 0], est["beta"][row, 1]
@@ -286,7 +290,7 @@ class FrameSign(Item):
                         "n": int(m.sum()), "n_ratio": int(len(r)),
                         "ratio_median": float(np.median(r)) if len(r) >= FRAME_MIN_CLUSTERS else None,
                         "after_centre_reported": SA.centre_of(after[m])}
-        return {"input": ctx.input, "events": ctx.events, "bad": bad, "groups": groups}
+        return {"input": ctx.input, "events": ctx.events, "bad": bad, "disc_sense": sense, "groups": groups}
 
     def compute(self, ctx):
         return self._stat(ctx)
@@ -295,7 +299,12 @@ class FrameSign(Item):
         return self._stat(ctx, bad=True)
 
     def judge(self, stat, ref):
-        g = {k: v for k, v in stat["groups"].items() if v["ratio_median"] is not None}
+        # UNDER THE Z SENSE (canon_v4) the disc groups are reported, not judged: the global disc beta is then an
+        # even function of the local cotBeta about 0 (lambda from sqrt(cotAlpha^2 + cotBeta^2)), so no sign map
+        # carries a global disc pull to the module frame; the disc frame is judged by spdefs.disc_frame
+        z_sense = stat.get("disc_sense") == "z"
+        g = {k: v for k, v in stat["groups"].items() if v["ratio_median"] is not None
+             and not (z_sense and k.startswith("ID"))}
         lo, hi = FRAME_RATIO_BAND
         fails = {k: v for k, v in g.items() if not lo <= v["ratio_median"] <= hi}
         orients = {k.split("/")[1] for k in g}
@@ -324,8 +333,10 @@ class KeyFromLocal(Item):
     def _stat(self, ctx, bad=False):
         D = clusters(ctx)
         o = np.ones_like(D["orient"]) if bad else D["orient"]
+        z_sense = SA.disc_sense(D["surface"], D["globalZ"], D["globalClusterCotTheta"]) == "z"
         kg = SA.incidence_key(D["surface"], D["tpGlobalClusterCotTheta"])
-        kl = SA.key_from_local(D["surface"], D["tpLocalCotAlpha"], D["tpLocalCotBeta"], o)
+        kl = SA.key_from_local(D["surface"], D["tpLocalCotAlpha"], D["tpLocalCotBeta"], o,
+                               np.sign(D["globalZ"]) if z_sense else None)
         m = D["T"] & (D["orient"] != 0) & (D["tpPt"] >= SA.PT_MIN)
         lo = D["T"] & (D["orient"] != 0) & (D["tpPt"] < SA.PT_MIN)
         d = np.abs(kl - kg)[m] / (1 + np.abs(kg[m]))
@@ -347,7 +358,55 @@ class KeyFromLocal(Item):
                     f"{stat['below_pt_min']['n']}; unknown orientation {stat['unknown_orientation']}")
 
 
-ITEMS = [KnobIdentity(), KnobContinuityFloor(), KnobClassC(), KnobCentre(), FrameSign(), KeyFromLocal()]
+class DiscFrame(Item):
+    id = "spdefs.disc_frame"
+    title = "the D121 disc module frames: the published global direction rotated into each disc module's frame equals " \
+            "its published module-frame cots"
+    c4_row = "frame sign: the disc module frame (WP-Disc D-frame)"
+    known_bad_desc = "the disc facing sign flipped (sx -> -sx)"
+    rule_desc = (f"every usable disc cluster on a module of the D121 frame table (ex = sx phi_hat, ey = -r_hat, ez = sx "
+                 f"z_hat at the module azimuth), emitted and true (class T) columns, both facings: |cot_pred - "
+                 f"cot_published| / (1 + |cot_published|) <= {DISC_FRAME_TOL:g} for cotAlpha and cotBeta (the 12-bit "
+                 "storage), and no disc cluster on an unknown module")
+
+    def _stat(self, ctx, bad=False):
+        D = clusters(ctx)
+        dsc = SA.is_disc(D["surface"])
+        sx, _ = SA.disc_frame_lookup(D["detId"])
+        out = {"input": ctx.input, "events": ctx.events, "bad": bad,
+               "unknown_module": int(np.sum(dsc & (sx == 0)))}
+        for which, phi, cot, ca, cb, sel in (
+                ("emitted", "globalClusterPhi", "globalClusterCotTheta", "localCotAlpha", "localCotBeta", D["ok"]),
+                ("true", "tpGlobalClusterPhi", "tpGlobalClusterCotTheta", "tpLocalCotAlpha", "tpLocalCotBeta", D["T"])):
+            m = dsc & sel & (sx != 0) & np.isfinite(D[cot]) & (D[cot] != 0)
+            pa, pb = SA.disc_local_from_global(D["detId"][m], D[phi][m], D[cot][m], facing_flip=bad)
+            for a, p, e in (("alpha", pa, D[ca][m]), ("beta", pb, D[cb][m])):
+                e = np.asarray(e, np.float64)
+                d = np.abs(p - e) / (1.0 + np.abs(e))
+                for f in (-1, 1):
+                    q = sx[m] == f
+                    out[f"{which}/{a}/sx{f:+d}"] = {"n": int(q.sum()),
+                                                     "max_rel": float(d[q].max()) if q.any() else None}
+        return out
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        return self._stat(ctx, bad=True)
+
+    def judge(self, stat, ref):
+        rows = {k: v for k, v in stat.items() if isinstance(v, dict)}
+        why = [f"{k}: max rel {v['max_rel']:.2g}" for k, v in rows.items()
+               if v["n"] == 0 or v["max_rel"] > DISC_FRAME_TOL]
+        if stat["unknown_module"]:
+            why.append(f"{stat['unknown_module']} disc clusters on modules outside the frame table")
+        worst = max((v["max_rel"] or 0.0) for v in rows.values())
+        return not why, (f"{sum(v['n'] for v in rows.values()) // 4} disc clusters per angle, both facings, emitted "
+                         f"and true: max rel {worst:.1e}" if not why else "; ".join(why[:4]))
+
+
+ITEMS = [KnobIdentity(), KnobContinuityFloor(), KnobClassC(), KnobCentre(), FrameSign(), KeyFromLocal(), DiscFrame()]
 
 
 def main(argv=None) -> int:
