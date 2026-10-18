@@ -346,7 +346,7 @@ def _c1b_checks(f, rid, title, bias, job_dir, overwrite):
                  {"name": "power statements", "value": json.dumps(Q["power"])}]
     _reg({"id": rid, "title": title, "status": "valid" if not Q["material"] else "void",
           "status_note": "; ".join(Q["material"]) or "no failure", "values": vals, "bias": bias,
-          "sources": [str(p), str(CM.OUT / "c1b" / "d1_exempt_v1.json")]}, job_dir, overwrite)
+          "sources": [str(p), Q["d1_exempt_file"]]}, job_dir, overwrite)
 
 
 def c1b_j5(job_dir, overwrite):
