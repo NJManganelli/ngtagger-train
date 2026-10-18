@@ -857,15 +857,18 @@ def coverage_z(m, n_test, e0, var):
 Z_LUMI_CM = 15.0     # the census's luminous-region half-window (tracklet_topology_cost Z_LUMI) [cm]
 
 
-def alpha_band(r_cm, pt_floor):
-    """|alpha| of a prompt track of transverse momentum pt_floor at radius r: asin(KPT r / 2 pT)."""
-    return np.arcsin(np.clip(KPT_CMSSW * np.asarray(r_cm, np.float64) / (2.0 * pt_floor), 0.0, 1.0))
+def alpha_band(r_cm, pt_floor, d0_max=0.0):
+    """|alpha| allowed at radius r: a prompt track of transverse momentum pt_floor, asin(KPT r / 2 pT), plus the
+    turn a transverse impact parameter up to d0_max adds there, asin(d0_max / r) (alpha = asin(c kappa r - d0 / r))."""
+    r = np.asarray(r_cm, np.float64)
+    band = np.arcsin(np.clip(KPT_CMSSW * r / (2.0 * pt_floor), 0.0, 1.0))
+    return band + np.arcsin(np.clip(d0_max / np.maximum(r, 1e-6), 0.0, 1.0)) if d0_max else band
 
 
-def s1_statistic(a, sigma_cons, centre_abs, r_cm, pt_floor):
-    """S1-like single-cluster alpha test against the pT floor: (|alpha - c| - band(r, floor)) /
+def s1_statistic(a, sigma_cons, centre_abs, r_cm, pt_floor, d0_max=0.0):
+    """S1-like single-cluster alpha test against the pT floor (and |d0| <= d0_max): (|alpha - c| - band) /
     sigma (negative inside the band). `centre_abs` = the subtracted centre (centre_k x sigma_pub)."""
-    return (np.abs(wrap_2pi(np.asarray(a) - centre_abs)) - alpha_band(r_cm, pt_floor)) / sigma_cons
+    return (np.abs(wrap_2pi(np.asarray(a) - centre_abs)) - alpha_band(r_cm, pt_floor, d0_max)) / sigma_cons
 
 
 def beta_window(r_cm, z_cm, z_lumi=Z_LUMI_CM):

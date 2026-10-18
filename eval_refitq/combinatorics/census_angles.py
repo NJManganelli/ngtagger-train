@@ -88,6 +88,12 @@ DISC_KNOWN_BADS = ("facing_flipped", "barrel_frame", "barrel_form", "global_alph
 # thresholds, and the barrel tracks there lose 2-3 % to a 99 % cut (CAL36). A disc track also carries up to twice
 # the barrel's measurements (s6_n_max).
 S6_DISC = "/disc"
+# S1'S DISPLACED TOLERANCE (the physicist's decision of 2026-10-18): the allowed |alpha| band of the single-cluster
+# test adds the turn a track with |d0| <= S1_D0MAX_CM makes at the cluster's radius, asin(D / r) (barrel: radians of
+# alpha; disc: over |cot theta|, cot units), so S1 no longer kills displaced clusters at low pT (16 % of > 1 cm at
+# 1-2 GeV with the prompt band, WP-D0b). 1 cm: the census KF's d0 prior (kf_emulation.D0_PRIOR_CM). 0 is the
+# prompt band of census formats 33-35.
+S1_D0MAX_CM = 1.0
 
 
 def s6_group(build, disc):
@@ -119,7 +125,7 @@ class Model:
     """The table, the knob (k per angle, sigma mode) and the weighting keys of one census run."""
 
     def __init__(self, table_path=TABLE_DEFAULT, k_alpha=1.0, k_beta=1.0, mode="fixed",
-                 registry=TABLE_REGISTRY, disc_table_path=DISC_TABLE_DEFAULT):
+                 registry=TABLE_REGISTRY, disc_table_path=DISC_TABLE_DEFAULT, s1_d0max=S1_D0MAX_CM):
         self.table_path = os.path.realpath(table_path)
         self.table = SD.AngleTable.load(self.table_path)
         self.table_sha = sha256(self.table_path)
@@ -132,12 +138,14 @@ class Model:
         if mode not in SD.K_MODES:
             raise ValueError(f"k mode {mode!r} not in {SD.K_MODES}")
         self.mode = mode
+        self.s1_d0max = float(s1_d0max)
 
     @classmethod
     def from_identity(cls, am):
-        """The model a census manifest's angle_model names, refusing a table that changed since (either one)."""
+        """The model a census manifest's angle_model names, refusing a table that changed since (either one); a
+        manifest without s1_d0max ran S1's prompt band (0)."""
         m = cls(am["table_path"], am["k_alpha"], am["k_beta"], am["mode"],
-                disc_table_path=am.get("disc_table_path", DISC_TABLE_DEFAULT))
+                disc_table_path=am.get("disc_table_path", DISC_TABLE_DEFAULT), s1_d0max=am.get("s1_d0max", 0.0))
         if m.table_sha != am["table_sha256"]:
             raise SystemExit("the angle table changed since the census ran")
         if "disc_table_sha256" in am and m.disc_table_sha != am["disc_table_sha256"]:
@@ -152,7 +160,7 @@ class Model:
                 "fit_sample": d.get("fit_sample"), "k_alpha": self.k["alpha"],
                 "k_beta": self.k["beta"], "mode": self.mode,
                 "disc_table_path": self.disc_table_path, "disc_table_sha256": self.disc_table_sha,
-                "disc_table_registry": DISC_TABLE_REGISTRY}
+                "disc_table_registry": DISC_TABLE_REGISTRY, "s1_d0max": self.s1_d0max}
 
     def with_disc_known_bad(self, name):
         """This model with a disc known-bad (DISC_KNOWN_BADS) in every disc statistic: the import gate's offline
@@ -183,6 +191,12 @@ class Model:
         m.mode = mode
         return m
 
+    def with_s1_d0max(self, d0max):
+        """This model with S1's displaced tolerance at `d0max` (cm)."""
+        m = copy.copy(self)
+        m.s1_d0max = float(d0max)
+        return m
+
     def calib_k(self):
         """(k_alpha, k_beta) at which a cutting consumer's quantile is measured: k in scaled mode,
         1 in fixed mode (spdefs.calibration_k)."""
@@ -203,7 +217,7 @@ class Model:
 
     # ---- the statistics, as the census stages call them (M, KF) -----------
     def s1(self, Q, idx, floor):
-        return s1_stat(Q["half_c"][idx], np.maximum(Q["s_half_c"][idx], 1e-12), Q["r"][idx], floor)
+        return s1_stat(Q["half_c"][idx], np.maximum(Q["s_half_c"][idx], 1e-12), Q["r"][idx], floor, self.s1_d0max)
 
     def s2a(self, kap, Q, gA, gB, useA, useB):
         return s2a_stat(kap, Q["kap_a"][gA], Q["s_kap"][gA], Q["kap_a"][gB], Q["s_kap"][gB],
@@ -279,14 +293,17 @@ class Model:
 
     def s1d(self, Q, g, floor):
         """S1 on disc clusters g: (statistic, the disc table row it is binned by). The straight prompt track
-        through the cluster (kappa 0, z0 0) predicts (pa0, pb0); the statistic is |alpha pull| less the pT band
-        C r kappa_floor / |cot| in the same units (negative inside the band)."""
+        through the cluster (kappa 0, z0 0) predicts (pa0, pb0); the statistic is |alpha pull| less the band
+        (C r kappa_floor + asin(s1_d0max / r)) / |cot| in the same units (negative inside the band)."""
         r, z = Q["lr"][g], Q["lz"][g]
         cot0 = z / np.maximum(r, 1e-6)
         pa0, pb0 = self._predict(Q, g, np.zeros(len(g)), cot0)
         rows = self.disc_rows(Q, g, pa0, pb0)
         pa, _ = self.disc_pulls(Q, g, pa0, pb0, rows)
-        band = M.C_BEND * r / (np.asarray(floor, np.float64) * np.maximum(np.abs(cot0), 1e-6))
+        turn = M.C_BEND * r / np.asarray(floor, np.float64)
+        if self.s1_d0max:
+            turn = turn + np.arcsin(np.clip(self.s1_d0max / np.maximum(r, 1e-6), 0.0, 1.0))
+        band = turn / np.maximum(np.abs(cot0), 1e-6)
         c = self.disc_table.get(DISC_KEY, "alpha", "width", rows)
         w = np.where(np.isfinite(c), c, 1.0)
         return np.abs(pa) - band / np.maximum(w * Q["lca_sk"][g], 1e-12), rows
@@ -532,10 +549,10 @@ def with_ot_stubs(QI, n):
 # ==========================================================================
 # statistics (in-run and offline)
 # ==========================================================================
-def s1_stat(half_c, s_half_c, r, floor):
-    """S1: the single-cluster alpha test against the pT floor, in table units (spdefs.s1_statistic
-    on the corrected angle; negative inside the band)."""
-    return SD.s1_statistic(half_c, s_half_c, 0.0, r, floor)
+def s1_stat(half_c, s_half_c, r, floor, d0max=0.0):
+    """S1: the single-cluster alpha test against the pT floor and |d0| <= d0max, in table units
+    (spdefs.s1_statistic on the corrected angle; negative inside the band)."""
+    return SD.s1_statistic(half_c, s_half_c, 0.0, r, floor, d0max)
 
 
 def s2a_stat(kap_pair, kapA, skapA, kapB, skapB, useA, useB):
@@ -968,6 +985,8 @@ class CutSet:
         for k in ("bench", "d0_prior_cm", "level"):
             if I.get(k) != run.get(k):
                 bad.append(f"{k} {I.get(k)!r} != {run.get(k)!r}")
+        if float(I.get("s1_d0max", 0.0)) != model.s1_d0max:
+            bad.append(f"S1 displaced tolerance {I.get('s1_d0max', 0.0)!r} cm != this run's {model.s1_d0max!r}")
         # the thresholds are quantiles of the calibration census's own candidates: a census format
         # moves those numbers (e.g. format 35's OT inputs), so a file calibrated on another is refused
         fmt = I.get("calibration", {}).get("format")

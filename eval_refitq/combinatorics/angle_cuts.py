@@ -64,10 +64,10 @@ def _rep(R, p, ka, kb, mode):
         return h, sh, CA.represent(R[p + "r"], R[p + "z"], h, sh, lam, sl)
 
 
-def stat_s1(R, ka, kb, mode):
+def stat_s1(R, ka, kb, mode, d0max=0.0):
     h, sh, _ = _rep(R, "", ka, kb, mode)
     with np.errstate(all="ignore"):
-        return CA.s1_stat(h, np.maximum(sh, 1e-12), R["r"], R["floor"])
+        return CA.s1_stat(h, np.maximum(sh, 1e-12), R["r"], R["floor"], d0max)
 
 
 def stat_pair(R, ka, kb, mode):
@@ -475,7 +475,8 @@ def _s6_cell(c2, n, tp, ev_w, level, n_max):
 def statistics(R, k=(1.0, 1.0), mode="fixed", model=None):
     """The cutting consumers' statistics of records R at (k, mode), computed once (fit, evaluate and
     the bootstrap reuse them); with the census angle model, the disc consumers' records too."""
-    out = {"s1": stat_s1(R["s1"], *k, mode), "pair": stat_pair(R["pair"], *k, mode),
+    out = {"s1": stat_s1(R["s1"], *k, mode, 0.0 if model is None else model.s1_d0max),
+           "pair": stat_pair(R["pair"], *k, mode),
            "win": stat_win(R["win"], *k, mode)}
     if model is not None:
         for kind, fn in (("s1d", stat_s1d), ("paird", stat_paird), ("wind", stat_wind)):
@@ -665,7 +666,7 @@ def evaluate(R, doc, k=(1.0, 1.0), mode="fixed", model=None):
         res.update(_evaluate_discs(R, doc, model, ka, kb, mode))
     if "s1" in doc and "s1" in R:
         T = R["s1"]
-        st = stat_s1(T, ka, kb, mode)
+        st = stat_s1(T, ka, kb, mode, 0.0 if model is None else model.s1_d0max)
         ui = _unit_index([tuple(u) for u in doc["s1"]["bins"]],
                          list(zip(T["floor"].tolist(), T["row"].tolist())))
         thr = np.where(ui >= 0, np.asarray(doc["s1"]["thr"])[np.maximum(ui, 0)], np.inf)
@@ -745,6 +746,7 @@ def save(path, body, floors, R_man, model, k, mode, cal_dir, s6_dir=None, level=
            "identity": {"table_path": model.table_path, "table_sha256": model.table_sha,
                         "table_registry": model.registry, "level": level,
                         "disc_table_path": model.disc_table_path, "disc_table_sha256": model.disc_table_sha,
+                        "s1_d0max": model.s1_d0max,
                         "k_alpha": float(k[0]), "k_beta": float(k[1]), "mode": mode,
                         "bench": cfg.get("bench"),
                         "d0_prior_cm": float(cfg["kf_opts"].get("d0_prior_cm",
@@ -779,6 +781,9 @@ def main():
     f.add_argument("--mode", default="fixed", choices=list(SD.K_MODES))
     f.add_argument("--s6-from", default=None,
                    help="the calibration census at the file's k (scaled mode) for S6")
+    f.add_argument("--s1-d0max", type=float, default=CA.S1_D0MAX_CM,
+                   help="S1's displaced tolerance (cm) the file is fitted for (census_angles.S1_D0MAX_CM); S1 is "
+                        "recomputed from its records' components, so the calibration census may have run another")
     a = ap.parse_args()
     import tp_findability as TF
     d = TF.census_dir(a.census)
@@ -790,7 +795,8 @@ def main():
     R = CA.load_records(d)
     # at the census's own k the recomputed statistics are the recorded ones
     kc = (am["k_alpha"], am["k_beta"])
-    checks = [("s1", stat_s1, ("stat",)), ("pair", stat_pair, ("stat_a", "stat_z")), ("win", stat_win, ("pa", "pb"))]
+    checks = [("s1", (lambda T, ka, kb, md: stat_s1(T, ka, kb, md, model.s1_d0max)), ("stat",)),
+              ("pair", stat_pair, ("stat_a", "stat_z")), ("win", stat_win, ("pa", "pb"))]
     checks += [(kind, (lambda T, ka, kb, md, f=fn: f(T, model, ka, kb, md)), cols) for kind, fn, cols in (
         ("s1d", stat_s1d, ("stat",)), ("paird", stat_paird, ("stat_a", "stat_z")), ("wind", stat_wind, ("pa", "pb")))
         if kind in R]
@@ -811,6 +817,7 @@ def main():
         TF.one_format({d: man, s6d: json.load(open(os.path.join(s6d, "manifest.json")))})
         s6R = CA.load_records(s6d)
     k = (a.k_alpha, a.k_beta)
+    model = model.with_s1_d0max(a.s1_d0max)          # the checks above ran at the census's own tolerance
     body, floors = fit(R, man, model, k, a.mode, s6_R=s6R)
     save(a.out, body, floors, man, model, k, a.mode, d, s6d)
     for c, v in body.items():

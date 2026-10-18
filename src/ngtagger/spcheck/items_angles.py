@@ -123,7 +123,7 @@ class AngleImport(Item):
         # of this code's format (a cut file is bound to its calibration census's format)
         TF = ctx.script_module(CENSUS_DIR, "tp_findability")
         doc = {"schema": CA.CUT_SCHEMA,
-               "identity": {"table_sha256": model.table_sha, "k_alpha": 1.0, "k_beta": 1.0,
+               "identity": {"table_sha256": model.table_sha, "s1_d0max": model.s1_d0max, "k_alpha": 1.0, "k_beta": 1.0,
                             "mode": "fixed", "bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL,
                             "floors": [2.0], "calibration": {"format": TF.FORMAT_VERSION}},
                "s1": {"bins": [], "thr": []}, "s2a": {"bins": [], "thr": []},

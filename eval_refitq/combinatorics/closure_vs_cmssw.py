@@ -329,8 +329,8 @@ def g0(c35, c36, nev=None):
     """G0 (WP-Disc plan sec. 3): a format-36 census with the discs off (--discs off) against format 35's on the
     same inputs and configuration, shard by shard: every array identical apart from format 36's additions, which
     must be empty (_g0_array); the counters, the entries and the configuration identical apart from the format
-    and format 36's configuration keys: the discs key, it_discs (False), disc_seeds (none) and the angle model's disc
-    table identity (disc_table_*, inert with the discs off)."""
+    and format 36's configuration keys: the discs key, it_discs (False), disc_seeds (none), the angle model's disc
+    table identity (disc_table_*, inert with the discs off) and S1's displaced tolerance (0, the prompt band)."""
     d35, d36 = TF.census_dir(c35), TF.census_dir(c36)
     m35, m36 = (json.load(open(Path(d) / "manifest.json")) for d in (d35, d36))
     cfg35, cfg36 = dict(m35["config"]), dict(m36["config"])
@@ -338,7 +338,11 @@ def g0(c35, c36, nev=None):
     disc_on = oc36.pop("discs", None)
     it_discs, disc_seeds = cfg36.pop("it_discs", False), cfg36.pop("disc_seeds", None)
     if isinstance(cfg36.get("angle_model"), dict):
-        cfg36["angle_model"] = {k: v for k, v in cfg36["angle_model"].items() if not k.startswith("disc_table")}
+        am = cfg36["angle_model"]
+        if am.get("s1_d0max", 0.0) != 0.0:
+            return {"stage": "G0", "gates": {"g0_identical": False},
+                    "differences": [f"S1 displaced tolerance {am['s1_d0max']} with the discs off"]}, False
+        cfg36["angle_model"] = {k: v for k, v in am.items() if not k.startswith("disc_table") and k != "s1_d0max"}
     same_cfg = cfg35.pop("ot_chain") == oc36 and cfg35 == cfg36 and it_discs is False and not disc_seeds
     head = {"formats": [m35.get("format"), m36.get("format")], "discs": disc_on,
             "inputs_equal": m35["inputs"] == m36["inputs"], "config_equal": same_cfg,

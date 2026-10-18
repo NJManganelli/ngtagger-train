@@ -1997,6 +1997,9 @@ def main():
                     help="the angle cut file the cutting stages read "
                          "(census_angles.CutSet; refused if made for another "
                          "configuration)")
+    ap.add_argument("--s1-d0max", type=float, default=None,
+                    help="S1's displaced tolerance, cm: the allowed alpha band adds asin(D / r) (census_angles."
+                         f"S1_D0MAX_CM); default {CA.S1_D0MAX_CM:g} with --discs on, 0 (format 35's prompt band) off")
     ap.add_argument("--calibrate", action="store_true",
                     help="the calibration run: every angle cutting stage records "
                          "its statistic and passes everything")
@@ -2049,7 +2052,9 @@ def main():
                            a.angle_keys, arb_weight=a.arb_weight)
     if a.calibrate and a.angle_cuts:
         raise SystemExit("--calibrate runs with every cut open: no --angle-cuts")
-    model = CA.Model(a.angle_table, a.k_alpha, a.k_beta, a.k_mode, disc_table_path=a.angle_table_disc)
+    s1_d0max = a.s1_d0max if a.s1_d0max is not None else (CA.S1_D0MAX_CM if a.discs == "on" else 0.0)
+    model = CA.Model(a.angle_table, a.k_alpha, a.k_beta, a.k_mode, disc_table_path=a.angle_table_disc,
+                     s1_d0max=s1_d0max)
     cuts = CA.CutSet.load(a.angle_cuts) if a.angle_cuts else None
     print(f"angle stages: {ang.label()}; keys {ang.keys}; k alpha {a.k_alpha:g}, "
           f"beta {a.k_beta:g} ({a.k_mode}); cuts "

@@ -513,7 +513,12 @@ def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP
     formats = TF.one_format({"calibration": cal_man, "test": t_man}, cross_format)
     doc = json.load(open(cuts))
     body = {k: doc[k] for k in ("s1", "s2a", "s2z", "win", "s6") + ("s1d", "s2ad", "s2zd", "wind") if k in doc}
-    model = model_of(cal_man)
+    # S1's displaced tolerance is the cut file's (its S1 thresholds were fitted for it; the calibration census's
+    # records hold the components, whatever tolerance it ran); the test census must have run it
+    d0max = float(doc["identity"].get("s1_d0max", 0.0))
+    if float(t_man["config"]["angle_model"].get("s1_d0max", 0.0)) != d0max:
+        raise SystemExit(f"the test census ran S1 at another displaced tolerance than the cut file's ({d0max} cm)")
+    model = model_of(cal_man).with_s1_d0max(d0max)
     cfg = run_config(t_man)
     test = Test(t_R, t_man, cfg, model)
     units = test.bins(body)
