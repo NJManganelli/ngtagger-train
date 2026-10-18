@@ -7,6 +7,7 @@ from pathlib import Path
 
 import awkward as ak
 import numpy as np
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "eval_refitq" / "combinatorics"))
 import closure_vs_cmssw as CV   # noqa: E402
@@ -110,3 +111,15 @@ def test_match_list_gate_physicist_acceptance():
     assert CV.match_list_gate(2445, 2482)[1:] == (False, False)
     lo, acc, ok = CV.match_list_gate(2482, 2482)
     assert lo >= CV.C1B_MATCH_MIN and not acc and ok
+
+
+def test_injected_known_bads_shift_by_their_margins():
+    rng = np.random.default_rng(0)
+    den = np.ones(1000, bool)
+    f_cen = rng.random(1000) < 0.8
+    f_cms = f_cen.copy()
+    f = CV._inject_found(f_cen, f_cms, den, "d_eff", 1.5, CV.MARGIN["d_eff"], rng)
+    assert (f.sum() - f_cen.sum()) / 1000 == pytest.approx(-0.015, abs=1e-3)
+    f = CV._inject_found(f_cen, f_cms, den, "disc", 1.5, CV.MARGIN["disc"], rng)
+    assert f.sum() == f_cen.sum() and (f ^ f_cms).sum() / 1000 == pytest.approx(0.03, abs=2e-3)
+    assert CV._injection(["C2 L1L2: d_eff=1.5", "C3 delivered: d_dup=10"], "C2 L1L2") == {"d_eff": 1.5}

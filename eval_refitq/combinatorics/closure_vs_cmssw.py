@@ -730,9 +730,58 @@ def _event_mask(nev, exclude):
     return keep
 
 
-def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_events=()):
+# INJECTED KNOWN-BADS (physicist, 2026-10-18; plan sec. 13.4): a statistic no code-level variant moves gets a known
+# shift of the census side, in margin units, to show its gate fails a decision-scale change. Drawn with a fixed seed.
+INJECT_SEED = 20261018
+
+
+def _inject_records(R, stat, m, margin, rng):
+    """Census records with extra copies: ln_cand, of judged tracks (exp(m margin) - 1 of them); ln_fake, of judged
+    fakes (no seed TP); d_dup, of judged seed-truthful tracks (m margin per seed TP)."""
+    J = np.flatnonzero((R[:, 4] >= 0) & (R[:, 4] <= MAX_KF_REGION))
+    if stat == "ln_cand":
+        pool, k = J, len(J) * (math.exp(m * margin) - 1)
+    elif stat == "ln_fake":
+        pool = J[R[J, 3] == 0]
+        k = len(pool) * (math.exp(m * margin) - 1)
+    elif stat == "d_dup":
+        pool = J[R[J, 2] >= 0]
+        k = len(np.unique(R[pool, 2])) * m * margin
+    else:
+        return R
+    return np.concatenate([R, R[rng.choice(pool, int(round(k)), replace=False)]])
+
+
+def _inject_found(f_cen, f_cms, den, stat, m, margin, rng):
+    """The census's found flags shifted: d_eff, m margin of the denominator's TPs it found are lost; disc, as many
+    TPs found by both are lost as TPs found by neither are gained (efficiency unchanged), m margin in all."""
+    f = f_cen.copy()
+    n = int(den.sum())
+    if stat == "d_eff":
+        f[rng.choice(np.flatnonzero(f_cen), int(round(m * margin * n)), replace=False)] = False
+    elif stat == "disc":
+        k = int(round(m * margin * n / 2))
+        f[rng.choice(np.flatnonzero(f_cen & f_cms), k, replace=False)] = False
+        f[rng.choice(np.flatnonzero(den & ~f_cen & ~f_cms), k, replace=False)] = True
+    return f
+
+
+def _injection(inject, name):
+    """{statistic: margins} injected into comparison `name` ("C2 L1L2", "C3 delivered") from "NAME: STAT=M" items."""
+    out = {}
+    for item in inject or ():
+        target, _, m = item.rpartition("=")
+        comp, _, stat = target.partition(":")
+        if comp.strip() == name:
+            out[stat.strip()] = float(m)
+    return out
+
+
+def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_events=(), inject=()):
     """C2 (per seed, no DR) and C3 (delivered, merge DR) of a closed-arm census against CMSSW; `exclude` the
-    events left out on both sides; `power_events` the gated sizes the joint power is also computed at."""
+    events left out on both sides; `power_events` the gated sizes the joint power is also computed at; `inject` the
+    injected known-bads ("C2 L1L2: d_eff=1.5": that statistic shifted by 1.5 margins on the census side)."""
+    rng = np.random.default_rng(INJECT_SEED)
     C = TF.load(TF.census_dir(census_dir), nev=nev, with_tracks=True, verbose=False)
     nevc = int(C["n_events"])
     keep = _event_mask(nevc, exclude)
@@ -748,8 +797,13 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_event
         R_cen = _census_tracks(C, entries, False, stubs)
         for sd in JUDGED_SEEDS:
             i = entry[sd]
+            inj = _injection(inject, f"C2 {OC.SEED_NAME[sd]}")
+            for st, m in inj.items():
+                R_cen[i] = _inject_records(R_cen[i], st, m, MARGIN[st], rng)
             f_cen = _found(R_cen[i], key) & den
             f_cms = _found(R_cms[R_cms[:, 1] == sd], key) & den
+            for st, m in inj.items():
+                f_cen = _inject_found(f_cen, f_cms, den, st, m, MARGIN[st], rng)
             nc = _track_counts(R_cen[i], nevc)[0]
             nm = _track_counts(R_cms[R_cms[:, 1] == sd], nevc)[0]
             parts[f"C2 {OC.SEED_NAME[sd]}"] = {
@@ -760,7 +814,12 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_event
     if cmssw_merge:
         R_cen = np.concatenate(list(_census_tracks(C, entries, True, stubs).values()))
         R_cms = _cmssw_tracks(cmssw_merge, ids)
+        inj = _injection(inject, "C3 delivered")
+        for st, m in inj.items():
+            R_cen = _inject_records(R_cen, st, m, MARGIN[st], rng)
         f_cen, f_cms = _found(R_cen, key) & den, _found(R_cms, key) & den
+        for st, m in inj.items():
+            f_cen = _inject_found(f_cen, f_cms, den, st, m, MARGIN[st], rng)
         nc, fc, dc, tc, sc = _track_counts(R_cen, nevc)
         nm, fm, dm, tm, sm = _track_counts(R_cms, nevc)
         parts["C3 delivered"] = {"den": _per_event(nevc, tev[den]), "cen": _per_event(nevc, tev[f_cen]),
@@ -792,7 +851,7 @@ def c23(census_dir, cmssw_nodr, cmssw_merge, nev=None, exclude=None, power_event
     return {"stage": "C2 / C3", "census": census_dir, "census_inputs": _census_inputs(C),
             "cmssw_nodr": cmssw_nodr, "cmssw_merge": cmssw_merge, "n_events": nevc, "excluded_events": exclude,
             "n_events_judged": nkeep, "n_boot": N_BOOT, "boot_seed": BOOT_SEED, "statistics": table,
-            "joint_power_by_events": power, "sheet_definitions_ungated": sheet,
+            "joint_power_by_events": power, "sheet_definitions_ungated": sheet, "injected": list(inject or ()),
             "gates": gates}, all(gates.values())
 
 
@@ -974,6 +1033,9 @@ def main():
             p.add_argument("census")
             p.add_argument("--power-events", default="",
                            help="gated sizes (events, comma-separated) the joint power is also computed at")
+            p.add_argument("--inject", action="append", default=[],
+                           help="an injected known-bad, 'C2 L1L2: d_eff=1.5' (that statistic shifted by 1.5 margins "
+                                "on the census side); repeatable")
         else:
             p.add_argument("dtc"); p.add_argument("random", nargs="+")
             p.add_argument("--c1b-report", default=None, help="the match-list check's report (c1b -o)")
@@ -1005,7 +1067,7 @@ def main():
         rep, ok = c1b(a.fakefit, a.nodr, a.nev, a.ot_order)
     elif a.stage == "c23":
         pe = [int(x) for x in a.power_events.split(",") if x.strip()]
-        rep, ok = c23(a.census, a.nodr, a.merge, a.nev, a.exclude_events, pe)
+        rep, ok = c23(a.census, a.nodr, a.merge, a.nev, a.exclude_events, pe, a.inject)
     elif a.stage == "floor":
         rep, ok = floor(a.dtc, a.random, a.nodr, a.merge, a.nev, a.exclude_events, a.c1b_report)
     elif a.stage == "truncation":
