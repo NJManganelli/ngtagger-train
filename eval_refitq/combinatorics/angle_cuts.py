@@ -16,7 +16,9 @@ floor, each TP weighted once per bin. Bins (what the census can apply):
                                                                  merged along pT, then across seed
                                                                  layer sets of the same arity, then
                                                                  over every seed (role, target, floor)
-  S6   build x S5 state x S5 key x S6 angle set x n_meas         sparse n pooled by tail probability
+  S6   group x S5 state x S5 key x S6 angle set x n_meas         sparse n pooled by tail probability
+       (group: the build; with the IT discs, its tracks with a disc angle measurement apart, n to twice
+       the barrel's: census_angles.s6_group)
 S3 / S4w use ONE statistic per consumer, s = max over its angles of the per-bin empirical CDF of
 |pull| (TP-weighted), cut at its quantile s*, stored as the per-angle thresholds F_a^-1(s*); a single
 angle's subset is that angle's own quantile. S6 within a merged n group: each track's CDF value under
@@ -352,10 +354,12 @@ def menu_units(man, table, disc_table=None):
                     if L in M.IT_DISC_CODES:
                         U["wind"].add((1, code, L, pb, fl))
     bkeys = sorted({"+".join(sorted(v)) for v in builds_of.values()})
-    for b in bkeys:
+    # S6's groups: each build, and with the census's IT discs its tracks with a disc angle measurement apart
+    groups = sorted(bkeys + ([b + CA.S6_DISC for b in bkeys] if cfg.get("it_discs") else []))
+    for b in groups:
         for s5, key in CA.S5_REFITS:
             for sub in SUBS:
-                for n in range(1, N_MAX[sub] + 1):
+                for n in range(1, CA.s6_n_max(N_MAX[sub], b) + 1):
                     U["s6"].append((b, s5, key, sub, n))
     return {k: sorted(v) if isinstance(v, set) else v for k, v in U.items()}, floors
 
@@ -631,16 +635,18 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
         cells = sorted({(u[0], u[1], u[2], u[3]) for u in units["s6"]})
         if only is not None and "s6" in only:
             cells = [c for c in cells if c in only["s6"]]
+        grp6 = T["s6g"] if "s6g" in T else T["build"]
         for (b, s5, key, sub) in cells:
-            sel = pop & (T["build"] == b) & (T[f"ok_{s5}_{key}"] if f"ok_{s5}_{key}" in T
-                                              else np.ones(len(pop), bool))
+            sel = pop & (grp6 == b) & (T[f"ok_{s5}_{key}"] if f"ok_{s5}_{key}" in T
+                                       else np.ones(len(pop), bool))
             c2, n = s6_parts(T, s5, key, sub)
+            nmax = CA.s6_n_max(N_MAX[sub], b)
             res = _s6_cell(c2[sel], n[sel], T["tp_key"][sel],
-                           None if ew is None else ew[sel], level, N_MAX[sub])
+                           None if ew is None else ew[sel], level, nmax)
             if res is None:
                 raise SystemExit(f"S6 cell {(b, s5, key, sub)}: no n with >= {CA.MIN_TP} TPs")
             t, grp, ntp = res
-            for v in range(1, N_MAX[sub] + 1):
+            for v in range(1, nmax + 1):
                 bins.append((b, s5, key, sub, v))
                 thr.append(t[v])
                 ntps.append(int(ntp[v]))

@@ -80,6 +80,11 @@ POWER_MIN = 0.80
 KNOWN_BAD_REPORT_ONLY = ("s6_pooled_over_n", "s34_two_99_cuts")
 
 
+def s6_groups(T):
+    """S6's group per track record (census_angles.s6_group: the build, its disc tracks apart with the IT discs)."""
+    return T["s6g"] if "s6g" in T else T["build"]
+
+
 # ==========================================================================
 # loading
 # ==========================================================================
@@ -168,7 +173,7 @@ class Test:
         T = R["trk"]
         c = self.cfg
         u["s6"] = AC._unit_index([tuple(x) for x in body["s6"]["bins"]],
-                                 list(zip(T["build"].tolist(), [c["s5"]] * len(self.n6),
+                                 list(zip(s6_groups(T).tolist(), [c["s5"]] * len(self.n6),
                                           [c["key"]] * len(self.n6), [c["sub6"]] * len(self.n6),
                                           self.n6.tolist())))
         if self.disc:
@@ -274,8 +279,9 @@ def efficiencies(test, body, units, passed, ev_w=None):
             bins = {int(gi): (float(mi), float(ni)) for gi, mi, ni in zip(gu, mw, nw)}
         if c == "s6":
             pooled = {}
-            for b in np.unique(T["build"][m]):
-                mb = T["build"][m] == b
+            g6 = s6_groups(T)[m]
+            for b in np.unique(g6):
+                mb = g6 == b
                 pooled[str(b)] = 1.0 - float((w * fail)[mb].sum()) / max(float(w[mb].sum()), 1e-300)
         else:
             pooled = {"all": 1.0 - float((w * fail).sum()) / max(float(w.sum()), 1e-300)}
@@ -484,7 +490,7 @@ def known_bad_bodies(cal_R, cal_man, model, body, cfg):
         for i, b in enumerate(body["s6"]["bins"]):
             if (b[1], b[2], b[3]) != (cfg["s5"], cfg["key"], cfg["sub6"]):
                 continue
-            m = pop & (T["build"] == b[0]) & (n > 0)
+            m = pop & (s6_groups(T) == b[0]) & (n > 0)
             w = AC.tp_weights(T["tp_key"][m], np.zeros(int(m.sum()), np.int64), wc[T["event"][m]])
             thr[i] = AC.wquantile(c2[m], w, LEVEL)        # one raw-chi2 cut for every n
         return {**bb, "s6": {**bb["s6"], "thr": thr}}, None
@@ -527,7 +533,8 @@ def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP
     for name, fn in kbs.items():
         b2, wthr = fn(body, np.ones(n_events(cal_man)))
         eff[name] = efficiencies(test, body, units, test.passes(b2, units, wthr))
-    eff["legacy_3sigma"] = efficiencies(test, body, units, legacy_passes(test))
+    # the legacy per-layer scales exist on the barrel consumers only: the disc consumers keep the nominal cuts
+    eff["legacy_3sigma"] = efficiencies(test, body, units, {**passed, **legacy_passes(test)})
     # the disc known-bads (offline: the test records' disc statistics under each, the nominal cuts)
     disc_kb = {}
     if test.disc:

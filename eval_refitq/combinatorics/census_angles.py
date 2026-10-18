@@ -83,6 +83,22 @@ DISC_KEY = "true_local"                  # the disc table at the predicted key (
 # statistics (alpha through curvature for S2a, beta through z0 for S2z, from the global disc angles); the global
 # disc alpha in place of the module-frame cotAlpha
 DISC_KNOWN_BADS = ("facing_flipped", "barrel_frame", "barrel_form", "global_alpha")
+# S6 WITH THE DISCS (census format 36): a track's S6 group is its build, with S6_DISC appended when the track
+# carries a disc angle measurement. Pooled, the disc tracks (lighter-tailed module-frame pulls) set the small-n
+# thresholds, and the barrel tracks there lose 2-3 % to a 99 % cut (CAL36). A disc track also carries up to twice
+# the barrel's measurements (s6_n_max).
+S6_DISC = "/disc"
+
+
+def s6_group(build, disc):
+    """Per track: its S6 group label (`build`, a string; `disc`, whether it carries a disc angle measurement)."""
+    disc = np.asarray(disc, bool)
+    return np.where(disc, build + S6_DISC, build)
+
+
+def s6_n_max(n_max, group):
+    """The largest n of an S6 group: the barrel's n_max, twice that with disc measurements."""
+    return 2 * n_max if str(group).endswith(S6_DISC) else n_max
 CLASS_C_NOTE = ("the table describes class T (tpEmuClass == 1); class-C clusters (CNN angles, "
                 "~30 %) get the same row and are not calibrated; their efficiencies are reported, "
                 "not gated; scaled-mode rejection is an upper bound")
@@ -838,8 +854,10 @@ def record_s6(rec, U, Q, fit, keep, passed, G, trip, floor, build, entry, c2, n6
         all_T &= (~dang | Q["lis_T"][gi]).all(axis=1)
     trip_c = tuple(x[idx] for x in trip)
     n = len(idx)
+    disc = (T["VALID"][idx] & T["DANG"][idx]).any(axis=1) if "DANG" in T else np.zeros(n, bool)
     cols = {"event": ev, "tp_key": key, "tp_pt": pt, "gen": gen, "all_T": all_T,
             "floor": np.full(n, float(floor)), "build": np.array([build] * n),
+            "disc": disc, "s6g": s6_group(build, disc),
             "entry": np.full(n, entry, np.int32), "stat": c2[idx], "n6": n6[idx],
             "passed": passed[idx], "n_a": fit["n_a"][idx], "n_b": fit["n_b"][idx]}
     L = U["l1ttp"]
@@ -965,6 +983,10 @@ class CutSet:
         for sub in run.get("win_subsets", ()):
             if not any(k.startswith(sub + "|") for k in self.win):
                 bad.append(f"S3/S4w not calibrated for angle set {sub!r}")
+        if run.get("s6") and run.get("it_discs"):
+            s5, key, sub = run["s6"]
+            if not any(k.startswith(_k(b + S6_DISC, s5, key, sub) + "|") for b in run["builds"] for k in self.s6):
+                bad.append("S6 not calibrated for tracks with disc angle measurements")
         for c in run.get("disc_stages", ()):
             tab = getattr(self, c)
             if not tab or (c == "wind" and not any(k.startswith(sub + "|") for sub in run.get("win_subsets", ())
@@ -1033,9 +1055,12 @@ class CutSet:
             qa[ptb == b], qb[ptb == b] = t
         return qa, qb
 
-    def s6_thr(self, build, s5, key, sub, n):
+    def s6_thr(self, build, s5, key, sub, n, disc=None):
+        """Per track: S6's threshold at its n in its S6 group (the build; `disc`, per track, whether it carries
+        a disc angle measurement: s6_group)."""
         n = np.asarray(n)
+        g = s6_group(build, np.zeros(len(n), bool) if disc is None else disc)
         out = np.full(len(n), np.inf)
-        for v in np.unique(n[n > 0]):
-            out[n == v] = self._get(self.s6, _k(build, s5, key, sub, int(v)), "S6")
+        for gv, v in {(a, int(b)) for a, b in zip(g[n > 0], n[n > 0])}:
+            out[(g == gv) & (n == v)] = self._get(self.s6, _k(gv, s5, key, sub, v), "S6")
         return out

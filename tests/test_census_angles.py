@@ -123,6 +123,24 @@ def test_cut_file_refuses_a_configuration_it_was_not_made_for():
     assert C.s6_thr("AAAA", "ab", "emitted", "ab", np.array([0, 4])).tolist() == [np.inf, 20.0]
 
 
+def test_s6_disc_group():
+    """With the IT discs, S6's tracks with a disc angle measurement are a group of their own, to twice the
+    barrel's n; a run with the IT discs is refused by a file without that group."""
+    d = _doc()
+    d["s6"] = {"bins": [["AAAA", "ab", "emitted", "ab", 4], ["AAAA/disc", "ab", "emitted", "ab", 4],
+                        ["AAAA/disc", "ab", "emitted", "ab", 12]], "thr": [20.0, 9.0, 30.0]}
+    C = CA.CutSet(d)
+    got = C.s6_thr("AAAA", "ab", "emitted", "ab", np.array([4, 4, 12, 0]), np.array([False, True, True, True]))
+    assert got.tolist() == [20.0, 9.0, 30.0, np.inf]
+    assert CA.s6_group("AAAA", [False, True]).tolist() == ["AAAA", "AAAA/disc"]
+    assert (CA.s6_n_max(8, "AAAA"), CA.s6_n_max(8, "AAAA/disc")) == (8, 16)
+    C.check(_Model(), _run(it_discs=True))
+    with pytest.raises(SystemExit):
+        CA.CutSet(_doc()).check(_Model(), _run(it_discs=True))
+    with pytest.raises(SystemExit):               # a barrel track at n = 12 has no threshold
+        C.s6_thr("AAAA", "ab", "emitted", "ab", np.array([12]), np.array([False]))
+
+
 def test_census_identity_is_accepted_by_its_cut_file():
     """The census's own run identity (tp_findability.cut_identity), not a hand-made one: the S6 build
     keys are the fit's (one mask -> its name; was 'A+A+A+A', which refused every cut file)."""

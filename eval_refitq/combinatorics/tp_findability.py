@@ -1187,12 +1187,14 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         if ang("accept"):
             # S6, after the position chi2 acceptance: the final-state angle chi2
             # over the stage's angles, cut at the cut file's threshold for the
-            # entry's build and its number of angle measurements (KF.angle_gate)
+            # entry's build, its number of angle measurements and whether one is
+            # a disc's (CA.s6_group; KF.angle_gate)
             sub6 = ang.subset("accept")
             c2, n6 = CA.s6_stat(fit0, sub6)
+            disc6 = (fit0["hits"]["VALID"] & fit0["hits"]["DANG"]).any(axis=1)
             k6 = (np.ones(len(c2), bool) if ang.cuts_open else
                   KF.angle_gate(c2, n6, ang.cuts.s6_thr(entry_builds[s_i], s5_state,
-                                                          s5_key, sub6, n6)))
+                                                          s5_key, sub6, n6, disc6)))
             if ang.rec is not None:
                 CA.record_s6(ang.rec, U, Q, fit0, keep, k6, gidx_all, trip0, pt_s,
                              entry_builds[s_i], s_i, c2, n6, fopt)
@@ -1618,7 +1620,7 @@ def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks, it_discs=False):
             "s6": ((s5, ang.keys["kf"] if s5 != "off" else "emitted", ang.subset("accept"))
                    if ang("accept") else None),
             "win_subsets": sorted({ang.subset(s) for s in ("attach", "proj_window") if ang(s)}),
-            "disc_stages": disc_stages,
+            "disc_stages": disc_stages, "it_discs": bool(it_discs),
             "builds": [entry_build_key([m]) for m in (masks or ["AAAA"])]}
 
 
