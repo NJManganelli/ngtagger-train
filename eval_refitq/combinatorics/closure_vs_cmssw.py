@@ -296,11 +296,11 @@ _G0_NEW_COUNTERS = ("kf_diverged",)
 
 def _g0_array(name, a35, a36):
     """'' when shard array `name` of a format-36 census with the discs off equals format 35's, else why not.
-    Format 36's additions must be empty: cen_hit_otd / cen_hit_itd all 0; the disc columns of a track's hit row
-    (hit_<i>, hit_m<i>: _G0_HIT_DISC_COLS) and of its final stubs (hit_o / hit_om: the trailing OD1-OD5) all -1;
-    the per-seed counters' kf_diverged 0."""
+    Format 36's additions must be empty: its census columns (cen_ + TF.FORMAT36_COLS) all 0; the disc columns of a
+    track's hit row (hit_<i>, hit_m<i>: _G0_HIT_DISC_COLS) and of its final stubs (hit_o / hit_om: the trailing
+    OD1-OD5) all -1; the per-seed counters' kf_diverged 0."""
     if a35 is None:
-        return "" if name in ("cen_hit_otd", "cen_hit_itd") and not np.any(a36) else "new array"
+        return "" if name[4:] in TF.FORMAT36_COLS and name.startswith("cen_") and not np.any(a36) else "new array"
     if name == "counters":                        # per seed: format 36 adds kf_diverged, which must be 0
         c35, c36 = json.loads(str(a35)), json.loads(str(a36))
         if any(c.get("kf_diverged", 0.0) for c in c36.values()):
@@ -325,13 +325,17 @@ def g0(c35, c36, nev=None):
     """G0 (WP-Disc plan sec. 3): a format-36 census with the discs off (--discs off) against format 35's on the
     same inputs and configuration, shard by shard: every array identical apart from format 36's additions, which
     must be empty (_g0_array); the counters, the entries and the configuration identical apart from the format
-    and the discs key."""
+    and format 36's configuration keys: the discs key, it_discs (False), disc_seeds (none) and the angle model's disc
+    table identity (disc_table_*, inert with the discs off)."""
     d35, d36 = TF.census_dir(c35), TF.census_dir(c36)
     m35, m36 = (json.load(open(Path(d) / "manifest.json")) for d in (d35, d36))
     cfg35, cfg36 = dict(m35["config"]), dict(m36["config"])
     oc36 = dict(cfg36.pop("ot_chain"))
     disc_on = oc36.pop("discs", None)
-    same_cfg = cfg35.pop("ot_chain") == oc36 and cfg35 == cfg36
+    it_discs, disc_seeds = cfg36.pop("it_discs", False), cfg36.pop("disc_seeds", None)
+    if isinstance(cfg36.get("angle_model"), dict):
+        cfg36["angle_model"] = {k: v for k, v in cfg36["angle_model"].items() if not k.startswith("disc_table")}
+    same_cfg = cfg35.pop("ot_chain") == oc36 and cfg35 == cfg36 and it_discs is False and not disc_seeds
     head = {"formats": [m35.get("format"), m36.get("format")], "discs": disc_on,
             "inputs_equal": m35["inputs"] == m36["inputs"], "config_equal": same_cfg,
             "entries_equal": (m35["seeds"], m35["seed_follow"]) == (m36["seeds"], m36["seed_follow"])}
