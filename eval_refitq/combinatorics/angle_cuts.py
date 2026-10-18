@@ -472,9 +472,16 @@ def _s6_cell(c2, n, tp, ev_w, level, n_max):
     return thr, grp, ntp
 
 
-def statistics(R, k=(1.0, 1.0), mode="fixed", model=None):
+def statistics(R, k=(1.0, 1.0), mode="fixed", model=None, calibration=False):
     """The cutting consumers' statistics of records R at (k, mode), computed once (fit, evaluate and
-    the bootstrap reuse them); with the census angle model, the disc consumers' records too."""
+    the bootstrap reuse them); with the census angle model, the disc consumers' records too.
+    S1'S CALIBRATION IS THE PROMPT BAND'S (calibration=True: S1 and S1 on the discs at D = 0, whatever the
+    model's s1_d0max): its thresholds are the calibrated window around the prompt band, and a run adds the
+    displacement turn asin(D / r) on top (census_angles.S1_D0MAX_CM). Re-calibrating the widened statistic at
+    99 % would move the window back onto the prompt clusters and undo the tolerance (CAL36: the loss of
+    class-T clusters with |d0| 1-2.5 cm at 1-2 GeV 12.8 % prompt, 13.4 % re-calibrated, 1.3 % widened)."""
+    if calibration and model is not None:
+        model = model.with_s1_d0max(0.0)
     out = {"s1": stat_s1(R["s1"], *k, mode, 0.0 if model is None else model.s1_d0max),
            "pair": stat_pair(R["pair"], *k, mode),
            "win": stat_win(R["win"], *k, mode)}
@@ -490,10 +497,10 @@ def fit(R, man, model, k=(1.0, 1.0), mode="fixed", level=CA.LEVEL, ev_w=None, s6
     """The cut file's per-consumer thresholds from records R (census_angles.load_records) of a
     calibration census with manifest `man`. ev_w: per-event weights (the bootstrap). s6_R: the S6
     records to use (a calibration census at the file's k, scaled mode); default R's. only: restrict
-    to {consumer: config} for the bootstrap (win subset, S6 cells). stats: statistics(R, k, mode),
-    when already computed. Returns the cut-file body."""
+    to {consumer: config} for the bootstrap (win subset, S6 cells). stats: statistics(R, k, mode, model,
+    calibration=True), when already computed. Returns the cut-file body."""
     units, floors = menu_units(man, model.table, model.disc_table)
-    S = statistics(R, k, mode, model) if stats is None else stats
+    S = statistics(R, k, mode, model, calibration=True) if stats is None else stats
     out = {}
 
     def evw(T):
@@ -782,8 +789,8 @@ def main():
     f.add_argument("--s6-from", default=None,
                    help="the calibration census at the file's k (scaled mode) for S6")
     f.add_argument("--s1-d0max", type=float, default=CA.S1_D0MAX_CM,
-                   help="S1's displaced tolerance (cm) the file is fitted for (census_angles.S1_D0MAX_CM); S1 is "
-                        "recomputed from its records' components, so the calibration census may have run another")
+                   help="S1's displaced tolerance (cm) the file is made for (census_angles.S1_D0MAX_CM): recorded in "
+                        "its identity; S1's thresholds are the prompt band's calibration either way (statistics)")
     a = ap.parse_args()
     import tp_findability as TF
     d = TF.census_dir(a.census)

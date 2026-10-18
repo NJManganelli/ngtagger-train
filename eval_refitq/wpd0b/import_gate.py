@@ -298,7 +298,7 @@ def bootstrap(cal_R, cal_man, model, test, body, cfg, n_cal, n_test, n_rep=N_REP
     independently and the cut file re-fitted on each CAL replica (its merges fixed). `extra`:
     {name: fn(body_b) -> (body_b', win_thr or None)} alternative cuts evaluated in the same replicas."""
     rng = np.random.default_rng(seed)
-    cal_stats = AC.statistics(cal_R, model=model if test.disc else None)
+    cal_stats = AC.statistics(cal_R, model=model if test.disc else None, calibration=True)
     cells = sorted({(b[0], b[1], b[2], b[3]) for b in body["s6"]["bins"]
                     if (b[1], b[2], b[3]) == (cfg["s5"], cfg["key"], cfg["sub6"])})
     only = {"s1": None, "s2a": None, "s2z": None, "win": [cfg["win"]], "s6": cells}
