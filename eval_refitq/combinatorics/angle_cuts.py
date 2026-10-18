@@ -808,7 +808,7 @@ def main():
     body, floors = fit(R, man, model, k, a.mode, s6_R=s6R)
     save(a.out, body, floors, man, model, k, a.mode, d, s6d)
     for c, v in body.items():
-        thr = v["thr"] if c != "win" else [x[0] for x in v["thr"]["ab"]]
+        thr = v["thr"] if c not in ("win", "wind") else [x[0] for x in v["thr"]["ab"]]
         fin = [t for t in thr if np.isfinite(t)]
         print(f"{c}: {len(v['bins'])} bins, {len(np.unique(v['group']))} groups, "
               f"threshold median {np.median(fin):.3g} (min {min(fin):.3g}, max {max(fin):.3g})")
