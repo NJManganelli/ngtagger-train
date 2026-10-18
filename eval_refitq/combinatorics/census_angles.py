@@ -78,6 +78,11 @@ DISC_NOTE = ("disc angles (census format 36): module-frame compatibility tests a
 DISC_TABLE_DEFAULT = "/Volumes/WDMac/smartpixels_scratch/p03_angles/angle_table_v1a1e_disclocal_canon_v3.json"
 DISC_TABLE_REGISTRY = "p03.table.v1a1e-disclocal"
 DISC_KEY = "true_local"                  # the disc table at the predicted key (the true key stands in for it)
+# THE DISC KNOWN-BADS of the import gate (WP-Disc plan sec. 4, D-angle), evaluated offline on the records
+# (Model.with_disc_known_bad): the module facing flipped; the barrel's frame on a disc module; the barrel-form
+# statistics (alpha through curvature for S2a, beta through z0 for S2z, from the global disc angles); the global
+# disc alpha in place of the module-frame cotAlpha
+DISC_KNOWN_BADS = ("facing_flipped", "barrel_frame", "barrel_form", "global_alpha")
 CLASS_C_NOTE = ("the table describes class T (tpEmuClass == 1); class-C clusters (CNN angles, "
                 "~30 %) get the same row and are not calibrated; their efficiencies are reported, "
                 "not gated; scaled-mode rejection is an upper bound")
@@ -106,6 +111,7 @@ class Model:
         self.disc_table_path = os.path.realpath(disc_table_path)
         self.disc_table = SD.AngleTable.load(self.disc_table_path)
         self.disc_table_sha = sha256(self.disc_table_path)
+        self.disc_kb = None
         self.k = {"alpha": SD.check_k(k_alpha), "beta": SD.check_k(k_beta)}
         if mode not in SD.K_MODES:
             raise ValueError(f"k mode {mode!r} not in {SD.K_MODES}")
@@ -131,6 +137,27 @@ class Model:
                 "k_beta": self.k["beta"], "mode": self.mode,
                 "disc_table_path": self.disc_table_path, "disc_table_sha256": self.disc_table_sha,
                 "disc_table_registry": DISC_TABLE_REGISTRY}
+
+    def with_disc_known_bad(self, name):
+        """This model with a disc known-bad (DISC_KNOWN_BADS) in every disc statistic: the import gate's offline
+        known-bads."""
+        if name not in DISC_KNOWN_BADS:
+            raise ValueError(f"unknown disc known-bad {name!r}")
+        m = copy.copy(self)
+        m.disc_kb = name
+        return m
+
+    def _predict(self, Q, g, kap, cot, d0=None):
+        """disc_predict, or its known-bad form: the facing flipped, or the barrel's frame (local normal along r,
+        local x along phi: cotAlpha = tan(dir - phi), cotBeta = cot / cos(dir - phi))."""
+        if self.disc_kb == "facing_flipped":
+            return disc_predict({**Q, "lsx": -Q["lsx"]}, g, kap, cot, d0)
+        if self.disc_kb == "barrel_frame":
+            r = Q["lr"][g]
+            s = M.C_BEND * np.asarray(kap, np.float64) * r - (0.0 if d0 is None else np.asarray(d0) / r)
+            d = -np.arcsin(np.clip(s, -1.0, 1.0))
+            return np.tan(d), np.asarray(cot, np.float64) / np.cos(d)
+        return disc_predict(Q, g, kap, cot, d0)
 
     def at_k(self, k_alpha, k_beta, mode):
         """This model (its tables) at another knob and sigma mode: the offline recomputation of a disc
@@ -226,7 +253,10 @@ class Model:
             bad = ~(np.isfinite(c) & np.isfinite(w))
             c, w = np.where(bad, 0.0, c), np.where(bad, 1.0, w)
             ka = self.k[a]
-            m2 = Q[f"{m}_k"][g] - SD.centre_k(c * Q[f"{m}_pub"][g], ka)
+            mk = Q[f"{m}_k"][g]
+            if self.disc_kb == "global_alpha" and a == "alpha":   # the known-bad: the global disc alpha's tangent
+                mk = np.tan(SD.wrap_2pi(Q["lphi"][g] - Q["lg_dir"][g]))
+            m2 = mk - SD.centre_k(c * Q[f"{m}_pub"][g], ka)
             sk = w * Q[f"{m}_sk"][g]
             out.append((m2 - pred) / np.maximum(np.hypot(sk, sp), 1e-12))
         return out[0], out[1]
@@ -237,7 +267,7 @@ class Model:
         C r kappa_floor / |cot| in the same units (negative inside the band)."""
         r, z = Q["lr"][g], Q["lz"][g]
         cot0 = z / np.maximum(r, 1e-6)
-        pa0, pb0 = disc_predict(Q, g, np.zeros(len(g)), cot0)
+        pa0, pb0 = self._predict(Q, g, np.zeros(len(g)), cot0)
         rows = self.disc_rows(Q, g, pa0, pb0)
         pa, _ = self.disc_pulls(Q, g, pa0, pb0, rows)
         band = M.C_BEND * r / (np.asarray(floor, np.float64) * np.maximum(np.abs(cot0), 1e-6))
@@ -248,7 +278,7 @@ class Model:
     def disc_window(self, Q, g, kap, cot, d0=None, skap=None, sct=None):
         """(alpha pull, beta pull) of disc candidates g against a helix's module-frame prediction (S4w; with
         skap / sct, the seed's kappa and cot errors propagated into the prediction and added once: S4a)."""
-        pa, pb = disc_predict(Q, g, kap, cot, d0)
+        pa, pb = self._predict(Q, g, kap, cot, d0)
         if skap is None:
             return self.disc_pulls(Q, g, pa, pb)
         r = Q["lr"][g]
@@ -269,13 +299,15 @@ class Model:
             i = np.flatnonzero(use)
             if not len(i):
                 continue
-            pa, pb = disc_predict(Q, g[i], kap[i], cot[i])
+            pa, pb = self._predict(Q, g[i], kap[i], cot[i])
             rows = self.disc_rows(Q, g[i], pa, pb)
             qa, qb = self.disc_pulls(Q, g[i], pa, pb, rows)
             st_a[i] = np.maximum(st_a[i], np.abs(qa))
             st_z[i] = np.maximum(st_z[i], np.abs(qb))
             if first:
                 row_a[i] = rows
+        if self.disc_kb == "barrel_form":
+            st_a, st_z = _disc_barrel_form(Q, gA, gB, kap, useA, useB)
         return st_a, st_z, row_a
 
 
@@ -399,6 +431,24 @@ def disc_predict(Q, g, kap, cot, d0=None):
     return np.sin(d) / c, -Q["lsx"][g] * np.cos(d) / c
 
 
+def _disc_barrel_form(Q, gA, gB, kap, useA, useB):
+    """The barrel-form statistics on a disc pair (the known-bad): S2a, the larger |kappa_pair - kappa_alpha| /
+    sigma of its disc clusters from their global alpha (alpha through curvature); S2z, the two clusters' global-beta
+    z0 against each other (beta through z0), both disc clusters needed (else 0)."""
+    def comp(g):
+        r = Q["lr"][g]
+        half = SD.wrap_2pi(Q["lphi"][g] - Q["lg_dir"][g])
+        ka = np.sin(half) / (M.C_BEND * r)
+        ska = Q["lg_sdir"][g] * np.abs(np.cos(half)) / (M.C_BEND * r)
+        cot = Q["lg_cot"][g]
+        return ka, ska, Q["lz"][g] - r * cot, r * Q["lg_scot"][g]
+    kA, sA, zA, szA = comp(gA)
+    kB, sB, zB, szB = comp(gB)
+    st_a = s2a_stat(kap, kA, sA, kB, sB, useA, useB)
+    st_z = np.where(useA & useB, s2z_stat(zA, szA, zB, szB), 0.0)
+    return st_a, st_z
+
+
 def disc_components(D):
     """Per IT disc cluster (codes 5-8): the inputs of every disc statistic: its code, position, module frame
     (sx, phi_m from the D121 table), emitted and true module-frame cots, published cot sigmas, class T, and
@@ -413,7 +463,12 @@ def disc_components(D):
             "lca_t": np.where(is_T, np.asarray(D["tpLocalCotAlpha"], np.float64), np.nan),
             "lcb_t": np.where(is_T, np.asarray(D["tpLocalCotBeta"], np.float64), np.nan),
             "lca_pub": np.asarray(D["sigAlpha"], np.float64), "lcb_pub": np.asarray(D["sigBeta"], np.float64),
-            "lis_T": is_T, "ldir_ok": M.SPN.direction_usable(D) & (sx != 0)}
+            "lis_T": is_T, "ldir_ok": M.SPN.direction_usable(D) & (sx != 0),
+            # the published GLOBAL disc direction, for the import gate's barrel-form known-bads only
+            "lg_dir": np.asarray(D["globalClusterPhi"], np.float64),
+            "lg_cot": np.asarray(D["globalClusterCotTheta"], np.float64),
+            "lg_sdir": np.asarray(D["sigGlobalClusterPhi"], np.float64),
+            "lg_scot": np.asarray(D["sigGlobalClusterCotTheta"], np.float64)}
 
 
 def disc_knob(C, k_alpha, k_beta, mode):
@@ -431,7 +486,8 @@ def disc_knob(C, k_alpha, k_beta, mode):
 # the disc components carried in Q (and their value elsewhere), and the knobbed values
 DISC_FILL = {"lcode": 0, "lr": np.nan, "lz": np.nan, "lphi": np.nan, "lsx": 0.0, "lphim": np.nan,
              "lca_e": np.nan, "lcb_e": np.nan, "lca_t": np.nan, "lcb_t": np.nan, "lca_pub": np.nan,
-             "lcb_pub": np.nan, "lis_T": False, "ldir_ok": False}
+             "lcb_pub": np.nan, "lis_T": False, "ldir_ok": False, "lg_dir": np.nan, "lg_cot": np.nan,
+             "lg_sdir": np.nan, "lg_scot": np.nan}
 DISC_KEYS = tuple(DISC_FILL)
 DISC_K_FILL = {"lca_k": np.nan, "lcb_k": np.nan, "lca_sk": np.nan, "lcb_sk": np.nan}
 

@@ -784,7 +784,8 @@ def chunk_census(U):
                 "charge": z.astype(np.float32),
                 "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8), "hit_otd": z.astype(np.uint8),
                 "hit_itd": z.astype(np.uint8),
-                "n_mod_it": z.astype(np.int16), "n_mod_ot": z.astype(np.int16)}
+                "n_mod_it": z.astype(np.int16), "n_mod_ot": z.astype(np.int16),
+                "n_mod_itd": z.astype(np.int16), "n_mod_otd": z.astype(np.int16)}
     key = M.tp_key(U["event"][hi], T[hi, sl])
     # per TP: hits on which it is the hit's own tpIdx (slot 0) first, each group
     # in hit order, so a TP some hit owns is represented by the first such hit
@@ -811,10 +812,15 @@ def chunk_census(U):
     # CREDITED MODULES per TP (census.findable): credited_tps lists a TP once per
     # hit, so an OT stub is one hit for each TP it is credited to however many of
     # its clusters credit it, and hits of one TP on one module count once
-    pm = np.unique(np.stack([pos, U["module"][hi_s]], axis=1), axis=0)
+    pm, first_hit = np.unique(np.stack([pos, U["module"][hi_s]], axis=1), axis=0, return_index=True)
     it_m = (pm[:, 1] >> 32) == 0
     n_mod_it = np.bincount(pm[it_m, 0], minlength=len(uk)).astype(np.int16)
     n_mod_ot = np.bincount(pm[~it_m, 0], minlength=len(uk)).astype(np.int16)
+    # of which disc modules (format 36: the findable count over barrel and disc modules, and its known-bad that
+    # counts the barrel's only, findable_barrel_only)
+    dm = M.is_disc(ls[first_hit])
+    n_mod_itd = np.bincount(pm[it_m & dm, 0], minlength=len(uk)).astype(np.int16)
+    n_mod_otd = np.bincount(pm[~it_m & dm, 0], minlength=len(uk)).astype(np.int16)
     L = U["l1ttp"]
     p, row = M.tp_rows(L, U["event"][rep], T[rep, sl_s[first]])
     nan = np.float32(np.nan)
@@ -834,7 +840,7 @@ def chunk_census(U):
             "pt": pt, "eta": eta, "phi": phi, "d0": d0, "z0": z0,
             "vr": np.hypot(vx, vy).astype(np.float32), "charge": charge,
             "hit_it": hit_it, "hit_ot": hit_ot, "hit_otd": hit_otd, "hit_itd": hit_itd, "n_mod_it": n_mod_it,
-            "n_mod_ot": n_mod_ot}
+            "n_mod_ot": n_mod_ot, "n_mod_itd": n_mod_itd, "n_mod_otd": n_mod_otd}
 
 
 # THE CENSUS EFFICIENCY DENOMINATOR (definition sheet census.findable; decisions of
@@ -848,9 +854,16 @@ def chunk_census(U):
 FINDABLE_MIN_MODULES = 4
 
 
-def findable(C):
-    """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_MODULES)."""
+# the census columns format 36 added (their dtype: zeros when reading 34 / 35)
+FORMAT36_COLS = {"hit_otd": np.uint8, "hit_itd": np.uint8, "n_mod_itd": np.int16, "n_mod_otd": np.int16}
+
+
+def findable(C, barrel_only=False):
+    """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_MODULES), over barrel and disc modules
+    (format 36); `barrel_only`, the WP-Disc known-bad that counts the barrel's modules only."""
     n = C["n_mod_it"].astype(np.int64) + C["n_mod_ot"]
+    if barrel_only:
+        n = n - C["n_mod_itd"] - C["n_mod_otd"]
     return (n >= FINDABLE_MIN_MODULES) & np.isfinite(C["charge"]) & (C["charge"] != 0)
 
 
@@ -1643,7 +1656,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     if not shards:
         raise SystemExit(f"{d} has no shards")
     cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "charge", "hit_it", "hit_ot", "hit_otd",
-            "hit_itd", "n_mod_it", "n_mod_ot"]
+            "hit_itd", "n_mod_it", "n_mod_ot", "n_mod_itd", "n_mod_otd"]
     parts = {c: [] for c in cols}
     fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
     non = []
@@ -1656,9 +1669,9 @@ def load(d, nev=None, verbose=True, with_tracks=False):
             break                    # a prefix of the shards is a valid census
         z = np.load(sh, allow_pickle=False)
         for c in cols:
-            # hit_otd / hit_itd from format 36; formats 34 / 35 hold no disc hit
-            parts[c].append(z[f"cen_{c}"] if f"cen_{c}" in z.files or c not in ("hit_otd", "hit_itd")
-                            else np.zeros(len(z["cen_key"]), np.uint8))
+            # hit_otd / hit_itd / n_mod_itd / n_mod_otd from format 36; formats 34 / 35 hold no disc hit
+            parts[c].append(z[f"cen_{c}"] if f"cen_{c}" in z.files or c not in FORMAT36_COLS
+                            else np.zeros(len(z["cen_key"]), FORMAT36_COLS[c]))
         fnd.append(z["found"])
         fdr.append(z["found_dr"])
         cl_off = cl_tot

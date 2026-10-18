@@ -106,3 +106,64 @@ def test_kf_fits_a_forward_track_on_disc_hits():
             V["sigY"][i] = sig
         fit2 = KF.fit_tracks(V, Q, (np.array([1]), np.array([2]), None), use_angles=False, gidx=G)
         assert 0.8 * want < fit2["chi2_rz"][0] < 1.25 * want
+
+
+# ---- the disc angle stages (module frame) -----------------------------------------------------------
+def _disc_Q(n=3, sx=1.0, phim=0.3, r=5.0, z=25.0, phi=0.32):
+    import census_angles as CA
+    Q = {k: np.full(n, v, dtype=np.asarray(v).dtype) for k, v in CA.DISC_FILL.items()}
+    Q.update({"lcode": np.full(n, 5, np.int8), "lr": np.full(n, r), "lz": np.full(n, z), "lphi": np.full(n, phi),
+              "lsx": np.full(n, sx), "lphim": np.full(n, phim), "lca_pub": np.full(n, 0.08),
+              "lcb_pub": np.full(n, 0.1), "lis_T": np.ones(n, bool), "ldir_ok": np.ones(n, bool),
+              "lg_dir": np.full(n, phi), "lg_cot": np.full(n, z / r), "lg_sdir": np.full(n, 0.01),
+              "lg_scot": np.full(n, 0.05)})
+    return Q
+
+
+def test_disc_prediction_matches_the_frame_relation():
+    import census_angles as CA
+    from ngtagger.spdefs import angles as SD
+    Q = _disc_Q()
+    g = np.arange(3)
+    kap, cot = np.array([0.0, 0.3, -0.3]), np.full(3, 5.0)
+    pa, pb = CA.disc_predict(Q, g, kap, cot)
+    # the direction azimuth phi - asin(c kappa r), rotated as spdefs.disc_local_from_global does
+    det = list(SD.disc_frames())[0]
+    sx, phm = SD.disc_frames()[det][:2]
+    Q2 = _disc_Q(sx=float(sx), phim=phm)
+    pa2, pb2 = CA.disc_predict(Q2, g, kap, cot)
+    dirs = Q2["lphi"] - np.arcsin(M.C_BEND * kap * Q2["lr"])
+    ra, rb = SD.disc_local_from_global(np.full(3, det), dirs, cot)
+    assert np.allclose(pa2, ra) and np.allclose(pb2, rb)
+    # cotAlpha does not depend on the facing, cotBeta flips with it
+    pa3, pb3 = CA.disc_predict({**Q, "lsx": -Q["lsx"]}, g, kap, cot)
+    assert np.allclose(pa3, pa) and np.allclose(pb3, -pb)
+
+
+def test_disc_knob_and_pulls():
+    import census_angles as CA
+    Q = _disc_Q()
+    Q["lca_e"], Q["lca_t"] = np.array([0.3, 0.3, 0.3]), np.array([0.1, 0.1, 0.1])
+    Q["lcb_e"], Q["lcb_t"] = np.array([-0.2, -0.2, -0.2]), np.array([-0.25, -0.25, -0.25])
+    ca, cb, sa, sb = CA.disc_knob(Q, 0.0, 0.5, "scaled")
+    assert np.allclose(ca, 0.1) and np.allclose(cb, -0.225)          # class T: truth + k (emitted - truth)
+    assert np.allclose(sa, 0.08 * 0.05) and np.allclose(sb, 0.1 * 0.5)  # scaled: max(k, 0.05) sigma
+    m = CA.Model(k_alpha=1.0, k_beta=1.0)
+    Q.update(dict(zip(CA.DISC_K_FILL, CA.disc_knob(Q, 1.0, 1.0, "fixed"))))
+    g = np.arange(3)
+    pa, pb = CA.disc_predict(Q, g, np.zeros(3), np.full(3, 5.0))
+    rows = m.disc_rows(Q, g, pa, pb)
+    qa, qb = m.disc_pulls(Q, g, pa, pb, rows)
+    c = m.disc_table.get(CA.DISC_KEY, "alpha", "centre", rows)
+    w = m.disc_table.get(CA.DISC_KEY, "alpha", "width", rows)
+    assert np.allclose(qa, (0.3 - c * 0.08 - pa) / (w * 0.08))
+    # S2: the larger of the pair's disc pulls; a cluster not used contributes nothing
+    st_a, st_z, row_a = m.s2d(Q, g, g, np.zeros(3), np.full(3, 5.0), np.array([True, True, False]),
+                              np.array([False, True, False]))
+    assert np.allclose(st_a[:2], np.abs(qa[:2])) and st_a[2] == 0.0 and row_a[2] == -1
+    # the known-bads change what they should: the facing flips the predicted beta only (the key, and so the
+    # table row, follows it)
+    fa, fb = m.with_disc_known_bad("facing_flipped")._predict(Q, g, np.zeros(3), np.full(3, 5.0))
+    assert np.allclose(fa, pa) and np.allclose(fb, -pb)
+    ba, bb = m.with_disc_known_bad("barrel_frame")._predict(Q, g, np.zeros(3), np.full(3, 5.0))
+    assert np.allclose(ba, 0.0) and np.allclose(bb, 5.0)        # a straight radial track in a barrel frame

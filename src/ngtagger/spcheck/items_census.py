@@ -529,7 +529,10 @@ class CutEntries(Item):
 
 
 # ---------------------------------------------------------------- the OT arms (WP-D, census format 35)
-OT_TARGETS = "OL1,OL2,OL3,OL4,OL5,OL6"
+# every OT surface (census format 36: the OT discs too)
+OT_TARGETS = "OL1,OL2,OL3,OL4,OL5,OL6,OD1,OD2,OD3,OD4,OD5"
+# the prompt OT seeds' layers (census codes): the barrel doublets and, format 36, the disc and overlap doublets
+OT_SEED_LAYERS = [[11, 12], [12, 13], [13, 14], [15, 16], [21, 22], [23, 24], [11, 21], [12, 21]]
 
 
 def _census_run(ctx, tag, args):
@@ -619,23 +622,27 @@ class OtAngleInert(Item):
 class SpItOffIsOt(Item):
     id = "census.sp_it_off_is_ot"
     title = "an SP build with every IT surface off equals the OT-only arm (census chain) bit for bit"
-    c4_row = "WP-D plan sec. 6.2 (the T5 reference until WP-D2: the OT-only arm with D3-D5 off)"
+    c4_row = "WP-D plan sec. 6.2 (the T5 reference until WP-D2: the OT-only arm with D3-D5 off); WP-Disc D-inert"
     known_bad_desc = "the same comparison with IL1 left on (--masks AIII): the OT seeds then follow into IL1"
-    rule_desc = ("two fresh 4-event censuses of the gate input with the census chain, cuts open (--calibrate): "
-                 "--masks IIII with the default targets (every surface) and --masks IIII with the OT targets only: "
-                 "the prompt OT doublets' found and found_dr bitmaps, counters and tracks' final stubs are identical; "
+    rule_desc = ("two fresh 4-event censuses of the gate input with the census chain, cuts open (--calibrate), the "
+                 "SmartPixels discs off (--it-discs off): --masks IIII with the default targets (every surface) and "
+                 "--masks IIII with the OT targets only (barrel and discs): the prompt OT seeds' (barrel, disc and "
+                 "overlap doublets) found and found_dr bitmaps, counters and tracks' final stubs are identical; "
                  "identity of the track and found counts with the reference")
     trees = (CENSUS_DIR,)
+    IT_OFF = ["--it-discs", "off"]
 
     def _ot_entries(self, d):
         man = json.load(open(os.path.join(d, "manifest.json")))
-        ot = [[11, 12], [12, 13], [13, 14], [15, 16]]
-        return [i for i, sd in enumerate(man["seeds"]) if list(sd) in ot]
+        return [i for i, sd in enumerate(man["seeds"]) if list(sd) in OT_SEED_LAYERS]
+
+    def _bad_args(self):
+        return ["--masks", "AIII"] + self.IT_OFF
 
     def _stat(self, ctx, bad=False):
-        a = _census_run(ctx, "sp_it_off" + ("_bad" if bad else ""),
-                        ["--masks", "AIII" if bad else "IIII", "--calibrate"])
-        b = _census_run(ctx, "ot_only", ["--masks", "IIII", "--targets", OT_TARGETS, "--calibrate"])
+        a = _census_run(ctx, f"{self.id}_a" + ("_bad" if bad else ""),
+                        (self._bad_args() if bad else ["--masks", "IIII"] + self.IT_OFF) + ["--calibrate"])
+        b = _census_run(ctx, "ot_only", ["--masks", "IIII", "--targets", OT_TARGETS, "--calibrate"] + self.IT_OFF)
         fa, nt, nf = _fingerprint(a, self._ot_entries(a))
         fb, _, _ = _fingerprint(b, self._ot_entries(b))
         return {"input": ctx.input, "events": CENSUS_EVENTS, "identical": fa == fb, "n_tracks": nt, "n_found": nf}
@@ -656,4 +663,16 @@ class SpItOffIsOt(Item):
                          if not why else "; ".join(why))
 
 
-ITEMS = [MajorityOwner(), CensusBuilds(), CensusInputContract(), CutEntries(), OtAngleInert(), SpItOffIsOt()]
+class SpItDiscsOffIsOt(SpItOffIsOt):
+    id = "census.sp_it_discs_off_is_ot"
+    title = "with the SmartPixels discs off as well, the IT-off SP build equals the OT-only arm (WP-Disc D-inert)"
+    c4_row = "WP-Disc plan sec. 3, D-inert (the IT-off SP build equals the OT-only arm, discs included)"
+    known_bad_desc = "the same comparison with the SmartPixels discs left on (--it-discs on): the OT seeds then " \
+                     "follow into ID1-ID4"
+
+    def _bad_args(self):
+        return ["--masks", "IIII", "--it-discs", "on"]
+
+
+ITEMS = [MajorityOwner(), CensusBuilds(), CensusInputContract(), CutEntries(), OtAngleInert(), SpItOffIsOt(),
+         SpItDiscsOffIsOt()]
