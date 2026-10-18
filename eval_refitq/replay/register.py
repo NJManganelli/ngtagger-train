@@ -12,7 +12,10 @@
   c1b-j2    wpc.c1b.j2-seed-test-smooth  C1b J2 of the smooth seed, A17 (c1b/seed/seedtest_summary.json)
   c1b-seed  wpc.c1b.seed-model-v1      C1b A16: the smooth seed model (seedmodel/seed_model_v1.json, select.json)
   c1b-j4    wpc.c1b.j4-cut-fit         C1b J4: the cut fit (c1b/cuts/cutfit_summary.json)
-  c1b-j5    wpc.c1b.j5-known-good      C1b J5: file 4 with the known-bads (c1b/checks/checks_f04.json)
+  c1b-j5    wpc.c1b.j5-known-good-a20  C1b J5 under A20: file 4 with the known-bads (c1b/checks/checks_f04.json);
+                                       supersedes wpc.c1b.j5-known-good (the A19 run, kept at c1b/checks/a19/)
+  c1b-j6    wpc.c1b.j6-gate            C1b J6 under A20: file 6, the gate (c1b/checks/checks_f06.json)
+  c1b-betasym wpc.c1b.beta-symmetry    C1b after J5: the disc beta symmetry figure (c1b/beta_symmetry.json)
   c1b-j3    wpc.c1b.j3-material-scale-smooth  C1b J3 with the smooth seed, A18 (c1b/scale/scalefit_summary.json)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
@@ -325,21 +328,39 @@ def c1b_j4(job_dir, overwrite):
           "bias": "the disc material scale 2.67 is physically suspect (A19)", "sources": [str(p)]}, job_dir, overwrite)
 
 
-def c1b_j5(job_dir, overwrite):
-    p = CM.OUT / "c1b" / "checks" / "checks_f04.json"
+def _c1b_checks(f, rid, title, bias, job_dir, overwrite):
+    """J5 / J6 under A16-A20 (the A19 run of J5 is registered as wpc.c1b.j5-known-good; its output is kept at
+    c1b/checks/a19/)."""
+    p = CM.OUT / "c1b" / "checks" / f"checks_f{f:02d}.json"
     with open(p) as fh:
         Q = json.load(fh)
     vals = [{"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"},
-            {"name": "known-bads (fails?)", "value": json.dumps(Q["known_bads"])},
+            {"name": "MINOR", "value": "; ".join(Q["minor"]) or "none"},
             {"name": "D1 failing bins", "value": json.dumps([{k: b[k] for k in ("angle", "surface", "keybin", "n", "width")}
                                                             for b in Q["D1"]["pooled"]["bins"] if b["fail"]])},
-            {"name": "D1 false veto", "value": json.dumps(Q["D1"]["false_veto"])},
+            {"name": "D1 exempt bins (A20, not judged)", "value": json.dumps(Q["D1"]["exempt"])},
             {"name": "D5", "value": json.dumps(Q["D5"])}]
-    _reg({"id": "wpc.c1b.j5-known-good", "title": "WP-C C1b J5: file 4, the final configuration with the known-bads "
-                                                  "(A16-A19)",
-          "status": "valid" if not Q["material"] else "void",
-          "status_note": "; ".join(Q["material"]) or "no failure", "values": vals,
-          "bias": "file 4, the rehearsal; judged with A18 / A19's statistic for D3", "sources": [str(p)]}, job_dir, overwrite)
+    if "known_bads" in Q:
+        vals += [{"name": "known-bads (fails?)", "value": json.dumps(Q["known_bads"])},
+                 {"name": "D1 false veto", "value": json.dumps(Q["D1"]["false_veto"])},
+                 {"name": "power statements", "value": json.dumps(Q["power"])}]
+    _reg({"id": rid, "title": title, "status": "valid" if not Q["material"] else "void",
+          "status_note": "; ".join(Q["material"]) or "no failure", "values": vals, "bias": bias,
+          "sources": [str(p), str(CM.OUT / "c1b" / "d1_exempt_v1.json")]}, job_dir, overwrite)
+
+
+def c1b_j5(job_dir, overwrite):
+    _c1b_checks(4, "wpc.c1b.j5-known-good-a20", "WP-C C1b J5: file 4, the final configuration with the known-bads "
+                "(A16-A20)", "file 4, the rehearsal; D3 on A18 / A19's statistic; D1 without A20's exempt bins",
+                job_dir, overwrite)
+    R.set_status("wpc.c1b.j5-known-good", "superseded", "rerun under A20 (the D1 exemption; the radius-only known-bad "
+                 "as a power statement); this run's output is kept at c1b/checks/a19/checks_f04.json", by=BY,
+                 superseded_by="wpc.c1b.j5-known-good-a20")
+
+
+def c1b_j6(job_dir, overwrite):
+    _c1b_checks(6, "wpc.c1b.j6-gate", "WP-C C1b J6: file 6, the gate, the final configuration (A16-A20)",
+                "file 6, judged once; D3 on A18 / A19's statistic; D1 without A20's exempt bins", job_dir, overwrite)
 
 
 def c1b_betasym(job_dir, overwrite):
@@ -370,7 +391,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
-                                     "c1b-betasym"))
+                                     "c1b-j6", "c1b-betasym"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -381,7 +402,7 @@ def main(argv=None):
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
          "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
-         "c1b-betasym": c1b_betasym}[a.what](a.job_dir, a.overwrite)
+         "c1b-j6": c1b_j6, "c1b-betasym": c1b_betasym}[a.what](a.job_dir, a.overwrite)
     return 0
 
 

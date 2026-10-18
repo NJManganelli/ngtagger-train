@@ -49,9 +49,9 @@ def d1_pulls(own, imp, geo, variant="model"):
     return x, rows
 
 
-def d1_bins(own, imp, x, by_facing=False):
+def d1_bins(own, imp, x, by_facing=False, exempt=frozenset()):
     """D1's bins: (angle, disc, disc-row key bin[, facing]) over own class-T rows with a clean history (the table's
-    population), with the disc table's sd for the widening."""
+    population), with the disc table's sd for the widening. exempt: (angle, disc, key bin) left out (A20)."""
     out = []
     base = own["table_pop"] & own["clean"] & (own["surface"] > 10)
     for i, ang in enumerate(SA.ANGLES):
@@ -61,7 +61,7 @@ def d1_bins(own, imp, x, by_facing=False):
         xs, evs = x[m0, i], own["ev"][m0]
         for k in np.unique(keys, axis=0):
             m = (keys == k).all(1)
-            if m.sum() < SA.MIN_FIT:
+            if m.sum() < SA.MIN_FIT or (ang, int(k[0]), int(k[1])) in exempt:
                 continue
             ctr = np.array([np.mean(SA.fine_bin_bounds(int(k[0]), int(k[1])))])
             row = imp.table.rows_of(DA.KEY, np.array([k[0]]), ctr, np.zeros(1, np.int8))[0]
@@ -72,13 +72,16 @@ def d1_bins(own, imp, x, by_facing=False):
     return out
 
 
-def d1(own, imp, geo, nev, false_veto=False, variants=()):
+def d1(own, imp, geo, nev, false_veto=False, variants=(), exempt=frozenset()):
     """D1 on one file: the model (pooled facings and per facing), its false veto (file 4), the variants (the
-    known-bads) and the reported diagnostics (the HCH share, the table-only pull, class C, the key change)."""
+    known-bads) and the reported diagnostics (the HCH share, the table-only pull, class C, the key change).
+    exempt: (angle, disc, key bin) left out of every judgement (A20); their pooled (n, centre, width) is reported."""
     x, rows = d1_pulls(own, imp, geo)
-    res = {}
+    res = {"exempt": [{"angle": b["angle"], "surface": b["surface"], "keybin": b["keybin"], "n": int(len(b["x"])),
+                       **dict(zip(("centre", "width"), map(float, G._bin_stats(b["x"]))))}
+                      for b in d1_bins(own, imp, x) if (b["angle"], b["surface"], b["keybin"]) in exempt]}
     for lab, byf in (("pooled", False), ("per_facing", True)):
-        b = d1_bins(own, imp, x, byf)
+        b = d1_bins(own, imp, x, byf, exempt)
         res[lab] = G.e1a_judge(b, nev=nev)
         if false_veto and not byf:
             fv = G.e1a_false_veto(b, res[lab])
@@ -87,8 +90,8 @@ def d1(own, imp, geo, nev, false_veto=False, variants=()):
     res["variants"] = {}
     for v in variants:
         xv, _ = d1_pulls(own, imp, geo, v)
-        jp = G.e1a_judge(d1_bins(own, imp, xv), nev=nev)
-        jf = G.e1a_judge(d1_bins(own, imp, xv, True), nev=nev)
+        jp = G.e1a_judge(d1_bins(own, imp, xv, exempt=exempt), nev=nev)
+        jf = G.e1a_judge(d1_bins(own, imp, xv, True, exempt), nev=nev)
         res["variants"][v] = {"pooled_fail": jp["n_fail"], "per_facing_fail": jf["n_fail"], "bins": len(jp["bins"]),
                               "fails": jp["n_fail"] + jf["n_fail"] > 0, "facing_only": jp["n_fail"] == 0 < jf["n_fail"]}
     disc = own["table_pop"] & own["clean"] & (own["surface"] > 10)

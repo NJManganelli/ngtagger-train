@@ -404,8 +404,8 @@ def c1b_cutfit(a):
 def checks(a):
     """J5 (file 4, --known-bad) / J6 (file 6): the final configuration (C1b's cut file, the fitted scale, the
     decided seed, v3's position errors, A13) judged by D1, D3 (relative, A4), D4 and D5; on file 4 the D1 false veto,
-    the known-bads (D1 / D4 post hoc; D3 / D5 by arm variants) and the power statements. Writes
-    c1b/checks/checks_f<NN>.json."""
+    the known-bads (D1 / D4 post hoc; D3 / D5 by arm variants) and the power statements. --d1-exempt: D1 bins left
+    out of the judgement and reported apart (A20). Writes c1b/checks/checks_f<NN>.json."""
     import cuts as CU
     import diagnostics as DG
     import disc_checks as DC
@@ -419,7 +419,7 @@ def checks(a):
         scale = float(json.load(fh)["scale"])
     variants = {"model": ({}, scale)}
     if a.known_bad:
-        variants.update({"kb_radius_only": ({"disc_material": "radius"}, scale), "kb_no_disc_material": ({}, 0.0),
+        variants.update({"kb_radius_only (power)": ({"disc_material": "radius"}, scale), "kb_no_disc_material": ({}, 0.0),
                          "kb_2x_scale": ({}, 2 * scale), "kb_1.3x_scale (power)": ({}, 1.3 * scale),
                          "kb_barrel_path_factor": ({"disc_material": "barrel_factor"}, scale),
                          "kb_disc_material_on_barrel_only": ({"disc_material": "all_tracks"}, scale)})
@@ -479,7 +479,12 @@ def checks(a):
     imp = AR.DiscTools().imp
     d1v = ("no_rows", "flip_centre", "global_rows", "key_from_local", "to_local", "width_div_1.15", "emitted_key") \
         if a.known_bad else ()
-    res["D1"] = DC.d1(own_all["AAAA"], imp, geo, nev, false_veto=a.known_bad, variants=d1v)
+    exempt = frozenset()
+    if a.d1_exempt:
+        with open(a.d1_exempt) as fh:
+            exempt = frozenset((e["angle"], e["surface"], e["keybin"]) for e in json.load(fh)["bins"])
+        res["d1_exempt_file"] = a.d1_exempt
+    res["D1"] = DC.d1(own_all["AAAA"], imp, geo, nev, false_veto=a.known_bad, variants=d1v, exempt=exempt)
     if res["D1"]["pooled"]["n_fail"]:
         res["material"].append(f"D1: {res['D1']['pooled']['n_fail']} failing bins (pooled facings)")
     if a.known_bad and res["D1"]["false_veto"]["material"]:
@@ -524,8 +529,13 @@ def checks(a):
         kb["D5/disc_material_on_barrel_only"] = d5["kb_disc_material_on_barrel_only"][1] > 0
         kb.update({f"D4/{k}": v["fails"] for k, v in res["D4_known_bads"].items()})
         res["known_bads"] = kb
+        rad, mod = res["D3"]["kb_radius_only (power)"]["D3b"], M["D3b"]
+        shift = [abs(rad[c][ax] - mod[c][ax]) for c in rad if c in mod for ax in ("pu", "pv")]
         res["power"] = {"D1 width / 1.15": res["D1"]["variants"]["width_div_1.15"],
-                        "D3 1.3 x scale": res["D3"]["kb_1.3x_scale (power)"]["any_fail"]}
+                        "D3 1.3 x scale": res["D3"]["kb_1.3x_scale (power)"]["any_fail"],
+                        "D3 radius-only material (A20)": {"fails": res["D3"]["kb_radius_only (power)"]["any_fail"],
+                                                          "D3b_shift_median": float(np.nanmedian(shift)),
+                                                          "D3b_shift_max": float(np.nanmax(shift))}}
         res["material"] += [f"known-bad {k} does not fail its check" for k, v in kb.items() if not v]
     res["seconds"] = round(time.time() - t0, 1)
     out_dir = os.path.join(a.out, "checks")
@@ -543,6 +553,8 @@ def main(argv=None):
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--files", type=int, nargs="+", default=None, help="pairs / il1truth / fit: files other than the fit files")
     ap.add_argument("--known-bad", action="store_true", help="file 4: the known-bads")
+    ap.add_argument("--d1-exempt", default=None, help="checks: a JSON of D1 bins (angle, surface, keybin) left out of the "
+                                                      "judgement (A20)")
     ap.add_argument("--what", choices=("seed", "scale"), default="seed", help="rejudge: J2 or J3")
     ap.add_argument("--n-boot", type=int, default=OV.N_BOOT,
                     help="fit: the shape fits' bootstrap replicas (a disc: at most N_BOOT_DISC)")
