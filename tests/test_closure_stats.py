@@ -174,3 +174,19 @@ def test_g0_array_rule():
                                                                      "fit": 3.0}}))) == "kf_diverged nonzero"
     assert CV._g0_array("counters", c35, np.array(json.dumps({"0": {"before_chi2": 4.0, "kf_diverged": 0.0,
                                                                      "fit": 3.0}}))) == "values differ"
+
+
+def test_inject_records_beyond_the_pool():
+    """A gross ln_fake injection asks for more copies than there are fakes: whole copies plus a drawn remainder; a
+    small one draws without replacement exactly as before."""
+    R = np.zeros((10, 8), np.int64)
+    R[:, 4] = 0                                       # every record judged (KF region 0)
+    R[:4, 3] = 0                                      # 4 fakes (no seed TP)
+    R[4:, 3] = 1
+    big = CV._inject_records(R, "ln_fake", 10.0, math.log(1.25), np.random.default_rng(1))
+    k = int(round(4 * (math.exp(10 * math.log(1.25)) - 1)))
+    assert len(big) == 10 + k and (big[10:, 3] == 0).all()
+    small = CV._inject_records(R, "ln_fake", 1.5, math.log(1.25), np.random.default_rng(1))
+    ref = np.random.default_rng(1).choice(np.arange(4), int(round(4 * (math.exp(1.5 * math.log(1.25)) - 1))),
+                                          replace=False)
+    assert np.array_equal(small[10:], R[ref])

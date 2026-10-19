@@ -934,7 +934,13 @@ def _inject_records(R, stat, m, margin, rng):
         k = len(np.unique(R[pool, 2])) * m * margin
     else:
         return R
-    return np.concatenate([R, R[rng.choice(pool, int(round(k)), replace=False)]])
+    # more copies than the pool holds (a gross ln_fake: exp(10 ln 1.25) - 1 = 8.3 per fake): every record of the pool
+    # copied the whole number of times, the remainder drawn without replacement (the same draw as before when k
+    # does not exceed the pool)
+    k = int(round(k))
+    whole, rest = divmod(k, len(pool)) if len(pool) else (0, 0)
+    extra = np.r_[np.tile(pool, whole), rng.choice(pool, rest, replace=False)].astype(np.int64)
+    return np.concatenate([R, R[extra]])
 
 
 def _inject_found(f_cen, f_cms, den, stat, m, margin, rng):
