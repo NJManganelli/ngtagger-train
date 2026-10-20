@@ -19,6 +19,7 @@
   scan-tree2-kg wpc.scan.tree2-e7-known-good  scan A4: E7 of tree2 on file 4 (scan/tree2/e7_f04.json)
   scan-nonprompt wpc.scan.nonprompt-first-visit  scan B4: non-prompt first-visit calibration (scan/nonprompt_f04.json)
   scan-go   wpc.scan.go-table          scan B3: the GO / NO-GO table, 10 files (job dir of the last scan job)
+  scan-truthmod wpc.scan.truth-modules  the window's truth-target modules ON vs OFF, file 4 (scan/truthmod_f04.json)
   scan-bpre wpc.scan.bpre-d0-pull       scan B-pre: d0 pull cores, disc-going vs barrel-only, file 4
   c1b-verdict wpc.c1b.verdict          C1b closed with the discs ON and its known limitations; updates the J2 / J3 / J6
                                        statuses (job dir of J6)
@@ -504,6 +505,25 @@ def scan_go(job_dir, overwrite):
          job_dir, overwrite)
 
 
+def scan_truthmod(job_dir, overwrite):
+    """The v3 port's question (2026-10-20): the ellipse window's truth-target modules, ON against OFF, on file 4
+    (wpc/scan/truthmod_f04.json)."""
+    p = CM.OUT / "scan" / "truthmod_f04.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = []
+    for scen, by in Q["scenarios"].items():
+        for cls, e in by.items():
+            vals.append({"name": f"{scen} {cls}: ON - OFF (att, H, P); ON - PM / OFF - PM attachment; target-only share "
+                                 "of accepted hits",
+                         "value": json.dumps({"on_off": [e["ON-OFF"][k]["diff"] for k in ("att", "H", "P")],
+                                              "on_pm": e["ON-PM"]["att"]["diff"], "off_pm": e["OFF-PM"]["att"]["diff"],
+                                              "tgt_only_accepted": e["tgt_only_share_of_accepted"]})})
+    _reg({"id": "wpc.scan.truth-modules", "title": "WP-C: the ellipse window's truth-target modules, ON vs OFF (file 4)",
+          "status": "valid", "status_note": "no effect: identical attachment, H and P; no accepted target-only cluster",
+          "values": vals, "bias": "file 4 only; INN-D with K = tree2", "sources": [str(p)]}, job_dir, overwrite)
+
+
 def c1b_betasym(job_dir, overwrite):
     """The read-only disc beta symmetry figure (after J5): the innermost populated key bins, k < 0 (J5's failing bin)
     and its mirror k > 0, per disc."""
@@ -533,7 +553,8 @@ def main(argv=None):
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
                                      "c1b-j6", "c1b-verdict", "c1b-betasym", "scan-tree2-kg",
-                                     "scan-bpre", "scan-nonprompt", "scan-go"))
+                                     "scan-bpre", "scan-nonprompt", "scan-go",
+                                     "scan-truthmod"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -546,7 +567,7 @@ def main(argv=None):
          "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
          "c1b-j6": c1b_j6, "c1b-verdict": c1b_verdict, "c1b-betasym": c1b_betasym,
          "scan-tree2-kg": scan_tree2_kg, "scan-bpre": scan_bpre, "scan-nonprompt": scan_nonprompt,
-         "scan-go": scan_go}[a.what](a.job_dir, a.overwrite)
+         "scan-go": scan_go, "scan-truthmod": scan_truthmod}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
