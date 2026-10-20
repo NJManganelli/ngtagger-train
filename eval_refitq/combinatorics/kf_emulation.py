@@ -520,7 +520,10 @@ _MAIN = None
 # ==========================================================================
 # assembling a track: the seed's three clusters plus one projection per layer
 # ==========================================================================
-LAYER_ORDER = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
+# the hit columns of a track (census format 36: the discs too): IL1-IL4, ID1-ID4, OL1-OL6, OD1-OD5. A disc hit is
+# measured in (phi, r) on a plane of fixed z; it enters the fit at its radius, its z exact and its r error carried
+# as the z error |cot| sigma_r (KFParamsComb::matrixV's endcap vz = sigmaPar^2 tan^2 lambda; fit_tracks)
+LAYER_ORDER = (1, 2, 3, 4) + M.IT_DISC_CODES + (11, 12, 13, 14, 15, 16) + M.OT_DISC_CODES
 
 
 def collect_track_hits(U, Q, trip, layers=LAYER_ORDER, nsig=4.0):
@@ -732,6 +735,17 @@ def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
     i0, i1 = it_variances(T["R"], T["SX"], T["SY"], pt0)
     v0 = np.where(is_ot, o0, i0)
     v1 = np.where(is_ot, o1, i1)
+    dsk = M.is_disc(lay)
+    if dsk.any():
+        # a disc hit's r sigma (the IT cluster's sigY, the OT stub's sigmaPar) as a z error: x cot^2, the seed
+        # pair's cot as the hybrid KF takes its tanL from the candidate (KFParamsComb::matrixV, endcap), at least
+        # the cot a track from the luminous region needs to reach the hit, (|z| - Z_LUMI) / r: a flat seed with a
+        # wrong disc hit would otherwise give it a vanishing z error and drive the filter away
+        ga, gb = trip[0], trip[1]
+        drs = U["globalR"][gb] - U["globalR"][ga]
+        cot0 = (U["globalZ"][gb] - U["globalZ"][ga]) / np.where(np.abs(drs) > 0.5, drs, 1e9)
+        cmin = np.maximum(np.abs(T["Z"]) - M.Z_LUMI, 0.0) / np.maximum(T["R"], 1e-3)
+        v1 = np.where(dsk, v1 * np.square(np.maximum(np.abs(cot0)[:, None], cmin)), v1)
     # azimuth relative to each track's own first hit, so no 2pi wrap enters
     ref = np.where(T["VALID"], T["PH"], 0.0)
     first = np.argmax(T["VALID"], axis=1)
@@ -760,25 +774,46 @@ def fit_tracks(U, Q, trip, use_angles=True, d0_prior_cm=D0_PRIOR_CM,
             mb = CT
             vb = np.maximum(SCT, 1e-9) ** 2
             angb = T["ANG_B"]
-    out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb,
-                 ang if ang is not None else angb, d0_prior_cm, ms_scale, it_ot_scale,
-                 pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse,
-                 has_beta=angb)
+    # A DIVERGED FIT (census format 36): finite inputs, a non-finite state or position chi2. The batch filter
+    # has no per-step isGoodState, and the third-order terms ((d0/r)^3 above all) feed a wild state back into
+    # its own prediction: a hit list that is no helix (an OT seed's IT disc attachments of more than one
+    # particle) can overflow. Such a fit is not a track (ok False, counted per seed by the census as
+    # kf_diverged); the overflow warnings it raises are expected. A non-finite INPUT is not divergence: its fit
+    # stays ok and its NaN reaches the NaN guard.
+    with np.errstate(over="ignore", invalid="ignore"):
+        out = kf_run(T["R"], m0, T["Z"], v0, v1, T["VALID"], ma, va, mb, vb,
+                     ang if ang is not None else angb, d0_prior_cm, ms_scale, it_ot_scale,
+                     pt_for_ms=pt0[:, 0], layers=layers, reverse=reverse,
+                     has_beta=angb)
     (kappa, phi0, d0, cot, z0, vk, vd, vc, vz, nhit, ok,
      c2p, c2z, vphi) = out
+    fin_in = np.ones(len(ok), bool)
+    for x, u in ((T["R"], T["VALID"]), (m0, T["VALID"]), (T["Z"], T["VALID"]), (v0, T["VALID"]),
+                 (v1, T["VALID"]), (ma, ang), (va, ang), (mb, angb), (vb, angb)):
+        if x is not None and u is not None:
+            fin_in &= ~(u & T["VALID"] & ~np.isfinite(x)).any(axis=1)
+    fin_out = np.isfinite(kappa) & np.isfinite(phi0) & np.isfinite(d0) & np.isfinite(cot) & np.isfinite(z0) \
+        & np.isfinite(c2p) & np.isfinite(c2z)
+    diverged = ok & fin_in & ~fin_out
+    ok = ok & ~diverged
     fit = {"kappa": kappa, "phi0": M.wrap(phi0 + phi_ref), "d0": d0,
            "cot": cot, "z0": z0, "var_kappa": vk, "var_d0": vd,
            "var_cot": vc, "var_z0": vz, "var_phi0": vphi,
-           "nhit": nhit, "ok": ok, "hits": T,
+           "nhit": nhit, "ok": ok, "diverged": diverged, "hits": T,
            "chi2_rphi": c2p, "chi2_rz": c2z}
     # THE FINAL-STATE ANGLE CHI2, whether or not the angles entered the fit, so
     # that the stages reading it (S6 acceptance, S7 rank, S8 features) see one
     # definition and switching S5 changes the state, not the yardstick. Its
     # alpha and beta parts are kept apart for S6's per-angle sets.
-    c2a, na, c2b, nb = angle_chi2_parts(T, fit)
+    # THE DISC HITS' ANGLES (census format 36): module-frame pulls against the final state (disc_angle_pulls),
+    # in the same chi2 and counts; never fed to the update (S5 reads the barrel's only)
+    # (a diverged state's pulls overflow too; the NaN guard counts the non-finite ones of every fit that is ok)
+    with np.errstate(over="ignore", invalid="ignore"):
+        T["DANG"], T["DPA"], T["DPB"] = disc_angle_pulls(Q, T, fit, model)
+        c2a, na, c2b, nb = angle_chi2_parts(T, fit)
     fit["chi2_a"], fit["n_a"], fit["chi2_b"], fit["n_b"] = c2a, na, c2b, nb
     fit["chi2_angle"] = c2a + c2b
-    fit["n_angle"] = (T["VALID"] & T["ANG"]).sum(axis=1).astype(np.int32)
+    fit["n_angle"] = (T["VALID"] & (T["ANG"] | T["DANG"])).sum(axis=1).astype(np.int32)
     fit["n_angle_meas"] = (na + nb).astype(np.int32)
     return fit
 
@@ -810,8 +845,9 @@ def angle_chi2_parts(T, fit):
     statistic, which contains it).
     """
     pa, pb = angle_pulls(T, fit)
-    ma = T["VALID"] & T["ANG_A"]
-    mb = T["VALID"] & T["ANG_B"]
+    dang = T.get("DANG", False)
+    ma = T["VALID"] & (T["ANG_A"] | dang)
+    mb = T["VALID"] & (T["ANG_B"] | dang)
     return (np.where(ma, pa * pa, 0.0).sum(axis=1), ma.sum(axis=1).astype(np.int32),
             np.where(mb, pb * pb, 0.0).sum(axis=1), mb.sum(axis=1).astype(np.int32))
 
@@ -841,7 +877,31 @@ def angle_pulls(T, fit):
     sig_a = M.C_BEND * np.maximum(T["SKA"], 1e-9)
     res_b = T["CT"] - fit["cot"][:, None]
     sig_b = np.maximum(T["SCT"], 1e-9)
-    return res_a / sig_a, res_b / sig_b
+    if "DANG" not in T:
+        return res_a / sig_a, res_b / sig_b
+    return np.where(T["DANG"], T["DPA"], res_a / sig_a), np.where(T["DANG"], T["DPB"], res_b / sig_b)
+
+
+def disc_angle_pulls(Q, T, fit, model):
+    """(use, alpha pull, beta pull) per (track, layer) of the IT disc hits with a usable module-frame direction:
+    the census angle model's module-frame pulls (census_angles.Model.disc_window) against the fitted helix
+    (kappa, cot, d0) at each hit; use is False everywhere without the model or a disc hit."""
+    use = np.zeros(T["VALID"].shape, bool)
+    pa, pb = np.zeros(use.shape), np.zeros(use.shape)
+    if model is None or "ldir_ok" not in Q:
+        return use, pa, pb
+    G = T["GIDX"]
+    lay = np.asarray(T["layers"])
+    cols = np.flatnonzero(np.isin(lay, M.IT_DISC_CODES))
+    for j in cols:
+        t = np.flatnonzero(T["VALID"][:, j])
+        g = G[t, j]
+        ok = Q["ldir_ok"][g]
+        t, g = t[ok], g[ok]
+        if len(t):
+            qa, qb = model.disc_window(Q, g, fit["kappa"][t], fit["cot"][t], fit["d0"][t])
+            use[t, j], pa[t, j], pb[t, j] = True, qa, qb
+    return use, pa, pb
 
 
 ANGLE_COLS = ("track_row", "layer", "res_a", "pred_a", "res_b", "pred_b",
@@ -1189,8 +1249,8 @@ def numerics_key():
 
 
 def sysclass_of(layers):
-    """0 = IT-only seed, 1 = OT-only, 2 = spans both."""
-    it = any(L <= 4 for L in layers)
+    """0 = IT-only seed, 1 = OT-only, 2 = spans both (IT: IL1-IL4 and the discs ID1-ID4)."""
+    it = any(L <= 10 for L in layers)
     ot = any(L > 10 for L in layers)
     return SYS_MIX if (it and ot) else (SYS_IT if it else SYS_OT)
 
@@ -1207,20 +1267,29 @@ def track_rows(U, Q, T, fit, trip, TP, seed_idx, arity, sysclass, rank):
     lay = np.asarray(T["layers"])[None, :]
     use = T["VALID"]
     nhit = use.sum(axis=1).astype(np.float64)
-    is_it = use & (lay <= 4)
+    is_it = use & (lay <= 10)                 # IL1-IL4 and the discs ID1-ID4
     is_ot = use & (lay > 10)
     pa, pb = angle_pulls(T, fit)
-    apull = np.maximum(np.where(use & T["ANG_A"], np.abs(pa), 0.0),
-                       np.where(use & T["ANG_B"], np.abs(pb), 0.0))
+    dang = T.get("DANG", False)
+    apull = np.maximum(np.where(use & (T["ANG_A"] | dang), np.abs(pa), 0.0),
+                       np.where(use & (T["ANG_B"] | dang), np.abs(pb), 0.0))
     srt = np.sort(apull, axis=1)[:, ::-1]
     r = np.maximum(T["R"], 1e-3)
     dz = T["Z"] - (fit["cot"][:, None] * r + fit["z0"][:, None])
-    ppos = np.where(use, np.abs(dz) / np.maximum(T["SY"], 1e-6), 0.0)
-    idx = np.arange(use.shape[1])[None, :]
-    lo = np.where(use, idx, 99).min(axis=1)
-    hi = np.where(use, idx, -1).max(axis=1)
-    span = (idx >= lo[:, None]) & (idx <= hi[:, None])
-    n_miss = (span & ~use).sum(axis=1).astype(np.float64)
+    # a disc hit's longitudinal sigma is its r sigma times |cot| (fit_tracks)
+    dsk = M.is_disc(lay)
+    szl = np.maximum(T["SY"], 1e-6) * np.where(dsk, np.abs(fit["cot"])[:, None], 1.0)
+    ppos = np.where(use, np.abs(dz) / np.maximum(szl, 1e-6), 0.0)
+    # interior misses along the barrel layers and along the discs, each in its own order (a forward track's barrel
+    # hits and disc hits are two sequences; LAYER_ORDER lists the discs after each system's barrel layers)
+    n_miss = np.zeros(use.shape[0])
+    for part in (~dsk[0], dsk[0]):
+        u = use[:, part]
+        idx = np.arange(u.shape[1])[None, :]
+        lo = np.where(u, idx, 99).min(axis=1)
+        hi = np.where(u, idx, -1).max(axis=1)
+        span = (idx >= lo[:, None]) & (idx <= hi[:, None])
+        n_miss += (span & ~u).sum(axis=1)
     c2a, nang = fit["chi2_angle"], fit["n_angle"]
     chi2s = fit["chi2_rphi"] / CHI2_RPHI_SCALE + fit["chi2_rz"]
     # ---- truth, referenced to the MAJORITY OWNER of the hits -------------

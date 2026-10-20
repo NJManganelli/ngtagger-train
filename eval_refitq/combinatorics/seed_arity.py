@@ -57,8 +57,36 @@ IL = (1, 2, 3, 4)
 OT_BARREL = (11, 12, 13, 14, 15, 16)
 # L1L2, L2L3, L3L4, L5L6 -- Settings.h:679. There is deliberately no L4L5.
 OT_DOUBLETS = ((11, 12), (12, 13), (13, 14), (15, 16))
-# the CMSSW seed index (ot_chain.SEEDS) of each prompt OT doublet
-OT_CHAIN_SEED = {tuple(L + 10 for L in lay): sd for sd, lay in OC.SEEDS.items()}
+# the OT discs OD1-OD5 (census codes: L1TOTStub_layer 11-15 + 10; tp_findability); the chain's disc codes 7-11;
+# the SmartPixels discs ID1-ID4 (codes 5-8; tracklet_topology_cost.IT_DISC_CODES)
+OT_DISCS = M.OT_DISC_CODES
+ID = M.IT_DISC_CODES
+
+
+def ot_census_code(chain_code):
+    """The census code of an ot_chain layer / disk code: barrel 1-6 -> OL1-OL6 (11-16), discs 7-11 -> OD1-OD5."""
+    return chain_code + 10 if chain_code <= 6 else chain_code + 14
+
+
+# the CMSSW seed index (ot_chain.SEEDS) of each prompt OT seed, by its census layers
+OT_CHAIN_SEED = {tuple(ot_census_code(L) for L in lay): sd for sd, lay in OC.SEEDS.items()}
+# the disc (D1D2, D3D4) and overlap (L1D1, L2D1) seeds: the closed arm's entries with the discs on (format 36;
+# not in the census chain's menu, whose geometry is the barrel's)
+OT_DISC_SEEDS = tuple(lay for lay, sd in OT_CHAIN_SEED.items() if sd not in OC.BARREL_SEEDS)
+# THE DISC SEEDS OF THE JOINT CENSUS (census format 36, wpdisc/PLAN.md sec. 1 B): the SmartPixels disc doublets
+# ID1+ID2, ID2+ID3, ID3+ID4 and the joint ID1+OD1, beside the OT's own disc and overlap doublets; each switchable
+# (disc_seeds' `chosen`, the census's --disc-seeds)
+IT_DISC_SEEDS = ((5, 6), (6, 7), (7, 8), (5, 21))
+
+
+def disc_seeds(it_discs, ot, chosen=None):
+    """The disc entries of a build (census format 36): the OT's disc and overlap doublets whose layers are all among
+    its OT surfaces `ot`, then IT_DISC_SEEDS whose IT discs are all among `it_discs` (the joint one also needs OD1);
+    `chosen`, a set of seed tags (Seed.tag), keeps only those (None: all)."""
+    out = [Seed(lay, "OT disc doublet") for lay in OT_DISC_SEEDS if all(L in ot for L in lay)]
+    out += [Seed(lay, "SmartPixels disc doublet") for lay in IT_DISC_SEEDS
+            if all(L in it_discs or L in ot for L in lay) and any(L in it_discs for L in lay)]
+    return [sd for sd in out if chosen is None or sd.tag in chosen]
 # L2L3L4 and L4L5L6 -- the design's only barrel triplet seeds, IN CONSTRUCTION
 # ORDER: the pair first, the attached third layer last.
 #
@@ -121,8 +149,9 @@ class Seed:
         return MIN_LAYERS - (2 if strict_cmssw else self.arity)
 
 
-NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
-        11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
+NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4", 5: "ID1", 6: "ID2", 7: "ID3", 8: "ID4",
+        11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6",
+        21: "OD1", 22: "OD2", 23: "OD3", 24: "OD4", 25: "OD5"}
 
 
 def soft_seeds(seeds):
@@ -233,7 +262,10 @@ def menu_fingerprint():
     for m in range(1, 16):
         il = [L for k, L in enumerate(IL) if m >> k & 1]
         out.append([[list(sd.layers), sd.category] for sd in enumerate_seeds(il)])
-    return {"active": list(DEFAULT_CATEGORIES), "builds": out}
+    fp = {"active": list(DEFAULT_CATEGORIES), "builds": out}
+    if OC.DISCS:                                          # the disc seeds' rule (census format 36)
+        fp["disc"] = [list(sd.layers) for sd in disc_seeds(ID, OT_BARREL + OT_DISCS)]
+    return fp
 
 
 def run_seed(U, Q, seed, ptmin, targets, use_angles=True,
@@ -392,7 +424,7 @@ def apply_layer_rule(F, seed, targets, strict_cmssw=False, min_layers=None,
     # by itself, and OT confirmations are counted separately. min_ot_conf = 0
     # makes the OT hit optional ("3xIT or 3xIT + 1xOT"), 1 makes it mandatory.
     if min_it_layers is not None:
-        n_it_seed = sum(1 for L in seed.layers if L <= 4)
+        n_it_seed = sum(1 for L in seed.layers if L <= 10)
         keep = (n_it_seed + nconf_it >= min_it_layers) & (nconf_ot >= min_ot_conf)
         need = max(min_it_layers - n_it_seed, 0)
     elif min_layers is None:

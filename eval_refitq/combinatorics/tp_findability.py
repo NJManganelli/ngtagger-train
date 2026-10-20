@@ -10,6 +10,8 @@ ttbar set before the stub credit (format < 28), 9,515 per event -- carrying
     d0 z0 vr       L1TTP d0 and z0 [cm] at the POCA to the beamline, production radius [cm]
     charge         L1TTP charge (findable() requires a charged TP)
     hit_it hit_ot  bitmasks of which IL1-IL4 / OL1-OL6 the TP actually hit
+    hit_otd        bitmask of which OT discs OD1-OD5 it hit (format 36; either side)
+    hit_itd        bitmask of which IT discs ID1-ID4 it hit (format 36; either side)
     n_mod_it/_ot   IT / OT modules carrying a credited hit (findable() at >= 4 in all)
     found          BITMAP over every candidate seed: did that seed recover this TP
 
@@ -57,9 +59,12 @@ import seed_arity as SA             # noqa: E402
 import census_angles as CA          # noqa: E402
 import ot_chain as OC               # noqa: E402
 
-NAME = {1: "IL1", 2: "IL2", 3: "IL3", 4: "IL4",
-        11: "OL1", 12: "OL2", 13: "OL3", 14: "OL4", 15: "OL5", 16: "OL6"}
+NAME = dict(SA.NAME)
 CODE = {v: k for k, v in NAME.items()}
+# THE OT DISCS (format 36, WP-Disc): an OT stub's census code is its L1TOTStub_layer + 10, so the barrel's 1-6
+# are OL1-OL6 (11-16) and the discs' 11-15 (either side; the side is the stub's z) are OD1-OD5 (21-25). With the
+# discs off (ot_chain.set_discs) the census holds no disc stub: format 35's population.
+OT_DISC_CODES = M.OT_DISC_CODES
 ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
 # tpGenuine/tpCombinatoric/tpUnknown are the per-stub CMS truth flags, needed
 # because tpIdx = -1 cannot distinguish a merged cluster from noise. bend is the
@@ -70,9 +75,10 @@ ALL_LAYERS = (1, 2, 3, 4, 11, 12, 13, 14, 15, 16)
 # (M.STUB_TP_COLS).
 # x / y: the OT stub azimuth is atan2(y, x) (format 35), in place of L1TOTStub_phi, which canon_v3 stored at
 # 12 mantissa bits.
+# innerStrip / isFlipped: a 2S disc stub's strip and orientation, the KF's alpha (format 36).
 OT_COLS = ["layer", "isBarrel", "r", "z", "x", "y", "tpIdx", "tpPt",
            "tpGenuine", "tpCombinatoric", "tpUnknown", "bend", "isPS", "isTilted",
-           "tpIdxInner", "tpIdxOuter", "detId"]
+           "tpIdxInner", "tpIdxOuter", "detId", "innerStrip", "isFlipped"]
 # THE DTC FRAMES (format 35, canon_v4): one row per stub copy in a track-finder processing region, with the
 # 64-bit word the tracklet finder reads (ot_dtc). A stub with no copy was dropped by the DTC and never reaches
 # the finder; the census seeds and follows with the DTC-accepted stubs only, while the findable count keeps
@@ -94,12 +100,18 @@ IT_MODULE_COL = "detId"
 # format 31 the module of every IT cluster and OT stub (detId), which the
 # findable count counts (one hit per module).
 OT_MODULE_FLAGS = ("isPS", "isTilted")
-OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:] + ("detId", "x", "y")
+OT_REQUIRED = OT_MODULE_FLAGS + M.STUB_TP_COLS[1:] + ("detId", "x", "y", "innerStrip", "isFlipped")
 IT_REQUIRED = (IT_MODULE_COL,)
 
 # Bumped whenever a change alters the NUMBERS in a shard. The cache key folds it
 # in, so a stale cache cannot be silently reused across a semantic change.
-FORMAT_VERSION = 35   # 35: THE OT INPUTS AS THE TRACK FINDER READS THEM (WP-D; canon_v4 only, canon_v3
+FORMAT_VERSION = 36   # 36: THE OT DISCS (WP-Disc; ot_chain.set_discs, on by default): the OT disc stubs
+                      # enter the census table as OD1-OD5 (21-25) and the findable count (n_mod_ot
+                      # counts disc modules; new column hit_otd); the closed arm runs the 8 prompt
+                      # seeds (D1D2, D3D4, L1D1, L2D1 too) with every disc projection, its final stubs
+                      # with OD1-OD5 columns (OT_STUB_COLS); the WP-Disc corrections (ot_chain.FIXES)
+                      # on. With the discs off, format 35's numbers (gate G0).
+                      # 35: THE OT INPUTS AS THE TRACK FINDER READS THEM (WP-D; canon_v4 only, canon_v3
                       # refused: no DTC frames): the OT stub azimuth is atan2(y, x) (was the 12-bit
                       # L1TOTStub_phi); the census seeds and follows with the DTC-accepted stubs only
                       # (L1TOTStubDTC) while the findable count keeps every stub (U["truth"]); the
@@ -179,12 +191,12 @@ FORMAT_VERSION = 35   # 35: THE OT INPUTS AS THE TRACK FINDER READS THEM (WP-D; 
                       # fails the angle cap (SPN.direction_usable) from angle-using
                       # seeds. 19: TP truth (census d0/z0/eta/phi/vr, qual_* and
                       # track-row residuals, OT sigma z) from L1TTP at the POCA
-# The formats load() READS: this one, and 34, the last census built from canon_v3 (rebuild one at the
-# tag census-canon_v3-format34), so the canon_v3 results stay readable. Two formats are different
+# The formats load() READS: this one, 35 (WP-D's, barrel OT), and 34, the last census built from canon_v3
+# (rebuild one at the tag census-canon_v3-format34), so the canon_v3 results stay readable. Two formats are different
 # numbers under the same names, so load() records the one it read (C["format"]) and every comparison or
 # aggregation of censuses goes through one_format(), which refuses a mix unless the caller marks the
 # comparison cross-format.
-READ_FORMATS = (34, FORMAT_VERSION)
+READ_FORMATS = (34, 35, FORMAT_VERSION)
 
 
 def one_format(runs, cross_format=False):
@@ -343,7 +355,7 @@ def calibrate(spec, nev, ptmin):
     resolution the projection has to open its window to, not a nominal strip
     pitch.
     """
-    I, nI, _ = M.load_flat(spec, M.IT_TABLE, ["layer", "globalR"], nev)
+    I, nI, _ = M.load_flat(spec, M.IT_TABLE, ["layer", "globalR"], nev, discs=OC.DISCS)
     O, _, _ = M.load_ot(spec, nev, tp=("tp_z0", "tp_tanL"))
     bar = (O["isBarrel"] > 0) & (O["eta"] <= M.ETA_MATCHED)
 
@@ -358,9 +370,14 @@ def calibrate(spec, nev, ptmin):
         sigz[L] = rs(O["z"][g] - (O["tp_z0"][g] + O["r"][g] * O["tp_tanL"][g])) \
             if g.sum() >= 200 else 0.2
     rmed = {}
-    for L in ALL_LAYERS:
-        s = (I["layer"] == L) if L <= 4 else (bar & (O["layer"] == L - 10))
-        r = (I["globalR"] if L <= 4 else O["r"])[s]
+    for L in ALL_LAYERS + ((M.IT_DISC_CODES + OT_DISC_CODES) if OC.DISCS else ()):
+        if L <= 10:
+            s = I["layer"] == L
+        elif L <= 16:
+            s = bar & (O["layer"] == L - 10)
+        else:                                   # an OT disc: L1TOTStub disc layer 11-15
+            s = (O["isBarrel"] == 0) & (O["layer"] == L - 10)
+        r = (I["globalR"] if L <= 10 else O["r"])[s]
         rmed[L] = float(np.median(r)) if len(r) else 0.0
     return {"sigz_ot": sigz, "r_median": rmed, "calib_events": nI}
 
@@ -384,7 +401,7 @@ SOFT_BUILDS = ("AAAA", "AAAI", "AAIA", "AIAA", "IAAA")
 SOFT_TARGETS = (1, 2, 3, 4, 11, 12, 13)
 
 
-def seed_universe_over_builds(rmed, masks, seed_classes=None):
+def seed_universe_over_builds(rmed, masks, seed_classes=None, discs=None):
     """Union over builds of each build's own doublet and triplet seeds, each
     once, in the census order. Enumeration and the locality rule live in
     seed_arity; what a seed follows into is per build (census_entries).
@@ -405,15 +422,19 @@ def seed_universe_over_builds(rmed, masks, seed_classes=None):
                 continue
             seen[sd.layers] = sd
             out.append(sd)
-    return sorted(out, key=lambda sd: (sd.arity,) + tuple(rmed.get(L, 0.0)
-                                                          for L in sd.layers))
+    for sd in (discs or {}).get("seeds", ()):           # the disc seeds (format 36), after the barrel's
+        if sd.layers not in seen and (seed_classes is None or KF.sysclass_of(sd.layers) in seed_classes):
+            seen[sd.layers] = sd
+            out.append(sd)
+    return sorted(out, key=lambda sd: (bool(M.is_disc(sd.layers).any()), sd.arity)
+                  + tuple(rmed.get(L, 0.0) for L in sd.layers))
 
 
 def seed_tag(s):
     return s.tag if hasattr(s, "tag") else SA.Seed(s).tag
 
 
-def census_entries(rmed, masks, targets=None, seed_classes=None, it_ptmin=None):
+def census_entries(rmed, masks, targets=None, seed_classes=None, it_ptmin=None, discs=None):
     """The census's units of work and each build's menu over them.
 
     A BUILD'S SURFACES ARE ITS OWN. A mask's letters say which IT layers exist
@@ -433,20 +454,26 @@ def census_entries(rmed, masks, targets=None, seed_classes=None, it_ptmin=None):
 
     Returns (entries, builds): entries are SA.Seed with .follow set; builds maps
     each mask to the indices of its menu's entries.
+
+    THE DISCS (census format 36; `discs` = {"it": the build's IT discs, "ot": the OT discs, "seeds": the disc
+    seeds, disc_menu}): every build's surfaces gain its IT discs and the OT discs, its menu the disc seeds (the
+    same for every mask: the SmartPixels discs are not varied by the build masks), after the barrel entries.
     """
     masks = list(masks) if masks else ["AAAA"]
-    tg = list(targets) if targets else list(SA.IL) + list(SA.OT_BARREL)
+    dk = discs or {"it": (), "ot": (), "seeds": ()}
+    tg = list(targets) if targets else list(SA.IL) + list(dk["it"]) + list(SA.OT_BARREL) + list(dk["ot"])
     order = {sd.layers: k for k, sd in
-             enumerate(seed_universe_over_builds(rmed, masks, seed_classes))}
+             enumerate(seed_universe_over_builds(rmed, masks, seed_classes, discs))}
     rows = []
     for bi, mask in enumerate(masks):
         il = [IL_OF[i] for i, ch in enumerate(mask) if ch == "A"]
         menu = [sd for sd in SA.enumerate_seeds(il) if sd.layers in order]
         if it_ptmin is not None:
             menu += SA.soft_seeds(menu)
+        menu += [sd for sd in dk["seeds"] if sd.layers in order]
         for sd in menu:
             follow = tuple(sorted(L for L in tg
-                                  if (L > 10 or L in il) and L not in sd.layers))
+                                  if (L > 10 or L in il or L in dk["it"]) and L not in sd.layers))
             rows.append(((sd.soft, order[sd.layers], bi), sd, follow, mask))
     rows.sort(key=lambda r: r[0])
     index, entries, builds = {}, [], {m: [] for m in masks}
@@ -538,7 +565,7 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0,
 # ==========================================================================
 # chunked unified IT+OT table
 # ==========================================================================
-def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None):
+def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None, it_discs=False):
     """Yield one unified IT+OT hit table per chunk of `step` events.
 
     `model` is the census angle model (census_angles.Model: the locked table, the
@@ -552,6 +579,9 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None):
 
     Event numbering carries a running offset across chunks AND across files, so
     (event, tpIdx) stays globally unique and chunk censuses concatenate.
+
+    With the discs on (ot_chain.DISCS, format 36) the SmartPixels disc clusters ID1-ID4 are read too, as census
+    codes 5-8: always into the findable count (U["truth"]), and into the build's hit table when `it_discs`.
     """
     paths = M.expand_inputs(spec)
     M.require_tp_table(paths)
@@ -559,8 +589,8 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None):
     srcs = [f"{p}:Events" for p in paths]
     # class T and its truth direction: the knob's reference and the records'
     # population (truth only: never a decision input)
-    itc = M.IT_COLS + [IT_MODULE_COL] + list(IT_TRUTH_COLS)
-    itk = M.table_branches(paths[0], M.IT_TABLE, itc)
+    itc = M.IT_COLS + [IT_MODULE_COL] + list(IT_TRUTH_COLS) + list(IT_DISC_COLS)
+    itk = M.table_branches(paths[0], M.IT_TABLE, itc, discs=OC.DISCS)
     otk = M.table_branches(paths[0], M.OT_TABLE, OT_COLS)
     keys0 = uproot.open(f"{paths[0]}:Events").keys()
     tpk = M.tp_branches(paths[0]) + SPN.branch_names(keys0, M.TP_TABLE, TP_GENEALOGY_COLS)
@@ -574,7 +604,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None):
                 return
             if len(A) > nev - seen:
                 A = A[:nev - seen]
-        JI = M.table_columns(A, M.IT_TABLE, itc)  # TBPX only
+        JI = M.table_columns(A, M.IT_TABLE, itc, discs=OC.DISCS)  # TBPX, and ID1-ID4 with the discs
         JO = M.table_columns(A, M.OT_TABLE, OT_COLS)
         nI = ak.to_numpy(ak.num(JI[M.IT_COLS[0]]))
         nO = ak.to_numpy(ak.num(JO[OT_COLS[0]]))
@@ -592,7 +622,7 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None):
         # the flat L1TOTStub index of every copy
         Dt["stub"] = np.repeat(offO, nD) + Dt["otStubIdx"].astype(np.int64)
         seen += len(nI)
-        U, Q = _unify(I, O, Dt, sigz_ot, bench, model)
+        U, Q = _unify(I, O, Dt, sigz_ot, bench, model, it_discs)
         # the chunk's L1TTP rows travel with U: a TP credited only through a
         # stub's cluster (U["tps"]) has no hit carrying its truth columns; the
         # genealogy columns (truth.genealogy) serve the angle records
@@ -611,7 +641,11 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None):
 # class T (tpEmuClass == 1) and its truth direction, the knob's reference
 # (census_angles); the L1TTP genealogy (truth.genealogy) of the cut calibration
 # population
-IT_TRUTH_COLS = ("tpEmuClass", "tpGlobalClusterPhi", "tpGlobalClusterCotTheta")
+IT_TRUTH_COLS = ("tpEmuClass", "tpGlobalClusterPhi", "tpGlobalClusterCotTheta",
+                 # the module-frame truth of a disc cluster (the knob's reference on the discs, format 36)
+                 "tpLocalCotAlpha", "tpLocalCotBeta")
+# the disc stages' published module-frame sigmas (census_angles.disc_components; format 36)
+IT_DISC_COLS = ("sigAlpha", "sigBeta")
 TP_GENEALOGY_COLS = ("genFromB", "genFromC", "evt")
 
 
@@ -621,12 +655,18 @@ def module_key(system, det_id):
     return (np.int64(system) << np.int64(32)) | np.asarray(det_id).astype(np.int64)
 
 
-def _unify(I, O, Dt, sigz_ot, bench=None, model=None):
-    """The chunk's unified hit table U (IT clusters, then the DTC-accepted OT barrel stubs) and its angle
-    table Q. U["truth"] holds every hit the findable count counts (every OT barrel stub, accepted by the DTC
-    or not; chunk_census), U["ot_in"] the whole stub and DTC tables for the OT chain (ot_chain)."""
+def _unify(I, O, Dt, sigz_ot, bench=None, model=None, it_discs=False):
+    """The chunk's unified hit table U (IT clusters, then the DTC-accepted OT stubs: with the discs on every one,
+    barrel and disc (OD1-OD5); off, the barrel's at |eta| <= M.ETA_MATCHED, format 35) and its angle table Q.
+    U["truth"] holds every hit the findable count counts (every IT cluster read, the IT discs' too, and those OT
+    stubs, accepted by the DTC or not; chunk_census), U["ot_in"] the whole stub and DTC tables for the OT chain
+    (ot_chain). The IT disc clusters (codes 5-8) enter U only with `it_discs` (the build's IT discs on)."""
+    Ia = I
+    if not it_discs:
+        I = {c: v[np.asarray(I["layer"]) <= 4] for c, v in I.items()}
     eta = np.abs(np.arcsinh(O["z"] / np.maximum(O["r"], 1e-6)))
-    pop = (O["isBarrel"] > 0) & (eta <= M.ETA_MATCHED)
+    disc = O["isBarrel"] == 0
+    pop = np.ones(len(eta), bool) if OC.DISCS else ~disc & (eta <= M.ETA_MATCHED)
     dtc_ok = np.zeros(len(eta), bool)
     dtc_ok[Dt["stub"]] = True
     if OC.KNOWN_BAD == "dtc_acceptance_ignored":
@@ -638,6 +678,9 @@ def _unify(I, O, Dt, sigz_ot, bench=None, model=None):
     ol = O["layer"][bar]
     for L in range(1, 7):
         sig[ol == L] = sigz_ot.get(L, sigz_ot.get(str(L), 0.2))
+    # a disc stub's measured coordinate along the strip is r: its sigma the strip (PS macro-pixel) length / sqrt 12
+    dsk = disc[bar]
+    sig[dsk] = np.where(O["isPS"][bar][dsk] > 0, OC.KF.LENGTH[True], OC.KF.LENGTH[False]) / math.sqrt(12.0)
     # PER-STUB TRUTH IS THREE-VALUED AND tpIdx ALONE CANNOT EXPRESS IT.
     # An OT stub carries a matched tpIdx (SPN.tp_matched) only when the producer
     # called it GENUINE (a unique TP in both clusters). A COMBINATORIC stub has no
@@ -658,7 +701,7 @@ def _unify(I, O, Dt, sigz_ot, bench=None, model=None):
             f"these branches.")
     ot_flag = np.where(O["tpGenuine"][bar] > 0, 1,
                        np.where(O["tpCombinatoric"][bar] > 0, 2, 3)).astype(np.int8)
-    U = {"layer": np.r_[M.it_barrel_codes(I["layer"], "tp_findability._unify"), ol + 10],
+    U = {"layer": np.r_[M.it_codes(I["layer"], "tp_findability._unify"), ol + 10],
          "globalR": np.r_[I["globalR"], O["r"][bar]],
          "globalZ": np.r_[I["globalZ"], O["z"][bar]],
          "globalPhi": np.r_[I["globalPhi"], phi[bar]],
@@ -689,14 +732,15 @@ def _unify(I, O, Dt, sigz_ot, bench=None, model=None):
          "event": np.r_[I["event"], O["event"][bar]],
          # the OT stub's L1TOTStub row in its event (-1 on every IT cluster): the OT chain's tracks map onto U
          "ot_row": np.r_[np.full(len(I["layer"]), -1, np.int64), O["row"][bar]]}
-    U["truth"] = {"layer": np.r_[U["layer"][:len(I["layer"])], O["layer"][pop] + 10],
-                  "tpIdx": np.r_[I["tpIdx"], O["tpIdx"][pop]],
-                  "tps": np.r_[M.credited_tps(I["tpIdx"]),
+    U["truth"] = {"layer": np.r_[Ia["layer"], O["layer"][pop] + 10],
+                  "tpIdx": np.r_[Ia["tpIdx"], O["tpIdx"][pop]],
+                  "tps": np.r_[M.credited_tps(Ia["tpIdx"]),
                                M.credited_tps(*(O[c][pop] for c in M.STUB_TP_COLS))],
-                  "tpPt": np.r_[I["tpPt"], O["tpPt"][pop]],
-                  "module": np.r_[module_key(0, I[IT_MODULE_COL]), module_key(1, O["detId"][pop])],
-                  "event": np.r_[I["event"], O["event"][pop]]}
-    U["ot_in"] = {"stub": {c: O[c] for c in ("layer", "isBarrel", "isPS", "isTilted", "x", "y", "z")},
+                  "tpPt": np.r_[Ia["tpPt"], O["tpPt"][pop]],
+                  "module": np.r_[module_key(0, Ia[IT_MODULE_COL]), module_key(1, O["detId"][pop])],
+                  "event": np.r_[Ia["event"], O["event"][pop]]}
+    U["ot_in"] = {"stub": {c: O[c] for c in ("layer", "isBarrel", "isPS", "isTilted", "x", "y", "z",
+                                             "innerStrip", "isFlipped")},
                   "event": O["event"], "row": O["row"], "dtc": Dt}
     # EVERY angle any stage reads comes from here: the census angle model (the
     # knob, the table's centre and width, then the bench quantisation), or the
@@ -704,7 +748,8 @@ def _unify(I, O, Dt, sigz_ot, bench=None, model=None):
     # huge sigmas make every angle gate pass, and the joint (z0,phi) pairing then
     # treats the stub as a phi-only wildcard (M.OT_STUB_ANGLES).
     if model is not None:
-        Q = CA.with_ot_stubs(CA.prepare({c: I[c] for c in M.IT_COLS + list(IT_TRUTH_COLS)},
+        Q = CA.with_ot_stubs(CA.prepare({c: I[c] for c in M.IT_COLS + list(IT_TRUTH_COLS) + list(IT_DISC_COLS)
+                                         + [IT_MODULE_COL]},
                                         model, bench), n)
     else:
         Q = M.q_with_ot_stubs(M.it_prepare({c: I[c] for c in M.IT_COLS}, bench), n)
@@ -737,8 +782,10 @@ def chunk_census(U):
                 "phi": z.astype(np.float32), "d0": z.astype(np.float32),
                 "z0": z.astype(np.float32), "vr": z.astype(np.float32),
                 "charge": z.astype(np.float32),
-                "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8),
-                "n_mod_it": z.astype(np.int16), "n_mod_ot": z.astype(np.int16)}
+                "hit_it": z.astype(np.uint8), "hit_ot": z.astype(np.uint8), "hit_otd": z.astype(np.uint8),
+                "hit_itd": z.astype(np.uint8),
+                "n_mod_it": z.astype(np.int16), "n_mod_ot": z.astype(np.int16),
+                "n_mod_itd": z.astype(np.int16), "n_mod_otd": z.astype(np.int16)}
     key = M.tp_key(U["event"][hi], T[hi, sl])
     # per TP: hits on which it is the hit's own tpIdx (slot 0) first, each group
     # in hit order, so a TP some hit owns is represented by the first such hit
@@ -751,17 +798,29 @@ def chunk_census(U):
     pos = np.cumsum(first) - 1                # entry index of every credit
     hit_it = np.zeros(len(uk), np.uint8)
     hit_ot = np.zeros(len(uk), np.uint8)
+    hit_otd = np.zeros(len(uk), np.uint8)
+    hit_itd = np.zeros(len(uk), np.uint8)
     ls = U["layer"][hi_s]
     it = ls <= 4
+    itd = np.isin(ls, M.IT_DISC_CODES)
+    otd = np.isin(ls, OT_DISC_CODES)
+    otb = ~it & ~itd & ~otd
     np.bitwise_or.at(hit_it, pos[it], (1 << (ls[it] - 1)).astype(np.uint8))
-    np.bitwise_or.at(hit_ot, pos[~it], (1 << (ls[~it] - 11)).astype(np.uint8))
+    np.bitwise_or.at(hit_itd, pos[itd], (1 << (ls[itd] - M.IT_DISC_CODES[0])).astype(np.uint8))
+    np.bitwise_or.at(hit_ot, pos[otb], (1 << (ls[otb] - 11)).astype(np.uint8))
+    np.bitwise_or.at(hit_otd, pos[otd], (1 << (ls[otd] - 21)).astype(np.uint8))
     # CREDITED MODULES per TP (census.findable): credited_tps lists a TP once per
     # hit, so an OT stub is one hit for each TP it is credited to however many of
     # its clusters credit it, and hits of one TP on one module count once
-    pm = np.unique(np.stack([pos, U["module"][hi_s]], axis=1), axis=0)
+    pm, first_hit = np.unique(np.stack([pos, U["module"][hi_s]], axis=1), axis=0, return_index=True)
     it_m = (pm[:, 1] >> 32) == 0
     n_mod_it = np.bincount(pm[it_m, 0], minlength=len(uk)).astype(np.int16)
     n_mod_ot = np.bincount(pm[~it_m, 0], minlength=len(uk)).astype(np.int16)
+    # of which disc modules (format 36: the findable count over barrel and disc modules, and its known-bad that
+    # counts the barrel's only, findable_barrel_only)
+    dm = M.is_disc(ls[first_hit])
+    n_mod_itd = np.bincount(pm[it_m & dm, 0], minlength=len(uk)).astype(np.int16)
+    n_mod_otd = np.bincount(pm[~it_m & dm, 0], minlength=len(uk)).astype(np.int16)
     L = U["l1ttp"]
     p, row = M.tp_rows(L, U["event"][rep], T[rep, sl_s[first]])
     nan = np.float32(np.nan)
@@ -780,7 +839,8 @@ def chunk_census(U):
             "event": M.tp_key_parts(uk)[0].astype(np.int32),
             "pt": pt, "eta": eta, "phi": phi, "d0": d0, "z0": z0,
             "vr": np.hypot(vx, vy).astype(np.float32), "charge": charge,
-            "hit_it": hit_it, "hit_ot": hit_ot, "n_mod_it": n_mod_it, "n_mod_ot": n_mod_ot}
+            "hit_it": hit_it, "hit_ot": hit_ot, "hit_otd": hit_otd, "hit_itd": hit_itd, "n_mod_it": n_mod_it,
+            "n_mod_ot": n_mod_ot, "n_mod_itd": n_mod_itd, "n_mod_otd": n_mod_otd}
 
 
 # THE CENSUS EFFICIENCY DENOMINATOR (definition sheet census.findable; decisions of
@@ -794,47 +854,69 @@ def chunk_census(U):
 FINDABLE_MIN_MODULES = 4
 
 
-def findable(C):
-    """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_MODULES)."""
+# the census columns format 36 added (their dtype: zeros when reading 34 / 35)
+FORMAT36_COLS = {"hit_otd": np.uint8, "hit_itd": np.uint8, "n_mod_itd": np.int16, "n_mod_otd": np.int16}
+
+
+def findable(C, barrel_only=False):
+    """Boolean over the census TP table C: the findable TPs (FINDABLE_MIN_MODULES), over barrel and disc modules
+    (format 36); `barrel_only`, the WP-Disc known-bad that counts the barrel's modules only."""
     n = C["n_mod_it"].astype(np.int64) + C["n_mod_ot"]
+    if barrel_only:
+        n = n - C["n_mod_itd"] - C["n_mod_otd"]
     return (n >= FINDABLE_MIN_MODULES) & np.isfinite(C["charge"]) & (C["charge"] != 0)
 
 
-# THE CLOSED OT ARM (WP-D, census format 35): the prompt OT doublets run through the CMSSW chain itself
-# (ot_chain: multi-match with the match processor's rule and order, the exact hybrid KF, merge duplicate
-# removal before the fit) instead of the census's projection, fit and score DR. OT-only by construction:
-# its entries are the four prompt OT doublets following the OT barrel only. OT_CHAIN_DEFAULT is the census
-# chain; the closed arm's options are its caps (TB 108, DR 108, 32 comparators) and its match order.
-OT_CHAIN_DEFAULT = {"mode": "census"}
+# THE CLOSED OT ARM (WP-D, census format 35; WP-Disc, format 36): the prompt OT seeds run through the CMSSW chain
+# itself (ot_chain: multi-match with the match processor's rule and order, the exact hybrid KF, merge duplicate
+# removal before the fit) instead of the census's projection, fit and score DR. OT-only by construction: its
+# entries are the prompt OT seeds the chain runs (the four barrel doublets; with the discs on also D1D2, D3D4,
+# L1D1 and L2D1) following the OT only. OT_CHAIN_DEFAULT is the census chain; the closed arm's options are its
+# caps (TB 108, DR 108, 32 comparators) and its match order. "discs" (both modes) is ot_chain.set_discs: on, the
+# OT discs and the WP-Disc corrections (format 36); off, format 35's barrel chain and population (gate G0).
+OT_CHAIN_DEFAULT = {"mode": "census", "discs": True}
 OT_CHAIN_MODES = ("census", "closed")
-# column of each OT barrel layer (1-6) in a track's hit row (KF.LAYER_ORDER)
-_OT_COL = {L: KF.LAYER_ORDER.index(L + 10) for L in range(1, 7)}
+# the column of each OT census code (OL1-OL6 11-16, OD1-OD5 21-25) in a track's hit row (KF.LAYER_ORDER)
+_OT_COL = {L: KF.LAYER_ORDER.index(L) for L in tuple(range(11, 17)) + OT_DISC_CODES}
 
 
-def ot_chain_config(mode="census", caps=True, order="dtc", known_bad=None):
+def ot_chain_config(mode="census", caps=True, order="dtc", known_bad=None, discs=True):
     """The census's OT chain configuration (cache identity): mode census or closed; for closed, the caps
     (on / off) and the match order ("dtc" or "random:<seed>"); a known-bad variant (ot_chain.set_known_bad,
-    the WP-D closure's known-bad runs only) in either mode."""
+    the closure's known-bad runs only) in either mode; the discs on or off (ot_chain.set_discs)."""
     if mode not in OT_CHAIN_MODES:
         raise SystemExit(f"--ot-chain {mode!r}: one of {', '.join(OT_CHAIN_MODES)}")
     kb = {} if known_bad is None else {"known_bad": known_bad}
     if mode == "census":
-        return {**OT_CHAIN_DEFAULT, **kb}
+        return {**OT_CHAIN_DEFAULT, "discs": bool(discs), **kb}
     if order == "dtc":
-        return {"mode": "closed", "caps": bool(caps), "order": "dtc", "order_seed": 0, **kb}
+        return {"mode": "closed", "caps": bool(caps), "order": "dtc", "order_seed": 0, "discs": bool(discs), **kb}
     kind, _, sd = order.partition(":")
     if kind != "random" or not sd.isdigit():
         raise SystemExit(f"--ot-order {order!r}: 'dtc' or 'random:<seed>'")
-    return {"mode": "closed", "caps": bool(caps), "order": "random", "order_seed": int(sd), **kb}
+    return {"mode": "closed", "caps": bool(caps), "order": "random", "order_seed": int(sd), "discs": bool(discs),
+            **kb}
+
+
+def disc_menu(cfg):
+    """census_entries' `discs` of a census configuration: None with the discs off; else the build's IT discs (with
+    --it-discs), the OT discs and the disc seeds (SA.disc_seeds, restricted to cfg["disc_seeds"])."""
+    if not cfg["ot_chain"]["discs"]:
+        return None
+    it_d = M.IT_DISC_CODES if cfg["it_discs"] else ()
+    chosen = None if cfg["disc_seeds"] is None else set(cfg["disc_seeds"])
+    return {"it": it_d, "ot": OT_DISC_CODES,
+            "seeds": SA.disc_seeds(it_d, SA.OT_BARREL + OT_DISC_CODES, chosen)}
 
 
 def closed_entries(seeds, builds):
-    """The closed arm's entries: the census entries restricted to the prompt OT doublets following the
-    OT barrel only (SystemExit otherwise), with each build's menu re-indexed."""
-    keep = [i for i, sd in enumerate(seeds) if sd.layers in SA.OT_DOUBLETS and not sd.soft]
+    """The closed arm's entries: the census entries restricted to the prompt OT seeds the chain runs (the barrel
+    doublets; with the discs on also the disc and overlap doublets, census_entries' disc seeds), following the OT
+    only (SystemExit otherwise), with each build's menu re-indexed."""
+    keep = [i for i, sd in enumerate(seeds) if sd.layers in SA.OT_CHAIN_SEED and not sd.soft]
     bad = [seeds[i].tag for i in keep if any(L <= 10 for L in seeds[i].follow)]
     if bad or not keep:
-        raise SystemExit("the closed OT arm is OT-only: run it with --masks IIII --targets OL1,...,OL6 "
+        raise SystemExit("the closed OT arm is OT-only: run it with --masks IIII --targets OL1,...,OL6[,OD1,...,OD5] "
                          f"(entries following IT layers: {bad})")
     new = {old: k for k, old in enumerate(keep)}
     return [seeds[i] for i in keep], {m: [new[i] for i in es if i in new] for m, es in builds.items()}
@@ -842,10 +924,15 @@ def closed_entries(seeds, builds):
 
 # THE FINAL STUBS OF EVERY EXPORTED OT TRACK (shard keys hit_o<i>, and hit_om<i> for the closed arm's
 # merge-DR tracks; int32): the event, then the L1TOTStub row in that event of the track's fitted stub on each
-# OT barrel layer OL1-OL6 (-1 none). From these and the input's own L1TOTStub table the closure
-# (closure_vs_cmssw) builds both sides' per-track records with one function, the CMSSW tracks' from their
-# fitted stubs alike.
-OT_STUB_COLS = ("event",) + tuple(f"row_OL{L}" for L in range(1, 7))
+# OT barrel layer OL1-OL6 and (format 36) each OT disc OD1-OD5 (-1 none). From these and the input's own
+# L1TOTStub table the closure (closure_vs_cmssw) builds both sides' per-track records with one function, the
+# CMSSW tracks' from their fitted stubs alike.
+OT_STUB_COLS = ("event",) + tuple(f"row_OL{L}" for L in range(1, 7)) + tuple(f"row_OD{d}" for d in range(1, 6))
+
+
+def _stub_col(nano_layer):
+    """The OT_STUB_COLS column of an L1TOTStub_layer (barrel 1-6, discs 11-15)."""
+    return nano_layer if nano_layer <= 6 else nano_layer - 4
 
 
 def _ot_rows(U, G):
@@ -855,9 +942,9 @@ def _ot_rows(U, G):
         return out
     first = np.where(G >= 0, G, np.iinfo(np.int64).max).min(axis=1)
     out[:, 0] = np.where(first < len(U["event"]), U["event"][np.minimum(first, len(U["event"]) - 1)], -1)
-    for L in range(1, 7):
-        g = G[:, _OT_COL[L]]
-        out[:, L] = np.where(g >= 0, U["ot_row"][np.maximum(g, 0)], -1)
+    for code, col in _OT_COL.items():
+        g = G[:, col]
+        out[:, _stub_col(code - 10)] = np.where(g >= 0, U["ot_row"][np.maximum(g, 0)], -1)
     return out
 
 
@@ -876,10 +963,10 @@ def _closed_rows(chain, ev, tracks, n_layers):
         outside += int((u < 0).sum())
         for r, g in zip(t.rows, u):
             L = int(lay[r])
-            if g >= 0 and G[i, _OT_COL[L]] < 0:
-                G[i, _OT_COL[L]] = g
-            if O[i, L] < 0:
-                O[i, L] = r
+            if g >= 0 and G[i, _OT_COL[L + 10]] < 0:
+                G[i, _OT_COL[L + 10]] = g
+            if O[i, _stub_col(L)] < 0:
+                O[i, _stub_col(L)] = r
         S[i] = chain.to_u(ev, t.input_rows[:2])
     return G, S, O, outside
 
@@ -1041,6 +1128,8 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         floors = {float(ptmin)} | ({float(it_ptmin)} if it_ptmin is not None else set())
         for fl in sorted(floors):
             ang.rec.s1(fl, None if ang.cuts_open else ang.cuts.s1_thr(fl, Q["row"]))
+            if "ldir_ok" in Q:                          # the IT discs (format 36)
+                ang.rec.s1d(fl, None if ang.cuts_open else ang.cuts)
     cen = chunk_census(U["truth"])
     ntp, nw = len(cen["key"]), (len(seeds) + 63) // 64
     # TWO BITMAPS, and the distinction is not bookkeeping.
@@ -1080,9 +1169,11 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         trip0 = (o["_gA"], o["_gB"], gc0 if gc0 is not None else o["_gB"])
         fit0 = KF.fit_tracks(U, Q, trip0, gidx=gidx_all, **fopt)
         keep, chi2s = KF.good_state(fit0, pt_s)
-        # the NaN guard on S6's statistic, cut or feature (the exported chi2_angle_per_meas)
-        ang.count_nonfinite("S6", fit0["chi2_angle"][fit0["n_angle_meas"] > 0])
+        # the NaN guard on S6's statistic, cut or feature (the exported chi2_angle_per_meas), among the fits
+        # that are tracks: a diverged fit (KF.fit_tracks) is rejected as such and counted apart
+        ang.count_nonfinite("S6", fit0["chi2_angle"][fit0["ok"] & (fit0["n_angle_meas"] > 0)])
         base = {"arity": float(sd.arity), "before_chi2": float(n_pre),
+                "kf_diverged": float(fit0["diverged"].sum()),
                 "seed_objects": float(o.get("seed_objects", 0)),
                 "pairs": float(o.get("tracklets", 0)),
                 # cluster pairs EXAMINED (after the S2j pre-gate, before the
@@ -1096,12 +1187,14 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
         if ang("accept"):
             # S6, after the position chi2 acceptance: the final-state angle chi2
             # over the stage's angles, cut at the cut file's threshold for the
-            # entry's build and its number of angle measurements (KF.angle_gate)
+            # entry's build, its number of angle measurements and whether one is
+            # a disc's (CA.s6_group; KF.angle_gate)
             sub6 = ang.subset("accept")
             c2, n6 = CA.s6_stat(fit0, sub6)
+            disc6 = (fit0["hits"]["VALID"] & fit0["hits"]["DANG"]).any(axis=1)
             k6 = (np.ones(len(c2), bool) if ang.cuts_open else
                   KF.angle_gate(c2, n6, ang.cuts.s6_thr(entry_builds[s_i], s5_state,
-                                                          s5_key, sub6, n6)))
+                                                          s5_key, sub6, n6, disc6)))
             if ang.rec is not None:
                 CA.record_s6(ang.rec, U, Q, fit0, keep, k6, gidx_all, trip0, pt_s,
                              entry_builds[s_i], s_i, c2, n6, fopt)
@@ -1290,8 +1383,12 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           export_tracks=0, seed_classes=None, targets=None,
           min_layers=SA.MIN_LAYERS, bench=None, d0_window_cm=0.0,
           it_ptmin=None, min_it_layers=None, min_ot_conf=0, ang=None,
-          model=None, cuts=None, cuts_open=False, pos_arb=None, ot_chain=None):
+          model=None, cuts=None, cuts_open=False, pos_arb=None, ot_chain=None, it_discs=True, disc_seeds=None):
     """Build (or load) the census. Returns a dict of concatenated arrays.
+
+    `it_discs`: the build's SmartPixels discs ID1-ID4 on (their clusters in the hit table; with the discs on only,
+    ot_chain["discs"]); the findable count holds them whenever the discs are on. `disc_seeds`: the disc seeds'
+    tags to run (SA.disc_seeds; None: all).
 
     `ot_chain` is the OT chain configuration (ot_chain_config; None = the census
     chain): the closed arm runs the prompt OT doublets through the CMSSW chain
@@ -1326,11 +1423,13 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     pos_arb = POS_ARB_DEFAULT if pos_arb is None else pos_arb
     model = CA.Model() if model is None else model
     ot_chain = dict(OT_CHAIN_DEFAULT) if ot_chain is None else ot_chain
-    # a known-bad census (WP-D closure) runs with its variant switched on, before the cache is read or built
+    # a known-bad census (WP-D closure) runs with its variant switched on, and the OT discs on or off (format
+    # 36 / 35's population and chain), before the cache is read or built
     try:
         OC.set_known_bad(ot_chain.get("known_bad"))
     except ValueError as e:
         raise SystemExit(str(e)) from None
+    OC.set_discs(ot_chain["discs"], fixes=ot_chain["discs"])
     if bench is not None and "prediction" in ang.keys.values():
         raise SystemExit("the prediction table key reads unquantised angles: not with --alpha-bits")
     cut_stages = [s for s in ("veto", "pair_alpha", "pair_z0", "pair_joint", "attach",
@@ -1338,7 +1437,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
     if cut_stages and cuts is None and not cuts_open:
         raise SystemExit(f"angle cutting stages {cut_stages} need --angle-cuts (or --calibrate)")
     if cuts is not None:
-        cuts.check(model, cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks))
+        cuts.check(model, cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks,
+                                       bool(it_discs and ot_chain["discs"])))
     cfg = {"ptmin": ptmin, "layers": sorted(layers), "n_adjacent": n_adjacent,
            "chunk": chunk, "calib_events": calib_events, "masks": masks,
            "kf_opts": dict(sorted((kf_opts or {}).items())),
@@ -1371,6 +1471,9 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
            # the knob that tests whether that is where displaced tracks are lost
            "d0_window_cm": float(d0_window_cm),
            "it_ptmin": None if it_ptmin is None else float(it_ptmin),
+           # the build's IT discs (format 36): their clusters in the hit table; the disc seeds run (None: all)
+           "it_discs": bool(it_discs and ot_chain["discs"]),
+           "disc_seeds": None if disc_seeds is None or not ot_chain["discs"] else sorted(disc_seeds),
            # the OT chain: the census's, or the closed arm (CMSSW's) with its caps and match order
            "ot_chain": dict(sorted(ot_chain.items()))}
     kh = cache_key(man, cfg)
@@ -1395,7 +1498,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
         # extension on and off is then a seed selection, and the 2 GeV numbers
         # cannot move.
         seeds, builds = census_entries(cal["r_median"], masks, targets,
-                                       seed_classes, it_ptmin)
+                                       seed_classes, it_ptmin, disc_menu(cfg))
         if ot_chain["mode"] == "closed":
             seeds, builds = closed_entries(seeds, builds)
         if not seeds:
@@ -1449,7 +1552,7 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                      min(rss_gb, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
         want = None if nev is None else nev
         for ci, ((U, Q), ev) in enumerate(
-                unified_chunks(spec, want, chunk, sigz, bench, model)):
+                unified_chunks(spec, want, chunk, sigz, bench, model, cfg["it_discs"])):
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
@@ -1503,9 +1606,12 @@ def entry_build_key(masks):
     return "+".join(sorted(masks))
 
 
-def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks):
-    """The run's identity an angle cut file is checked against (census_angles.CutSet.check)."""
+def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks, it_discs=False):
+    """The run's identity an angle cut file is checked against (census_angles.CutSet.check); `it_discs`: the
+    builds' IT discs are on, so the disc consumers of the stages the run cuts with need thresholds."""
     s5 = ang.subset("kf") if ang("kf") else "off"
+    disc_stages = [c for c, st in (("s1d", "veto"), ("s2ad", "pair_alpha"), ("s2zd", "pair_z0"),
+                                   ("wind", "proj_window")) if it_discs and ang(st)]
     return {"format": FORMAT_VERSION,
             "bench": list(bench) if bench else None,
             "d0_prior_cm": float((kf_opts or {}).get("d0_prior_cm", KF.D0_PRIOR_CM)),
@@ -1514,6 +1620,7 @@ def cut_identity(ang, bench, kf_opts, ptmin, it_ptmin, masks):
             "s6": ((s5, ang.keys["kf"] if s5 != "off" else "emitted", ang.subset("accept"))
                    if ang("accept") else None),
             "win_subsets": sorted({ang.subset(s) for s in ("attach", "proj_window") if ang(s)}),
+            "disc_stages": disc_stages, "it_discs": bool(it_discs),
             "builds": [entry_build_key([m]) for m in (masks or ["AAAA"])]}
 
 
@@ -1552,8 +1659,8 @@ def load(d, nev=None, verbose=True, with_tracks=False):
     shards = sorted(Path(d).glob("chunk_*.npz"))
     if not shards:
         raise SystemExit(f"{d} has no shards")
-    cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "charge", "hit_it", "hit_ot",
-            "n_mod_it", "n_mod_ot"]
+    cols = ["key", "event", "pt", "eta", "phi", "d0", "z0", "vr", "charge", "hit_it", "hit_ot", "hit_otd",
+            "hit_itd", "n_mod_it", "n_mod_ot", "n_mod_itd", "n_mod_otd"]
     parts = {c: [] for c in cols}
     fnd, fdr, cnt, qs, fts, hts, ags, nread = [], [], {}, {}, {}, {}, {}, 0
     non = []
@@ -1566,7 +1673,9 @@ def load(d, nev=None, verbose=True, with_tracks=False):
             break                    # a prefix of the shards is a valid census
         z = np.load(sh, allow_pickle=False)
         for c in cols:
-            parts[c].append(z[f"cen_{c}"])
+            # hit_otd / hit_itd / n_mod_itd / n_mod_otd from format 36; formats 34 / 35 hold no disc hit
+            parts[c].append(z[f"cen_{c}"] if f"cen_{c}" in z.files or c not in FORMAT36_COLS
+                            else np.zeros(len(z["cen_key"]), FORMAT36_COLS[c]))
         fnd.append(z["found"])
         fdr.append(z["found_dr"])
         cl_off = cl_tot
@@ -1724,7 +1833,7 @@ def seed_table(C):
         if mil is not None and C.get("it_ptmin") is not None and not sd.soft:
             mil = None          # the per-system rule applies to recovery seeds
         if mil is not None:
-            return float(max(int(mil) - sum(1 for L in sd.layers if L <= 4), 0))
+            return float(max(int(mil) - sum(1 for L in sd.layers if L <= 10), 0))
         ml = C.get("min_layers")
         return float(max(int(ml) - sd.arity, 0)) if ml is not None \
             else float(sd.min_proj())
@@ -1881,10 +1990,16 @@ def main():
     ap.add_argument("--angle-table", default=CA.TABLE_DEFAULT,
                     help="the angle-uncertainty table (sheet angle.error_table; "
                          f"registry {CA.TABLE_REGISTRY})")
+    ap.add_argument("--angle-table-disc", default=CA.DISC_TABLE_DEFAULT,
+                    help="the disc module-frame angle table (registry "
+                         f"{CA.DISC_TABLE_REGISTRY}; the disc stages, format 36)")
     ap.add_argument("--angle-cuts", default=None,
                     help="the angle cut file the cutting stages read "
                          "(census_angles.CutSet; refused if made for another "
                          "configuration)")
+    ap.add_argument("--s1-d0max", type=float, default=None,
+                    help="S1's displaced tolerance, cm: the allowed alpha band adds asin(D / r) (census_angles."
+                         f"S1_D0MAX_CM); default {CA.S1_D0MAX_CM:g} with --discs on, 0 (format 35's prompt band) off")
     ap.add_argument("--calibrate", action="store_true",
                     help="the calibration run: every angle cutting stage records "
                          "its statistic and passes everything")
@@ -1907,6 +2022,16 @@ def main():
                     help="closed arm: the track builder, DR input and comparator caps")
     ap.add_argument("--ot-order", default="dtc",
                     help="closed arm: the match order, 'dtc' or 'random:<seed>'")
+    ap.add_argument("--discs", default="on", choices=["on", "off"],
+                    help="the OT discs (format 36): on, the disc stubs in the census table and the findable "
+                         "count, the closed arm's disc and overlap seeds and disc projections, the WP-Disc "
+                         "corrections; off, format 35's barrel population and chain (gate G0)")
+    ap.add_argument("--disc-seeds", default="all",
+                    help="the disc seeds to run (with --discs on), comma-separated tags, e.g. "
+                         "ID1+ID2,ID2+ID3,ID3+ID4,ID1+OD1,OD1+OD2,OD3+OD4,OL1+OD1,OL2+OD1; all (default) or none")
+    ap.add_argument("--it-discs", default="on", choices=["on", "off"],
+                    help="the build's SmartPixels discs ID1-ID4 (with --discs on): their clusters in the hit "
+                         "table for seeding and following")
     ap.add_argument("--ot-known-bad", default=None,
                     help="a known-bad variant of the OT chain or fit (ot_chain.CHAIN_KNOWN_BADS, "
                          "cmssw_kf.KF_KNOWN_BADS), for the WP-D closure's known-bad runs only")
@@ -1927,7 +2052,9 @@ def main():
                            a.angle_keys, arb_weight=a.arb_weight)
     if a.calibrate and a.angle_cuts:
         raise SystemExit("--calibrate runs with every cut open: no --angle-cuts")
-    model = CA.Model(a.angle_table, a.k_alpha, a.k_beta, a.k_mode)
+    s1_d0max = a.s1_d0max if a.s1_d0max is not None else (CA.S1_D0MAX_CM if a.discs == "on" else 0.0)
+    model = CA.Model(a.angle_table, a.k_alpha, a.k_beta, a.k_mode, disc_table_path=a.angle_table_disc,
+                     s1_d0max=s1_d0max)
     cuts = CA.CutSet.load(a.angle_cuts) if a.angle_cuts else None
     print(f"angle stages: {ang.label()}; keys {ang.keys}; k alpha {a.k_alpha:g}, "
           f"beta {a.k_beta:g} ({a.k_mode}); cuts "
@@ -1944,7 +2071,11 @@ def main():
               bench=((a.alpha_bits, a.beta_bits)
                      if a.alpha_bits and a.beta_bits else None),
               d0_window_cm=a.d0_window_cm, it_ptmin=a.it_ptmin,
-              ot_chain=ot_chain_config(a.ot_chain, a.ot_caps == "on", a.ot_order, a.ot_known_bad))
+              ot_chain=ot_chain_config(a.ot_chain, a.ot_caps == "on", a.ot_order, a.ot_known_bad,
+                                       a.discs == "on"),
+              it_discs=a.it_discs == "on",
+              disc_seeds=(None if a.disc_seeds == "all" else
+                          [] if a.disc_seeds == "none" else [x.strip() for x in a.disc_seeds.split(",") if x.strip()]))
     nev = C["n_events"]
     kin = np.isfinite(C["eta"])
     print(f"\n{nev} events, {len(C['key']):,} TPs with >= 1 hit "
@@ -1991,6 +2122,13 @@ def main():
     if C["angle_nonfinite"] and any(C["angle_nonfinite"].values()):
         print(f"\nWARNING: non-finite angle statistics (the NaN guard; a NaN vetoes silently): "
               f"{C['angle_nonfinite']}")
+    diverged = {}
+    for i, c in C["counters"].items():
+        if c.get("kf_diverged"):
+            diverged[C["seed_tags"][i]] = diverged.get(C["seed_tags"][i], 0) + int(c["kf_diverged"])
+    if diverged:
+        print(f"\nNOTE: KF fits that diverged (finite inputs, a non-finite state; rejected, not tracks), per seed "
+              f"over its builds: {diverged}")
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
         json.dump({"n_events": nev, "n_tp": int(len(C["key"])),
@@ -1998,7 +2136,7 @@ def main():
                    "pos_arb": C["pos_arb"],
                    "angles": C["angle_use"].key(), "angle_model": C["angle_model"],
                    "angle_cuts": C["angle_cuts"], "angle_notes": C["angle_notes"],
-                   "n_moved": C["n_moved"], "angle_nonfinite": C["angle_nonfinite"],
+                   "n_moved": C["n_moved"], "angle_nonfinite": C["angle_nonfinite"], "kf_diverged": diverged,
                    "truncation": trunc,
                    "seeds": seed_table(C)}, open(a.out, "w"), indent=1)
         print(f"\nwrote {a.out}")

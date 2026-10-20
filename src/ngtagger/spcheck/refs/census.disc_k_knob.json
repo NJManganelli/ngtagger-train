@@ -1,0 +1,23 @@
+{
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
+ "derived": "2026-10-18T17:38:51Z",
+ "events": 5,
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+ "item": "census.disc_k_knob",
+ "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "known_bad": "the k = 1 centre subtracted at k = 0 (the class-T disc pull at the true prediction is then not 0)",
+ "rule": "census_angles.disc_knob and Model.disc_pulls on the gate input's first events with the SmartPixels discs: (i) k = 1 in fixed and scaled mode bit-identical to the emitted cots and published sigmas, as the census prepared them; (ii) scaled at k = 0.999 within 1.1e-3 of k = 1 in every usable cluster's sigma; (iii) scaled at k = 0 every usable sigma finite and 0.05 x the k = 1 one; (iv) class C never moved at k = 0 and 0.5; (v) at k = 0, both modes, every usable class-T cluster's pulls against its true cots are 0 (the centre k c); (vi) k_alpha = 0, k_beta = 1 moves alpha to truth and leaves beta",
+ "stat": {
+  "bad_centre": false,
+  "class_c_moved": 0.0,
+  "events": 5,
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
+  "k0_class_t_pull": 0.0,
+  "k1_identical": true,
+  "n_class_c": 63739,
+  "n_class_t": 158560,
+  "own_k": true,
+  "scaled_continuity": 0.001000000000000112,
+  "scaled_floor": true
+ }
+}

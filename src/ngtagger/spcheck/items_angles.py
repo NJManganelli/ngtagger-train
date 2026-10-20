@@ -123,7 +123,7 @@ class AngleImport(Item):
         # of this code's format (a cut file is bound to its calibration census's format)
         TF = ctx.script_module(CENSUS_DIR, "tp_findability")
         doc = {"schema": CA.CUT_SCHEMA,
-               "identity": {"table_sha256": model.table_sha, "k_alpha": 1.0, "k_beta": 1.0,
+               "identity": {"table_sha256": model.table_sha, "s1_d0max": model.s1_d0max, "k_alpha": 1.0, "k_beta": 1.0,
                             "mode": "fixed", "bench": None, "d0_prior_cm": 1.0, "level": CA.LEVEL,
                             "floors": [2.0], "calibration": {"format": TF.FORMAT_VERSION}},
                "s1": {"bins": [], "thr": []}, "s2a": {"bins": [], "thr": []},
@@ -367,7 +367,8 @@ class AngleNonFinite(Item):
                       "statistics must be counted")
     rule_desc = ("the 4-event AAAI+IAAA census with the cut file (census.cut_entries' cut run): the census's NaN-guard "
                  "counts (non-finite S1, S2a, S2z, S3, S4w, S4a and S6 statistics among IT inputs with a usable "
-                 "direction, M.NONFINITE_STAGES) are present for every stage and all 0; n/a without the cut file")
+                 "direction, M.NONFINITE_STAGES; S6 among the fits that did not diverge, KF.fit_tracks) are present "
+                 "for every stage and all 0; n/a without the cut file")
     trees = (CENSUS_DIR,)
 
     def compute(self, ctx):
@@ -413,4 +414,283 @@ class AngleNonFinite(Item):
             f"{k} 0" for k in nf)) if not why else "; ".join(why)
 
 
-ITEMS = [AngleImport(), KKnob(), AngleSwitches(), AngleNonFinite()]
+# ---------------------------------------------------------------- the discs (WP-Disc, census format 36)
+DISC_LOCKED_REGISTRY = "p03.table.v1a1e-disclocal"
+DISC_NAMES = {5: "ID1", 6: "ID2", 7: "ID3", 8: "ID4"}
+
+
+def _chunk_discs(ctx, model):
+    """(U, Q) of the gate input's first ctx.events events with the SmartPixels discs, prepared with `model`."""
+    TF = ctx.script_module(CENSUS_DIR, "tp_findability")
+    key = ("angle_chunk_discs", ctx.input, ctx.events, id(model))
+    if key not in ctx.cache:
+        (U, Q), _ = next(iter(TF.unified_chunks(ctx.input, ctx.events, ctx.events, SIGZ, None, model, True)))
+        ctx.cache[key] = (U, Q)
+    return ctx.cache[key]
+
+
+def _band(x, ev):
+    """(centre, width, ok) of a pull sample: the D.3 band widened by t(N = 8) event-bootstrap sd."""
+    from ngtagger.spdefs import angles as SD
+
+    cen = float(SD.centre_of(x))
+    wid = float(SD.weighting_width(np.abs(x - cen)))
+    t = t_family(8)
+    sdc = _boot_sd(x, ev, SD.centre_of)
+    sdw = _boot_sd(x, ev, lambda y: SD.weighting_width(np.abs(y - SD.centre_of(y))))
+    return cen, wid, bool(abs(cen) <= 0.25 + t * sdc and abs(wid - 1.0) <= 0.1 + t * sdw)
+
+
+class DiscAngleImport(Item):
+    id = "census.disc_angle_import"
+    title = ("the census's disc angles are the locked module-frame table's at the predicted key: per disc cluster "
+             "the pull equals spdefs' (1e-12), the table is the locked one, class-T after-table pulls in the D.3 band")
+    c4_row = "an error table from the wrong era or key, on the discs (WP-Disc D-angle)"
+    known_bad_desc = ("three variants, each of which must be red: (key) the table read at the emitted incidence key "
+                      "instead of the predicted one; (sign) the centre added instead of subtracted; (width) the "
+                      "table's width not applied")
+    rule_desc = ("on the first events of the gate input with the SmartPixels discs, every usable class-T IT disc "
+                 "cluster's census-path module-frame pulls (census_angles.Model.disc_pulls, k = 1) against its true "
+                 "local cots as the prediction equal spdefs' (the disc table, key true_local at the predicted "
+                 "incidence key: its centre subtracted, its width applied) to 1e-12 relative; the disc table is "
+                 f"{DISC_LOCKED_REGISTRY} and its sha256 the reference's; per disc and angle the class-T "
+                 "(pT >= 1 GeV) pull centre (25 %-trimmed mean) within 0 +- 0.25 and width (95 %-trimmed) within "
+                 "1 +- 0.1, each widened by t(N = 8) event-bootstrap sd; identity of the cluster counts with the "
+                 "reference")
+    trees = (CENSUS_DIR,)
+
+    def _stat(self, ctx, variant=None):
+        from ngtagger.spdefs import angles as SD
+
+        CA = ctx.script_module(CENSUS_DIR, "census_angles")
+        M = ctx.script_module(CENSUS_DIR, "tracklet_topology_cost")
+        model = CA.Model()
+        U, Q = _chunk_discs(ctx, model)
+        g = np.flatnonzero(np.isin(U["layer"], M.IT_DISC_CODES))
+        gT = g[Q["ldir_ok"][g] & Q["lis_T"][g]]
+        pa, pb = Q["lca_t"][gT], Q["lcb_t"][gT]
+        # the reference from spdefs alone: the disc table, loaded here, at the predicted (here the true) key
+        tab = SD.AngleTable.load(CA.DISC_TABLE_DEFAULT)
+        sf = Q["lcode"][gT].astype(np.int64) + M.DISC_CODE_OFFSET
+        rows = tab.rows_of(CA.DISC_KEY, sf, SD.local_incidence_key(pa, pb), np.zeros(len(gT), np.int8))
+        rows_e = model.disc_rows(Q, gT, Q["lca_e"][gT], Q["lcb_e"][gT])
+        ref, got = {}, {}
+        for a, m, pred in (("alpha", "lca", pa), ("beta", "lcb", pb)):
+            e, sp = Q[f"{m}_e"][gT], Q[f"{m}_pub"][gT]
+            c, w = tab.get(CA.DISC_KEY, a, "centre", rows), tab.get(CA.DISC_KEY, a, "width", rows)
+            ok = np.isfinite(c) & np.isfinite(w)
+            c, w = np.where(ok, c, 0.0), np.where(ok, w, 1.0)
+            ref[a] = (e - c * sp - pred) / (w * sp)
+            if variant == "sign":
+                got[a] = (e + c * sp - pred) / (w * sp)
+            elif variant == "width":
+                got[a] = (e - c * sp - pred) / sp
+        if variant in (None, "key"):
+            got["alpha"], got["beta"] = model.disc_pulls(Q, gT, pa, pb, rows=rows_e if variant == "key" else None)
+        diff = {}
+        for a in ("alpha", "beta"):
+            fin = np.isfinite(ref[a])
+            d = np.abs(got[a][fin] - ref[a][fin]) / np.maximum(np.abs(ref[a][fin]), 1.0)
+            diff[a] = float(d.max(initial=0.0)) if np.isfinite(got[a][fin]).all() else float("inf")
+        band = {}
+        hard = U["tpPt"][gT] >= 1.0
+        for a in ("alpha", "beta"):
+            for L, nm in DISC_NAMES.items():
+                mm = hard & (U["layer"][gT] == L) & np.isfinite(got[a])
+                cen, wid, ok = _band(got[a][mm], U["event"][gT][mm])
+                band[f"{a}/{nm}"] = {"n": int(mm.sum()), "centre": cen, "width": wid, "ok": ok}
+        return {"input": ctx.input, "events": ctx.events, "variant": variant,
+                "n_disc_clusters": int(len(g)), "n_usable_T": int(len(gT)),
+                "table_sha256": model.disc_table_sha, "table_registry": CA.DISC_TABLE_REGISTRY,
+                "max_diff": diff, "band": band}
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        return {"input": ctx.input, "events": ctx.events,
+                "variants": {v: self._stat(ctx, v) for v in ("key", "sign", "width")}}
+
+    def judge(self, stat, ref):
+        if "variants" in stat:
+            res = {k: self.judge(v, ref) for k, v in stat["variants"].items()}
+            return any(r[0] for r in res.values()), "; ".join(
+                f"{k}: {'GREEN' if r[0] else 'red'} ({r[1][:160]})" for k, r in res.items())
+        why = [f"{a} differs from spdefs by {d:.3g}" for a, d in stat["max_diff"].items() if not d <= ATOL]
+        why += [f"{k} out of band (centre {v['centre']:.3f}, width {v['width']:.3f})"
+                for k, v in stat["band"].items() if not v["ok"]]
+        if stat["table_registry"] != DISC_LOCKED_REGISTRY:
+            why.append(f"disc table registry {stat['table_registry']}")
+        if ref is not None and stat["table_sha256"] != ref["stat"]["table_sha256"]:
+            why.append("not the locked disc table (sha256)")
+        if same_input(stat, ref) and stat.get("variant") == ref["stat"].get("variant"):
+            why += identity(stat, ref, ["n_disc_clusters", "n_usable_T"])[1]
+        return not why, (f"{stat['n_usable_T']} usable class-T disc clusters: pulls = spdefs at the predicted key, "
+                         f"locked disc table, pulls in band") if not why else "; ".join(why)
+
+
+class DiscKKnob(Item):
+    id = "census.disc_k_knob"
+    title = ("the improvement knob on the disc clusters' module-frame cots: k = 1 is no knob, scaled is continuous "
+             "at 1 and floored at 0, class C never moves, the centre scales with k, each angle by its own k")
+    c4_row = "k knob, on the discs (WP-Disc D-angle)"
+    known_bad_desc = "the k = 1 centre subtracted at k = 0 (the class-T disc pull at the true prediction is then not 0)"
+    rule_desc = ("census_angles.disc_knob and Model.disc_pulls on the gate input's first events with the SmartPixels "
+                 "discs: (i) k = 1 in fixed and scaled mode bit-identical to the emitted cots and published sigmas, "
+                 "as the census prepared them; (ii) scaled at k = 0.999 within 1.1e-3 of k = 1 in every usable "
+                 "cluster's sigma; (iii) scaled at k = 0 every usable sigma finite and 0.05 x the k = 1 one; (iv) "
+                 "class C never moved at k = 0 and 0.5; (v) at k = 0, both modes, every usable class-T cluster's "
+                 "pulls against its true cots are 0 (the centre k c); (vi) k_alpha = 0, k_beta = 1 moves alpha to "
+                 "truth and leaves beta")
+    trees = (CENSUS_DIR,)
+
+    def _stat(self, ctx, bad_centre=False):
+        CA = ctx.script_module(CENSUS_DIR, "census_angles")
+        M = ctx.script_module(CENSUS_DIR, "tracklet_topology_cost")
+        model = CA.Model()
+        U, Q = _chunk_discs(ctx, model)
+        g = np.flatnonzero(np.isin(U["layer"], M.IT_DISC_CODES))
+        C = {k: Q[k][g] for k in CA.DISC_KEYS}
+        isT, isC = C["lis_T"], ~C["lis_T"]
+        use = C["ldir_ok"] & np.isfinite(C["lca_pub"]) & (C["lca_pub"] > 0) & np.isfinite(C["lcb_pub"]) \
+            & (C["lcb_pub"] > 0)
+        out = {"input": ctx.input, "events": ctx.events, "bad_centre": bad_centre}
+        f1, s1 = CA.disc_knob(C, 1.0, 1.0, "fixed"), CA.disc_knob(C, 1.0, 1.0, "scaled")
+        free = (C["lca_e"], C["lcb_e"], C["lca_pub"], C["lcb_pub"])
+        prep = tuple(Q[k][g] for k in CA.DISC_K_FILL)
+        out["k1_identical"] = bool(all(np.array_equal(a, b, equal_nan=True) for a, b in zip(f1, s1))
+                                   and all(np.array_equal(a, b, equal_nan=True) for a, b in zip(f1, free))
+                                   and all(np.array_equal(a, b, equal_nan=True) for a, b in zip(f1, prep)))
+        near = CA.disc_knob(C, 0.999, 0.999, "scaled")
+        out["scaled_continuity"] = float(max(np.max(np.abs(near[2][use] / f1[2][use] - 1.0), initial=0.0),
+                                             np.max(np.abs(near[3][use] / f1[3][use] - 1.0), initial=0.0)))
+        z = CA.disc_knob(C, 0.0, 0.0, "scaled")
+        out["scaled_floor"] = bool(np.all(np.isfinite(z[2][use])) and np.all(np.isfinite(z[3][use]))
+                                   and np.allclose(z[2][use], 0.05 * f1[2][use], rtol=1e-12)
+                                   and np.allclose(z[3][use], 0.05 * f1[3][use], rtol=1e-12))
+        out["class_c_moved"] = float(max(max(np.max(np.abs(v[0][isC] - C["lca_e"][isC]), initial=0.0),
+                                             np.max(np.abs(v[1][isC] - C["lcb_e"][isC]), initial=0.0))
+                                         for v in (CA.disc_knob(C, k, k, "fixed") for k in (0.0, 0.5))))
+        gT = g[isT & use]
+        r0 = 0.0
+        for mode in ("fixed", "scaled"):
+            kn = CA.disc_knob(C, 0.0, 0.0, mode)
+            Qk = dict(Q)
+            for k, v in zip(CA.DISC_K_FILL, kn):
+                Qk[k] = Q[k].copy()
+                Qk[k][g] = v
+            mk = model if bad_centre else model.at_k(0.0, 0.0, mode)
+            qa, qb = mk.disc_pulls(Qk, gT, Q["lca_t"][gT], Q["lcb_t"][gT])
+            r0 = max(r0, float(np.max(np.abs(qa), initial=0.0)), float(np.max(np.abs(qb), initial=0.0)))
+        out["k0_class_t_pull"] = r0
+        own = CA.disc_knob(C, 0.0, 1.0, "fixed")
+        mv = isT & use
+        out["own_k"] = bool(np.array_equal(own[0][mv], C["lca_t"][mv]) and np.array_equal(own[1], C["lcb_e"],
+                                                                                        equal_nan=True))
+        out["n_class_t"], out["n_class_c"] = int(isT.sum()), int(isC.sum())
+        return out
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        return self._stat(ctx, bad_centre=True)
+
+    def judge(self, stat, ref):
+        why = []
+        if not stat["k1_identical"]:
+            why.append("k = 1 not bit-identical to the emitted cots and published sigmas")
+        if not stat["scaled_continuity"] <= 1.1e-3:
+            why.append(f"scaled k -> 1 jump {stat['scaled_continuity']:.3g}")
+        if not stat["scaled_floor"]:
+            why.append("scaled k = 0 not floored at 0.05")
+        if not stat["class_c_moved"] <= ATOL:
+            why.append(f"class C moved by {stat['class_c_moved']:.3g}")
+        if not stat["k0_class_t_pull"] <= 1e-9:
+            why.append(f"class-T pull at k = 0: {stat['k0_class_t_pull']:.3g} (centre not k c)")
+        if not stat["own_k"]:
+            why.append("k_alpha != k_beta does not move each angle by its own k")
+        if same_input(stat, ref) and stat["bad_centre"] == ref["stat"]["bad_centre"]:
+            why += identity(stat, ref, ["n_class_t", "n_class_c"])[1]
+        return not why, (f"{stat['n_class_t']} class-T, {stat['n_class_c']} class-C disc clusters: knob as the "
+                         f"sheet says") if not why else "; ".join(why)
+
+
+class DiscAngleSwitches(Item):
+    id = "census.disc_angle_switches"
+    title = ("on the discs each per-angle switch removes exactly its angle, the fit reads no disc angle, and with "
+             "every stage off the census reads none")
+    c4_row = "dead angle flags, on the discs (WP-Disc D-angle)"
+    known_bad_desc = "S4a told to use beta only, scored with the disc alpha term still added"
+    rule_desc = ("one ID1+ID2 doublet seed followed into ID3 and ID4 on the gate input's first events with the "
+                 "SmartPixels discs, weighting stages only (no cut file needed): S4a with no angle == S4a off; S4a "
+                 "with beta only == S4a with both angles and the disc alpha sigma infinite (the same hits); every "
+                 "stage off: hits bit-identical under two knobs (k = 1 fixed; k = 0.3 scaled); the fit of the "
+                 "followed tracks identical with S5 on and off (S5 feeds no disc angle); S6's alpha part unchanged "
+                 "and its beta part changed when the disc beta sigma is infinite; identity of the track count with "
+                 "the reference")
+    trees = (CENSUS_DIR,)
+
+    def _follow(self, ctx, model, ang, Qmod=None):
+        SA = ctx.script_module(CENSUS_DIR, "seed_arity")
+        U, Q = _chunk_discs(ctx, model)
+        if Qmod is not None:
+            Q = Qmod(dict(Q))
+        ang.model = model
+        F = SA.follow_seed(U, Q, SA.Seed((5, 6), follow=(7, 8)), 2.0, (7, 8), ang, 0.0, "rphiz")
+        hits = {L: (np.asarray(v[0]), np.asarray(v[1])) for L, v in sorted(F["hits"].items())}
+        return U, Q, F, hits
+
+    def _stat(self, ctx, bad=False):
+        M = ctx.script_module(CENSUS_DIR, "tracklet_topology_cost")
+        KF = ctx.script_module(CENSUS_DIR, "kf_emulation")
+        CA = ctx.script_module(CENSUS_DIR, "census_angles")
+        model = CA.Model()
+
+        def inf_sigma(m):
+            def f(Q):
+                Q[f"{m}_sk"] = np.where(np.isin(Q["lcode"], M.IT_DISC_CODES), np.inf, Q[f"{m}_sk"])
+                return Q
+            return f
+        _, _, _, h_off = self._follow(ctx, model, M.AngleUse(()))
+        _, _, _, h_empty = self._follow(ctx, model, M.AngleUse({"proj_arb"}, angles={"proj_arb": []}))
+        b_set = ["alpha", "beta"] if bad else ["beta"]
+        _, _, _, h_b = self._follow(ctx, model, M.AngleUse({"proj_arb"}, angles={"proj_arb": b_set}))
+        _, _, _, h_b_ref = self._follow(ctx, model, M.AngleUse({"proj_arb"}), inf_sigma("lca"))
+        U, Q, F, _ = self._follow(ctx, model, M.AngleUse(()))
+        G = KF.hits_from_seed(U, {"_gA": F["gA"], "_gB": F["gB"], "_gC": F["gC"], "_hits": F["hits"]})
+        trip = (F["gA"], F["gB"], F["gB"])
+        fit_off = KF.fit_tracks(U, Q, trip, gidx=G, use_angles=False, model=model)
+        fit_on = KF.fit_tracks(U, Q, trip, gidx=G, use_angles=True, model=model)
+        s5_blind = all(np.array_equal(fit_off[k], fit_on[k], equal_nan=True)
+                       for k in ("kappa", "d0", "cot", "z0", "chi2_rphi", "chi2_rz", "chi2_a", "chi2_b"))
+        fit_nb = KF.fit_tracks(U, inf_sigma("lcb")(dict(Q)), trip, gidx=G, use_angles=False, model=model)
+        s6_parts = bool(np.array_equal(fit_nb["chi2_a"], fit_off["chi2_a"], equal_nan=True)
+                        and not np.array_equal(fit_nb["chi2_b"], fit_off["chi2_b"], equal_nan=True))
+        m2 = CA.Model(k_alpha=0.3, k_beta=0.3, mode="scaled")
+        _, _, _, h_off2 = self._follow(ctx, m2, M.AngleUse(()))
+        return {"input": ctx.input, "events": ctx.events, "bad": bad, "n_tracks": int(len(G)),
+                "s4a_empty_is_off": AngleSwitches._same(h_empty, h_off),
+                "s4a_one_angle_is_other_removed": AngleSwitches._same(h_b, h_b_ref),
+                "s5_reads_no_disc_angle": bool(s5_blind), "s6_parts_separate": s6_parts,
+                "all_off_reads_no_angle": AngleSwitches._same(h_off, h_off2)}
+
+    def compute(self, ctx):
+        return self._stat(ctx)
+
+    def known_bad(self, ctx):
+        return self._stat(ctx, bad=True)
+
+    def judge(self, stat, ref):
+        why = [f"{k} fails" for k in ("s4a_empty_is_off", "s4a_one_angle_is_other_removed", "s5_reads_no_disc_angle",
+                                      "s6_parts_separate", "all_off_reads_no_angle") if not stat[k]]
+        if not stat["n_tracks"]:
+            why.append("no followed track")
+        if same_input(stat, ref) and stat["bad"] == ref["stat"]["bad"]:
+            why += identity(stat, ref, ["n_tracks"])[1]
+        return not why, (f"{stat['n_tracks']} disc tracks: per-angle switches remove exactly their angle, the fit "
+                         f"reads no disc angle") if not why else "; ".join(why)
+
+
+ITEMS = [AngleImport(), KKnob(), AngleSwitches(), AngleNonFinite(), DiscAngleImport(), DiscKKnob(),
+         DiscAngleSwitches()]

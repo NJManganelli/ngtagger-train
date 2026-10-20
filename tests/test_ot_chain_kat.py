@@ -195,9 +195,20 @@ def test_decode_matches_the_dtc_positions():
 @pytest.mark.skipif(not MODECMP_NODR.exists(), reason="modecmp no-DR file not present")
 def test_chain_matches_cmssw_no_dr_tracks():
     """The emulated no-DR tracks' stub sets against CMSSW's on the same 10 events (barrel seeds, barrel-only
-    tracks); CMSSW's tracks are identified by their stub positions (the modecmp file predates the stub links)."""
+    tracks); CMSSW's tracks are identified by their stub positions (the modecmp file predates the stub links).
+    The floor was registered on format 35's chain, which this runs (the discs and WP-Disc corrections off; the
+    test production also predates innerStrip, which the discs need)."""
     import awkward as ak
     import uproot
+
+    OC.set_discs(False, fixes=False)
+    try:
+        _chain_matches_cmssw_no_dr_tracks(ak, uproot)
+    finally:
+        OC.set_discs(True)
+
+
+def _chain_matches_cmssw_no_dr_tracks(ak, uproot):
 
     t = uproot.open(f"{TEST_PROD}:Events")
     evs = t["event"].array(library="np")

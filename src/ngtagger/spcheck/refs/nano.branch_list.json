@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261017T075020Z-wpd-gate35-derive-76375/copy",
- "derived": "2026-10-17T08:42:38Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
+ "derived": "2026-10-18T17:33:15Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "nano.branch_list",
- "job_id": "20261017T075020Z-wpd-gate35-derive-76375",
+ "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
  "known_bad": "the same file with one branch removed (a drop-list change)",
  "rule": "identical set of (branch, type) to the reference; every difference listed",
  "stat": {

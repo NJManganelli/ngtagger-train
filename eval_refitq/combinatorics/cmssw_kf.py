@@ -48,8 +48,18 @@ KF_KNOWN_BADS = {
     "no_skips": "doKF with no layer skips",
     "hard_budget_2": "a skip budget of 2 for hard tracks",
     "keep_first_overflow": "the per-layer cap keeps the first stubs instead of replacing the last",
+    # WP-Disc (wpdisc/PLAN.md sec. 4)
+    "zref_float32": "the KF eta region's reference z0 + 50 t from the float32 z0 and t (HybridFit uses double)",
+    "alpha_no_flip": "the 2S disc alpha without the isFlipped sign",
+    "strip_not_truncated": "the 2S disc alpha from innerStrip as stored, not truncated to an unsigned int",
+    "kf_regions_0_3": "the KF fits only tracks in KF eta regions 0-3",
 }
 KNOWN_BAD = None
+# THE ORDER OF EQUAL KEYS (WP-Disc): KFbase sorts its stubs by layer and its states by chi2 with std::sort, which is
+# not stable; with two stubs at one position (one module's inner cluster with two outer clusters) the states tie and
+# CMSSW keeps the one std::sort puts first. STD_SORT: libstdc++'s std::sort, exactly (std_sort); False: Python's
+# stable sort (census format 35; ot_chain.set_discs turns it off with the other WP-Disc corrections for gate G0).
+STD_SORT = True
 
 
 def set_known_bad(name):
@@ -247,9 +257,9 @@ def l1tstub_alpha(strip, flipped, x, y, z, ps):
     +-((int)strip - 509.5) * pitch * flip / r^2, the sign set by z and the flip flag."""
     if ps:
         return 0.0
-    flip = -1 if flipped else 1
+    flip = -1 if flipped and KNOWN_BAD != "alpha_no_flip" else 1
     r2 = x * x + y * y
-    v = (int(strip) - 509.5) * PITCH[False] * flip / r2
+    v = ((strip if KNOWN_BAD == "strip_not_truncated" else int(strip)) - 509.5) * PITCH[False] * flip / r2
     return v if z > 0.0 else -v
 
 
@@ -326,7 +336,7 @@ def make_seed(rinv, phi0_rel, t, z0, isector, n_input, k=K):
     kfz0, kft = f32(z0), f32(t)
     # float kfzRef = kfz0 + chosenRofZ * kft, the tracklet's DOUBLE z0 and t (HybridFit.cc:161); zRefMax:
     # etaMax float, exp and atan in float, 2.0 * atan and tan in double, stored as float (:164-165)
-    kfzref = f32(z0 + CHOSEN_R_OF_Z * t)
+    kfzref = f32(z0 + CHOSEN_R_OF_Z * t) if KNOWN_BAD != "zref_float32" else f32(kfz0 + f32(CHOSEN_R_OF_Z) * kft)
     eta_reg = 0
     for i in range(1, len(ETA_REGIONS) - 1):
         a = f32(np.arctan(f32(np.exp(f32(-ETA_REGIONS[i])))))
@@ -511,10 +521,126 @@ def initial_state(seed):
     return State(seed_x(seed), seed_c(), -1, 0, 0.0, 0.0)
 
 
+# ---- std::sort -----------------------------------------------------------------
+STD_SORT_THRESHOLD = 16            # libstdc++ _S_threshold
+
+
+def std_sort(a, key):
+    """Sort list `a` in place by key as libstdc++'s std::sort does with comp(x, y) = key(x) < key(y): introsort
+    (median-of-three pivot to the front, unguarded partition, a heap sort past 2 floor(log2 n) levels) on ranges
+    longer than 16, then the final insertion sort. Equal keys end in std::sort's order, not the input's. With
+    STD_SORT off, Python's stable sort (census format 35)."""
+    if not STD_SORT:
+        a.sort(key=key)
+        return
+    k = [key(x) for x in a]
+    v = list(range(len(a)))
+    n = len(v)
+    if n > 1:
+        _introsort_loop(v, 0, n, 2 * (n.bit_length() - 1), k)
+        _final_insertion_sort(v, 0, n, k)
+    a[:] = [a[i] for i in v]
+
+
+def _introsort_loop(v, first, last, depth, k):
+    while last - first > STD_SORT_THRESHOLD:
+        if depth == 0:
+            _heap_sort(v, first, last, k)
+            return
+        depth -= 1
+        mid = first + (last - first) // 2
+        _move_median_to_first(v, first, first + 1, mid, last - 1, k)
+        cut = _unguarded_partition(v, first + 1, last, first, k)
+        _introsort_loop(v, cut, last, depth, k)
+        last = cut
+
+
+def _move_median_to_first(v, result, a, b, c, k):
+    ka, kb, kc = k[v[a]], k[v[b]], k[v[c]]
+    if ka < kb:
+        pick = b if kb < kc else c if ka < kc else a
+    else:
+        pick = a if ka < kc else c if kb < kc else b
+    v[result], v[pick] = v[pick], v[result]
+
+
+def _unguarded_partition(v, first, last, pivot, k):
+    while True:
+        while k[v[first]] < k[v[pivot]]:
+            first += 1
+        last -= 1
+        while k[v[pivot]] < k[v[last]]:
+            last -= 1
+        if not first < last:
+            return first
+        v[first], v[last] = v[last], v[first]
+        first += 1
+
+
+def _unguarded_linear_insert(v, last, k):
+    val, nxt = v[last], last - 1
+    while k[val] < k[v[nxt]]:
+        v[last] = v[nxt]
+        last, nxt = nxt, nxt - 1
+    v[last] = val
+
+
+def _insertion_sort(v, first, last, k):
+    for i in range(first + 1, last):
+        if k[v[i]] < k[v[first]]:
+            val = v[i]
+            v[first + 1:i + 1] = v[first:i]
+            v[first] = val
+        else:
+            _unguarded_linear_insert(v, i, k)
+
+
+def _final_insertion_sort(v, first, last, k):
+    if last - first > STD_SORT_THRESHOLD:
+        _insertion_sort(v, first, first + STD_SORT_THRESHOLD, k)
+        for i in range(first + STD_SORT_THRESHOLD, last):
+            _unguarded_linear_insert(v, i, k)
+    else:
+        _insertion_sort(v, first, last, k)
+
+
+def _adjust_heap(v, first, hole, length, value, k):
+    top = child = hole
+    while child < (length - 1) // 2:
+        child = 2 * (child + 1)
+        if k[v[first + child]] < k[v[first + child - 1]]:
+            child -= 1
+        v[first + hole] = v[first + child]
+        hole = child
+    if length % 2 == 0 and child == (length - 2) // 2:
+        child = 2 * (child + 1)
+        v[first + hole] = v[first + child - 1]
+        hole = child - 1
+    parent = (hole - 1) // 2
+    while hole > top and k[v[first + parent]] < k[value]:
+        v[first + hole] = v[first + parent]
+        hole, parent = parent, (parent - 1) // 2
+    v[first + hole] = value
+
+
+def _heap_sort(v, first, last, k):
+    """std::__partial_sort(first, last, last): __make_heap, then __sort_heap."""
+    n = last - first
+    for parent in range((n - 2) // 2, -1, -1):
+        _adjust_heap(v, first, parent, n, v[first + parent], k)
+    while last - first > 1:
+        last -= 1
+        value, v[last] = v[last], v[first]
+        _adjust_heap(v, first, 0, last - first, value, k)
+
+
 def do_kf(seed, stubs):
-    """KFbase::doKF. stubs: the input list (tmtt::Stub order = HybridFit's trackstublist order).
-    Returns the finished State or None."""
-    order = sorted(range(len(stubs)), key=lambda i: stubs[i].layer)   # sort by layerId (stable here)
+    """KFbase::doKF. stubs: the input list (tmtt::Stub order = HybridFit's trackstublist order), sorted by layerId
+    as KFbase::fit does (std_sort). Returns the finished State or None."""
+    if KNOWN_BAD == "kf_regions_0_3" and kf_eta_region(seed.eta_reg) > 3:
+        return None
+    order = list(range(len(stubs)))
+    std_sort(order, key=lambda i: stubs[i].layer)
     layer_stubs = {}
     for i in order:
         s = stubs[i]
@@ -561,10 +687,10 @@ def do_kf(seed, stubs):
                 ns = kalman_update(st, s, layer + 1 + n_amb_next, nskip + 1 + n_amb_next, seed)
                 if is_good_state(ns, seed):
                     nxt_skip.append(ns)
-            nxt.sort(key=lambda q: q.chi2scaled)
-            nxt_skip.sort(key=lambda q: q.chi2scaled)
+            std_sort(nxt, key=lambda q: q.chi2scaled)
+            std_sort(nxt_skip, key=lambda q: q.chi2scaled)
             new_states += nxt + nxt_skip
-        new_states.sort(key=lambda q: q.chi2scaled * (q.nskip + 1))
+        std_sort(new_states, key=lambda q: q.chi2scaled * (q.nskip + 1))
         nstubs = iteration + 1
         if nstubs >= KF_MIN_STUBS and new_states:
             best_by_n[nstubs] = new_states[0]

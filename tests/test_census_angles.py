@@ -94,6 +94,7 @@ def _doc(s5="ab", key="emitted", sub="ab"):
 class _Model:
     table_sha = "x"
     mode = "fixed"
+    s1_d0max = 0.0
 
     def calib_k(self):
         return (1.0, 1.0)
@@ -123,6 +124,24 @@ def test_cut_file_refuses_a_configuration_it_was_not_made_for():
     assert C.s6_thr("AAAA", "ab", "emitted", "ab", np.array([0, 4])).tolist() == [np.inf, 20.0]
 
 
+def test_s6_disc_group():
+    """With the IT discs, S6's tracks with a disc angle measurement are a group of their own, to twice the
+    barrel's n; a run with the IT discs is refused by a file without that group."""
+    d = _doc()
+    d["s6"] = {"bins": [["AAAA", "ab", "emitted", "ab", 4], ["AAAA/disc", "ab", "emitted", "ab", 4],
+                        ["AAAA/disc", "ab", "emitted", "ab", 12]], "thr": [20.0, 9.0, 30.0]}
+    C = CA.CutSet(d)
+    got = C.s6_thr("AAAA", "ab", "emitted", "ab", np.array([4, 4, 12, 0]), np.array([False, True, True, True]))
+    assert got.tolist() == [20.0, 9.0, 30.0, np.inf]
+    assert CA.s6_group("AAAA", [False, True]).tolist() == ["AAAA", "AAAA/disc"]
+    assert (CA.s6_n_max(8, "AAAA"), CA.s6_n_max(8, "AAAA/disc")) == (8, 16)
+    C.check(_Model(), _run(it_discs=True))
+    with pytest.raises(SystemExit):
+        CA.CutSet(_doc()).check(_Model(), _run(it_discs=True))
+    with pytest.raises(SystemExit):               # a barrel track at n = 12 has no threshold
+        C.s6_thr("AAAA", "ab", "emitted", "ab", np.array([12]), np.array([False]))
+
+
 def test_census_identity_is_accepted_by_its_cut_file():
     """The census's own run identity (tp_findability.cut_identity), not a hand-made one: the S6 build
     keys are the fit's (one mask -> its name; was 'A+A+A+A', which refused every cut file)."""
@@ -134,6 +153,25 @@ def test_census_identity_is_accepted_by_its_cut_file():
     C.check(_Model(), run)
     with pytest.raises(SystemExit):
         C.check(_Model(), TF.cut_identity(M.AngleUse.parse("all", off="kf"), None, None, 2.0, None, ["AAAA"]))
+
+
+def test_s1_displaced_tolerance():
+    """S1's band adds asin(D / r) for |d0| <= D (physicist, 2026-10-18); a cut file fitted for one tolerance
+    refuses a run at another."""
+    from ngtagger.spdefs import angles as SD
+    r = np.array([3.0, 16.0])
+    assert np.allclose(SD.alpha_band(r, 2.0, 1.0) - SD.alpha_band(r, 2.0), np.arcsin(1.0 / r))
+    assert np.array_equal(SD.alpha_band(r, 2.0, 0.0), SD.alpha_band(r, 2.0))
+    m = _Model()
+    m.s1_d0max = 1.0
+    with pytest.raises(SystemExit):
+        CA.CutSet(_doc()).check(m, _run())                # the file's identity: the prompt band
+    d = _doc()
+    d["identity"]["s1_d0max"] = 1.0
+    CA.CutSet(d).check(m, _run())
+    # a displaced cluster at IL1 (|alpha| = asin(0.5 / 3)) fails the prompt band and passes with D = 1 cm
+    half = np.arcsin(0.5 / 3.0)
+    assert CA.s1_stat(half, 0.01, 3.0, 2.0) > 2.5 > CA.s1_stat(half, 0.01, 3.0, 2.0, 1.0)
 
 
 def test_s1_tests_smartpixels_clusters_only():
@@ -148,7 +186,8 @@ def test_s1_tests_smartpixels_clusters_only():
          "ovf_a": np.zeros(4, bool), "dir_ok": np.array([True, True, ot["dir_ok"], ot["dir_ok"]])}
     D = {"layer": np.array([1, 1, 12, 13])}
     ang = M.AngleUse.parse("all")
-    ang.model = object.__new__(CA.Model)               # s1 reads only Q
+    ang.model = object.__new__(CA.Model)               # s1 reads only Q (and the prompt band here)
+    ang.model.s1_d0max = 0.0
     ang.cuts = CA.CutSet(_doc())                        # S1 bin (floor 2, row 3) at 2.5
     assert M.alpha_veto(D, Q, np.arange(4), 0.5, False, ang).tolist() == [0, 2, 3]
     ang.cuts_open = True
@@ -166,6 +205,7 @@ def test_nan_guard_counts_it_inputs_only():
     D = {"layer": np.array([1, 2, 12])}
     ang = M.AngleUse.parse("all")
     ang.model = object.__new__(CA.Model)
+    ang.model.s1_d0max = 0.0
     ang.cuts = CA.CutSet(_doc())
     M.alpha_veto(D, Q, np.arange(3), 0.5, False, ang)          # outside the census: no count kept
     assert ang.nonfinite is None

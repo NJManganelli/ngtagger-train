@@ -1,6 +1,7 @@
 """Unit tests of the WP-D closure's bookkeeping and statistics (eval_refitq/combinatorics/closure_vs_cmssw):
 the shared record rule, the event exclusion, the no-DR alignment, bit-level branch comparison, the joint
 power at another sample size and the known-bad classification."""
+import json
 import math
 import sys
 from pathlib import Path
@@ -38,7 +39,7 @@ def test_record_rule_seed_tp_owner_and_region():
     rec = dict(zip(CV.RECORD_COLS, CV.track_record(L, 0, 0, [0, 1, 2, 3])))   # L1L2 seed: stubs 0, 1
     assert rec["tp_key"] == int(M.tp_key(np.array([0]), np.array([7]))[0]) and rec["real"] == 1
     assert rec["own_key"] == rec["tp_key"] and rec["n_wrong"] == 1 and rec["nstub"] == 4
-    assert 0 <= rec["kfreg"] <= CV.MAX_KF_REGION                               # cot 0.2: central
+    assert 0 <= rec["kfreg"] <= CV.MAX_KF_REGION_BARREL                              # cot 0.2: central
     # a fake seed (the two seed stubs credit different TPs) is not seed-truthful
     L2 = _stubs([1, 2, 3, 4], _line(RS[:4]), [7, 8, 7, 7])
     rec2 = dict(zip(CV.RECORD_COLS, CV.track_record(L2, 0, 0, [0, 1, 2, 3])))
@@ -123,3 +124,69 @@ def test_injected_known_bads_shift_by_their_margins():
     f = CV._inject_found(f_cen, f_cms, den, "disc", 1.5, CV.MARGIN["disc"], rng)
     assert f.sum() == f_cen.sum() and (f ^ f_cms).sum() / 1000 == pytest.approx(0.03, abs=2e-3)
     assert CV._injection(["C2 L1L2: d_eff=1.5", "C3 delivered: d_dup=10"], "C2 L1L2") == {"d_eff": 1.5}
+
+
+# ---- WP-Disc (format 36) ---------------------------------------------------------------------------
+def test_tp_kf_index_on_the_kf_edges():
+    eta = np.array([0.0, 0.19, -0.2, 0.89, 0.9, 1.67, 1.68, -2.39, 2.4, np.nan])
+    assert CV.tp_kf_index(eta).tolist() == [0, 0, 1, 3, 4, 5, 6, 7, 8, 8]
+    assert [CV.BANDS[b] for b in ("barrel", "overlap", "forward")] == [(0, 3), (4, 5), (6, 7)]
+
+
+def test_record_rule_disc_seed():
+    """A D1D2 track (L1TOTStub disc codes 11, 12): its seed stubs are its disc stubs, its KF region forward."""
+    rs = [40.0, 45.0, 52.0, 60.0]
+    xyz = [(r, 0.001 * r * r, 0.5 + 3.0 * r) for r in rs]           # cot 3: |eta| ~ 1.8
+    L = _stubs([11, 12, 13, 14], xyz, [5, 5, 5, 5])
+    L["isBarrel"][:] = False
+    rec = dict(zip(CV.RECORD_COLS, CV.track_record(L, 0, 4, [0, 1, 2, 3])))
+    assert rec["real"] == 1 and rec["tp_key"] >= 0 and rec["kfreg"] in (6, 7)
+
+
+def test_g0_array_rule():
+    a = np.arange(14).reshape(2, 7)
+    assert CV._g0_array("hit_o0", a, a.copy()) == ""
+    wide = np.c_[a, np.full((2, 5), -1)]
+    assert CV._g0_array("hit_o0", a, wide) == ""
+    wide[1, 9] = 3
+    assert CV._g0_array("hit_o0", a, wide) == "disc columns filled"
+    assert CV._g0_array("cen_hit_otd", None, np.zeros(4, np.uint8)) == ""
+    assert CV._g0_array("cen_hit_otd", None, np.ones(4, np.uint8)) == "new array"
+    assert CV._g0_array("cen_n_mod_itd", None, np.zeros(4, np.int16)) == ""     # every format-36 census column
+    assert CV._g0_array("rec_s1d__stat", None, np.zeros(0)) == "new array"
+    assert CV._g0_array("rec_trk__disc", None, np.zeros(3, bool)) == ""
+    assert CV._g0_array("rec_trk__s6g", None, np.array(["AAAA", "AAAA"])) == ""
+    assert CV._g0_array("rec_trk__s6g", None, np.array(["AAAA", "AAAA/disc"])) != ""
+    assert CV._g0_array("cen_pt", np.ones(3), np.r_[1.0, 1.0, 2.0]) == "values differ"
+    # a track's hit row: format 36 inserts ID1-ID4 after IL4 and appends OD1-OD5 (KF.LAYER_ORDER)
+    rows35 = np.arange(20).reshape(2, 10)
+    rows36 = np.full((2, 19), -1)
+    rows36[:, [i for i in range(19) if i not in CV._G0_HIT_DISC_COLS]] = rows35
+    assert CV._G0_HIT_DISC_COLS == [4, 5, 6, 7, 14, 15, 16, 17, 18]
+    assert CV._g0_array("hit_3", rows35, rows36) == ""
+    rows36[0, 5] = 7
+    assert CV._g0_array("hit_m3", rows35, rows36) == "disc columns filled"
+    # the per-seed counters: format 36 adds kf_diverged, which must be 0
+    c35 = np.array(json.dumps({"0": {"fit": 3.0, "before_chi2": 5.0}}))
+    c36 = np.array(json.dumps({"0": {"before_chi2": 5.0, "kf_diverged": 0.0, "fit": 3.0}}))
+    assert CV._g0_array("counters", c35, c36) == ""
+    assert CV._g0_array("counters", c35, np.array(json.dumps({"0": {"before_chi2": 5.0, "kf_diverged": 1.0,
+                                                                     "fit": 3.0}}))) == "kf_diverged nonzero"
+    assert CV._g0_array("counters", c35, np.array(json.dumps({"0": {"before_chi2": 4.0, "kf_diverged": 0.0,
+                                                                     "fit": 3.0}}))) == "values differ"
+
+
+def test_inject_records_beyond_the_pool():
+    """A gross ln_fake injection asks for more copies than there are fakes: whole copies plus a drawn remainder; a
+    small one draws without replacement exactly as before."""
+    R = np.zeros((10, 8), np.int64)
+    R[:, 4] = 0                                       # every record judged (KF region 0)
+    R[:4, 3] = 0                                      # 4 fakes (no seed TP)
+    R[4:, 3] = 1
+    big = CV._inject_records(R, "ln_fake", 10.0, math.log(1.25), np.random.default_rng(1))
+    k = int(round(4 * (math.exp(10 * math.log(1.25)) - 1)))
+    assert len(big) == 10 + k and (big[10:, 3] == 0).all()
+    small = CV._inject_records(R, "ln_fake", 1.5, math.log(1.25), np.random.default_rng(1))
+    ref = np.random.default_rng(1).choice(np.arange(4), int(round(4 * (math.exp(1.5 * math.log(1.25)) - 1))),
+                                          replace=False)
+    assert np.array_equal(small[10:], R[ref])

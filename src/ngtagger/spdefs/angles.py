@@ -249,16 +249,40 @@ def facing(surface, orientation):
     return np.where(is_disc(surface), np.asarray(orientation, np.int8), 0).astype(np.int8)
 
 
-def key_from_local(surface, cot_alpha, cot_beta, orientation):
+def key_from_local(surface, cot_alpha, cot_beta, orientation, z_side=None):
     """The incidence key from module-local angles and the module's orientation sign s:
     barrel cot theta = s cotBeta / sqrt(1 + cotAlpha^2); disc 1 / cot theta =
-    s sign(cotBeta) sqrt(cotAlpha^2 + cotBeta^2)."""
+    s sign(cotBeta) sqrt(cotAlpha^2 + cotBeta^2) under the radial disc sense (canon_v3), or
+    z_side sqrt(cotAlpha^2 + cotBeta^2) under the z sense (canon_v4; z_side the cluster's sign(z):
+    disc_sense)."""
     ca = np.asarray(cot_alpha, np.float64)
     cb = np.asarray(cot_beta, np.float64)
     s = np.asarray(orientation, np.float64)
     barrel = s * cb / np.sqrt(1.0 + ca * ca)
-    disc = s * np.sign(cb) * np.sqrt(ca * ca + cb * cb)
+    mag = np.sqrt(ca * ca + cb * cb)
+    disc = s * np.sign(cb) * mag if z_side is None else np.asarray(z_side, np.float64) * mag
     return np.where(is_disc(surface), disc, barrel)
+
+
+def disc_sense(surface, global_z, global_cot_theta):
+    """The sense of the published global direction on the discs: "z" when every disc cluster with a finite,
+    nonzero cot theta has sign(cot theta) = sign(z) (the CMSSW sense-rule fix, 15c345f: canon_v4), else "radial"
+    (the barrel rule on discs: canon_v3, where 34 % of the class-T directions are reversed)."""
+    c = np.asarray(global_cot_theta, np.float64)
+    m = is_disc(surface) & np.isfinite(c) & (c != 0)
+    return "z" if m.any() and np.all(np.sign(c[m]) == np.sign(np.asarray(global_z)[m])) else "radial"
+
+
+def disc_local_from_global(det_id, dir_phi, cot_theta, facing_flip=False):
+    """(cotAlpha, cotBeta) in the module frame (D121, disc_frames) of a global direction (azimuth dir_phi, cot theta;
+    either sense: the cot ratios do not depend on it): cotAlpha = sin(dir_phi - phi_m) / cot theta, cotBeta =
+    -sx cos(dir_phi - phi_m) / cot theta. NaN for a module not in the table. facing_flip: the known-bad (sx -> -sx)."""
+    sx, phm = disc_frame_lookup(det_id)
+    sx = -sx if facing_flip else sx
+    d = np.asarray(dir_phi, np.float64) - phm
+    c = np.asarray(cot_theta, np.float64)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.sin(d) / c, -sx * np.cos(d) / c
 
 
 def local_beta_sign(surface, orientation):
@@ -354,6 +378,77 @@ def facing_from_positions(det_id, local_x, local_y, global_r, global_phi):
         ns.append(int(n))
     dets = np.asarray(dets, np.float64)
     return (ids[keep], (-np.sign(dets)).astype(np.int8), dets, np.asarray(rmss), np.asarray(ns, np.int64))
+
+# ---------------------------------------------------------------- the disc module frames (WP-Disc D-frame)
+# THE IT DISC MODULE FRAMES FROM THE D121 GEOMETRY (wpdisc/PLAN.md sec. 1 B, gate D-frame). On every disc module of
+# the D121 geometry (CMSSW_20_1_0_pre1 GeomDet dump, otstub_arm/spix_module_geometry_D121.json: global = origin +
+# lx ex + ly ey + lz ez), exactly: ey = -r_hat, ex = sx phi_hat, ez = sx z_hat at the module's own azimuth phi_m
+# (the frame is the module's, constant over it: phi_hat at a cluster differs by up to the module's half width / r).
+# sx is the module facing; canon_v3's orientation sign s (frame.module_orientation) is -sx. The cluster vote
+# (orientation_from_clusters) was exact on canon_v3; on canon_v4 the global disc direction is z-sensed (the sense
+# fix) and the vote turns 66 / 34 on the noisy local cotBeta, so the disc orientation comes from this table.
+DISC_FRAMES_PATH = os.path.join(os.path.dirname(__file__), "it_disc_frames_D121.json")
+_DISC_FRAMES = {}
+
+
+def write_disc_frames(geometry_json, out=DISC_FRAMES_PATH, disks=(1, 2, 3, 4)):
+    """The disc frame table from a GeomDet dump: per PXF module of `disks` (the nano's ID1-ID4, surfaces 11-14),
+    its detId, the facing sx (ex . phi_hat), the module azimuth phi_m (of -ey) and its z; refuses a module whose
+    frame is not (sx phi_hat, -r_hat, sx z_hat) to 1e-5."""
+    with open(geometry_json) as f:
+        g = json.load(f)
+    rows = []
+    for m in g["modules"]:
+        if m["subdet"] != "PXF" or int(m["disk"]) not in disks:
+            continue
+        ex, ey, ez, o = (np.asarray(m[k], np.float64) for k in ("ex", "ey", "ez", "origin"))
+        phi_m = float(np.arctan2(-ey[1], -ey[0]))
+        rh, ph = np.array([np.cos(phi_m), np.sin(phi_m), 0.0]), np.array([-np.sin(phi_m), np.cos(phi_m), 0.0])
+        sx = int(np.sign(ex @ ph))
+        if (np.abs(ey + rh).max() > 1e-5 or np.abs(ex - sx * ph).max() > 1e-5
+                or np.abs(ez - sx * np.array([0.0, 0.0, 1.0])).max() > 1e-5
+                or abs(np.arctan2(o[1], o[0]) - phi_m) > 1e-5):
+            raise ValueError(f"module {m['detId']}: frame not (sx phi_hat, -r_hat, sx z_hat) at its azimuth")
+        rows.append([int(m["detId"]), sx, round(phi_m, 9), round(float(o[2]), 5)])
+    rows.sort()
+    head = {"source": os.path.abspath(geometry_json), "disks": list(disks),
+            "convention": "ex = sx phi_hat(phi_m), ey = -r_hat(phi_m), ez = sx z_hat; orientation s = -sx",
+            "columns": ["detId", "sx", "phi_m", "z"]}
+    with open(out, "w") as f:                       # one module per line
+        f.write(json.dumps(head)[:-1] + ', "modules": [\n' + ",\n".join(json.dumps(r) for r in rows) + "\n]}\n")
+    return len(rows)
+
+
+def disc_frames():
+    """{detId: (sx, phi_m, z)} of the IT disc modules (DISC_FRAMES_PATH), read once."""
+    if not _DISC_FRAMES:
+        with open(DISC_FRAMES_PATH) as f:
+            t = json.load(f)
+        _DISC_FRAMES.update({int(d): (int(sx), float(ph), float(z)) for d, sx, ph, z in t["modules"]})
+    return _DISC_FRAMES
+
+
+def disc_frame_lookup(det_id):
+    """(sx, phi_m) per cluster from its module (0, NaN for a module not in the table)."""
+    det_id = np.asarray(det_id)
+    fr = disc_frames()
+    ids = np.fromiter(fr, np.int64, len(fr))
+    o = np.argsort(ids)
+    ids = ids[o]
+    sx = np.array([fr[int(i)][0] for i in ids], np.int8)
+    ph = np.array([fr[int(i)][1] for i in ids], np.float64)
+    pos = np.clip(np.searchsorted(ids, det_id), 0, len(ids) - 1)
+    hit = ids[pos] == det_id
+    return np.where(hit, sx[pos], 0).astype(np.int8), np.where(hit, ph[pos], np.nan)
+
+
+def orientation_geometric(surface, det_id, ids, signs):
+    """The orientation sign s per cluster: disc modules from the D121 frames (s = -sx), barrel modules from the
+    cluster vote (ids, signs: orientation_from_clusters, exact on the barrel)."""
+    o = orientation_lookup(det_id, ids, signs)
+    sx, _ = disc_frame_lookup(det_id)
+    return np.where(is_disc(surface), -sx, o).astype(np.int8)
+
 
 # ---------------------------------------------------------------- the knob k (decision 10, D11 c)
 def check_k(k) -> float:
@@ -762,15 +857,18 @@ def coverage_z(m, n_test, e0, var):
 Z_LUMI_CM = 15.0     # the census's luminous-region half-window (tracklet_topology_cost Z_LUMI) [cm]
 
 
-def alpha_band(r_cm, pt_floor):
-    """|alpha| of a prompt track of transverse momentum pt_floor at radius r: asin(KPT r / 2 pT)."""
-    return np.arcsin(np.clip(KPT_CMSSW * np.asarray(r_cm, np.float64) / (2.0 * pt_floor), 0.0, 1.0))
+def alpha_band(r_cm, pt_floor, d0_max=0.0):
+    """|alpha| allowed at radius r: a prompt track of transverse momentum pt_floor, asin(KPT r / 2 pT), plus the
+    turn a transverse impact parameter up to d0_max adds there, asin(d0_max / r) (alpha = asin(c kappa r - d0 / r))."""
+    r = np.asarray(r_cm, np.float64)
+    band = np.arcsin(np.clip(KPT_CMSSW * r / (2.0 * pt_floor), 0.0, 1.0))
+    return band + np.arcsin(np.clip(d0_max / np.maximum(r, 1e-6), 0.0, 1.0)) if d0_max else band
 
 
-def s1_statistic(a, sigma_cons, centre_abs, r_cm, pt_floor):
-    """S1-like single-cluster alpha test against the pT floor: (|alpha - c| - band(r, floor)) /
+def s1_statistic(a, sigma_cons, centre_abs, r_cm, pt_floor, d0_max=0.0):
+    """S1-like single-cluster alpha test against the pT floor (and |d0| <= d0_max): (|alpha - c| - band) /
     sigma (negative inside the band). `centre_abs` = the subtracted centre (centre_k x sigma_pub)."""
-    return (np.abs(wrap_2pi(np.asarray(a) - centre_abs)) - alpha_band(r_cm, pt_floor)) / sigma_cons
+    return (np.abs(wrap_2pi(np.asarray(a) - centre_abs)) - alpha_band(r_cm, pt_floor, d0_max)) / sigma_cons
 
 
 def beta_window(r_cm, z_cm, z_lumi=Z_LUMI_CM):

@@ -7,7 +7,9 @@ and its round-2 amendment B1), and the reports that go with it.
     python import_gate.py report   G_CENSUS OFF_CENSUS -o endtoend.json
 
 THE CONSUMERS: S1, S2a, S2z, S3 (window, role attach), S4w (window, role follow) and S6 (per build,
-pooled over n_meas). Their records (census_angles.Recorder) carry each correct candidate's statistic
+pooled over n_meas); with the census's IT discs (WP-Disc, format 36) also the disc consumers S1, S2a, S2z, S4w
+(s1d, s2ad, s2zd, s4wd), judged apart, with the offline disc known-bads (census_angles.DISC_KNOWN_BADS), each of
+which must turn its own disc consumers red (DISC_KNOWN_BAD_TARGETS). Their records (census_angles.Recorder) carry each correct candidate's statistic
 before its own cut; the calibration population is class T, born inside 2.5 cm, the TP above the
 stage's floor; every efficiency is particle-level (each TP weighted once per bin, angle_cuts).
 
@@ -31,6 +33,11 @@ stage's floor; every efficiency is particle-level (each TP weighted once per bin
           paired core resolution of correct tracks (d0, z0, 1/pT), on KG (PLAN.md sec. 1c rules).
   report  the end-to-end particle loss against the all-angles-off census, per build, pT bin and
           genealogy (prompt hard scatter, prompt pile-up, b/c daughter, born beyond IL1).
+  dfill   (WP-Disc D-fill) every declared disc entry of the test census fills, and each disc record table's
+          records per event lie within 20 % of the known-good's; its known-bads (one disc entry dropped, every
+          IT-disc entry dropped) must turn red.
+
+    python import_gate.py dfill    KG_CENSUS TEST_CENSUS -o dfill.json
 """
 from __future__ import annotations
 
@@ -56,12 +63,26 @@ N_REP = 250
 SEED = 20261014
 LEVEL = CA.LEVEL
 CONSUMERS = ("s1", "s2a", "s2z", "s3", "s4w", "s6")
+# THE DISC CONSUMERS (WP-Disc, census format 36; wpdisc/PLAN.md sec. 3 D-angle): judged apart from the barrel's,
+# each by the same (b-ii) and (b-iii) rules; S3 has no disc target in the menu
+DISC_CONSUMERS = ("s1d", "s2ad", "s2zd", "s4wd")
+# the offline disc known-bads (census_angles.DISC_KNOWN_BADS) and the disc consumers each must turn red
+DISC_KNOWN_BAD_TARGETS = {"facing_flipped": ("s2ad", "s2zd"), "barrel_frame": DISC_CONSUMERS,
+                          "barrel_form": ("s2ad", "s2zd"), "global_alpha": ("s2ad",)}
+# the record table and the cut-file section of each disc consumer
+DISC_TAB = {"s1d": "s1d", "s2ad": "paird", "s2zd": "paird", "s4wd": "wind"}
+DISC_BODY = {"s1d": "s1d", "s2ad": "s2ad", "s2zd": "s2zd", "s4wd": "wind"}
 MATERIAL_BIN_SHARE = 0.02
 POWER_MIN = 0.80
 # the known-bads that cannot show at the cuts-open calibration (amendment of 2026-10-15): a cut
 # run's S6 has n = 6 or 8 only and the pooled cut falls between those per-n thresholds; S3 / S4w
 # keep 99.5 % of what reaches them. Reported, not required red.
 KNOWN_BAD_REPORT_ONLY = ("s6_pooled_over_n", "s34_two_99_cuts")
+
+
+def s6_groups(T):
+    """S6's group per track record (census_angles.s6_group: the build, its disc tracks apart with the IT discs)."""
+    return T["s6g"] if "s6g" in T else T["build"]
 
 
 # ==========================================================================
@@ -84,10 +105,7 @@ def run_config(man):
 
 def model_of(man):
     am = man["config"]["angle_model"]
-    m = CA.Model(am["table_path"], am["k_alpha"], am["k_beta"], am["mode"])
-    if m.table_sha != am["table_sha256"]:
-        raise SystemExit("the table changed since the census ran")
-    return m
+    return CA.Model.from_identity(am)
 
 
 def n_events(man):
@@ -101,9 +119,9 @@ class Test:
     """The consumers' test records of one census, their statistics (computed once) and their bins
     under a cut body; pass() re-thresholds for any body (the bootstrap)."""
 
-    def __init__(self, R, man, cfg):
-        self.R, self.cfg = R, cfg
-        self.S = AC.statistics(R)
+    def __init__(self, R, man, cfg, model=None):
+        self.R, self.cfg, self.model = R, cfg, model
+        self.S = AC.statistics(R, model=model)
         self.ev = {}
         P = R["pair"]
         W = R["win"]
@@ -120,6 +138,20 @@ class Test:
                      "s4w": AC.class_c(W, "win") & (W["role"] == 1),
                      "s6": AC.class_c(T, "trk")}
         self.c2, self.n6 = AC.s6_parts(T, cfg["s5"], cfg["key"], cfg["sub6"])
+        # the disc consumers, when the census recorded them (its IT discs on)
+        self.disc = model is not None and all(k in R for k in ("s1d", "paird", "wind"))
+        self.consumers = CONSUMERS + (DISC_CONSUMERS if self.disc else ())
+        if self.disc:
+            for c, kind in DISC_TAB.items():
+                Td = R[kind]
+                self.tab[c] = Td
+                self.pop[c] = AC.population(Td, kind) & ((Td["role"] == 1) if c == "s4wd" else True)
+                self.cpop[c] = AC.class_c(Td, kind) & ((Td["role"] == 1) if c == "s4wd" else True)
+
+    def disc_stats(self, model):
+        """The disc consumers' statistics of this test's records under `model` (a known-bad's)."""
+        return {k: fn(self.R[k], model, *[model.k[a] for a in CA.ANGLES], model.mode)
+                for k, fn in (("s1d", AC.stat_s1d), ("paird", AC.stat_paird), ("wind", AC.stat_wind))}
 
     def bins(self, body):
         """Per consumer: the bin (unit) index of every record in `body` (-1 when none)."""
@@ -141,9 +173,21 @@ class Test:
         T = R["trk"]
         c = self.cfg
         u["s6"] = AC._unit_index([tuple(x) for x in body["s6"]["bins"]],
-                                 list(zip(T["build"].tolist(), [c["s5"]] * len(self.n6),
+                                 list(zip(s6_groups(T).tolist(), [c["s5"]] * len(self.n6),
                                           [c["key"]] * len(self.n6), [c["sub6"]] * len(self.n6),
                                           self.n6.tolist())))
+        if self.disc:
+            S1, P, W = R["s1d"], R["paird"], R["wind"]
+            u["s1d"] = AC._unit_index([tuple(x) for x in body["s1d"]["bins"]],
+                                      list(zip(S1["floor"].tolist(), S1["row"].tolist())))
+            u["s2ad"] = AC._unit_index([tuple(x) for x in body["s2ad"]["bins"]],
+                                       list(zip(P["floor"].tolist(), P["la"].tolist(), P["lb"].tolist())))
+            u["s2zd"] = np.where(np.isin(P["A_lcode"], M.IT_DISC_CODES), AC._unit_index(
+                [tuple(x) for x in body["s2zd"]["bins"]],
+                list(zip(P["floor"].tolist(), P["la"].tolist(), P["lb"].tolist(), P["A_row"].tolist()))), -1)
+            u["s4wd"] = AC._unit_index([tuple(x) for x in body["wind"]["bins"]],
+                                       list(zip(W["role"].tolist(), W["seed"].tolist(), W["lc"].tolist(),
+                                                W["ptbin"].tolist(), W["floor"].tolist())))
         return u
 
     def passes(self, body, units, win_thr=None):
@@ -166,24 +210,48 @@ class Test:
         thr = np.asarray(body["s6"]["thr"], np.float64)
         t = np.where(ui >= 0, thr[np.maximum(ui, 0)], np.inf)
         out["s6"] = (self.n6 == 0) | (self.c2 <= t)
+        if self.disc:
+            out.update(self.disc_passes(body, units))
         return out
+
+    def disc_passes(self, body, units, stats=None):
+        """The disc consumers' pass flags under `body`, from this test's disc statistics (or `stats`: a
+        known-bad's, disc_stats)."""
+        st = self.S if stats is None else stats
+        out = {}
+        for c, s in (("s1d", st["s1d"][0]), ("s2ad", st["paird"][0]), ("s2zd", st["paird"][1])):
+            ui = units[c]
+            thr = np.asarray(body[c]["thr"], np.float64)
+            out[c] = s <= np.where(ui >= 0, thr[np.maximum(ui, 0)], np.inf)
+        q = np.asarray(body["wind"]["thr"][self.cfg["win"]], np.float64)
+        ui = units["s4wd"]
+        qa = np.where(ui >= 0, q[np.maximum(ui, 0), 0], np.inf)
+        qb = np.where(ui >= 0, q[np.maximum(ui, 0), 1], np.inf)
+        pa, pb = st["wind"]
+        out["s4wd"] = (np.abs(pa) <= qa) & (np.abs(pb) <= qb)
+        return out
+
+
+def _body_key(c):
+    """The cut-file section of consumer c."""
+    return "win" if c in ("s3", "s4w") else DISC_BODY.get(c, c)
 
 
 def groups_of(body, c, units):
     """The bin each record is judged in: the cut's merged group (S2a its own pair; S6 per n)."""
     ui = units[c]
-    if c in ("s2a", "s6"):
+    if c in ("s2a", "s2ad", "s6"):
         return ui
-    key = "win" if c in ("s3", "s4w") else c
+    key = _body_key(c)
     g = np.asarray(body[key]["group"])
     return np.where(ui >= 0, g[np.maximum(ui, 0)], -1)
 
 
 def n_fit_of(body, c):
     """TPs the calibration quantile of each judged bin was fitted on (per group; S6: its n group)."""
-    key = "win" if c in ("s3", "s4w") else c
+    key = _body_key(c)
     n = np.asarray(body[key]["n_tp"], np.int64)
-    if c == "s2a":
+    if c in ("s2a", "s2ad"):
         return n
     g = np.asarray(body[key]["group"])
     tot = {}
@@ -197,7 +265,7 @@ def n_fit_of(body, c):
 def efficiencies(test, body, units, passed, ev_w=None):
     """Per consumer: per judged bin (m, n) particle-weighted, and pooled (S6 per build)."""
     out = {}
-    for c in CONSUMERS:
+    for c in test.consumers:
         T = test.tab[c]
         m = test.pop[c] & (units[c] >= 0)
         g = groups_of(body, c, units)[m]
@@ -211,8 +279,9 @@ def efficiencies(test, body, units, passed, ev_w=None):
             bins = {int(gi): (float(mi), float(ni)) for gi, mi, ni in zip(gu, mw, nw)}
         if c == "s6":
             pooled = {}
-            for b in np.unique(T["build"][m]):
-                mb = T["build"][m] == b
+            g6 = s6_groups(T)[m]
+            for b in np.unique(g6):
+                mb = g6 == b
                 pooled[str(b)] = 1.0 - float((w * fail)[mb].sum()) / max(float(w[mb].sum()), 1e-300)
         else:
             pooled = {"all": 1.0 - float((w * fail).sum()) / max(float(w.sum()), 1e-300)}
@@ -229,10 +298,12 @@ def bootstrap(cal_R, cal_man, model, test, body, cfg, n_cal, n_test, n_rep=N_REP
     independently and the cut file re-fitted on each CAL replica (its merges fixed). `extra`:
     {name: fn(body_b) -> (body_b', win_thr or None)} alternative cuts evaluated in the same replicas."""
     rng = np.random.default_rng(seed)
-    cal_stats = AC.statistics(cal_R)
+    cal_stats = AC.statistics(cal_R, model=model if test.disc else None, calibration=True)
     cells = sorted({(b[0], b[1], b[2], b[3]) for b in body["s6"]["bins"]
                     if (b[1], b[2], b[3]) == (cfg["s5"], cfg["key"], cfg["sub6"])})
     only = {"s1": None, "s2a": None, "s2z": None, "win": [cfg["win"]], "s6": cells}
+    if test.disc:
+        only.update({"s1d": None, "s2ad": None, "s2zd": None, "wind": [cfg["win"]]})
     units = test.bins(body)
     reps = []
     for r in range(n_rep):
@@ -261,8 +332,8 @@ def _with_merges(bb, body):
             for b, t in zip(v["bins"], v["thr"]):
                 thr[nom[tuple(b)]] = t
             out["s6"] = {**body["s6"], "thr": thr}
-        elif k == "win":
-            out["win"] = {**body["win"], "thr": {**body["win"]["thr"], **v["thr"]}}
+        elif k in ("win", "wind"):
+            out[k] = {**body[k], "thr": {**body[k]["thr"], **v["thr"]}}
         else:
             out[k] = {**body[k], "thr": v["thr"]}
     return out
@@ -289,11 +360,11 @@ def judge_one(name, eff, reps, body, report_only=(), t_n=None):
     """(b-ii) and (b-iii) of one set of cuts (`name` in the replicas) on one test census."""
     from scipy import stats as st
     out = {"b_iii": {}, "b_ii": {}}
-    nbins = sum(len(eff[c]["bins"]) for c in CONSUMERS)
+    nbins = sum(len(eff[c]["bins"]) for c in eff)
     t = t_n if t_n is not None else _t(nbins)
     out["t"] = t
     out["n_bins"] = nbins
-    for c in CONSUMERS:
+    for c in eff:
         for cell, e in eff[c]["pooled"].items():
             sd = sd_from(reps, name, c, cell)
             ub = (LEVEL - e) + 1.645 * sd
@@ -345,6 +416,12 @@ def material(res):
         if v["failing_share"] > MATERIAL_BIN_SHARE:
             mat.append(f"(b-ii) {c}: failing bins hold {100 * v['failing_share']:.1f} % of its particles")
     return mat
+
+
+def material_consumers(res):
+    """The consumers with a MATERIAL finding in a judgement (material())."""
+    out = {k.split("/")[0] for k, v in res["b_iii"].items() if not v["pass"] and not v["report_only"]}
+    return out | {c for c, v in res["b_ii"].items() if v["failing_share"] > MATERIAL_BIN_SHARE}
 
 
 def fails_gate(res):
@@ -413,7 +490,7 @@ def known_bad_bodies(cal_R, cal_man, model, body, cfg):
         for i, b in enumerate(body["s6"]["bins"]):
             if (b[1], b[2], b[3]) != (cfg["s5"], cfg["key"], cfg["sub6"]):
                 continue
-            m = pop & (T["build"] == b[0]) & (n > 0)
+            m = pop & (s6_groups(T) == b[0]) & (n > 0)
             w = AC.tp_weights(T["tp_key"][m], np.zeros(int(m.sum()), np.int64), wc[T["event"][m]])
             thr[i] = AC.wquantile(c2[m], w, LEVEL)        # one raw-chi2 cut for every n
         return {**bb, "s6": {**bb["s6"], "thr": thr}}, None
@@ -435,16 +512,22 @@ def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP
     # marked cross-format (WP-D0b's own runs: CAL at format 33, KG / G / G2 at 34)
     formats = TF.one_format({"calibration": cal_man, "test": t_man}, cross_format)
     doc = json.load(open(cuts))
-    body = {k: doc[k] for k in ("s1", "s2a", "s2z", "win", "s6")}
-    model = model_of(cal_man)
+    body = {k: doc[k] for k in ("s1", "s2a", "s2z", "win", "s6") + ("s1d", "s2ad", "s2zd", "wind") if k in doc}
+    # S1's displaced tolerance is the cut file's (its S1 thresholds were fitted for it; the calibration census's
+    # records hold the components, whatever tolerance it ran); the test census must have run it
+    d0max = float(doc["identity"].get("s1_d0max", 0.0))
+    if float(t_man["config"]["angle_model"].get("s1_d0max", 0.0)) != d0max:
+        raise SystemExit(f"the test census ran S1 at another displaced tolerance than the cut file's ({d0max} cm)")
+    model = model_of(cal_man).with_s1_d0max(d0max)
     cfg = run_config(t_man)
-    test = Test(t_R, t_man, cfg)
+    test = Test(t_R, t_man, cfg, model)
     units = test.bins(body)
     passed = test.passes(body, units)
     # the census's own cut decisions are the offline ones (records' `passed`)
     agree = {}
     for c, col in (("s1", "passed"), ("s2a", "passed_a"), ("s2z", "passed_z"), ("s3", "passed"),
-                   ("s6", "passed")):
+                   ("s6", "passed")) + ((("s1d", "passed"), ("s2ad", "passed_a"), ("s2zd", "passed_z"),
+                                         ("s4wd", "passed")) if test.disc else ()):
         T = test.tab[c]
         m = units[c] >= 0
         if c == "s3":
@@ -455,18 +538,33 @@ def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP
     for name, fn in kbs.items():
         b2, wthr = fn(body, np.ones(n_events(cal_man)))
         eff[name] = efficiencies(test, body, units, test.passes(b2, units, wthr))
-    eff["legacy_3sigma"] = efficiencies(test, body, units, legacy_passes(test))
+    # the legacy per-layer scales exist on the barrel consumers only: the disc consumers keep the nominal cuts
+    eff["legacy_3sigma"] = efficiencies(test, body, units, {**passed, **legacy_passes(test)})
+    # the disc known-bads (offline: the test records' disc statistics under each, the nominal cuts)
+    disc_kb = {}
+    if test.disc:
+        for kb in CA.DISC_KNOWN_BADS:
+            p = dict(passed)
+            p.update(test.disc_passes(body, units, test.disc_stats(model.with_disc_known_bad(kb))))
+            disc_kb[f"disc_{kb}"] = efficiencies(test, body, units, p)
+    eff.update(disc_kb)
     t0 = time.time()
     reps = bootstrap(cal_R, cal_man, model, test, body, cfg, n_events(cal_man), n_events(t_man),
                      n_rep, extra=kbs)
     for r in reps:
         r["legacy_3sigma"] = r["nominal"]          # sd of the legacy known-bad: the nominal's
+        for k in disc_kb:
+            r[k] = r["nominal"]                    # and of the disc known-bads
     res = {"cal": cal_d, "test": t_d, "formats": formats, "cuts": os.path.realpath(cuts), "config": cfg,
            "n_rep": n_rep, "bootstrap_s": time.time() - t0, "offline_vs_census_disagreements": agree}
     res["nominal"] = judge_one("nominal", eff["nominal"], reps, body, report_only)
     res["known_bad"] = {k: judge_one(k, eff[k], reps, body, report_only)
-                        for k in list(kbs) + ["legacy_3sigma"]}
+                        for k in list(kbs) + ["legacy_3sigma"] + list(disc_kb)}
     res["known_bad_red"] = {k: fails_gate(v) for k, v in res["known_bad"].items()}
+    # a disc known-bad must turn its own disc consumers red (DISC_KNOWN_BAD_TARGETS)
+    for k in disc_kb:
+        res["known_bad_red"][k] = bool(material_consumers(res["known_bad"][k]) & set(DISC_KNOWN_BAD_TARGETS[k[5:]]))
+    res["disc_consumers"] = list(DISC_CONSUMERS) if test.disc else []
     res["known_bad_report_only"] = list(KNOWN_BAD_REPORT_ONLY)
     res["genealogy"] = genealogy(test, body, units, passed)
     return res
@@ -475,16 +573,18 @@ def _gate_run(cal, test_c, cuts, cfg_from_test=True, report_only=(), n_rep=N_REP
 def genealogy(test, body, units, passed):
     """Per consumer, particle-level efficiency per genealogy class and for class C."""
     out = {}
-    for c in CONSUMERS:
+    for c in test.consumers:
         T = test.tab[c]
         base = (units[c] >= 0) & (T["tp_pt"] >= T["floor"])
-        if c in ("s3", "s4w"):
+        if c in ("s3", "s4w", "s4wd"):
             base &= T["role"] == (0 if c == "s3" else 1)
         row = {}
         for code, nm in CA.GEN_NAMES.items():
             m = base & (T["gen"] == code) & (test.pop[c] | (T["gen"] == CA.GEN_BEYOND))
             if c in ("s1", "s3", "s4w"):
                 m &= T["is_T"].astype(bool)
+            if c in ("s1d", "s4wd"):
+                m &= T["lis_T"].astype(bool)
             if m.sum():
                 w = AC.tp_weights(T["tp_key"][m], units[c][m])
                 row[nm] = {"eff": float((w * passed[c][m]).sum() / w.sum()), "n_tp": float(w.sum())}
@@ -696,6 +796,84 @@ def cmd_report(a):
     print(f"wrote {a.out}")
 
 
+# ==========================================================================
+# D-fill (WP-Disc plan sec. 3): every declared disc entry fills; the disc consumers' records per event within
+# DFILL_BAND of the known-good's
+# ==========================================================================
+DFILL_BAND = 0.20
+
+
+def dfill_stat(C, R):
+    """Per declared disc entry (a census entry with a disc layer) its fitted tracks and TPs found; per disc
+    consumer's record table its records per event."""
+    ent = {}
+    for i, sd in enumerate(C["seeds"]):
+        if bool(M.is_disc(sd.layers).any()):
+            c = C["counters"].get(i, {})
+            ent[f"{i}:{sd.tag}"] = {"fit": float(c.get("fit", 0.0)), "found": float(c.get("found_standalone", 0.0))}
+    nev = max(int(C["n_events"]), 1)
+    rec = {k: (len(R[k]["event"]) / nev if k in R else 0.0) for k in ("s1d", "paird", "wind")}
+    return {"entries": ent, "records_per_event": rec, "n_events": nev}
+
+
+def dfill_judge(test, kg):
+    """D-fill's rule: every declared disc entry of the test census has tracks and found TPs; each disc record
+    table's records per event lies within DFILL_BAND of the known-good's (and the known-good has some)."""
+    why = [f"entry {e} does not fill ({v['fit']:g} tracks, {v['found']:g} TPs found)"
+           for e, v in test["entries"].items() if v["fit"] <= 0 or v["found"] <= 0]
+    if not test["entries"]:
+        why.append("no declared disc entry")
+    for k, v in test["records_per_event"].items():
+        ref = kg["records_per_event"].get(k, 0.0)
+        if ref <= 0 or abs(v / ref - 1.0) > DFILL_BAND:
+            why.append(f"{k}: {v:.1f} records per event against the known-good's {ref:.1f}")
+    return not why, why
+
+
+def _dfill_drop(st, entries):
+    """D-fill's known-bads: the test census with `entries` (indices) emptied, their records gone with them (the
+    disc pair records are the IT disc seeds' own; a dropped seed's follow records are not separable and stay)."""
+    out = {"entries": {e: (dict(v, fit=0.0, found=0.0) if int(e.split(":")[0]) in entries else v)
+                       for e, v in st["entries"].items()},
+           "records_per_event": dict(st["records_per_event"]), "n_events": st["n_events"]}
+    it_disc = [e for e in st["entries"] if any(L in M.IT_DISC_CODES for L in _tag_layers(e))]
+    if it_disc and all(int(e.split(":")[0]) in entries for e in it_disc):
+        out["records_per_event"]["paird"] = 0.0
+    return out
+
+
+def _tag_layers(e):
+    return [CODE_OF[n] for n in e.split(":", 1)[1].split()[0].split("+")]
+
+
+CODE_OF = {v: k for k, v in TF.NAME.items()}
+
+
+def cmd_dfill(a):
+    out = {}
+    stats = {}
+    for lab, c in (("kg", a.kg), ("test", a.test)):
+        d = TF.census_dir(c)
+        stats[lab] = dfill_stat(TF.load(d, verbose=False), CA.load_records(d))
+    TF.one_format({"kg": json.load(open(os.path.join(TF.census_dir(a.kg), "manifest.json"))),
+                   "test": json.load(open(os.path.join(TF.census_dir(a.test), "manifest.json")))})
+    ok, why = dfill_judge(stats["test"], stats["kg"])
+    out = {"stage": "D-fill", "kg": a.kg, "test": a.test, "band": DFILL_BAND, **stats, "pass": ok, "why": why}
+    idx = [int(e.split(":")[0]) for e in stats["test"]["entries"]]
+    it_idx = [int(e.split(":")[0]) for e in stats["test"]["entries"]
+              if any(L in M.IT_DISC_CODES for L in _tag_layers(e))]
+    kbs = {"one_disc_entry_dropped": idx[:1], "it_disc_entries_dropped": it_idx}
+    out["known_bads"] = {}
+    for name, drop in kbs.items():
+        okb, whyb = dfill_judge(_dfill_drop(stats["test"], set(drop)), stats["kg"])
+        out["known_bads"][name] = {"dropped": drop, "red": not okb, "why": whyb}
+    json.dump(out, open(a.out, "w"), indent=1)
+    print(f"D-fill: {'pass' if ok else 'FAIL'}; {why}")
+    for name, v in out["known_bads"].items():
+        print(f"  known-bad {name}: {'red' if v['red'] else 'NOT RED'}")
+    print(f"wrote {a.out}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -718,12 +896,17 @@ def main():
     r.add_argument("g")
     r.add_argument("off")
     r.add_argument("-o", "--out", required=True)
+    df = sub.add_parser("dfill")
+    df.add_argument("kg")
+    df.add_argument("test")
+    df.add_argument("-o", "--out", required=True)
     for p in (t, j, r):
         p.add_argument("--cross-format", action="store_true",
                        help="mark the comparison cross-format: censuses of different formats are allowed "
                             "(their formats are reported); refused otherwise")
     a = ap.parse_args()
-    {"keys": cmd_keys, "tolerances": cmd_tolerances, "judge": cmd_judge, "report": cmd_report}[a.cmd](a)
+    {"keys": cmd_keys, "tolerances": cmd_tolerances, "judge": cmd_judge, "report": cmd_report,
+     "dfill": cmd_dfill}[a.cmd](a)
 
 
 if __name__ == "__main__":
