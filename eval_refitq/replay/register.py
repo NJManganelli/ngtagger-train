@@ -17,6 +17,8 @@
   c1b-j6    wpc.c1b.j6-gate            C1b J6 under A20: file 6, the gate (c1b/checks/checks_f06.json)
   c1b-betasym wpc.c1b.beta-symmetry    C1b after J5: the disc beta symmetry figure (c1b/beta_symmetry.json)
   scan-tree2-kg wpc.scan.tree2-e7-known-good  scan A4: E7 of tree2 on file 4 (scan/tree2/e7_f04.json)
+  scan-nonprompt wpc.scan.nonprompt-first-visit  scan B4: non-prompt first-visit calibration (scan/nonprompt_f04.json)
+  scan-go   wpc.scan.go-table          scan B3: the GO / NO-GO table, 10 files (job dir of the last scan job)
   scan-bpre wpc.scan.bpre-d0-pull       scan B-pre: d0 pull cores, disc-going vs barrel-only, file 4
   c1b-verdict wpc.c1b.verdict          C1b closed with the discs ON and its known limitations; updates the J2 / J3 / J6
                                        statuses (job dir of J6)
@@ -453,6 +455,55 @@ def scan_bpre(job_dir, overwrite):
           "values": vals, "bias": "file 4; prompt tracks only", "sources": [str(p)]}, job_dir, overwrite)
 
 
+def scan_nonprompt(job_dir, overwrite):
+    """Scan B4 step 3: the first-visit calibration of non-prompt particles on file 4 (wpc/scan/nonprompt_f04.json)."""
+    p = CM.OUT / "scan" / "nonprompt_f04.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    vals = [{"name": "known limitations", "value": "; ".join(Q["known_limitations"]) or "none"}]
+    vals += [{"name": f"{e['scen']} {e['region']} {e['class']} {e['axis']}", "value": f"{e['scale']:.3f} +- {e['sd']:.3f} "
+              f"(n {e['n']})"} for e in Q["bins"] if e["n"] >= 30]
+    _reg({"id": "wpc.scan.nonprompt-first-visit", "title": "WP-C scan B4: the first-visit innovation calibration of "
+                                                           "heavy-flavour daughters and particles born beyond IL1 (file 4)",
+          "status": "valid", "status_note": "failures are known limitations of the prompt-fitted seed model",
+          "values": vals, "bias": "file 4; INN-D with K = 1", "sources": [str(p)]}, job_dir, overwrite)
+
+
+def scan_go(job_dir, overwrite):
+    """Scan B3: the GO / NO-GO table for refit v3 on the 10 files (wpc/scan/go_table_01_..._10.json), with the dry run,
+    the fit-file and the out-of-fit tables as sources."""
+    out = CM.OUT / "scan"
+    p = out / "go_table_01_02_03_04_05_06_07_08_09_10.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    m = Q["main"]
+    vals = [{"name": "verdict (INN-D alphaBeta - PM alphaBeta, pre-declared)", "value": "GO" if m["go"] else "NO-GO"},
+            {"name": "reasons", "value": "; ".join(m["why"]) or "none"},
+            {"name": "MATERIAL", "value": "; ".join(Q["material"]) or "none"},
+            {"name": "controls (null NO-GO without gain; positive GO)",
+             "value": json.dumps({"null_go": Q["control_null"]["go"], "null_no_gain": Q["control_null"]["no_gain"],
+                                  "positive_go": Q["control_positive"]["go"]})}]
+    for scen, by in m["diffs"].items():
+        for cls, e in by.items():
+            vals.append({"name": f"{scen} {cls}: INN-D / PM-ab, difference +- sd",
+                         "value": json.dumps({k: [round(v["a"], 4), round(v["b"], 4), round(v["diff"], 4), round(v["sd"], 4)]
+                                              for k, v in e.items()})})
+    for c, e in Q["contrasts"].items():
+        vals.append({"name": f"{c} [{e['family']}]: attachment / H / P difference (AAAA, AAAI, IAAA x barrel-only, "
+                             "disc-going)",
+                     "value": json.dumps({s: {cls: [round(x[k]["diff"], 4) for k in ("att", "H", "P")] for cls, x in by.items()}
+                                          for s, by in e["diffs"].items()})})
+    srcs = [str(p)] + [str(out / f) for f in ("go_table_04.json", "go_table_01_02_03_05_07_08_09_10.json",
+                                              "go_table_04_06.json")]
+    _reg({"id": "wpc.scan.go-table", "title": "WP-C scan: the GO / NO-GO table for refit v3 (canon_v4, 10 files, tree2)",
+          "status": "in-sample", "status_note": ("NO-GO" if not m["go"] else "GO") + " by the pre-declared rule; in-sample "
+                                                "for INN-D's calibrations (accepted: placeholder angles); files 4 + 6 "
+                                                "agree", "values": vals,
+          "bias": "in-sample for INN-D's seed model, material scale and cuts; the HF IP-significance proxy also moves "
+                  "with the covariance calibration (PM's reported sigma(d0) is small)", "sources": srcs},
+         job_dir, overwrite)
+
+
 def c1b_betasym(job_dir, overwrite):
     """The read-only disc beta symmetry figure (after J5): the innermost populated key bins, k < 0 (J5's failing bin)
     and its mirror k > 0, per disc."""
@@ -482,7 +533,7 @@ def main(argv=None):
     ap.add_argument("what", choices=("tail", "cuts", "entry", "final", "loocheck", "windowcheck", "cutcheck", "c1b-il1",
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
                                      "c1b-j6", "c1b-verdict", "c1b-betasym", "scan-tree2-kg",
-                                     "scan-bpre"))
+                                     "scan-bpre", "scan-nonprompt", "scan-go"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
@@ -494,7 +545,8 @@ def main(argv=None):
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
          "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
          "c1b-j6": c1b_j6, "c1b-verdict": c1b_verdict, "c1b-betasym": c1b_betasym,
-         "scan-tree2-kg": scan_tree2_kg, "scan-bpre": scan_bpre}[a.what](a.job_dir, a.overwrite)
+         "scan-tree2-kg": scan_tree2_kg, "scan-bpre": scan_bpre, "scan-nonprompt": scan_nonprompt,
+         "scan-go": scan_go}[a.what](a.job_dir, a.overwrite)
     return 0
 
 
