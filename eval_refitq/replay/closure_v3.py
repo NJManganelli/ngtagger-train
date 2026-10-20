@@ -22,6 +22,9 @@ against the dump: |da_i| / sigma_i <= 1e-6 and |dC_ij| / sqrt(C_ii C_jj) <= 1e-6
 dump's double one. The nano stores rInv and phi0 in float32: one unit in the last place, about 6e-8 relative, which a
 refit's shrunken sigma(phi0) turns into up to ~5e-4 sigma. --inputs nano: the nano's values, reported to show that.
 
+--export DIR: also the closure arm's per-track output in the spec reference's format (DIR/<scen>_f<NN>.jsonl and
+_forced.jsonl), for the port's cross-check.
+
 --geometry f32 (the default): the module origins and frames rounded to float32, as CMSSW holds them (GeomDet surfaces).
 The geometry file's 10-digit text, read as double, moves a projection by up to 1e-8 cm (2.4e-5 of the cluster sigma),
 which shows up as up to 9e-6 sigma in the state. --geometry file: the file's values as read.
@@ -94,6 +97,12 @@ def run(a):
     frc = {"updates": 0, "max_da_pre": 0.0, "max_dC_pre": 0.0, "max_da_post": 0.0, "max_dC_post": 0.0,
            "max_da_final": 0.0, "max_dC_final": 0.0, "tracks": 0, "worst": []}
     unpaired = 0
+    fh = ff = None
+    if a.export:
+        import export_v3 as X
+        os.makedirs(a.export, exist_ok=True)
+        stem = os.path.join(a.export, os.path.basename(a.nano).replace(".root", ""))
+        fh, ff = open(stem + ".jsonl", "w"), open(stem + "_forced.jsonl", "w")
     for start, A in CM.iterate(a.nano, br, chunk=a.chunk):
         ctx = AR.prepare(A, geo)
         kpt = CM.pt_constant(ctx)
@@ -107,6 +116,8 @@ def run(a):
                     ctx["a"][t] = [r["ot"][p] for p in PARAMS]
         out = AR.run_arm(ctx, geo, cfg, scen, arm, tools)
         rec, seq = out["rec"], out["seq"]
+        if fh is not None:
+            X.write_chunk(fh, ff, A, ctx, geo, cfg, scen, arm, tools, out)
         # item 5: the replay's free-running choices against CMSSW's
         for t in range(ctx["ntrk"]):
             e = int(tev[t])
@@ -198,6 +209,9 @@ def run(a):
             worst = max(worst, da, dC)
             if worst > TOL:
                 frc["worst"].append({"track": list(keys[t]), "worst": worst})
+    if fh is not None:
+        fh.close()
+        ff.close()
     # verdicts
     eps = a.eps
     cap = NEAR_TIE_CAP * sel["crossings"]
@@ -238,6 +252,7 @@ def main(argv=None):
     ap.add_argument("--dump", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--chunk", type=int, default=10)
+    ap.add_argument("--export", default="", help="a directory for the per-track output in the reference format")
     ap.add_argument("--eps", type=float, default=3.9e-5, help="the frozen committing-score tolerance (dev events)")
     ap.add_argument("--inputs", choices=("dump", "nano"), default="dump", help="the OT helix: the dump's double or the "
                                                                               "nano's float32")

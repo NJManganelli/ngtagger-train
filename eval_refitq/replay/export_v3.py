@@ -147,6 +147,54 @@ def _num(x):
 VARIANTS = {"v3": ("reference", {}), "anglesoff": ("reference_anglesoff", {"use": frozenset()})}
 
 
+def write_chunk(fh, ff, A, ctx, geo, cfg, scen, arm, tools, out_):
+    """One chunk's per-track lines in the reference format: the free-running output out_ of `arm` (to fh) and the forced
+    mode on its own choices (to ff). Returns (refit tracks whose forced final helix equals the free-running one, refit
+    tracks)."""
+    o = np.arange(ctx["ntrk"])
+    seed_a, seed_C = AR.seed(ctx, cfg, arm, tools, o)
+    tev = ctx["tev"]
+    first = np.r_[0, np.cumsum(np.bincount(tev, minlength=len(A)))[:-1]]
+    path_, seq_ = AR.visit_plan(ctx, geo, cfg, scen, arm)
+    dg = AR.disc_going(path_)
+    rec = out_["rec"]
+    ok = np.flatnonzero(out_["refit"])
+    sel_ci = np.where(rec["acc"][ok], rec["ci"][ok], -1)
+    F = AR.refit_forced(arm, ctx, geo, cfg, tools, ok, seq_[ok], rec["mi"][ok], sel_ci, path_, CM.pt_constant(ctx),
+                        history=True)
+    fpos = {int(x): i for i, x in enumerate(ok)}
+    for t in o:
+        e = int(tev[t])
+        steps = []
+        for j in range(out_["seq"].shape[1]):
+            S = int(out_["seq"][t, j])
+            if S < 0:
+                continue
+            ci = int(rec["ci"][t, j]) if rec["acc"][t, j] else -1
+            steps.append({"step": j, "surface": S, "visited": bool(rec["visited"][t, j]),
+                          "accepted": bool(rec["acc"][t, j]),
+                          "detId": int(geo["detId"][rec["mi"][t, j]]) if rec["acc"][t, j] else None,
+                          "cluster": ci - int(ctx["coff"][e]) if ci >= 0 else -1,
+                          "ncand": int(rec["ncand"][t, j]), "chi2": [float(x) for x in rec["chi2"][t, j]],
+                          "kchoice": int(rec["kchoice"][t, j]), **_margins(rec, t, j),
+                          "fallback": bool(rec["wfallback"][t, j])})
+        row = {"run": int(A["run"][e]), "lumi": int(A["luminosityBlock"][e]), "event": int(A["event"][e]),
+               "track": int(t - first[e]), "refit": bool(out_["refit"][t]), "nacc": int(out_["nacc"][t]),
+               "disc_going": bool(dg[t]), "ot": dict(zip(PARAMS, map(float, ctx["a"][t]))),
+               "seed_C": seed_C[t].tolist(), "steps": steps,
+               "final": dict(zip(PARAMS, map(float, out_["a"][t]))), "final_C": out_["C"][t].tolist()}
+        fh.write(json.dumps(row) + "\n")
+        if t in fpos:
+            i = fpos[t]
+            acc = [j for j in range(F.hist["pa"].shape[1]) if rec["acc"][t, j]]
+            ff.write(json.dumps({"run": row["run"], "lumi": row["lumi"], "event": row["event"], "track": row["track"],
+                                 "steps": [{"step": j, "surface": int(out_["seq"][t, j]),
+                                            "aPre": F.hist["pa"][i, j].tolist(), "CPred": F.hist["pC"][i, j].tolist(),
+                                            "aPost": F.hist["fa"][i, j].tolist(), "CPost": F.hist["fC"][i, j].tolist()}
+                                           for j in acc]}) + "\n")
+    return int((F.a == out_["a"][ok]).all(1).sum()), len(ok)
+
+
 def export_reference(out, nev, variant="v3", scens=CM.SCENARIOS):
     geo = OP.load_geometry(CM.GEOMETRY)
     with open(SCALE_FILE) as fh:
@@ -168,54 +216,10 @@ def export_reference(out, nev, variant="v3", scens=CM.SCENARIOS):
             for start, A in CM.iterate(path, br, chunk=nev, nev=nev):
                 ctx = AR.prepare(A, geo)
                 out_ = AR.run_arm(ctx, geo, cfg, scen, arm, tools)
-                o = np.arange(ctx["ntrk"])
-                seed_a, seed_C = AR.seed(ctx, cfg, arm, tools, o)
-                tev = ctx["tev"]
-                first = np.r_[0, np.cumsum(np.bincount(tev, minlength=len(A)))[:-1]]
-                dg = AR.disc_going(AR.visit_plan(ctx, geo, cfg, scen, arm)[0])
-                rec = out_["rec"]
-                ok = np.flatnonzero(out_["refit"])
-                path_, seq_ = AR.visit_plan(ctx, geo, cfg, scen, arm)
-                sel_ci = np.where(rec["acc"][ok], rec["ci"][ok], -1)
-                F = AR.refit_forced(arm, ctx, geo, cfg, tools, ok, seq_[ok], rec["mi"][ok], sel_ci, path_,
-                                    CM.pt_constant(ctx), history=True)
-                n_same += int((F.a == out_["a"][ok]).all(1).sum())
-                n_forced += len(ok)
-                fpos = {int(x): i for i, x in enumerate(ok)}
-                for t in o:
-                    e = int(tev[t])
-                    steps = []
-                    for j in range(out_["seq"].shape[1]):
-                        S = int(out_["seq"][t, j])
-                        if S < 0:
-                            continue
-                        ci = int(rec["ci"][t, j]) if rec["acc"][t, j] else -1
-                        steps.append({"step": j, "surface": S, "visited": bool(rec["visited"][t, j]),
-                                      "accepted": bool(rec["acc"][t, j]),
-                                      "detId": int(geo["detId"][rec["mi"][t, j]]) if rec["acc"][t, j] else None,
-                                      "cluster": ci - int(ctx["coff"][e]) if ci >= 0 else -1,
-                                      "ncand": int(rec["ncand"][t, j]), "chi2": [float(x) for x in rec["chi2"][t, j]],
-                                      "kchoice": int(rec["kchoice"][t, j]), **_margins(rec, t, j),
-                                      "fallback": bool(rec["wfallback"][t, j])})
-                    row = {"run": int(A["run"][e]), "lumi": int(A["luminosityBlock"][e]), "event": int(A["event"][e]),
-                           "track": int(t - first[e]), "refit": bool(out_["refit"][t]), "nacc": int(out_["nacc"][t]),
-                           "disc_going": bool(dg[t]),
-                           "ot": dict(zip(PARAMS, map(float, ctx["a"][t]))),
-                           "seed_C": seed_C[t].tolist(), "steps": steps,
-                           "final": dict(zip(PARAMS, map(float, out_["a"][t]))), "final_C": out_["C"][t].tolist()}
-                    fh.write(json.dumps(row) + "\n")
-                    if t in fpos:
-                        i = fpos[t]
-                        acc = [j for j in range(F.hist["pa"].shape[1]) if rec["acc"][t, j]]
-                        ff.write(json.dumps({"run": row["run"], "lumi": row["lumi"], "event": row["event"],
-                                             "track": row["track"],
-                                             "steps": [{"step": j, "surface": int(out_["seq"][t, j]),
-                                                        "aPre": F.hist["pa"][i, j].tolist(),
-                                                        "CPred": F.hist["pC"][i, j].tolist(),
-                                                        "aPost": F.hist["fa"][i, j].tolist(),
-                                                        "CPost": F.hist["fC"][i, j].tolist()} for j in acc]}) + "\n")
-        print(f"{scen}: {ctx['ntrk']} tracks; forced final helix = free-running final helix for {n_same} of "
-              f"{n_forced}", flush=True)
+                n = write_chunk(fh, ff, A, ctx, geo, cfg, scen, arm, tools, out_)
+                n_same += n[0]
+                n_forced += n[1]
+        print(f"{scen}: forced final helix = free-running final helix for {n_same} of {n_forced}", flush=True)
         summary[scen] = {"forced_equals_free": n_same, "refit_tracks": n_forced}
     with open(d / "SUMMARY.json", "w") as fh:
         json.dump(summary, fh, indent=1)

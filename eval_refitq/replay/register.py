@@ -526,6 +526,13 @@ def scan_truthmod(job_dir, overwrite):
           "values": vals, "bias": "file 4 only; INN-D with K = tree2", "sources": [str(p)]}, job_dir, overwrite)
 
 
+V3_PAYLOAD_NOTE = {
+    "AAAA_f04_10ev": "the closure nano was built with the CMSSW payload's first byte version (99a036cd...); the values "
+                     "are identical to the second's (data/refit_v3/v1/HISTORY.md in the arm tree)",
+    **{f"{s}_f03_100ev": "built with the CMSSW payload's second byte version (skip_price.json sha256 07eec3fc...)"
+       for s in CM.SCENARIOS}}
+
+
 def v3_closure(job_dir, overwrite, ver=None):
     """The v3 CMSSW closure, the replay side, on the port's closure nano (wpc/closure/closure_<tag>.json; --ver = the
     tag, default AAAA_f04_10ev)."""
@@ -545,7 +552,8 @@ def v3_closure(job_dir, overwrite, ver=None):
              "value": f"{f['max_da_pre']:.3g} / {f['max_da_post']:.3g} / {f['max_da_final']:.3g}"},
             {"name": "forced: max |dC|/sqrt(CiiCjj) pre / post / final",
              "value": f"{f['max_dC_pre']:.3g} / {f['max_dC_post']:.3g} / {f['max_dC_final']:.3g}"},
-            {"name": "forced: tracks over 1e-6", "value": f"{f['n_over_tolerance']} of {f['tracks']}"}]
+            {"name": "forced: tracks over 1e-6", "value": f"{f['n_over_tolerance']} of {f['tracks']}"},
+            {"name": "CMSSW payload", "value": V3_PAYLOAD_NOTE.get(tag, "not recorded")}]
     ok = s["passes"] and f["passes"]
     _reg({"id": f"wpc.v3.closure-{tag.lower().replace('_', '-')}",
           "title": f"WP-C: the v3 CMSSW closure, replay side ({tag})", "status": "valid",
