@@ -8,6 +8,10 @@
           u / v pulls of own primaries with a clean history, INN-D, K = 1) for prompt tracks, heavy-flavour daughters
           (100 um < |d0_TP| < 2 mm) and particles born beyond IL1, per first-visited region (barrel, disc) and scenario;
           |s - 1| <= 0.1 + t1(N) sd, a failure being a known limitation. Output: WPC_OUT/scan/nonprompt_f04.json
+  truthmod  the port's question (2026-10-20) on file 4: INN-D (K = tree2) with the window's truth-target modules ON
+          (as the scan ran) and OFF, against PM alphaBeta: attachment, H and P per scenario and track class, their paired
+          differences, and how often an accepted (own) cluster came from a target-only module.
+          Output: WPC_OUT/scan/truthmod_f04.json
   run     the B1 arms (and the null control) on --files x every scenario, with K from Part A (--K); per OT track
           (axis 0 = the file's tracks) the figures of merit of B2. Output: WPC_OUT/scan/arms/<scen>_f<NN>.npz
   table   B3: per arm, scenario and track class (barrel-only, disc-going) the figures of merit and their paired
@@ -143,6 +147,56 @@ def nonprompt(a):
     with open(OUT / "nonprompt_f04.json", "w") as fh:
         json.dump(res, fh, indent=1, default=float)
     print(json.dumps({"known_limitations": limits}, indent=1))
+    return 0
+
+
+def truthmod(a):
+    with open(C1B / "scale" / "scalefit_summary.json") as fh:
+        scale = float(json.load(fh)["scale"])
+    geo = OP.load_geometry(CM.GEOMETRY)
+    cuts = CU.Cuts.load(str(C1B / "cuts" / "wpc_cuts_c1b_v1.json"))
+    nev = 100
+    reps = G.replicas(nev=nev, n=N_REP, seed=20261020)
+    res = {"plan": "v3cmssw/PLAN.md §3 ask; wpc/scan/REVIEW_PACKET.md", "scenarios": {}}
+    for scen in a.scen:
+        path = CM.input_path(scen, CM.PRED_FILE)
+        cfg = CM.producer_config(path)
+        tools = AR.Tools(cfg, cuts=cuts, disc=AR.DiscTools(disc_scale=scale))
+        arms = {"ON": AR.inn_disc(cfg, name="ON", K="tree2", truth_modules=True),
+                "OFF": AR.inn_disc(cfg, name="OFF", K="tree2"), "PM-ab": AR.pm(cfg, name="PM-ab")}
+        parts = {}
+        br = list(dict.fromkeys(AR.branches(path) + [f"GenJet_{c}" for c in ("pt", "eta", "phi", "hadronFlavour")]))
+        for start, A in CM.iterate(path, br, chunk=a.chunk, nev=a.nev):
+            ctx = AR.prepare(A, geo)
+            tr = FM.track_truth(ctx)
+            light = _light_jet_tracks(A, ctx)
+            dg = AR.disc_going(AR.visit_plan(ctx, geo, cfg, scen, AR.inn_disc(cfg))[0])
+            for name, arm in arms.items():
+                out = AR.run_arm(ctx, geo, cfg, scen, arm, tools)
+                d = track_foms(out, ctx, geo, tr, light)
+                rec, tp = out["rec"], ctx["trk_tp"]
+                ci = np.where(rec["acc"], rec["ci"], -1)
+                own = (ci >= 0) & (ctx["K"]["tp_global"][np.maximum(ci, 0)] == tp[:, None]) & (tp[:, None] >= 0)
+                d.update(ev=ctx["tev"] + start, dg=dg, n_tgt=(rec["acc"] & rec["tgt_only"]).sum(1),
+                         n_tgt_own=(own & rec["tgt_only"]).sum(1))
+                parts.setdefault(name, []).append(d)
+        D = {k: CM.concat(v) for k, v in parts.items()}
+        e = {}
+        for cls, sel in (("barrel_only", ~D["ON"]["dg"]), ("disc_going", D["ON"]["dg"])):
+            pe = {k: _per_event(D[k], sel, nev) for k in D}
+            on_ = D["ON"]
+            e[cls] = {"ON-PM": _diff(pe["ON"], pe["PM-ab"], reps), "OFF-PM": _diff(pe["OFF"], pe["PM-ab"], reps),
+                      "ON-OFF": _diff(pe["ON"], pe["OFF"], reps),
+                      "tgt_only_share_of_accepted": float(on_["n_tgt"][sel & on_["pop"]].sum()
+                                                          / max(on_["nacc"][sel & on_["pop"]].sum(), 1)),
+                      "tgt_only_share_of_own_accepted": float(on_["n_tgt_own"][sel & on_["pop"]].sum()
+                                                              / max(on_["nown"][sel & on_["pop"]].sum(), 1)),
+                      "tracks_with_tgt_only_hit": float((on_["n_tgt"][sel & on_["pop"]] > 0).mean())}
+        res["scenarios"][scen] = e
+        print(f"{scen} done", flush=True)
+    os.makedirs(OUT, exist_ok=True)
+    with open(OUT / "truthmod_f04.json", "w") as fh:
+        json.dump(res, fh, indent=1, default=float)
     return 0
 
 
@@ -453,7 +507,7 @@ def table(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("dcheck", "nonprompt", "run", "table"))
+    ap.add_argument("job", choices=("dcheck", "nonprompt", "truthmod", "run", "table"))
     ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     ap.add_argument("--files", type=int, nargs="+", default=[CM.PRED_FILE])
     ap.add_argument("--K", choices=("1", "tree2"), default="1")
@@ -462,7 +516,7 @@ def main(argv=None):
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--chunk", type=int, default=10)
     a = ap.parse_args(argv)
-    return {"dcheck": dcheck, "nonprompt": nonprompt, "run": run, "table": table}[a.job](a)
+    return {"dcheck": dcheck, "nonprompt": nonprompt, "truthmod": truthmod, "run": run, "table": table}[a.job](a)
 
 
 if __name__ == "__main__":

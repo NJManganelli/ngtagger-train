@@ -630,7 +630,7 @@ def prepare_chunk(A, geo):
             "ko": np.argsort(kkey, kind="stable")}
 
 
-def evaluate_surface(ctx, a, C, S, geo, nsig, use):
+def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True):
     """One surface S (1-4 IL, 11-14 ID), for the track STATE (a, C): candidate
     modules, the ellipse on each, and every cluster there labelled A-in / A-out /
     B1 / B2 / B3.
@@ -638,6 +638,11 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use):
     Returns the study rows and per-projection bookkeeping (what study 19
     records), plus the candidate-level arrays a refit needs to choose a cluster
     and update on it (key "cand"). None if no track reaches the surface.
+    truth_modules: also evaluate every module holding a cluster of the track's
+    majority-owner TP (study 19's target bookkeeping; TRUTH). A refit that must not
+    see truth passes False: the modules are then the geometric search only. The
+    candidates carry "tgt_only": the cluster's module entered through the truth
+    target alone (outside the geometric overlap).
     """
     K, tev, ntrk = ctx["K"], ctx["tev"], ctx["ntrk"]
     maj_tp, foreign_keys, cls = ctx["maj_tp"], ctx["foreign_keys"], ctx["cls"]
@@ -679,10 +684,11 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use):
     order = np.argsort(tk, kind="stable")
     lo = np.searchsorted(tk[order], want, "left")
     hi = np.searchsorted(tk[order], want, "right")
-    nA = hi - lo
-    at = np.repeat(ti, nA)
-    am = kmi[tgt][order][np.repeat(lo, nA) + np.arange(nA.sum())
-                         - np.repeat(np.cumsum(nA) - nA, nA)]
+    nA = hi - lo                                      # target clusters per track (bookkeeping: a_exists)
+    nE = nA if truth_modules else np.zeros_like(nA)   # those whose modules are evaluated
+    at = np.repeat(ti, nE)
+    am = kmi[tgt][order][np.repeat(lo, nE) + np.arange(nE.sum())
+                         - np.repeat(np.cumsum(nE) - nE, nE)]
     pt_ = np.concatenate([cand_t, at])
     pm_ = np.concatenate([cand_m, am])
     pr_ = np.concatenate([cand_ratio, np.zeros(len(at))])
@@ -768,7 +774,7 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use):
     cand = {"t": t_of[cq], "ci": ci[cq], "pair": pq[cq], "cat": cat[cq], "inside": inside[cq],
             "cotA_pred": pj["cotA"][pq][cq], "cotB_pred": pj["cotB"][pq][cq],
             "isA": isA[cq], "du": du[cq], "dv": dv[cq], "dcA": dcA[cq], "dcB": dcB[cq],
-            "m2": m2[cq], "hasA": hasA[cq], "hasB": hasB[cq]}
+            "m2": m2[cq], "hasA": hasA[cq], "hasB": hasB[cq], "tgt_only": ~overlap[pq][cq]}
     return {"rows": rows_out, "proj": proj_out, "bound_ratio": bound_ratio,
             "ti": ti, "a_in_track": a_in, "cand": cand, "pj": pj, "pm": pm_, "pt": pt_}
 

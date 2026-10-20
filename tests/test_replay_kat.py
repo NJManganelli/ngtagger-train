@@ -533,6 +533,18 @@ def test_tree2_identity(data, monkeypatch):
     assert set(np.unique(t2["rec"]["kchoice"])) <= {-1, 0}
 
 
+def test_truth_modules_switch(data):
+    """The ellipse window's truth-target modules (port ask, 2026-10-20): with them the replay is the run it always was
+    (an accepted hit may come from a target-only module); without them no accepted hit is target-only, and every
+    difference between the two runs starts at a crossing where a target-only cluster was a candidate."""
+    cfg = data["cfg"]
+    on = run(data, AR.inn(cfg, name="truth-on", truth_modules=True))
+    off = run(data, AR.inn(cfg, name="truth-off"))
+    assert not off["rec"]["tgt_only"].any()
+    same = np.array_equal(on["rec"]["ci"], off["rec"]["ci"]) and np.array_equal(on["a"], off["a"])
+    assert same or on["rec"]["tgt_only"].any() or (on["rec"]["ncand"] != off["rec"]["ncand"]).any()
+
+
 def test_angle_steps(data):
     """Scan plan B1: angles at the first visited surface only share the all-angle arm's first-step choices and the
     no-angle arm's choices after a common first step; angles at later visits only share the no-angle arm's first-step

@@ -112,6 +112,10 @@ class Arm:
                                     # first visited surface only) | "later" (every visit but the first)
     angle_term: str = "gauss"       # scan plan B1: "gauss" | "t9" (the tail-robust term: each angle's sigma scaled by
                                     # sqrt(1 + z^2 / 9), z its residual over sigma, so its chi2 saturates at 9)
+    truth_modules: bool = False     # the ellipse window also searches the modules holding the track's majority-owner
+                                    # TP clusters (OP.evaluate_surface's study-19 target bookkeeping: TRUTH). False
+                                    # (v3, since 2026-10-20): the geometric search only. The entry gate, C1b and the
+                                    # 2026-10-19 scan ran with True
 
     @property
     def cov_model(self) -> str:
@@ -154,7 +158,7 @@ def orp_cal(cfg, **kw):
     """ORP's calibrated `innovation` arm (the E2 / E3 identity configuration: v3's binned seed deficits)."""
     ang = {"alphaBeta": ANGLE_NAMES, "alpha": ("alpha",)}[cfg["useAngles"]]
     return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False, seed_cov="calibrated",
-               use=use_set(("rank", "update"), ang, ("barrel",)), **kw)
+               use=use_set(("rank", "update"), ang, ("barrel",)), truth_modules=True, **kw)
 
 
 # ---------------------------------------------------------------- inputs ----
@@ -299,6 +303,7 @@ class State:
                     "chi2": np.zeros((n, ns, 4)), "gstat": np.full((n, ns), np.nan),
                     "ncand": np.zeros((n, ns), np.int16), "trunc": np.zeros((n, ns), bool),
                     "gated": np.zeros((n, ns), bool), "surface": np.full((n, ns), -1, np.int64),
+                    "tgt_only": np.zeros((n, ns), bool),       # the accepted cluster's module came from truth alone
                     "kchoice": np.full((n, ns), -1, np.int8)}      # tree2: the committed choice per visit step
 
     ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch", "dg", "pend", "s1", "P1", "j1")
@@ -628,11 +633,12 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
         ch0, cJ, cSz = h0[xi], J[xi], Sz[xi]
         cgr = gr[xi] if gr is not None else None
         S_rank = cSz
+        tgo = np.zeros(len(ci), bool)                              # the producer's box: geometry only
     else:
         on = np.zeros(len(st.o), bool)
         on[t] = True
         nsig = {"nsig": arm.nsig, "gate99": WINDOW_SEARCH_NSIG}[arm.window_cut]
-        ev = OP.evaluate_surface(_vctx(ctx, st.o), st.a, st.C, S, geo, nsig, on)
+        ev = OP.evaluate_surface(_vctx(ctx, st.o), st.a, st.C, S, geo, nsig, on, truth_modules=arm.truth_modules)
         if ev is None:
             return None
         c = ev["cand"]
@@ -641,6 +647,7 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
         p = c["pair"][keep]
         tt = c["t"][keep]
         ci = c["ci"][keep]
+        tgo = c["tgt_only"][keep]
         cmi = ev["pm"][p]
         ch0 = np.stack([pj["u"][p], pj["v"][p], pj["cotA"][p], pj["cotB"][p]], 1)
         cJ = pj["J"][p]
@@ -651,7 +658,7 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
                                      cut_surface(arm, st, tt, geo["surface"][cmi]), np.full(len(ci), j == 0))
             if not w.any():
                 return None
-            p, tt, ci, cmi, ch0, cJ, cSz = p[w], tt[w], ci[w], cmi[w], ch0[w], cJ[w], cSz[w]
+            p, tt, ci, cmi, ch0, cJ, cSz, tgo = p[w], tt[w], ci[w], cmi[w], ch0[w], cJ[w], cSz[w], tgo[w]
         S_rank = pj["S"][p]                                       # ORP.rank uses the unguarded S
         cgr = None
         # crossings = the tracks with at least one in-ellipse candidate (one record per track)
@@ -682,7 +689,8 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
     ncand = np.bincount(xi[keep], minlength=len(t))
     return {"t": t, "mi": mi, "trunc": trunc, "ncand": ncand}, \
            {"x": xi[keep], "ci": ci[keep], "mi": cmi[keep], "h0": ch0[keep], "J": cJ[keep], "Sz": cSz[keep],
-            "gr": (cgr[keep] if cgr is not None else None), "val": val[keep], "order": order[keep]}
+            "gr": (cgr[keep] if cgr is not None else None), "val": val[keep], "order": order[keep],
+            "tgt_only": tgo[keep]}
 
 
 def _ranked(cands, nx):
@@ -722,6 +730,7 @@ def _choose_apply(arm, st, j, X, cands, pick, ctx, geo, tools, path, S, kpt):
         ok &= (np.abs(h0[:, 2]) <= ORP.PRED_ANGLE_MAX_ABS) & (np.abs(h0[:, 3]) <= ORP.PRED_ANGLE_MAX_ABS)
     _apply(arm, st, j, t[ok], mi[ok], ci[ok], h0[ok], J[ok], (gr[ok] if gr is not None else None),
            ctx, geo, tools, path, S)
+    st.rec["tgt_only"][t[ok], j] = cands["tgt_only"][k][ok]
 
 
 def arm_at_step(arm, j):
