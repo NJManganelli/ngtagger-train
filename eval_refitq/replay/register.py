@@ -19,6 +19,8 @@
   scan-tree2-kg wpc.scan.tree2-e7-known-good  scan A4: E7 of tree2 on file 4 (scan/tree2/e7_f04.json)
   scan-nonprompt wpc.scan.nonprompt-first-visit  scan B4: non-prompt first-visit calibration (scan/nonprompt_f04.json)
   scan-go   wpc.scan.go-table          scan B3: the GO / NO-GO table, 10 files (job dir of the last scan job)
+  v3-closure wpc.v3.closure-<tag>       the v3 CMSSW closure, replay side (closure/closure_<tag>.json; --ver the tag;
+                                        --job-dir: the port's closure job directory)
   scan-truthmod wpc.scan.truth-modules  the window's truth-target modules ON vs OFF, file 4 (scan/truthmod_f04.json)
   scan-bpre wpc.scan.bpre-d0-pull       scan B-pre: d0 pull cores, disc-going vs barrel-only, file 4
   c1b-verdict wpc.c1b.verdict          C1b closed with the discs ON and its known limitations; updates the J2 / J3 / J6
@@ -524,6 +526,32 @@ def scan_truthmod(job_dir, overwrite):
           "values": vals, "bias": "file 4 only; INN-D with K = tree2", "sources": [str(p)]}, job_dir, overwrite)
 
 
+def v3_closure(job_dir, overwrite, ver=None):
+    """The v3 CMSSW closure, the replay side, on the port's closure nano (wpc/closure/closure_<tag>.json; --ver = the
+    tag, default AAAA_f04_10ev)."""
+    tag = ver or "AAAA_f04_10ev"
+    p = CM.OUT / "closure" / f"closure_{tag}.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    s, f = Q["selection"], Q["forced"]
+    vals = [{"name": "inputs / geometry / kpt", "value": f"{Q['inputs']} / {Q['geometry']} / {Q['kpt']}"},
+            {"name": "paired tracks (unpaired)", "value": f"{Q['paired_tracks']} ({Q['unpaired_tracks']})"},
+            {"name": "selection: crossings agreeing", "value": f"{s['agreeing']} of {s['crossings']}"},
+            {"name": "selection: first disagreements beyond eps / near-ties (eps)",
+             "value": f"{s['hard']} / {s['near_ties']} ({s['eps']:.3g})"},
+            {"name": "forced: max |da|/sigma pre / post / final",
+             "value": f"{f['max_da_pre']:.3g} / {f['max_da_post']:.3g} / {f['max_da_final']:.3g}"},
+            {"name": "forced: max |dC|/sqrt(CiiCjj) pre / post / final",
+             "value": f"{f['max_dC_pre']:.3g} / {f['max_dC_post']:.3g} / {f['max_dC_final']:.3g}"},
+            {"name": "forced: tracks over 1e-6", "value": f"{f['n_over_tolerance']} of {f['tracks']}"}]
+    ok = s["passes"] and f["passes"]
+    _reg({"id": f"wpc.v3.closure-{tag.lower().replace('_', '-')}",
+          "title": f"WP-C: the v3 CMSSW closure, replay side ({tag})", "status": "valid",
+          "status_note": ("passes" if ok else "fails") + " v3cmssw/PLAN.md rev 1 §3 items 4-5", "values": vals,
+          "bias": "the closure arm reads the dump's double seed helix and the float32 module geometry (CMSSW's)",
+          "sources": [str(p), Q["nano"], Q["dump"]]}, job_dir, overwrite)
+
+
 def c1b_betasym(job_dir, overwrite):
     """The read-only disc beta symmetry figure (after J5): the innermost populated key bins, k < 0 (J5's failing bin)
     and its mirror k > 0, per disc."""
@@ -554,13 +582,13 @@ def main(argv=None):
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
                                      "c1b-j6", "c1b-verdict", "c1b-betasym", "scan-tree2-kg",
                                      "scan-bpre", "scan-nonprompt", "scan-go",
-                                     "scan-truthmod"))
+                                     "scan-truthmod", "v3-closure"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use)")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args(argv)
-    if a.what in ("cuts", "cutcheck"):
-        {"cuts": cuts, "cutcheck": cutcheck}[a.what](a.job_dir, a.overwrite, a.ver)
+    if a.what in ("cuts", "cutcheck", "v3-closure"):
+        {"cuts": cuts, "cutcheck": cutcheck, "v3-closure": v3_closure}[a.what](a.job_dir, a.overwrite, a.ver)
     else:
         {"tail": tail, "entry": entry, "final": final, "loocheck": loocheck, "windowcheck": windowcheck,
          "c1b-il1": c1b_il1, "c1b-j1": c1b_j1, "c1b-j2": c1b_j2, "c1b-j3": c1b_j3,
