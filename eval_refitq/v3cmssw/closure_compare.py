@@ -15,8 +15,10 @@ kchoice) only. Its margin is the smaller of the committing score margin (second-
 three scores, the skip price included) and the ranking margin at that step, from the CMSSW dump. A first
 disagreement with margin > eps fails; near-ties (margin <= eps) are capped at 0.1 % of the visited crossings per
 file. eps is 10 x the largest |score difference| between the two sides over agreeing commits (needs the replay's
-scores), with the floor 1e-6 (1 + |score|); --eps freezes it. Reported: every first disagreement with its margin,
-surface, visit step and kchoice; agreement fractions; the final-state agreement on agreeing tracks.
+scores), with the floor 1e-6 (1 + |score|); --eps freezes it. With eps frozen, the agreeing crossings whose committing
+scores differ by more than eps are capped at the same 0.1 % (the re-aim for a mis-keyed skip price, which seldom
+changes a choice). Reported: every first disagreement with its margin, surface, visit step and kchoice; agreement
+fractions; the final-state agreement on agreeing tracks.
 
 forced (item 4): per accepted step, |a_cmssw - a_replay|_i / sigma_i <= 1e-6 (sigma from the CMSSW covariance at
 the same point) for the state before (aPre) and after (aPost) the update, and |dC_ij| / sqrt(C_ii C_jj) <= 1e-6 for
@@ -74,6 +76,7 @@ def select(a):
     missing = [k for k in keys if k not in C or k not in R]
     nvis = sum(len(visited_steps(C[k])) for k in keys if k in C)
     dscore = 0.0
+    dscores = []
     firsts, agree_tracks = [], 0
     final_dev = 0.0
     for k in keys:
@@ -87,9 +90,10 @@ def select(a):
                 bad = (j, sc, sr)
                 break
             if sc.get("scores") and sr.get("scores"):
-                for x, y in zip(sc["scores"], sr["scores"]):
-                    if x is not None and y is not None and math.isfinite(x) and math.isfinite(y):
-                        dscore = max(dscore, abs(x - y))
+                ds = max((abs(x - y) for x, y in zip(sc["scores"], sr["scores"])
+                          if x is not None and y is not None and math.isfinite(x) and math.isfinite(y)), default=0.0)
+                dscore = max(dscore, ds)
+                dscores.append(ds)
         if bad is None:
             agree_tracks += 1
             fc, fr, Cc = C[k]["final"], R[k]["final"], C[k]["final_C"]
@@ -104,6 +108,7 @@ def select(a):
                        "kchoice": None if sc is None else sc.get("kchoice"),
                        "margin": min(score_margin(sc), rank_margin(sc)) if sc is not None else math.inf})
     eps = a.eps if a.eps is not None else 10.0 * dscore
+    score_over = sum(d > eps for d in dscores)
     near, fail = [], []
     for f in firsts:
         floor = 1e-6
@@ -111,8 +116,9 @@ def select(a):
     res = {"tracks": len(keys), "missing": len(missing), "visited_crossings": nvis, "agreeing_tracks": agree_tracks,
            "first_disagreements": len(firsts), "near_ties": len(near), "failing": len(fail),
            "eps": eps, "max_dscore_agreeing": dscore, "near_tie_cap": NEAR_TIE_CAP * nvis,
-           "max_final_dev_sigma_on_agreeing": final_dev,
-           "verdict": "pass" if not fail and not missing and len(near) <= NEAR_TIE_CAP * nvis else "FAIL",
+           "max_final_dev_sigma_on_agreeing": final_dev, "agreeing_crossings_score_over_eps": score_over,
+           "verdict": "pass" if (not fail and not missing and len(near) <= NEAR_TIE_CAP * nvis
+                                 and score_over <= NEAR_TIE_CAP * nvis) else "FAIL",
            "list": firsts[:200]}
     return res
 

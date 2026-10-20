@@ -293,29 +293,55 @@ def orientation_reference(imp, rng):
 
 
 # ---------------------------------------------------------------- skip price
+def skip_level(cuts, dims, S, f):
+    """Which level of the cut file's fallback chain (cuts.Cuts._lookup) gives P: 0 "S|f", 1 "S", 2 "S-100|f",
+    3 "S-100", 4 "*" (the per-path counts of the closure)."""
+    tab = cuts.doc["cuts"][f"gate|{dims}|calibrated"]
+    chain = [f"{S}|{f}", f"{S}"] + ([f"{S - 100}|{f}", f"{S - 100}"] if S > 100 else [])
+    for lev, k in zip((0, 1, 2, 3), chain):
+        e = tab.get(k)
+        if e is not None and e["value"] is not None and e["n"] >= CU_MIN_N:
+            return lev
+    return 4
+
+
+CU_MIN_N = None   # set from the cuts module at export
+
+
 def export_skip_price(Cuts, cut_path):
     cuts = Cuts.load(cut_path)
-    table, ref = [], []
+    table, levels, ref = [], [], []
     for dims in DIMS:
         codes = []
+        lcodes = []
         for S in CUT_CODES:
-            firsts = []
+            firsts, lf = [], []
             for f in (0, 1):
                 v = float(cuts.chi2("gate", dims, "calibrated", np.array([S]), np.array([bool(f)]))[0])
+                lev = skip_level(cuts, dims, S, f)
                 firsts.append((f, v))
-                ref.append({"dims": dims, "code": S, "first": f, "value": v})
+                lf.append((f, float(lev)))
+                ref.append({"dims": dims, "code": S, "first": f, "value": v, "level": lev})
             codes.append((S, category("first", firsts)))
+            lcodes.append((S, category("first", lf)))
         star = float(cuts.doc["cuts"][f"gate|{dims}|calibrated"]["*"]["value"])
         codes.append((0, category("first", [(0, star), (1, star)])))   # code 0: the table's "*" value (a known-bad)
-        ref += [{"dims": dims, "code": 0, "first": f, "value": star} for f in (0, 1)]
+        ref += [{"dims": dims, "code": 0, "first": f, "value": star, "level": 4} for f in (0, 1)]
         table.append((dims, category("code", codes)))
+        lcodes.append((0, category("first", [(0, 4.0), (1, 4.0)])))
+        levels.append((dims, category("code", lcodes)))
     corr = correction("skip_price", "the two-layer hit choice's skip price P: the 99 % gate cut "
                       "(gate|<dims>|calibrated of the cut file) per cut-surface code (+100: a barrel visit of a "
                       "disc-going track; 0: the table's '*' value, test-only) and first visit step; the cut "
                       "file's fallback chain resolved",
                       [{"name": "dims", "type": "string"}, {"name": "code", "type": "int"},
                        {"name": "first", "type": "int"}], category("dims", table))
-    return cset([corr], "SmartPixels refit v3: skip price"), ref
+    lev = correction("skip_price_level", "the fallback level that gives the skip price (diagnostic, the per-path "
+                     "counts): 0 surface|step, 1 surface, 2 barrel surface|step for a disc-going track's barrel "
+                     "visit, 3 that barrel surface, 4 the table's '*'",
+                     [{"name": "dims", "type": "string"}, {"name": "code", "type": "int"},
+                      {"name": "first", "type": "int"}], category("dims", levels))
+    return cset([corr, lev], "SmartPixels refit v3: skip price"), ref
 
 
 # ---------------------------------------------------------------- seed model
@@ -432,9 +458,11 @@ def self_check(out_dir, rref, aref, sref, oref):
             assert want["usable"] and _same(mm, want["m"]) and _same(ss, want["sigma"]), (e, ang, mm, ss)
     for e in oref:
         assert A["module_orientation"].evaluate(e["detId"]) == e["sign"], e
-    K = correctionlib.CorrectionSet.from_file(str(out_dir / "skip_price.json"))["skip_price"]
+    KS = correctionlib.CorrectionSet.from_file(str(out_dir / "skip_price.json"))
+    K, KL = KS["skip_price"], KS["skip_price_level"]
     for e in sref:
         assert _same(K.evaluate(e["dims"], e["code"], e["first"]), e["value"]), e
+        assert KL.evaluate(e["dims"], e["code"], e["first"]) == e["level"], e
 
 
 def main():
@@ -450,6 +478,8 @@ def main():
     import angle_import as AI
     import arms as AR
     import cuts as CU
+    global CU_MIN_N
+    CU_MIN_N = CU.MIN_N
     import disc_angles as DA
     import refit_calibration_fit as RCF
     import seedmodel as SM
