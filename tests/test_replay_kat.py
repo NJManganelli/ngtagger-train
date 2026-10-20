@@ -533,6 +533,35 @@ def test_tree2_identity(data, monkeypatch):
     assert set(np.unique(t2["rec"]["kchoice"])) <= {-1, 0}
 
 
+def test_v3_known_bads_act(data):
+    """The port's named known-bads (v3cmssw/PLAN.md §3 item 7) each change v3's output on 5 events (selections or
+    parameters / covariance); one_sided_jacobian acts in the forced (arithmetic) mode, where the arm's Jacobian is used."""
+    import json
+    cfg = data["cfg"]
+    cuts = CU.Cuts.load(str(CM.OUT / "c1b" / "cuts" / "wpc_cuts_c1b_v1.json"))
+    with open(CM.OUT / "c1b" / "scale" / "scalefit_summary.json") as fh:
+        scale = float(json.load(fh)["scale"])
+
+    def go(arm, sc):
+        tools = AR.Tools(cfg, cuts=cuts, disc=AR.DiscTools(disc_scale=sc))
+        return AR.run_arm(data["ctx"], data["geo"], cfg, "AAAA", arm, tools), tools
+    ref, tools = go(AR.v3(cfg), scale)
+    for name in AR.V3_KNOWN_BADS:
+        arm, sc = AR.v3_known_bad(cfg, name)
+        if name == "one_sided_jacobian":
+            t = np.flatnonzero(ref["refit"])
+            ctx, geo = data["ctx"], data["geo"]
+            path, seq = AR.visit_plan(ctx, geo, cfg, "AAAA", arm)
+            ci = np.where(ref["rec"]["acc"][t], ref["rec"]["ci"][t], -1)
+            kpt = CM.pt_constant(ctx)
+            a = AR.refit_forced(AR.v3(cfg), ctx, geo, cfg, tools, t, seq[t], ref["rec"]["mi"][t], ci, path, kpt)
+            b = AR.refit_forced(arm, ctx, geo, cfg, tools, t, seq[t], ref["rec"]["mi"][t], ci, path, kpt)
+            assert not np.array_equal(a.a, b.a), name
+            continue
+        out, _ = go(arm, scale if sc is None else sc)
+        assert not (np.array_equal(out["rec"]["ci"], ref["rec"]["ci"]) and np.array_equal(out["C"], ref["C"])), name
+
+
 def test_truth_modules_switch(data):
     """The ellipse window's truth-target modules (port ask, 2026-10-20): with them the replay is the run it always was
     (an accepted hit may come from a target-only module); without them no accepted hit is target-only, and every

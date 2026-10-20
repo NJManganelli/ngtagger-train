@@ -112,6 +112,10 @@ class Arm:
                                     # first visited surface only) | "later" (every visit but the first)
     angle_term: str = "gauss"       # scan plan B1: "gauss" | "t9" (the tail-robust term: each angle's sigma scaled by
                                     # sqrt(1 + z^2 / 9), z its residual over sigma, so its chi2 saturates at 9)
+    skip_price: str = "bin"         # tree2's P: "bin" (the window's surface x visit-step bin) | "star" (the table's
+                                    # pooled value only: the port's known-bad)
+    disc_key: str = "local"         # the disc angle entry's key: "local" | "facing_mirrored" (SA.key_from_local, the key
+                                    # mirrored on one facing: the C1b / port known-bad)
     truth_modules: bool = False     # the ellipse window also searches the modules holding the track's majority-owner
                                     # TP clusters (OP.evaluate_surface's study-19 target bookkeeping: TRUTH). False
                                     # (v3, since 2026-10-20): the geometric search only. The entry gate, C1b and the
@@ -152,6 +156,32 @@ def inn_disc(cfg, **kw):
     base = dict(name="INN-D", discs=True, disc_model=True, use=use_set(("rank", "update"), ANGLE_NAMES, REGIONS))
     base.update(kw)
     return inn(cfg, **base)
+
+
+def v3(cfg, **kw):
+    """Refit v3 (the physicist's GO, 2026-10-20; v3cmssw/spec): INN-D with the two-layer hit choice, geometry-only
+    window modules."""
+    return inn_disc(cfg, **{"name": "v3", "K": "tree2", **kw})
+
+
+V3_KNOWN_BADS = {                   # the port's known-bads (v3cmssw/PLAN.md §3 item 7): name -> (arm switches, disc scale)
+    "disc_scale_1": ({}, 1.0),
+    "seed_model_off": ({"seed_cov": "reported"}, None),
+    "inner_material_by_radius": ({"inner_material_rule": "radius"}, None),
+    "one_sided_jacobian": ({"jac": "cmssw"}, None),
+    "k1_not_two_layer": ({"K": 1}, None),
+    "skip_price_star_only": ({"skip_price": "star"}, None),
+    "r_lookup_swapped": ({"rtable_swap": True}, None),
+    "barrel_centre_global_sign": ({"table_variant": "global_sign"}, None),
+    "disc_key_facing_mirrored": ({"disc_key": "facing_mirrored"}, None),
+    "window_3sigma": ({"nsig": 3.0}, None),
+}
+
+
+def v3_known_bad(cfg, name):
+    """(arm, disc scale or None for the fitted one) of a named port known-bad."""
+    kw, scale = V3_KNOWN_BADS[name]
+    return v3(cfg, name=f"v3-kb-{name}", **kw), scale
 
 
 def orp_cal(cfg, **kw):
@@ -328,7 +358,7 @@ def seed(ctx, cfg, arm, tools, o):
     a = ctx["a"][o].copy()
     C, _ = E.d0_floor(ctx["C"][o], cfg)
     if arm.seed_cov == "calibrated":
-        kpt = ORP.pt_constant(ctx["T"])
+        kpt = CM.pt_constant(ctx)
         C = ORP.seed_cov(tools.cal, C, a[:, 2], ctx["n_disk_stubs"][o], ctx["T"]["nStubs"][o],
                          kpt / np.maximum(np.abs(a[:, 0]), 1e-12))
     elif arm.seed_cov == "smooth":
@@ -394,7 +424,7 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
         for i, k in ((2, arm.k_alpha), (3, arm.k_beta)):
             sig[:, i] = np.where(disc, sig[:, i], SA.sigma_k(sig[:, i], k, arm.k_mode))
     if arm.disc_model:
-        _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig)
+        _disc_measurements(ctx, geo, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig)
     if arm.angle_term == "t9":
         for i, pred in ((2, cot_a_pred), (3, cot_b_pred)):
             sig[:, i] = sig[:, i] * tail_robust_scale((meas[:, i] - pred) / sig[:, i])
@@ -412,7 +442,7 @@ def tail_robust_scale(z, nu=T9_NU):
     return np.where(np.isfinite(z), np.sqrt(1.0 + z * z / nu), 1.0)
 
 
-def _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig):
+def _disc_measurements(ctx, geo, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig):
     """C1b (c1b/PLAN.md rev 4 §1 item 1), in place on the disc clusters: the cot-linear knob on the local columns and
     the disc rows (the barrel import refuses discs)."""
     import disc_angles as DA
@@ -422,7 +452,11 @@ def _disc_measurements(ctx, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub
     K, dk = ctx["K"], tools.disc
     cd = ci[d]
     T = SA.class_T(K["tpEmuClass"][cd])
-    rows = dk.imp.rows(surface[d], cot_a_pred[d], cot_b_pred[d]) if arm.ang_err == "table" else None
+    rows = None
+    if arm.ang_err == "table":
+        rows = dk.imp.rows(surface[d], cot_a_pred[d], cot_b_pred[d]) if arm.disc_key == "local" else \
+            dk.imp.rows_known_bad_key(surface[d], cot_a_pred[d], cot_b_pred[d],
+                                      np.sign(geo["ez"][ctx["K"]["mi"][cd]][:, 2]).astype(np.int8))
     for i, ang, k in ((2, "alpha", arm.k_alpha), (3, "beta", arm.k_beta)):
         raw, tp = SA.LOCAL_COLS[ang][0], SA.LOCAL_COLS[ang][1]
         m = DA.knob(K[raw][cd], K[tp][cd], k, T)
@@ -879,8 +913,9 @@ def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
     alive = ~np.isin(t, drop)
     h1, h2 = alive & (kb >= 0), alive & (kr >= 0)
     if h1.any():
+        surf = cut_surface(arm, st, t[h1], np.full(h1.sum(), S, np.int64))
         P = tools.cuts.chi2("gate", arm.dims_key("rank"), "calibrated",     # one skip price for every arm (A1)
-                            cut_surface(arm, st, t[h1], np.full(h1.sum(), S, np.int64)), np.full(h1.sum(), j == 0))
+                            surf if arm.skip_price == "bin" else np.full(h1.sum(), 0, np.int64), np.full(h1.sum(), j == 0))
         P2 = P[np.isin(t[h1], t[h2])]
         n0 = len(st.o)
         ru = st.take(t[h2])
@@ -915,7 +950,7 @@ def run_arm(ctx, geo, cfg, mask, arm, tools, tracks=None, own=False, loo=False):
     if tracks is None:
         tracks = np.trace(ctx["C"], axis1=1, axis2=2) > 0
     o = np.flatnonzero(tracks)
-    kpt = ORP.pt_constant(ctx["T"])
+    kpt = CM.pt_constant(ctx)
     path, seq = visit_plan(ctx, geo, cfg, mask, arm)
     a, C = seed(ctx, cfg, arm, tools, o)
     st = State(a, C, o.copy(), seq[o], dg=disc_going(path)[o] if arm.disc_model else None)

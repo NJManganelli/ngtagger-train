@@ -359,7 +359,7 @@ class SeedModel:
 
     def dC(self, ctx, a, o):
         tanl = a[:, 2]
-        kpt = ORP.pt_constant(ctx["T"])
+        kpt = CM.pt_constant(ctx)
         p = kpt / np.maximum(np.abs(a[:, 0]), 1e-12) * np.sqrt(1.0 + tanl ** 2)
         aeta = np.abs(np.arcsinh(tanl))
         n_ps = ctx["n_ps"][o] if self.seg["kind"] == "ps" else np.zeros(len(o), int)

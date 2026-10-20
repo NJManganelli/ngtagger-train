@@ -39,6 +39,21 @@ SP_TRACK = "L1TSmartPixelsTrack"
 CHUNK = 10                                    # events per chunk (ORP's study-20 default)
 
 
+KPT = os.environ.get("WPC_KPT", "")                # the v3 port's closure (v3cmssw/PLAN.md §3): "" = the chunk median of
+                                                    # pT |rInv| (ORP, as every run so far); "cmssw" = the producer's
+                                                    # float32 MagConstant x b_field (engine.kpt_value); or a number
+
+
+def pt_constant(ctx) -> float:
+    """kpt with pT = kpt / |rInv| for the replay arms, per KPT (WPC_KPT)."""
+    if not KPT:
+        return ORP.pt_constant(ctx["T"])
+    if KPT == "cmssw":
+        import engine as E
+        return E.kpt_value(ctx, "producer")
+    return float(KPT)
+
+
 def input_path(scen: str, f: int) -> Path:
     return CANON / f"spstudy_{scen}_f{f:02d}_100ev.root"
 

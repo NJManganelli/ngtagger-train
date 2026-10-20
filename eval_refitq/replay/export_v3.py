@@ -68,11 +68,6 @@ def _sha(p):
     return h.hexdigest()
 
 
-def v3_arm(cfg):
-    """The v3 arm: INN-D (C1b, discs ON) with the two-layer hit choice (scan plan A5)."""
-    return AR.inn_disc(cfg, name="v3", K="tree2")
-
-
 def export_payload(out):
     d = out / "payload"
     d.mkdir(parents=True, exist_ok=True)
@@ -99,7 +94,7 @@ def export_code(out):
 
 
 def export_config(out, cfg, scale, head):
-    arm = v3_arm(cfg)
+    arm = AR.v3(cfg)
     a = dataclasses.asdict(arm)
     a["use"] = sorted([list(x) for x in arm.use])
     cuts = CU.Cuts.load(str(PAYLOAD["wpc_cuts_c1b_v1.json"][0]))
@@ -111,6 +106,9 @@ def export_config(out, cfg, scale, head):
            "disc_material_scale": scale,
            "skip_price_table": {"file": "payload/wpc_cuts_c1b_v1.json", "key": key,
                                 "bins": cuts.doc["cuts"][key]},
+           "known_bads": {k: {"switches": kw, "disc_scale": sc} for k, (kw, sc) in AR.V3_KNOWN_BADS.items()},
+           "kpt": "pT = kpt / |rInv|; the reference uses the chunk median of pT |rInv| (0.0114256970); WPC_KPT=cmssw "
+                  "(the producer's float32 MagConstant x b_field) or a number overrides it",
            "producer_settings_kept": {k: cfg[k] for k in ("maxKFUpdates", "chi2UpdateGate", "predAngleMaxAbs",
                                                          "measAngleMaxAbs", "jacobianMaxAbs", "layerOrder", "minHits",
                                                          "otNPar")},
@@ -138,7 +136,7 @@ def export_reference(out, nev):
         path = CM.input_path(scen, CM.PRED_FILE)
         cfg = CM.producer_config(path)
         tools = AR.Tools(cfg, cuts=cuts, disc=AR.DiscTools(disc_scale=scale))
-        arm = v3_arm(cfg)
+        arm = AR.v3(cfg)
         br = list(dict.fromkeys(AR.branches(path) + ["run", "luminosityBlock", "event"]))
         with open(d / f"{scen}_f{CM.PRED_FILE:02d}.jsonl", "w") as fh:
             for start, A in CM.iterate(path, br, chunk=nev, nev=nev):
