@@ -1833,7 +1833,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
                 f"by a different version; rebuild it or check out the matching "
                 f"code.")
     hk = {"": "hits", "dr": "hits_dr", "m": "hits_merged", "s": "hits_seed", "sm": "hits_seed_merged",
-          "o": "track_stubs", "om": "track_stubs_merged"}
+          "o": "track_stubs", "om": "track_stubs_merged", "nc": "track_class_c"}
     for kind, name in hk.items():
         C[name] = {i: np.concatenate(v) for i, v in hts.get(kind, {}).items()}
     C["angles"] = {i: np.concatenate(v) for i, v in ags.items()}
