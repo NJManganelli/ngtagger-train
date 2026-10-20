@@ -8,7 +8,10 @@ Writes, under --out:
   payload/                the payload files, copied, and PROVENANCE.json (source path, sha256, size, registry ids)
   code/                   the reference implementation as committed (the replay modules and the helpers they import)
   reference/<scen>_f04.jsonl  the replay's per-track output on the first --nev events of canon_v4 file 4, per scenario:
-                          one OT track per line (axis 0 = the event's OT tracks, axis 1 = the event's clusters)
+                          one OT track per line (axis 0 = the event's OT tracks, axis 1 = the event's clusters), with
+                          per step the committing scores, the selection and rank margins and the window fallback
+  reference/<scen>_f04_forced.jsonl  the forced mode on those choices: per accepted step the state and covariance
+                          before (after Q) and after the update, in double
 The descriptions (README.md, ALGORITHMS.md) are written by hand beside them.
 """
 from __future__ import annotations
@@ -125,6 +128,20 @@ def export_config(out, cfg, scale, head):
         json.dump(doc, fh, indent=1, default=float)
 
 
+def _margins(rec, t, j):
+    """The near-tie inputs of one visit step: the committed window's scores (best, runner-up, skip; tree2), selMargin =
+    the second-lowest score minus the lowest, rankMargin = the runner-up's rank value minus the best's."""
+    sc = rec["kscores"][t, j]
+    fin = np.sort(sc[np.isfinite(sc)])
+    return {"scores": [_num(x) for x in sc] if np.isfinite(sc).any() else None,
+            "selMargin": float(fin[1] - fin[0]) if len(fin) >= 2 else None, "rankMargin": _num(rec["rmargin"][t, j])}
+
+
+def _num(x):
+    """A finite float, else None (JSON has no inf / NaN)."""
+    return float(x) if np.isfinite(x) else None
+
+
 def export_reference(out, nev):
     geo = OP.load_geometry(CM.GEOMETRY)
     with open(SCALE_FILE) as fh:
@@ -132,13 +149,16 @@ def export_reference(out, nev):
     cuts = CU.Cuts.load(str(PAYLOAD["wpc_cuts_c1b_v1.json"][0]))
     d = out / "reference"
     d.mkdir(parents=True, exist_ok=True)
+    summary = {}
     for scen in CM.SCENARIOS:
         path = CM.input_path(scen, CM.PRED_FILE)
         cfg = CM.producer_config(path)
         tools = AR.Tools(cfg, cuts=cuts, disc=AR.DiscTools(disc_scale=scale))
         arm = AR.v3(cfg)
         br = list(dict.fromkeys(AR.branches(path) + ["run", "luminosityBlock", "event"]))
-        with open(d / f"{scen}_f{CM.PRED_FILE:02d}.jsonl", "w") as fh:
+        n_same = n_forced = 0
+        with open(d / f"{scen}_f{CM.PRED_FILE:02d}.jsonl", "w") as fh, \
+                open(d / f"{scen}_f{CM.PRED_FILE:02d}_forced.jsonl", "w") as ff:
             for start, A in CM.iterate(path, br, chunk=nev, nev=nev):
                 ctx = AR.prepare(A, geo)
                 out_ = AR.run_arm(ctx, geo, cfg, scen, arm, tools)
@@ -148,6 +168,14 @@ def export_reference(out, nev):
                 first = np.r_[0, np.cumsum(np.bincount(tev, minlength=len(A)))[:-1]]
                 dg = AR.disc_going(AR.visit_plan(ctx, geo, cfg, scen, arm)[0])
                 rec = out_["rec"]
+                ok = np.flatnonzero(out_["refit"])
+                path_, seq_ = AR.visit_plan(ctx, geo, cfg, scen, arm)
+                sel_ci = np.where(rec["acc"][ok], rec["ci"][ok], -1)
+                F = AR.refit_forced(arm, ctx, geo, cfg, tools, ok, seq_[ok], rec["mi"][ok], sel_ci, path_,
+                                    CM.pt_constant(ctx), history=True)
+                n_same += int((F.a == out_["a"][ok]).all(1).sum())
+                n_forced += len(ok)
+                fpos = {int(x): i for i, x in enumerate(ok)}
                 for t in o:
                     e = int(tev[t])
                     steps = []
@@ -161,7 +189,8 @@ def export_reference(out, nev):
                                       "detId": int(geo["detId"][rec["mi"][t, j]]) if rec["acc"][t, j] else None,
                                       "cluster": ci - int(ctx["coff"][e]) if ci >= 0 else -1,
                                       "ncand": int(rec["ncand"][t, j]), "chi2": [float(x) for x in rec["chi2"][t, j]],
-                                      "kchoice": int(rec["kchoice"][t, j])})
+                                      "kchoice": int(rec["kchoice"][t, j]), **_margins(rec, t, j),
+                                      "fallback": bool(rec["wfallback"][t, j])})
                     row = {"run": int(A["run"][e]), "lumi": int(A["luminosityBlock"][e]), "event": int(A["event"][e]),
                            "track": int(t - first[e]), "refit": bool(out_["refit"][t]), "nacc": int(out_["nacc"][t]),
                            "disc_going": bool(dg[t]),
@@ -169,7 +198,21 @@ def export_reference(out, nev):
                            "seed_C": seed_C[t].tolist(), "steps": steps,
                            "final": dict(zip(PARAMS, map(float, out_["a"][t]))), "final_C": out_["C"][t].tolist()}
                     fh.write(json.dumps(row) + "\n")
-        print(f"{scen}: {ctx['ntrk']} tracks", flush=True)
+                    if t in fpos:
+                        i = fpos[t]
+                        acc = [j for j in range(F.hist["pa"].shape[1]) if rec["acc"][t, j]]
+                        ff.write(json.dumps({"run": row["run"], "lumi": row["lumi"], "event": row["event"],
+                                             "track": row["track"],
+                                             "steps": [{"step": j, "surface": int(out_["seq"][t, j]),
+                                                        "aPre": F.hist["pa"][i, j].tolist(),
+                                                        "CPred": F.hist["pC"][i, j].tolist(),
+                                                        "aPost": F.hist["fa"][i, j].tolist(),
+                                                        "CPost": F.hist["fC"][i, j].tolist()} for j in acc]}) + "\n")
+        print(f"{scen}: {ctx['ntrk']} tracks; forced final helix = free-running final helix for {n_same} of "
+              f"{n_forced}", flush=True)
+        summary[scen] = {"forced_equals_free": n_same, "refit_tracks": n_forced}
+    with open(d / "SUMMARY.json", "w") as fh:
+        json.dump(summary, fh, indent=1)
 
 
 def main(argv=None):

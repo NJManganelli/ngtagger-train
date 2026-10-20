@@ -562,6 +562,17 @@ def test_v3_known_bads_act(data):
         assert not (np.array_equal(out["rec"]["ci"], ref["rec"]["ci"]) and np.array_equal(out["C"], ref["C"])), name
 
 
+def test_window_fallback(data):
+    """The port's ask (2026-10-20): the ellipse window's nearest-module fallback, "all" (every module of the surface) vs
+    "chunk" (the batch's largest ellipse). On file 4 the nearest projection never fails (0 of 263,745 visits), so the
+    two rules agree and no visit is flagged."""
+    cfg = data["cfg"]
+    a = run(data, AR.inn(cfg, name="fb-all"))
+    b = run(data, AR.inn(cfg, name="fb-chunk", window_fallback="chunk"))
+    assert not a["rec"]["wfallback"].any()
+    assert np.array_equal(a["rec"]["ci"], b["rec"]["ci"]) and np.array_equal(a["a"], b["a"])
+
+
 def test_truth_modules_switch(data):
     """The ellipse window's truth-target modules (port ask, 2026-10-20): with them the replay is the run it always was
     (an accepted hit may come from a target-only module); without them no accepted hit is target-only, and every

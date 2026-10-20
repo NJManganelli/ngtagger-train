@@ -630,7 +630,7 @@ def prepare_chunk(A, geo):
             "ko": np.argsort(kkey, kind="stable")}
 
 
-def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True):
+def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True, fallback="chunk"):
     """One surface S (1-4 IL, 11-14 ID), for the track STATE (a, C): candidate
     modules, the ellipse on each, and every cluster there labelled A-in / A-out /
     B1 / B2 / B3.
@@ -643,6 +643,10 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True):
     see truth passes False: the modules are then the geometric search only. The
     candidates carry "tgt_only": the cluster's module entered through the truth
     target alone (outside the geometric overlap).
+    fallback: a track whose projection onto its nearest module fails gets
+    "chunk" the largest ellipse of the tracks in this call (study 19's rule: it
+    depends on the batch) or "all" every module of the surface (on the helix's
+    side for a disc). "fallback_t": those tracks (indices into a).
     """
     K, tev, ntrk = ctx["K"], ctx["tev"], ctx["ntrk"]
     maj_tp, foreign_keys, cls = ctx["maj_tp"], ctx["foreign_keys"], ctx["cls"]
@@ -666,12 +670,15 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True):
     p0 = project_with_cov(a[ti], C[ti], s0[ti], geo, m0)
     tr = np.nan_to_num(p0["S"][:, 0, 0]) + np.nan_to_num(p0["S"][:, 1, 1])
     r_ell = BOUND_SIGMA_MARGIN * nsig * np.sqrt(np.clip(tr, 0, None))
-    r_ell = np.where(p0["ok"], r_ell, np.nanmax(np.where(p0["ok"], r_ell, np.nan)) if p0["ok"].any() else 10.0)
+    if fallback == "all":
+        r_ell = np.where(p0["ok"], r_ell, np.inf)
+    else:
+        r_ell = np.where(p0["ok"], r_ell, np.nanmax(np.where(p0["ok"], r_ell, np.nan)) if p0["ok"].any() else 10.0)
     hdiag = np.hypot(geo["hw"][rows], geo["hl"][rows])
     tl2 = a[ti, 2] ** 2
     slack = BOUND_SLACK_CM * np.sqrt(1.0 + (1.0 / np.maximum(tl2, 1e-12) if disc else tl2))
     bound = (r_ell + slack)[:, None] + hdiag[None, :]
-    it_, im_ = np.nonzero(dist <= bound)
+    it_, im_ = np.nonzero(np.isfinite(dist) & (dist <= bound))
     cand_t, cand_m = ti[it_], rows[im_]
     cand_ratio = (dist / bound)[it_, im_]
     # target modules: every IT module on this surface holding a cluster of
@@ -776,7 +783,7 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True):
             "isA": isA[cq], "du": du[cq], "dv": dv[cq], "dcA": dcA[cq], "dcB": dcB[cq],
             "m2": m2[cq], "hasA": hasA[cq], "hasB": hasB[cq], "tgt_only": ~overlap[pq][cq]}
     return {"rows": rows_out, "proj": proj_out, "bound_ratio": bound_ratio,
-            "ti": ti, "a_in_track": a_in, "cand": cand, "pj": pj, "pm": pm_, "pt": pt_}
+            "ti": ti, "a_in_track": a_in, "cand": cand, "pj": pj, "pm": pm_, "pt": pt_, "fallback_t": ti[~p0["ok"]]}
 
 
 def process_chunk(A, geo, nsig=4.0, with_refit=False, refit=REFIT):

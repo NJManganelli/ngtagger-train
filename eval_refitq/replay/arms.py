@@ -116,6 +116,10 @@ class Arm:
                                     # pooled value only: the port's known-bad)
     disc_key: str = "local"         # the disc angle entry's key: "local" | "facing_mirrored" (SA.key_from_local, the key
                                     # mirrored on one facing: the C1b / port known-bad)
+    window_fallback: str = "all"    # the ellipse window when the projection onto the nearest module fails: "all" (every
+                                    # module of the surface, on the helix's side for a disc: v3, as the CMSSW port) |
+                                    # "chunk" (the largest ellipse of the chunk's tracks: batch-dependent; every run
+                                    # before 2026-10-20)
     truth_modules: bool = False     # the ellipse window also searches the modules holding the track's majority-owner
                                     # TP clusters (OP.evaluate_surface's study-19 target bookkeeping: TRUTH). False
                                     # (v3, since 2026-10-20): the geometric search only. The entry gate, C1b and the
@@ -188,7 +192,7 @@ def orp_cal(cfg, **kw):
     """ORP's calibrated `innovation` arm (the E2 / E3 identity configuration: v3's binned seed deficits)."""
     ang = {"alphaBeta": ANGLE_NAMES, "alpha": ("alpha",)}[cfg["useAngles"]]
     return inn(cfg, name=kw.pop("name", "ORP-cal"), ang_err="payload", inner_material=False, seed_cov="calibrated",
-               use=use_set(("rank", "update"), ang, ("barrel",)), truth_modules=True, **kw)
+               use=use_set(("rank", "update"), ang, ("barrel",)), truth_modules=True, window_fallback="chunk", **kw)
 
 
 # ---------------------------------------------------------------- inputs ----
@@ -334,6 +338,9 @@ class State:
                     "ncand": np.zeros((n, ns), np.int16), "trunc": np.zeros((n, ns), bool),
                     "gated": np.zeros((n, ns), bool), "surface": np.full((n, ns), -1, np.int64),
                     "tgt_only": np.zeros((n, ns), bool),       # the accepted cluster's module came from truth alone
+                    "wfallback": np.zeros((n, ns), bool),      # the nearest-module projection failed (window fallback)
+                    "kscores": np.full((n, ns, 3), np.nan),    # tree2: the committed window's scores (best, runner, skip)
+                    "rmargin": np.full((n, ns), np.nan),       # the rank margin: runner-up value - best value
                     "kchoice": np.full((n, ns), -1, np.int8)}      # tree2: the committed choice per visit step
 
     ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch", "dg", "pend", "s1", "P1", "j1")
@@ -672,9 +679,11 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
         on = np.zeros(len(st.o), bool)
         on[t] = True
         nsig = {"nsig": arm.nsig, "gate99": WINDOW_SEARCH_NSIG}[arm.window_cut]
-        ev = OP.evaluate_surface(_vctx(ctx, st.o), st.a, st.C, S, geo, nsig, on, truth_modules=arm.truth_modules)
+        ev = OP.evaluate_surface(_vctx(ctx, st.o), st.a, st.C, S, geo, nsig, on, truth_modules=arm.truth_modules,
+                                 fallback=arm.window_fallback)
         if ev is None:
             return None
+        st.rec["wfallback"][ev["fallback_t"], j] = True
         c = ev["cand"]
         keep = c["inside"]
         pj = ev["pj"]
@@ -868,9 +877,11 @@ def _tree2_commit(arm, st, idx, x2):
     if x2 is not None:
         X2 = np.full((len(ug), 3, 2), np.inf)
         X2[gi, c] = x2
-    win = np.argmin(tree2_scores(X1, X2, P, arm.k_score), 1)
+    sc = tree2_scores(X1, X2, P, arm.k_score)
+    win = np.argmin(sc, 1)
     keep = c == win[gi]
     st.rec["kchoice"][idx[keep], st.j1[idx[keep]]] = c[keep]
+    st.rec["kscores"][idx[keep], st.j1[idx[keep]]] = sc[gi[keep]]
     st.pend[idx] = False
     return keep
 
@@ -896,6 +907,8 @@ def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
         best, runner = _ranked(cands, len(X["t"]))
         pos = np.searchsorted(t, X["t"])
         kb[pos], kr[pos] = best, runner
+        two = runner >= 0
+        st.rec["rmargin"][X["t"][two], j] = cands["val"][runner[two]] - cands["val"][best[two]]
         for k_, x_ in ((kb, xb), (kr, xr)):
             m = k_ >= 0
             if m.any():
@@ -1118,7 +1131,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     if arm.inner_material:
         inner_material(arm, st, geo, tools, kpt)
     nacc = st.rec["acc"].sum(1)
-    fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan, "kchoice": -1}
+    fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan, "kchoice": -1, "kscores": np.nan, "rmargin": np.nan}
     out = {"a": ctx["a"].copy(), "C": ctx["C"].copy(), "nacc": np.zeros(ntrk, np.int64),
            "refit": np.zeros(ntrk, bool), "branch": np.full(ntrk, -1, np.int8),
            "rec": {k: np.full((ntrk,) + v.shape[1:], fill.get(k, 0), v.dtype) for k, v in st.rec.items()},
