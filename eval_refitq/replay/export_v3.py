@@ -12,6 +12,8 @@ Writes, under --out:
                           per step the committing scores, the selection and rank margins and the window fallback
   reference/<scen>_f04_forced.jsonl  the forced mode on those choices: per accepted step the state and covariance
                           before (after Q) and after the update, in double
+  --variant anglesoff --scen AAAA: only reference_anglesoff/, the same output for v3 with angles off everywhere
+                          (positions only; the skip price then reads the "xy" gate table), for the port's harness
 The descriptions (README.md, ALGORITHMS.md) are written by hand beside them.
 """
 from __future__ import annotations
@@ -142,19 +144,23 @@ def _num(x):
     return float(x) if np.isfinite(x) else None
 
 
-def export_reference(out, nev):
+VARIANTS = {"v3": ("reference", {}), "anglesoff": ("reference_anglesoff", {"use": frozenset()})}
+
+
+def export_reference(out, nev, variant="v3", scens=CM.SCENARIOS):
     geo = OP.load_geometry(CM.GEOMETRY)
     with open(SCALE_FILE) as fh:
         scale = float(json.load(fh)["scale"])
     cuts = CU.Cuts.load(str(PAYLOAD["wpc_cuts_c1b_v1.json"][0]))
-    d = out / "reference"
+    sub, kw = VARIANTS[variant]
+    d = out / sub
     d.mkdir(parents=True, exist_ok=True)
     summary = {}
-    for scen in CM.SCENARIOS:
+    for scen in scens:
         path = CM.input_path(scen, CM.PRED_FILE)
         cfg = CM.producer_config(path)
         tools = AR.Tools(cfg, cuts=cuts, disc=AR.DiscTools(disc_scale=scale))
-        arm = AR.v3(cfg)
+        arm = AR.v3(cfg, **kw)
         br = list(dict.fromkeys(AR.branches(path) + ["run", "luminosityBlock", "event"]))
         n_same = n_forced = 0
         with open(d / f"{scen}_f{CM.PRED_FILE:02d}.jsonl", "w") as fh, \
@@ -219,15 +225,21 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--out", required=True)
     ap.add_argument("--nev", type=int, default=10)
+    ap.add_argument("--variant", choices=tuple(VARIANTS), default="v3",
+                    help="v3: the full spec export; anglesoff: only reference_anglesoff/ (positions only)")
+    ap.add_argument("--scen", nargs="+", default=list(CM.SCENARIOS))
     a = ap.parse_args(argv)
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    if a.variant != "v3":
+        export_reference(out, a.nev, a.variant, a.scen)
+        return 0
     with open(SCALE_FILE) as fh:
         scale = float(json.load(fh)["scale"])
     export_payload(out)
     head = export_code(out)
     export_config(out, CM.producer_config(CM.input_path("AAAA", CM.PRED_FILE)), scale, head)
-    export_reference(out, a.nev)
+    export_reference(out, a.nev, scens=a.scen)
     return 0
 
 

@@ -8,9 +8,10 @@ their index along axis 0 of a file.
 
 Item 5, selection (free-running): per visited step, the accepted flag and the cluster (detId, index along axis 1 of the
 event's cluster collection). Each track is judged at its first disagreement. Its margin is the committing two-layer
-score margin (selMargin) of the window that disagrees. eps = 10 x the largest |score difference| over the agreeing
-commits, with a floor of 1e-6 (1 + |score|). A first disagreement with margin > eps fails; near-ties are capped at
-0.1 % of crossings. Also reported: the crossing agreement and, on tracks with identical choices, the final state and
+score margin (selMargin) of the window that disagrees. eps is frozen (--eps, 3.9e-5 from the dev events), with a
+floor of 1e-6 (1 + |score|). A first disagreement with margin > eps fails; near-ties are capped at 0.1 % of crossings.
+Score check: on tracks whose choices all agree, the crossings whose committing scores differ by more than eps are also
+capped at 0.1 % of crossings. Also reported: the crossing agreement and, on tracks with identical choices, the final state and
 covariance (|da_i| / sigma_i, |dC_ij| / sqrt(C_ii C_jj)).
 
 Item 4, arithmetic (forced, double): the replay's forced mode on CMSSW's chosen clusters. At every accepted update, the
@@ -88,7 +89,7 @@ def run(a):
             r = json.loads(line)
             ref[(r["run"], r["lumi"], r["event"], r["track"])] = r
     br = list(dict.fromkeys(AR.branches(a.nano) + ["run", "luminosityBlock", "event"]))
-    sel = {"crossings": 0, "agree": 0, "tracks": 0, "tracks_identical": 0, "first": [], "dscore": [],
+    sel = {"crossings": 0, "agree": 0, "tracks": 0, "tracks_identical": 0, "first": [], "dscore": [], "score_over": 0,
            "final_da": [], "final_dC": []}
     frc = {"updates": 0, "max_da_pre": 0.0, "max_dC_pre": 0.0, "max_da_post": 0.0, "max_dC_post": 0.0,
            "max_da_final": 0.0, "max_dC_final": 0.0, "tracks": 0, "worst": []}
@@ -117,6 +118,7 @@ def run(a):
             sel["tracks"] += 1
             cs = {s["step"]: s for s in r["steps"]}
             first_bad = None
+            dsc = []
             for j in range(seq.shape[1]):
                 if seq[t, j] < 0:
                     continue
@@ -136,7 +138,7 @@ def run(a):
                     cmssw = np.array([np.nan if x is None else x for x in c["scores"]], float)
                     m = np.isfinite(cmssw) & np.isfinite(ks)
                     if m.any():
-                        sel["dscore"].append((float(np.max(np.abs(cmssw[m] - ks[m]))), float(np.max(np.abs(cmssw[m])))))
+                        dsc.append(float(np.max(np.abs(cmssw[m] - ks[m]))))
                 if not same and first_bad is None:
                     fin = np.sort(ks[np.isfinite(ks)])
                     rep_margin = float(fin[1] - fin[0]) if len(fin) >= 2 else None
@@ -152,6 +154,8 @@ def run(a):
                 sel["first"].append(first_bad)
             else:
                 sel["tracks_identical"] += 1
+                sel["dscore"] += dsc
+                sel["score_over"] += sum(x > a.eps for x in dsc)
                 if r["refit"]:
                     sel["final_da"].append(_rel([out["a"][t][i] for i in range(5)], [r["final"][p] for p in PARAMS],
                                                 r["final_C"]))
@@ -195,8 +199,8 @@ def run(a):
             if worst > TOL:
                 frc["worst"].append({"track": list(keys[t]), "worst": worst})
     # verdicts
-    eps_d = max((d for d, _ in sel["dscore"]), default=0.0)
-    eps = 10 * eps_d
+    eps = a.eps
+    cap = NEAR_TIE_CAP * sel["crossings"]
     for f in sel["first"]:
         f["eps"] = max(eps, 1e-6 * (1 + abs(f["score"] or 0.0)))
         f["near_tie"] = f["margin"] is not None and f["margin"] <= f["eps"]
@@ -208,12 +212,14 @@ def run(a):
            "unpaired_tracks": unpaired, "paired_tracks": sel["tracks"],
            "selection": {"crossings": sel["crossings"], "agreeing": sel["agree"],
                          "agreement": sel["agree"] / max(sel["crossings"], 1),
-                         "tracks_identical": sel["tracks_identical"], "eps": eps, "max_dscore_agreeing": eps_d,
+                         "tracks_identical": sel["tracks_identical"], "eps": eps,
+                         "max_dscore_agreeing": max(sel["dscore"], default=0.0),
+                         "score_checked_crossings": len(sel["dscore"]), "score_over_eps": sel["score_over"],
                          "first_disagreements": sel["first"], "hard": len(hard), "near_ties": len(near),
-                         "near_tie_cap": NEAR_TIE_CAP * sel["crossings"],
+                         "cap": cap,
                          "final_max_da": max(sel["final_da"], default=0.0),
                          "final_max_dC": max(sel["final_dC"], default=0.0),
-                         "passes": not hard and len(near) <= NEAR_TIE_CAP * sel["crossings"]
+                         "passes": not hard and len(near) <= cap and sel["score_over"] <= cap
                                    and sel["agree"] / max(sel["crossings"], 1) >= 0.999},
            "forced": {**{k: v for k, v in frc.items() if k != "worst"}, "over_tolerance": frc["worst"][:50],
                       "n_over_tolerance": len(frc["worst"]), "tolerance": TOL,
@@ -232,6 +238,7 @@ def main(argv=None):
     ap.add_argument("--dump", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--chunk", type=int, default=10)
+    ap.add_argument("--eps", type=float, default=3.9e-5, help="the frozen committing-score tolerance (dev events)")
     ap.add_argument("--inputs", choices=("dump", "nano"), default="dump", help="the OT helix: the dump's double or the "
                                                                               "nano's float32")
     ap.add_argument("--geometry", choices=("f32", "file"), default="f32", help="module origins and frames: float32 "
