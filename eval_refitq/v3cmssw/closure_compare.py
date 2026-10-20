@@ -6,8 +6,9 @@ events (v3cmssw/PLAN.md rev 1 §3, items 4 and 5).
 
 Both inputs are JSON lines, one per OT track, in the spec's reference schema (run, lumi, event, track, refit, nacc,
 disc_going, steps [surface, visited, accepted, detId, cluster, ncand, chi2, kchoice, ...], final, final_C); the
-CMSSW dump adds per step scores (the committing two-layer scores of the window opened there), selMargin (runner-up
-minus best ranking value) and, per accepted step, aPre / CPred / aPost / CPost.
+CMSSW dump and the replay's re-export (a710b04) add per step scores (the committing two-layer scores of the window
+opened there), selMargin (their second-lowest minus lowest), rankMargin (runner-up minus best ranking value) and
+fallback; the forced files give, per accepted step, aPre / CPred / aPost / CPost.
 
 select (item 5, free-running): each track is judged at its FIRST disagreement in (visited, accepted, cluster,
 kchoice) only. Its margin is the smaller of the committing score margin (second-lowest minus lowest of the window's
@@ -52,6 +53,9 @@ def step_key(s):
 
 
 def score_margin(s):
+    m = s.get("selMargin")
+    if m is not None:
+        return m if math.isfinite(m) else math.inf
     sc = [x for x in (s.get("scores") or []) if x is not None and math.isfinite(x)]
     if len(sc) < 2:
         return math.inf
@@ -60,7 +64,7 @@ def score_margin(s):
 
 
 def rank_margin(s):
-    m = s.get("selMargin")
+    m = s.get("rankMargin")
     return m if m is not None and math.isfinite(m) else math.inf
 
 
@@ -137,6 +141,8 @@ def forced(a):
                     for m in range(5):
                         nrm = math.sqrt(abs(Cm[i][i] * Cm[m][m])) or 1.0
                         worst[cv] = max(worst[cv], abs(Cm[i][m] - t[cv][i][m]) / nrm)
+        if "final" not in r:          # the replay's forced files carry the per-update states only
+            continue
         Cc = c["final_C"]
         for i, p in enumerate(("rInv", "phi0", "tanL", "z0", "d0")):
             sg = math.sqrt(abs(Cc[i][i])) or 1.0
