@@ -47,6 +47,13 @@ def _code_paths(spec: Path):
     return (code / "COMMIT").read_text().strip()
 
 
+def md5(path) -> str:
+    h = hashlib.md5()
+    with open(path, "rb") as fh:
+        h.update(fh.read())
+    return h.hexdigest()
+
+
 def sha256(path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as fh:
@@ -298,10 +305,14 @@ def export_skip_price(Cuts, cut_path):
                 firsts.append((f, v))
                 ref.append({"dims": dims, "code": S, "first": f, "value": v})
             codes.append((S, category("first", firsts)))
+        star = float(cuts.doc["cuts"][f"gate|{dims}|calibrated"]["*"]["value"])
+        codes.append((0, category("first", [(0, star), (1, star)])))   # code 0: the table's "*" value (a known-bad)
+        ref += [{"dims": dims, "code": 0, "first": f, "value": star} for f in (0, 1)]
         table.append((dims, category("code", codes)))
     corr = correction("skip_price", "the two-layer hit choice's skip price P: the 99 % gate cut "
                       "(gate|<dims>|calibrated of the cut file) per cut-surface code (+100: a barrel visit of a "
-                      "disc-going track) and first visit step; the cut file's fallback chain resolved",
+                      "disc-going track; 0: the table's '*' value, test-only) and first visit step; the cut "
+                      "file's fallback chain resolved",
                       [{"name": "dims", "type": "string"}, {"name": "code", "type": "int"},
                        {"name": "first", "type": "int"}], category("dims", table))
     return cset([corr], "SmartPixels refit v3: skip price"), ref
@@ -465,7 +476,7 @@ def main():
         with open(path, "w") as fh:
             json.dump(doc, fh, indent=1, allow_nan=False)
             fh.write("\n")
-        files[name] = {"sha256": sha256(path), "sources": sources}
+        files[name] = {"sha256": sha256(path), "md5": md5(path), "sources": sources}
 
     write("rtables.json", export_rtables(cal), ["refit_calibration_v3.json"])
     bar, disc = barrel_entries(AI, SA, imp), disc_entries(DA, SA, dimp)
