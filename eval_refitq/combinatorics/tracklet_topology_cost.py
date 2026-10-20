@@ -1379,6 +1379,12 @@ class AngleUse:
     arb_weight   S4a: weight of the angle pulls^2 against the position pull^2
     dr_weight    S7: (doublet, triplet) weight of the angle chi2 per cluster in
                  the duplicate-removal rank
+    s1_at        where S1 acts: "pairs" (pair formation only: the physicist's ruling, beamline pointing
+                 only where a seed is formed, everything after it local) or "all" (also the attach /
+                 follow targets, the placement until census_scan, kept for comparison and format 35)
+    regions      whose angles the stages use: "both", "barrel" (the IT disc clusters' angles off
+                 everywhere) or "disc" (the barrel clusters' off); an off region's clusters keep every
+                 position role (the census sets Q["ang_off"] and clears their direction flags)
     model        the census angle model (census_angles.Model), cuts its cut file
                  (census_angles.CutSet), cuts_open the calibration run (every
                  cutting stage records and passes everything), rec the chunk's
@@ -1386,7 +1392,11 @@ class AngleUse:
                  may use only the seeding stages, with the 3-sigma cuts on
                  it_prepare's pull-scaled sigmas.
     """
-    PARAMS = {"arb_weight": 1.0, "dr_weight": (0.30, 0.03)}
+    PARAMS = {"arb_weight": 1.0, "dr_weight": (0.30, 0.03), "s1_at": "pairs", "regions": "both"}
+    # what a configuration key written before the parameter existed meant
+    KEY_DEFAULTS = {"s1_at": "all", "regions": "both"}
+    S1_AT = ("pairs", "all")
+    REGIONS = ("both", "barrel", "disc")
 
     def __init__(self, on=(), angles=None, keys=None, **params):
         on = frozenset(on)
@@ -1412,6 +1422,10 @@ class AngleUse:
         p = dict(self.PARAMS, **params)
         self.arb_weight = float(p["arb_weight"])
         self.dr_weight = tuple(float(x) for x in p["dr_weight"])
+        if p["s1_at"] not in self.S1_AT or p["regions"] not in self.REGIONS:
+            raise ValueError(f"s1_at {p['s1_at']!r} (one of {self.S1_AT}), regions {p['regions']!r} "
+                             f"(one of {self.REGIONS})")
+        self.s1_at, self.regions = p["s1_at"], p["regions"]
         self.model = self.cuts = self.rec = None
         self.cuts_open = False
         self.nonfinite = None       # per chunk {stage: count}, set by the census (NaN guard)
@@ -1501,12 +1515,12 @@ class AngleUse:
         return {"stages": sorted(self.on),
                 "angles": {s: sorted(a) for s, a in self.angles.items()},
                 "keys": dict(self.keys), "arb_weight": self.arb_weight,
-                "dr_weight": list(self.dr_weight)}
+                "dr_weight": list(self.dr_weight), "s1_at": self.s1_at, "regions": self.regions}
 
     @classmethod
     def from_key(cls, k):
         return cls(k["stages"], angles=k.get("angles"), keys=k.get("keys"),
-                   **{p: k[p] for p in cls.PARAMS})
+                   **{p: (k[p] if p in k else cls.KEY_DEFAULTS[p]) for p in cls.PARAMS})
 
     def label(self):
         parts = []
@@ -1974,6 +1988,9 @@ def alpha_veto(D, Q, idxL, kmax, displaced, ang=None):
         ang.count_nonfinite("S1", std[Q["ldir_ok"][g]])
         kd = np.ones(len(g), bool) if ang.cuts_open else std <= ang.cuts.s1d_thr(1.0 / kmax, rows)
         k[dsk] = kd & Q["ldir_ok"][g]
+    # A REGION WITH ITS ANGLES OFF (AngleUse.regions): its clusters pass, as with every angle stage off
+    if "ang_off" in Q:
+        k |= Q["ang_off"][idxL]
     return idxL[k]
 
 
@@ -2504,7 +2521,9 @@ def it_project(D, Q, out, gA, gB, kap, cot, z0p, idx, la, lb, lc, ptmin,
     # the target layer's radius from its FULL cluster set, like the pair radii
     # (it_pairs), so the position windows do not depend on the angle stages
     rCmed = float(np.median(D["globalR"][idx[lc]])) if len(idx[lc]) else 0.0
-    if ang("veto"):
+    # S1 ON A TARGET LAYER only at s1_at "all": the physicist's ruling allows beamline pointing at pair formation
+    # only; after a seed exists the local S3 / S4w tests act on its targets (census_scan)
+    if ang("veto") and ang.s1_at == "all":
         idx[lc] = alpha_veto(D, Q, idx[lc], kmax, displaced, ang)
     out["in_C"] = len(idx[lc])
     if len(idx[lc]) < 1:
