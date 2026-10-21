@@ -682,6 +682,18 @@ def permute_angles(I, ev0):
             I[c] = v
 
 
+# WHAT THE NULL CONTROL'S SHUFFLED ANGLES MAY FEED (the physicist, 2026-10-21): the cuts only. Hit arbitration (S4a) and the
+# duplicate-removal ranking (S7) use what angles-off uses, no angle: with shuffled angles they steered the hit choice and the
+# ranking at random and cost the null about 10 pt of efficiency at pT >= 2 GeV (census scan, recalibrated null).
+NULL_OFF_STAGES = frozenset({"proj_arb", "dr"})
+
+
+def null_angle_use(ang):
+    """The null control's angle use: `ang` with the arbitration and ranking stages off (NULL_OFF_STAGES)."""
+    ang.on = frozenset(ang.on) - NULL_OFF_STAGES
+    return ang
+
+
 def angle_regions(U, Q, regions):
     """AngleUse.regions: the off region's IT clusters lose their direction flags (no angle test or measurement
     reads them: a wildcard everywhere) and are marked Q["ang_off"] (S1 passes them, as with every stage off); every
@@ -2066,7 +2078,8 @@ def main():
                          "barrel clusters' off); an off region's clusters keep every position role (census_scan)")
     ap.add_argument("--angle-null", default="none", choices=["none", "permute"],
                     help="the information-free control (census_scan NULL): every usable IT cluster's emitted angles "
-                         "permuted among the event's usable clusters of its surface, its sigmas kept (fixed seed)")
+                         "permuted among the event's usable clusters of its surface, its sigmas kept (fixed seed); the "
+                         "shuffled angles feed the cuts only (hit arbitration and duplicate-removal ranking off)")
     ap.add_argument("--s1-d0max", type=float, default=None,
                     help="S1's displaced tolerance, cm: the allowed alpha band adds asin(D / r) (census_angles."
                          f"S1_D0MAX_CM); default {CA.S1_D0MAX_CM:g} with --discs on, 0 (format 35's prompt band) off")
@@ -2121,6 +2134,8 @@ def main():
     s1_at = a.s1_at if a.s1_at is not None else ("pairs" if a.discs == "on" else "all")
     ang = M.AngleUse.parse(a.angle_stages, a.angle_stages_off, a.angle_sets,
                            a.angle_keys, arb_weight=a.arb_weight, s1_at=s1_at, regions=a.angle_regions)
+    if a.angle_null != "none":
+        ang = null_angle_use(ang)
     if a.calibrate and a.angle_cuts:
         raise SystemExit("--calibrate runs with every cut open: no --angle-cuts")
     s1_d0max = a.s1_d0max if a.s1_d0max is not None else (CA.S1_D0MAX_CM if a.discs == "on" else 0.0)
