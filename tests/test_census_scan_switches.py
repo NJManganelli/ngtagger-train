@@ -105,3 +105,11 @@ def test_null_permutation():
     J = {k: v.copy() for k, v in ref.items()}
     TF.permute_angles(J, 10)
     assert np.array_equal(J["globalClusterCotTheta"], I["globalClusterCotTheta"])
+
+
+def test_null_feeds_the_cuts_only():
+    """The null control's shuffled angles never reach the hit arbitration or the duplicate-removal ranking."""
+    ang = TF.null_angle_use(M.AngleUse.parse("default"))
+    assert not ang("proj_arb") and not ang("dr")
+    assert all(ang(s) for s in ("veto", "pair_alpha", "pair_z0", "attach", "proj_window", "accept"))
+    assert "proj_arb" not in ang.key()["stages"] and "dr" not in ang.key()["stages"]
