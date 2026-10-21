@@ -3,6 +3,7 @@
   TAGGER_SP_OUT=<heads_cmssw>/work python eval_refitq/tagger_sp/export_heads.py train    # reference heads (lambda 0)
   TAGGER_SP_OUT=<heads_cmssw>/work python eval_refitq/tagger_sp/export_heads.py models   # conifer JSON + MANIFEST
   TAGGER_SP_OUT=<heads_cmssw>/work python eval_refitq/tagger_sp/export_heads.py parity   # AAAA file 4, 5 events
+  python eval_refitq/tagger_sp/export_heads.py models --version A|B    # a joint variant (the study's own OUT)
 
 The heads are joint_heads.py's (its features, targets, windows and training events). "train" fits the uncoupled
 reference (lambda = 0: six independent heads in one model) of every mask and window; "models" splits each
@@ -49,15 +50,26 @@ def stage_train(masks):
     J.stage_fit(masks)
 
 
-def booster(mask, window):
+def booster(mask, window, setting=None):
+    """The fitted six-output booster of a mask and window: the reference (lambda 0) by default, or a setting
+    such as "B_0.3" (joint_heads.sname)."""
     import xgboost as xgb
 
     b = xgb.Booster()
-    b.load_model(os.path.join(J.jdir("fits", mask, window), J.sname("ref", 0.0) + ".json"))
+    b.load_model(os.path.join(J.jdir("fits", mask, window), (setting or J.sname("ref", 0.0)) + ".json"))
     return b
 
 
-def stage_models(masks, n_check=2000):
+def version_setting(version):
+    """(models sub-folder, setting) of a head version: the reference -> ("", "ref_0"); a joint variant -> its
+    chosen lambda from the study's choice.json (joint_heads.chosen)."""
+    if version == "ref":
+        return "", J.sname("ref", 0.0)
+    v, lam = J.chosen()[version]
+    return f"joint_{version}", J.sname(v, lam)
+
+
+def stage_models(masks, n_check=2000, version="ref"):
     import conifer
     import conifer.backends.cpp.writer as W
     import xgboost as xgb
@@ -68,21 +80,24 @@ def stage_models(masks, n_check=2000):
                          "the five width heads: margin = log sigma_hat in the head's unit (SPEC.md)",
            "heads": [h[0] for h in J.head_list()], "units": J.UNIT, "missing_value": J.MISSING,
            "xgboost": __import__("xgboost").__version__, "conifer": str(conifer.__version__), "models": {}, "checks": {}}
+    sub, setting = version_setting(version)
+    man["version"] = {"head_version": version, "setting": setting, "fits": J.jdir("fits")}
+    root = os.path.join(DEST, "models", sub)
     for mask in masks:
         coll = J.coll_of(mask)
         T, X, y, R, k, Wn = J.mask_problem(mask)
         names = J.feature_names(T, coll)
         for w in windows_of(coll):
             meta = json.load(open(os.path.join(J.jdir("fits", mask, w), "meta.json")))
-            b = booster(mask, w)
+            b = booster(mask, w, setting)
             te = Wn[w][2][:n_check]
             full = b.predict(xgb.DMatrix(X[te]), output_margin=True)
-            d = os.path.join(DEST, "models", COLL_NAME[coll], mask, w)
+            d = os.path.join(root, COLL_NAME[coll], mask, w)
             os.makedirs(d, exist_ok=True)
             for j, h in enumerate(man["heads"]):
                 bj = J.split_booster(b, j)
                 cfg = conifer.backends.cpp.auto_config()
-                cfg["OutputDir"] = os.path.join(DEST, "work", "conifer_build", mask, w, h)
+                cfg["OutputDir"] = os.path.join(DEST, "work", "conifer_build", version, mask, w, h)
                 cfg["Precision"] = "float"
                 cm = conifer.converters.convert_from_xgboost(bj, cfg)
                 cm.compile()
@@ -90,7 +105,7 @@ def stage_models(masks, n_check=2000):
                 p = os.path.join(d, f"{h}.json")
                 cm.save(p)
                 key = f"{COLL_NAME[coll]}/{mask}/{w}/{h}"
-                man["models"][key] = {"file": os.path.relpath(p, DEST), "sha256": sha(p), "n_trees": len(cm.trees),
+                man["models"][key] = {"file": os.path.relpath(p, root), "sha256": sha(p), "n_trees": len(cm.trees),
                                       "n_features": len(names)}
                 man["checks"][key] = {"n_tracks": int(len(te)),
                                       "max_abs_conifer_vs_booster": float(np.abs(pc - full[:, j]).max())}
@@ -103,7 +118,7 @@ def stage_models(masks, n_check=2000):
     man["windows"] = {"OT": "one window (all tracks)",
                       "SmartPixels": "prompt: |d0| <= 0.02 cm, displaced: |d0| > 0.02 cm; d0 = the SmartPixels refit "
                                      "track's d0 (L1TSmartPixelsExtTrack_d0, cm)"}
-    json.dump(man, open(os.path.join(DEST, "models", "MANIFEST.json"), "w"), indent=1)
+    json.dump(man, open(os.path.join(root, "MANIFEST.json"), "w"), indent=1)
 
 
 def stage_parity():
@@ -159,11 +174,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("stage", choices=["train", "models", "parity"])
     ap.add_argument("--masks", nargs="+", default=C.MASKS)
+    ap.add_argument("--version", choices=["ref", "A", "B"], default="ref",
+                    help="models: the reference heads, or a joint variant at its chosen lambda (run with the joint "
+                         "study's TAGGER_SP_OUT); written to models/ or models/joint_<A|B>/ with its own MANIFEST")
     a = ap.parse_args()
     if a.stage == "train":
         stage_train(a.masks)
     elif a.stage == "models":
-        stage_models(a.masks)
+        stage_models(a.masks, version=a.version)
     else:
         stage_parity()
 
