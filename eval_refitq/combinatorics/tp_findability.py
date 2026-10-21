@@ -565,7 +565,7 @@ def entry_results(U, Q, seeds, ptmin_of, rule_of, min_layers, d0_cm=0.0,
 # ==========================================================================
 # chunked unified IT+OT table
 # ==========================================================================
-def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None, it_discs=False):
+def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None, it_discs=False, angle_null=None):
     """Yield one unified IT+OT hit table per chunk of `step` events.
 
     `model` is the census angle model (census_angles.Model: the locked table, the
@@ -611,6 +611,8 @@ def unified_chunks(spec, nev, step, sigz_ot, bench=None, model=None, it_discs=Fa
         ev = np.arange(seen, seen + len(nI))
         I = {c: ak.to_numpy(ak.flatten(JI[c])) for c in itc}
         I["event"] = np.repeat(ev, nI)
+        if angle_null == "permute":
+            permute_angles(I, ev[0])
         O = {c: ak.to_numpy(ak.flatten(JO[c])) for c in OT_COLS}
         O["event"] = np.repeat(ev, nO)
         offO = np.r_[0, np.cumsum(nO)[:-1]].astype(np.int64)
@@ -647,6 +649,51 @@ IT_TRUTH_COLS = ("tpEmuClass", "tpGlobalClusterPhi", "tpGlobalClusterCotTheta",
 # the disc stages' published module-frame sigmas (census_angles.disc_components; format 36)
 IT_DISC_COLS = ("sigAlpha", "sigBeta")
 TP_GENEALOGY_COLS = ("genFromB", "genFromC", "evt")
+
+
+# THE NULL CONTROL (census_scan): a fixed seed, the chunk's first event number added
+NULL_SEED = 20261020
+
+
+def permute_angles(I, ev0):
+    """The information-free control: per event and IT surface, the emitted angles of the clusters with a usable
+    direction permuted among themselves (in place). The transverse angle alpha (direction azimuth less the cluster's
+    azimuth) and cot theta move together, a disc cluster's module-frame cots with them; each cluster keeps its
+    position, surface, published sigmas, usability flags and truth."""
+    from ngtagger.spdefs import angles as SD
+    ok = M.SPN.direction_usable(I)
+    alpha = SD.alpha_of(I["globalPhi"], I["globalClusterPhi"])
+    rng = np.random.default_rng([NULL_SEED, int(ev0)])
+    grp = np.flatnonzero(ok)
+    key = I["event"][grp] * 100 + np.asarray(I["layer"])[grp]
+    order = np.argsort(key, kind="stable")
+    grp, key = grp[order], key[order]
+    bounds = np.flatnonzero(np.r_[True, key[1:] != key[:-1], True])
+    perm = grp.copy()
+    for a, b in zip(bounds[:-1], bounds[1:]):
+        perm[a:b] = grp[a:b][rng.permutation(b - a)]
+    new_alpha = alpha.copy()
+    new_alpha[grp] = alpha[perm]
+    I["globalClusterPhi"] = SD.angle_from("alpha", new_alpha, I)
+    for c in ("globalClusterCotTheta", "localCotAlpha", "localCotBeta"):
+        if c in I:
+            v = np.asarray(I[c]).copy()
+            v[grp] = np.asarray(I[c])[perm]
+            I[c] = v
+
+
+def angle_regions(U, Q, regions):
+    """AngleUse.regions: the off region's IT clusters lose their direction flags (no angle test or measurement
+    reads them: a wildcard everywhere) and are marked Q["ang_off"] (S1 passes them, as with every stage off); every
+    position role is kept."""
+    Q = dict(Q)
+    lay = np.asarray(U["layer"])
+    off = ((lay >= 5) & (lay <= 8)) if regions == "barrel" else ((lay >= 1) & (lay <= 4))
+    Q["ang_off"] = off
+    Q["dir_ok"] = Q["dir_ok"] & ~((lay >= 1) & (lay <= 4) & off)
+    if "ldir_ok" in Q:
+        Q["ldir_ok"] = Q["ldir_ok"] & ~off
+    return Q
 
 
 def module_key(system, det_id):
@@ -1271,6 +1318,13 @@ def process_chunk(U, Q, seeds, groups, ptmin, ci, qual_per_chunk, kf_opts=None,
             # affordable, and it keeps min_shared (and the criterion itself)
             # changeable without re-running the seeding.
             hits[s_i] = gk[ks].astype(np.int32)
+            # each track's angle-bearing class-C clusters (the CNN stand-in's; census_scan: fakes split by class C)
+            Th = ff["hits"]
+            gi = np.clip(Th["GIDX"], 0, None)
+            ncc = (Th["VALID"] & Th["ANG"] & ~Q["is_T"][gi]).sum(axis=1)
+            if "DANG" in Th and "lis_T" in Q:
+                ncc = ncc + (Th["VALID"] & Th["DANG"] & ~Q["lis_T"][gi]).sum(axis=1)
+            hits[f"nc{s_i}"] = ncc.astype(np.int16)
             # the final stubs as L1TOTStub rows (OT_STUB_COLS), for the closure
             hits[f"o{s_i}"] = _ot_rows(U, gk[ks]).astype(np.int32)
             # PER-CLUSTER ANGLE RESIDUALS, on a sample. Four IT hits per track
@@ -1383,7 +1437,8 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
           export_tracks=0, seed_classes=None, targets=None,
           min_layers=SA.MIN_LAYERS, bench=None, d0_window_cm=0.0,
           it_ptmin=None, min_it_layers=None, min_ot_conf=0, ang=None,
-          model=None, cuts=None, cuts_open=False, pos_arb=None, ot_chain=None, it_discs=True, disc_seeds=None):
+          model=None, cuts=None, cuts_open=False, pos_arb=None, ot_chain=None, it_discs=True, disc_seeds=None,
+          angle_null=None):
     """Build (or load) the census. Returns a dict of concatenated arrays.
 
     `it_discs`: the build's SmartPixels discs ID1-ID4 on (their clusters in the hit table; with the discs on only,
@@ -1475,7 +1530,9 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
            "it_discs": bool(it_discs and ot_chain["discs"]),
            "disc_seeds": None if disc_seeds is None or not ot_chain["discs"] else sorted(disc_seeds),
            # the OT chain: the census's, or the closed arm (CMSSW's) with its caps and match order
-           "ot_chain": dict(sorted(ot_chain.items()))}
+           "ot_chain": dict(sorted(ot_chain.items())),
+           # the information-free control (census_scan NULL): None, or "permute"
+           "angle_null": angle_null}
     kh = cache_key(man, cfg)
     d = os.path.join(cache_dir, f"tpcensus_{kh}")
     mpath = os.path.join(d, "manifest.json")
@@ -1552,10 +1609,12 @@ def build(spec, nev, ptmin, layers, n_adjacent, chunk, cache_dir, mode,
                      min(rss_gb, M.SAFE_RSS_FRAC * M.PHYS_RAM_GB))
         want = None if nev is None else nev
         for ci, ((U, Q), ev) in enumerate(
-                unified_chunks(spec, want, chunk, sigz, bench, model, cfg["it_discs"])):
+                unified_chunks(spec, want, chunk, sigz, bench, model, cfg["it_discs"], angle_null)):
             if ci < done:
                 del U, Q                  # resume re-reads, but never re-seeds
                 continue
+            if ang.regions != "both":
+                Q = angle_regions(U, Q, ang.regions)
             ang.rec = CA.Recorder(U, Q, model)
             ang.nonfinite = {s: 0 for s in M.NONFINITE_STAGES}
             (cen, found, found_dr, counters, qual, trk, hits, angr, nonant,
@@ -1641,7 +1700,8 @@ def census_dir(path):
 
 
 def hit_key(name):
-    """(kind, entry) of an exported-track shard key hit_<kind><entry>: kind "", "dr", "m", "s", "sm", "o" or "om"."""
+    """(kind, entry) of an exported-track shard key hit_<kind><entry>: kind "", "dr", "nc", "m", "s", "sm", "o" or
+    "om"."""
     m = re.fullmatch(r"hit_([a-z]*)(\d+)", name)
     if m is None:
         raise SystemExit(f"unknown shard key {name}")
@@ -1702,13 +1762,14 @@ def load(d, nev=None, verbose=True, with_tracks=False):
             elif with_tracks and f.startswith("ang_"):
                 ags.setdefault(int(f[4:]), []).append(z[f])
             elif with_tracks and f.startswith("hit_"):
-                # hit_<i>: hit rows; hit_dr<i>: census-chain DR survivor flags; hit_o<i>: the final stubs
+                # hit_<i>: hit rows; hit_dr<i>: census-chain DR survivor flags; hit_nc<i>: each track's class-C
+                # angle clusters (census_scan); hit_o<i>: the final stubs
                 # (OT_STUB_COLS); closed arm: hit_m<i> the merge-DR tracks' rows, hit_s<i> / hit_sm<i> the seed
                 # stubs (census table indices, offset globally), hit_om<i> the merge-DR final stubs
                 kind, num = hit_key(f)
                 h = z[f]
                 hts.setdefault(kind, {}).setdefault(num, []).append(
-                    h.astype(bool) if kind == "dr" else h.astype(np.int64) if kind in ("o", "om")
+                    h.astype(bool) if kind == "dr" else h.astype(np.int64) if kind in ("o", "om", "nc")
                     else np.where(h >= 0, h + cl_off, -1).astype(np.int64))
     C = {c: np.concatenate(parts[c]) for c in cols}
     C["found"] = np.concatenate(fnd, axis=0)
@@ -1772,7 +1833,7 @@ def load(d, nev=None, verbose=True, with_tracks=False):
                 f"by a different version; rebuild it or check out the matching "
                 f"code.")
     hk = {"": "hits", "dr": "hits_dr", "m": "hits_merged", "s": "hits_seed", "sm": "hits_seed_merged",
-          "o": "track_stubs", "om": "track_stubs_merged"}
+          "o": "track_stubs", "om": "track_stubs_merged", "nc": "track_class_c"}
     for kind, name in hk.items():
         C[name] = {i: np.concatenate(v) for i, v in hts.get(kind, {}).items()}
     C["angles"] = {i: np.concatenate(v) for i, v in ags.items()}
@@ -1997,6 +2058,15 @@ def main():
                     help="the angle cut file the cutting stages read "
                          "(census_angles.CutSet; refused if made for another "
                          "configuration)")
+    ap.add_argument("--s1-at", default=None, choices=list(M.AngleUse.S1_AT),
+                    help="where S1 acts: pairs (pair formation only, the physicist's ruling; default with --discs on) "
+                         "or all (also the attach / follow targets; default with --discs off, format 35)")
+    ap.add_argument("--angle-regions", default="both", choices=list(M.AngleUse.REGIONS),
+                    help="whose angles the stages use: both, barrel (the IT disc clusters' angles off) or disc (the "
+                         "barrel clusters' off); an off region's clusters keep every position role (census_scan)")
+    ap.add_argument("--angle-null", default="none", choices=["none", "permute"],
+                    help="the information-free control (census_scan NULL): every usable IT cluster's emitted angles "
+                         "permuted among the event's usable clusters of its surface, its sigmas kept (fixed seed)")
     ap.add_argument("--s1-d0max", type=float, default=None,
                     help="S1's displaced tolerance, cm: the allowed alpha band adds asin(D / r) (census_angles."
                          f"S1_D0MAX_CM); default {CA.S1_D0MAX_CM:g} with --discs on, 0 (format 35's prompt band) off")
@@ -2048,8 +2118,9 @@ def main():
            if a.seed_classes else None)
     tgt = ([CODE[x.strip()] for x in a.targets.split(",") if x.strip()]
            if a.targets else None)
+    s1_at = a.s1_at if a.s1_at is not None else ("pairs" if a.discs == "on" else "all")
     ang = M.AngleUse.parse(a.angle_stages, a.angle_stages_off, a.angle_sets,
-                           a.angle_keys, arb_weight=a.arb_weight)
+                           a.angle_keys, arb_weight=a.arb_weight, s1_at=s1_at, regions=a.angle_regions)
     if a.calibrate and a.angle_cuts:
         raise SystemExit("--calibrate runs with every cut open: no --angle-cuts")
     s1_d0max = a.s1_d0max if a.s1_d0max is not None else (CA.S1_D0MAX_CM if a.discs == "on" else 0.0)
@@ -2073,7 +2144,7 @@ def main():
               d0_window_cm=a.d0_window_cm, it_ptmin=a.it_ptmin,
               ot_chain=ot_chain_config(a.ot_chain, a.ot_caps == "on", a.ot_order, a.ot_known_bad,
                                        a.discs == "on"),
-              it_discs=a.it_discs == "on",
+              it_discs=a.it_discs == "on", angle_null=None if a.angle_null == "none" else a.angle_null,
               disc_seeds=(None if a.disc_seeds == "all" else
                           [] if a.disc_seeds == "none" else [x.strip() for x in a.disc_seeds.split(",") if x.strip()]))
     nev = C["n_events"]

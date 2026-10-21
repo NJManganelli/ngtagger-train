@@ -300,6 +300,8 @@ def _g0_array(name, a35, a36):
     track's hit row (hit_<i>, hit_m<i>: _G0_HIT_DISC_COLS) and of its final stubs (hit_o / hit_om: the trailing
     OD1-OD5) all -1; the per-seed counters' kf_diverged 0; S6's records without a disc track or group."""
     if a35 is None:
+        if name.startswith("hit_nc"):              # the class-C count per exported track (census_scan): descriptive
+            return ""
         if name == "rec_trk__disc":                # S6's disc group (census_angles.s6_group): empty
             return "" if not np.any(a36) else "S6 disc tracks with the discs off"
         if name == "rec_trk__s6g":
@@ -330,20 +332,27 @@ def g0(c35, c36, nev=None):
     same inputs and configuration, shard by shard: every array identical apart from format 36's additions, which
     must be empty (_g0_array); the counters, the entries and the configuration identical apart from the format
     and format 36's configuration keys: the discs key, it_discs (False), disc_seeds (none), the angle model's disc
-    table identity (disc_table_*, inert with the discs off) and S1's displaced tolerance (0, the prompt band)."""
+    table identity (disc_table_*, inert with the discs off), S1's displaced tolerance (0, the prompt band), S1's
+    placement and the angle regions (all, both) and the null control (none)."""
     d35, d36 = TF.census_dir(c35), TF.census_dir(c36)
     m35, m36 = (json.load(open(Path(d) / "manifest.json")) for d in (d35, d36))
     cfg35, cfg36 = dict(m35["config"]), dict(m36["config"])
     oc36 = dict(cfg36.pop("ot_chain"))
     disc_on = oc36.pop("discs", None)
     it_discs, disc_seeds = cfg36.pop("it_discs", False), cfg36.pop("disc_seeds", None)
+    null = cfg36.pop("angle_null", None)
+    ang36 = dict(cfg36.get("angles", {}))
+    placement = (ang36.pop("s1_at", "all"), ang36.pop("regions", "both"))
+    if "angles" in cfg36:
+        cfg36["angles"] = ang36
     if isinstance(cfg36.get("angle_model"), dict):
         am = cfg36["angle_model"]
         if am.get("s1_d0max", 0.0) != 0.0:
             return {"stage": "G0", "gates": {"g0_identical": False},
                     "differences": [f"S1 displaced tolerance {am['s1_d0max']} with the discs off"]}, False
         cfg36["angle_model"] = {k: v for k, v in am.items() if not k.startswith("disc_table") and k != "s1_d0max"}
-    same_cfg = cfg35.pop("ot_chain") == oc36 and cfg35 == cfg36 and it_discs is False and not disc_seeds
+    same_cfg = (cfg35.pop("ot_chain") == oc36 and cfg35 == cfg36 and it_discs is False and not disc_seeds
+                and null is None and placement == ("all", "both"))
     head = {"formats": [m35.get("format"), m36.get("format")], "discs": disc_on,
             "inputs_equal": m35["inputs"] == m36["inputs"], "config_equal": same_cfg,
             "entries_equal": (m35["seeds"], m35["seed_follow"]) == (m36["seeds"], m36["seed_follow"])}
