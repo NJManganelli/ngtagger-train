@@ -7,17 +7,22 @@ test-set predictions.
 Inputs: build.py jet caches (all samples given, TTbar + HTT combined). Acceptance
 common.PT_MIN / ETA_MAX. Feature columns = common.VARIANTS[variant] resolved through
 ngtagger.data.features (cumulative variants). Class weighting: the framework's
-(trainer.class_pt_weights, training_config.weight_method). Training jets are shuffled
-per seed before keras' validation_split (which takes the LAST fraction).
-Outputs: OUT/models/<mask>/<variant>/s<seed>/ (framework model dir) and
-OUT/preds/<mask>_<variant>_s<seed>.npz (softmax probabilities of the test jets + jet
-kinematics + event identity).
+(trainer.class_pt_weights, training_config.weight_method).
+Validation: the jets of the study's fixed validation events (common.val_table: 10% of each
+sample's training events, the same events for every mask, cell and trial). They are put LAST and
+keras' validation_split (which takes the last fraction) is set to take exactly them; the other
+training jets are shuffled per seed. keras is seeded before the model is built, so a trial is
+reproducible from its seed.
+Outputs: OUT/models/<mask>/<variant>/s<seed>/ (framework model dir, with the trial's config) and
+OUT/preds/<mask>_<variant>_s<seed>.npz: softmax probabilities of the test jets + jet kinematics +
+event identity, and of the validation jets with the trial's validation classification loss
+(val_closs: class-weighted cross-entropy of the jet-class output, the framework's weights) -- the
+trial screen and choice (trial_select.py) read only these. A trial whose file exists for the same samples,
+test events and features is skipped (rerun-safe); --force retrains it.
 
 --d0 A|B|C|D: the PV-(x, y) d0 upper-bound study (d0pv.py): the variant's d0 inputs are
 transformed (d0pv.apply), outputs go to OUT/d0_upper_bound/{models,preds} as
-<mask>_<variant>_<d0>_s<seed>, and keras is seeded before the model is built (the
-framework seeds only at fit, after the weights exist), so the four variants share each
-seed's initialisation and shuffling.
+<mask>_<variant>_<d0>_s<seed>; the four variants share each seed's initialisation and shuffling.
 
 --recipe linout: tagger_sp_linout.yaml (linout.py: the framework DeepSetHGQ2 with linear class
 logits instead of a ReLU on them, which leaves 0-50% of the test jets of a seed with an exactly
@@ -53,8 +58,10 @@ def load_mask(mask, samples):
         fs = [n for s2, n, _ in man["files"] if s2 == s]
         if not fs:
             raise FileNotFoundError(f"no {s} files for {mask}")
-        for n in fs:
-            d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, mask, n) + ".npz"))
+        caches = {n: np.load(os.path.join(C.cache_dir("jets"), C.tag(s, mask, n) + ".npz")) for n in fs}
+        val = C.val_table(s, {n: d["evid"] for n, d in caches.items()},
+                          {n: d["test_entries"] for n, d in caches.items()})
+        for n, d in caches.items():
             fn = [str(x) for x in d["feature_names"]]
             if names is None:
                 names = fn
@@ -67,11 +74,33 @@ def load_mask(mask, samples):
                 "X": d["X"][acc], "label": d["label"][acc], "target_pt": d["target_pt"][acc],
                 "pt": d["pt"][acc], "eta": d["eta"][acc], "is_test": d["is_test"][acc],
                 "sample": np.full(acc.sum(), si), "file": np.full(acc.sum(), n),
-                "entry": d["entry"][acc], "evid": ev,
+                "entry": d["entry"][acc], "evid": ev, "is_val": val[n][d["entry"][acc]],
             })
     D = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
     D["test_event_keys"] = np.sort(np.concatenate(test_keys))
+    if (D["is_val"] & D["is_test"]).any():
+        raise RuntimeError(f"{mask}: validation and test jets overlap")
     return D, names
+
+
+def softmax(logits):
+    z = logits - logits.max(axis=1, keepdims=True)
+    return np.exp(z) / np.exp(z).sum(axis=1, keepdims=True)
+
+
+def trial_config(config, odir, n_val, n_all):
+    """The recipe's yaml with validation_split set so that keras' split (the last
+    floor-complement of n_all * (1 - split)) takes exactly the n_val validation jets put last."""
+    import yaml
+
+    with open(config) as f:
+        cfg = yaml.safe_load(f)
+    cfg["training_config"]["validation_split"] = (n_val - 0.5) / n_all
+    os.makedirs(odir, exist_ok=True)
+    p = os.path.join(odir, "config_trial.yaml")
+    with open(p, "w") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False)
+    return p
 
 
 def main():
@@ -86,15 +115,19 @@ def main():
     ap.add_argument("--threads", type=int, default=2)
     ap.add_argument("--gpu", action="store_true", help="use the Metal GPU (default: CPU only)")
     ap.add_argument("--tag", default="", help="suffix of the output names (dev runs)")
+    ap.add_argument("--force", action="store_true", help="retrain trials whose prediction file exists")
     ap.add_argument("--d0", choices=["A", "B", "C", "D"], default=None,
                     help="PV-(x, y) d0 upper-bound variant (d0pv.py); outputs under OUT/d0_upper_bound")
     a = ap.parse_args()
 
     C.tf_setup(a.threads, a.gpu)
     os.environ.setdefault("MLFLOW_TRACKING_URI", "file://" + os.path.join(C.OUT, "mlruns"))
+    import keras
+    import yaml
+
     from ngtagger.data.features import resolve_feature_groups
     from ngtagger.data.labels import CLASS_LABELS
-    from ngtagger.train.trainer import run_training
+    from ngtagger.train.trainer import class_pt_weights, run_training
 
     D, names = load_mask(a.mask, a.samples)
     X = D["X"]
@@ -122,39 +155,58 @@ def main():
     print(f"{a.mask} {vname}: {len(cols)} features, train {int((~te).sum())} / test {int(te.sum())} jets; "
           f"[train, test] per class {json.dumps(counts)}", flush=True)
 
-    tr_idx = np.flatnonzero(~te)
+    va = D["is_val"].astype(bool)
+    tr_idx, va_idx = np.flatnonzero(~te & ~va), np.flatnonzero(va)
+    print(f"  validation: {len(va_idx)} jets of the fixed validation events; fit: {len(tr_idx)} jets", flush=True)
+    wmethod = yaml.safe_load(open(config))["training_config"].get("weight_method", "onlyclass")
     for seed in a.seeds:
         t0 = time.time()
-        perm = tr_idx[np.random.default_rng(seed).permutation(len(tr_idx))]
+        name = f"{a.mask}_{vname}_s{seed}{a.tag}"
+        pfile = os.path.join(out, "preds", name + ".npz")
+        if os.path.exists(pfile) and not a.force:
+            with np.load(pfile) as old:
+                current = [str(x) for x in old["samples"]] == list(a.samples) and \
+                    np.array_equal(old["test_event_keys"], D["test_event_keys"]) and \
+                    [str(x) for x in old["features"]] == list(cols)
+            if current:
+                print(f"{name}: exists, skipped", flush=True)
+                continue
+            print(f"{name}: stale prediction file (another sample set or split), retrained", flush=True)
+        order = np.concatenate([tr_idx[np.random.default_rng(seed).permutation(len(tr_idx))], va_idx])
         ds = {
-            "X_train": X[perm], "y_train": y[perm], "pt_train": D["target_pt"][perm],
-            "reco_pt_train": D["pt"][perm], "charge_train": None,
+            "X_train": X[order], "y_train": y[order], "pt_train": D["target_pt"][order],
+            "reco_pt_train": D["pt"][order], "charge_train": None,
             "X_test": X[te], "y_test": y[te], "pt_test": D["target_pt"][te],
             "reco_pt_test": D["pt"][te], "reco_eta_test": D["eta"][te],
             "feature_names": cols, "class_labels": CLASS_LABELS,
         }
-        name = f"{a.mask}_{vname}_s{seed}{a.tag}"
         odir = os.path.join(out, "models", a.mask, vname + a.tag, f"s{seed}")
-        if a.d0:
-            import keras
-
-            keras.utils.set_random_seed(seed)
-        model = run_training(config, [], odir, seed=seed, mlflow_run_name=name, dataset=ds)
-        logits = model.predict(X[te])[0]
-        z = logits - logits.max(axis=1, keepdims=True)
-        prob = np.exp(z) / np.exp(z).sum(axis=1, keepdims=True)
+        cfg = trial_config(config, odir, len(va_idx), len(order))
+        keras.utils.set_random_seed(seed)       # the framework seeds only at fit, after the weights exist
+        model = run_training(cfg, [], odir, seed=seed, mlflow_run_name=name, dataset=ds)
+        prob = softmax(model.predict(X[te])[0])
+        vprob = softmax(model.predict(X[va_idx])[0])
+        # the trial's validation classification loss: class-weighted cross-entropy with the framework's
+        # weights (computed over the whole fit + validation set, as run_training does)
+        w = class_pt_weights(y[order], D["pt"][order], wmethod)[len(tr_idx):]
+        ce = -np.log(np.clip(vprob[np.arange(len(va_idx)), D["label"][va_idx]], 1e-12, None))
+        val_closs = float(np.sum(w * ce) / np.sum(w))
         h = model.history.history
         os.makedirs(os.path.join(out, "preds"), exist_ok=True)
+        tmp = pfile[:-4] + ".tmp.npz"
         np.savez_compressed(
-            os.path.join(out, "preds", name + ".npz"), prob=prob.astype(np.float32),
+            tmp, prob=prob.astype(np.float32),
             label=D["label"][te], pt=D["pt"][te], eta=D["eta"][te], sample=D["sample"][te],
             fileno=D["file"][te], entry=D["entry"][te], evid=D["evid"][te],
+            val_prob=vprob.astype(np.float32), val_label=D["label"][va_idx], val_pt=D["pt"][va_idx],
+            val_eta=D["eta"][va_idx], val_sample=D["sample"][va_idx], val_evid=D["evid"][va_idx],
+            val_closs=val_closs,
             samples=np.array(a.samples), classes=np.array(CLASS_LABELS), features=np.array(cols),
             val_loss=np.array(h.get("val_loss", [])), loss=np.array(h.get("loss", [])),
             train_counts=json.dumps(counts), seed=seed, test_event_keys=D["test_event_keys"])
+        os.replace(tmp, pfile)
         print(f"{name}: {len(h.get('loss', []))} epochs, best val_loss {model.best_val_loss():.4f}, "
-              f"{time.time() - t0:.0f}s", flush=True)
-
+              f"val_closs {val_closs:.4f}, {time.time() - t0:.0f}s", flush=True)
 
 if __name__ == "__main__":
     main()

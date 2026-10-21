@@ -1,12 +1,15 @@
 """Shared definitions of the SmartPixels jet-tagging study (eval_refitq/tagger_sp).
 
-Scenarios = canonical (coopt) nanos, canon_v4 (build C_v4 b85da0c18cd; canon_v2's events): the whole
-downstream L1 chain (GTT vertex, PF, PUPPI, SC4 NG jets) is re-emulated from the
-SmartPixels (SP) tracks of each IT active-layer mask. IIII = passthrough (SP track ==
-its OT track), i.e. the OT-only baseline through the identical pipeline.
+Scenarios = canonical (coopt) nanos: the whole downstream L1 chain (GTT vertex, PF, PUPPI, SC4 NG
+jets) is re-emulated from the SmartPixels (SP) tracks of each IT active-layer mask. IIII =
+passthrough (SP track == its OT track), i.e. the OT-only baseline through the identical pipeline.
+  SP masks (AAAA, AAAI, IAAA): canon_v5 (refit v3: the seedless SmartPixels refit).
+  IIII: canon_v4. canon_v5 has no IIII: it carries no refit, so it would equal canon_v4's; canon_v5
+  equals canon_v4 bit for bit on every branch that does not depend on the refit (bridge of
+  2026-10-21), so both hold the same events.
 
-Samples (PU200): ttbar = canon_v4 spstudy_<mask>_f01..f10_100ev.root (1000 ev),
-htt = canon_v4/htt spstudy_<mask>_htt_f<NN>.root (QQ -> H -> tautau RelVal; every file
+Samples (PU200): ttbar = spstudy_<mask>_f01..f10_100ev.root (1000 ev),
+htt = htt/spstudy_<mask>_htt_f<NN>.root (QQ -> H -> tautau RelVal; every file
 file number finished for ALL masks is used -- `study_files` -- so every scenario sees the
 same events and adding tau files is a rerun of run_all.sh). Files younger than MIN_AGE_S
 are skipped (may still be being copied). build.py freezes the set it used in a per-mask
@@ -20,8 +23,11 @@ Event split (identical for every mask; events are the same across masks):
   ttbar: 20% of ALL ttbar events (200) are test, drawn only from f03..f10 -- f01/f02
          trained the cluster-angle CNN (IT angles in-sample), so they are always train.
   htt:   20% of each file's events are test.
+  validation: VAL_FRACTION of each sample's TRAINING events (val_table), the same events for every
+         mask, cell and trial: early stopping, the trial screen and the trial choice use them only.
 Chosen once with SPLIT_SEED on the EVENT IDENTITY (run, lumi, event): the entry order of a
-file differs between masks (multithreaded output), so entries are never used as keys.
+file differs between masks (multithreaded output) and between canon versions, so entries are
+never used as keys.
 """
 from __future__ import annotations
 
@@ -29,20 +35,20 @@ import os
 
 import numpy as np
 
-# canon_v4's study writes beside the canon_v2 one (tagger_sp: its caches, heads, models, predictions; kept as
-# they are), so a rerun never mixes or overwrites the two eras
-OUT = "/Volumes/WDMac/smartpixels_scratch/tagger_sp_canon_v4"
+# TAGGER_SP_OUT: another output folder (dev tests on a few files)
+OUT = os.environ.get("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagger_v5")
 MASKS = ["IIII", "AAAA", "AAAI", "IAAA"]       # IIII = OT baseline (passthrough)
 BASELINE_MASK = "IIII"
-SAMPLES = {
-    "ttbar": ("/Volumes/WDMac/smartpixels_scratch/canon_v4", "spstudy_{mask}_f{n:02d}_100ev.root",
-              range(1, 11)),
-    "htt": ("/Volumes/WDMac/smartpixels_scratch/canon_v4/htt", "spstudy_{mask}_htt_f{n:02d}.root",
-            None),                              # None: every file number present
+# the SP masks read canon_v5 (refit v3); IIII reads canon_v4 (canon_v5 has none: see the docstring)
+CANON = {"sp": "/Volumes/WDMac/smartpixels_scratch/canon_v5", BASELINE_MASK: "/Volumes/WDMac/smartpixels_scratch/canon_v4"}
+SAMPLES = {   # sample: (sub-directory of the canon folder, file pattern, file numbers or None = every one present)
+    "ttbar": ("", "spstudy_{mask}_f{n:02d}_100ev.root", range(1, 11)),
+    "htt": ("htt", "spstudy_{mask}_htt_f{n:02d}.root", None),
 }
 MIN_AGE_S = 180
 TTBAR_TRAIN_ONLY = (1, 2)       # cluster-CNN training files
 TEST_FRACTION = 0.2
+VAL_FRACTION = 0.1              # of each sample's training events (val_table)
 SPLIT_SEED = 20260930
 
 FAMILY = "canonical_ext"        # L1TExtTrack + L1TSmartPixelsExtTrack (+ ext refit hits)
@@ -71,9 +77,12 @@ VARIANTS = {
 }
 LEVEL = {"baseline": 1, "track": 2, "trackmva": 3}
 
+def sample_dir(sample: str, mask: str) -> str:
+    return os.path.join(CANON[BASELINE_MASK if mask == BASELINE_MASK else "sp"], SAMPLES[sample][0])
+
+
 def path(sample: str, mask: str, n: int) -> str:
-    d, pat, _ = SAMPLES[sample]
-    return os.path.join(d, pat.format(mask=mask, n=n))
+    return os.path.join(sample_dir(sample, mask), SAMPLES[sample][1].format(mask=mask, n=n))
 
 
 def files(sample: str, mask: str, require_all: bool = False) -> list[tuple[int, str]]:
@@ -82,7 +91,8 @@ def files(sample: str, mask: str, require_all: bool = False) -> list[tuple[int, 
     import re
     import time
 
-    d, pat, nums = SAMPLES[sample]
+    _, pat, nums = SAMPLES[sample]
+    d = sample_dir(sample, mask)
     if nums is None:
         rx = re.compile(re.escape(pat.format(mask=mask, n=0)).replace("00", r"(\d+)", 1) + "$")
         nums = sorted(int(m.group(1)) for f in glob.glob(os.path.join(d, f"spstudy_{mask}_*.root"))
@@ -129,6 +139,15 @@ def manifest_path(mask: str) -> str:
     return os.path.join(OUT, "cache", f"manifest_{mask}.json")
 
 
+def built_samples(mask: str) -> list[str]:
+    """The samples of the mask's current build (its manifest): prediction files of another sample set
+    (an earlier run) are stale and ignored."""
+    import json
+
+    with open(manifest_path(mask)) as f:
+        return list(json.load(f)["samples"])
+
+
 def split_table(sample: str, evids: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
     """{file number: bool test mask in the file's entry order}, from each file's (n, 3)
     (run, lumi, event) array. The choice is made on the events sorted by identity, so it
@@ -148,6 +167,20 @@ def split_table(sample: str, evids: dict[int, np.ndarray]) -> dict[int, np.ndarr
             pick = np.random.default_rng([SPLIT_SEED, 1, n]).permutation(k)[:int(round(TEST_FRACTION * k))]
             test[n][order[n][pick]] = True
     return test
+
+
+def val_table(sample: str, evids: dict[int, np.ndarray], test: dict[int, np.ndarray]) -> dict[int, np.ndarray]:
+    """{file number: bool validation mask in the file's entry order}: VAL_FRACTION of the sample's
+    TRAINING events (not in `test`), chosen on the events sorted by identity, so it is the same set
+    of events in every mask, cell and trial."""
+    order = {n: np.lexsort(e.T[::-1]) for n, e in evids.items()}
+    val = {n: np.zeros(len(e), bool) for n, e in evids.items()}
+    pool = [(n, i) for n in sorted(evids) for i in order[n] if not test[n][i]]
+    for j in np.random.default_rng([SPLIT_SEED, 2, list(SAMPLES).index(sample)]).permutation(len(pool))[
+            :int(round(VAL_FRACTION * len(pool)))]:
+        n, i = pool[j]
+        val[n][i] = True
+    return val
 
 
 def event_key(sample_idx, fileno, evid):

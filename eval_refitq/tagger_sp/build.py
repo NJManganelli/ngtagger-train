@@ -9,8 +9,9 @@
 2. mva     the five heads (clean, d0acc, z0acc, log sigma_hat d0/z0; trackmva.fit_frozen)
            fitted on the TRAINING events of every sample given (the tagger's 80%; the
            correlation with the tagger training is ignored by design). SP masks: the
-           "refit" heads (SP track + refit features); IIII: the "base" (OT-only) heads -- its
-           SP tracks are passthrough copies with no refit columns (read base-only). Truth =
+           "refit" heads (SP track + refit features; canon_v5, refit v3); IIII: the "base"
+           (OT-only) heads on canon_v4 -- its SP tracks are passthrough copies with no refit
+           columns (read base-only). Truth =
            the OT track's TP for every head (refit_truth "otlink", user decision).
            Saved as a framework bundle (trackmva.save_bundle) under OUT/mva/<mask>/; a
            held-out check on the TEST events' tracks is written next to it.
@@ -118,6 +119,15 @@ def train_mva(mask, fileset, splits):
     Tte = {k: np.concatenate([x[k] for x in parts_te]) for k in parts_te[0]}
     del parts_tr, parts_te
     log(f"mva {mask} ({coll}): {len(Ttr['b_pt'])} train / {len(Tte['b_pt'])} test tracks")
+    # refit v3 (canon_v5) leaves spixChi2ITAtOT at the -999 sentinel on every track (the seedless refit has
+    # no IT chi2 at the OT state). HistGradientBoosting cannot bin an all-missing feature, so such a column is
+    # fitted as the constant 0: a constant is never split on, so the heads ignore the column when they meet
+    # the sentinel in the nano (held-out check and jet caches). Workaround here only; the nano is unchanged.
+    filled = [c for c in tm.REFIT_SENTINEL_COLS if coll == "refit" and not np.any(Ttr["r_" + c] > -998)]
+    for c in filled:
+        Ttr["r_" + c] = np.zeros_like(Ttr["r_" + c])
+    if filled:
+        log(f"mva {mask}: all-sentinel refit columns fitted as a constant: {filled}")
     models, info = tm.fit_frozen(Ttr, (coll,), tm.SEED, None, C.REFIT_TRUTH, log)
     meta = {
         "what": "tagger_sp study heads: trackmva.fit_frozen on the tagger's training events",
@@ -126,6 +136,7 @@ def train_mva(mask, fileset, splits):
         "features": {coll: list(tm.features(Ttr, coll))}, "outputs": tm.OUTPUTS,
         "head_definitions": tm.HEAD_DEFINITIONS, "withheld_features": tm.WITHHELD,
         "refit_truth": C.REFIT_TRUTH, "windows": {coll: tm.window_names(coll)},
+        "all_sentinel_columns_fitted_constant": filled,
         "sigma_floor_um": tm.SIGMA_FLOOR_UM, "quantiles": list(tm.QUANTILES),
         "hgb_params": tm.HGB_PARAMS, "random_state": tm.SEED, "frozen_fit": info,
         "training_files": [{"basename": os.path.basename(p), "path": p, "size": os.path.getsize(p)}
@@ -195,6 +206,11 @@ def main():
         if not fs:
             raise FileNotFoundError(f"no {s} files for {a.mask}")
         ev = {n: event_ids(p) for n, p in fs}
+        if a.mask != C.BASELINE_MASK:      # the SP masks (canon_v5) must hold the OT baseline's (canon_v4) events
+            for n, p in fs:
+                ref = C.path(s, C.BASELINE_MASK, n)
+                if not np.array_equal(np.unique(ev[n], axis=0), np.unique(event_ids(ref), axis=0)):
+                    raise RuntimeError(f"{p}: its events differ from {ref}")
         splits[s] = C.split_table(s, ev)
         log(f"{s} {a.mask}: {len(fs)} files, {sum(len(e) for e in ev.values())} ev, "
             f"{sum(int(v.sum()) for v in splits[s].values())} test")
