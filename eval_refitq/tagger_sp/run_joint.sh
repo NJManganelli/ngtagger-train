@@ -22,6 +22,15 @@ say() { echo "$(date -u +%FT%TZ) joint $*" | tee -a "$LOG/run.log"; }
 fail() { say "$* FAILED"; say "end rc=1"; exit 1; }
 say "start [${SAMPLES[*]}] in $PWD"
 MATERIAL=""
+# outputs of another code revision (e.g. a run frozen before the base-score and h_nmerged fixes) must not be reused
+# by the rerun-safe stages: stop and say what to move aside
+REV=r1
+if [ -e "$OUT/joint_heads/fits" ] && [ "$(cat "$OUT/joint_heads/REVISION" 2>/dev/null)" != "$REV" ]; then
+  say "stale joint outputs of another revision: move aside $OUT/joint_heads, $OUT/cache/jets_joint_*, $OUT/preds/*_joint_*, $OUT/models/*/joint_* first"
+  say "end rc=1"
+  exit 1
+fi
+mkdir -p "$OUT/joint_heads" && echo $REV > "$OUT/joint_heads/REVISION"
 
 for st in extra fit choose mi quality conifer jets; do
   $PY -u $D/joint_heads.py $st >> "$LOG/joint_${st}_$TAG.log" 2>&1 || fail "joint_heads $st"
