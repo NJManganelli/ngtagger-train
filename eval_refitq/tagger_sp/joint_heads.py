@@ -320,6 +320,7 @@ def with_base(b, base):
     lp["base_score"] = "[" + ",".join(repr(float(x)) for x in base) + "]" if len(base) > 1 else repr(float(base[0]))
     out = xgb.Booster()
     out.load_model(bytearray(json.dumps(m).encode()))
+    out.set_param({"max_depth": XGB["max_depth"]})     # a reloaded model forgets it (conifer reads it as metadata)
     return out
 
 
@@ -375,6 +376,7 @@ def split_booster(b, k):
     lp["base_score"] = str(json.loads(bs)[k]) if bs.startswith("[") else bs
     out = xgb.Booster()
     out.load_model(bytearray(json.dumps(m).encode()))
+    out.set_param({"max_depth": XGB["max_depth"]})
     return out
 
 
