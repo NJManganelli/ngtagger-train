@@ -26,8 +26,10 @@
   c1b-verdict wpc.c1b.verdict          C1b closed with the discs ON and its known limitations; updates the J2 / J3 / J6
                                        statuses (job dir of J6)
   c1b-j3    wpc.c1b.j3-material-scale-smooth  C1b J3 with the smooth seed, A18 (c1b/scale/scalefit_summary.json)
-  pseed     wpc.pseed.canon-v5-<scen>  the parallel seed study on canon_v5 (parallel_seed/results/match_<scen>.json and
-                                  extras_<scen>.json; --ver the scenario); --job-dir: the scenario's matching job
+  pseed     wpc.pseed.canon-v5-<sample>-<build>  the parallel seed study's overnight run on canon_v5
+                                  (parallel_seed/results/night/match_<sample>_<build>.json; --ver e.g. ttbar_AAAA);
+                                  a TTbar entry supersedes the 2026-10-21 wpc.pseed.canon-v5-<build>
+  pseed-bridge wpc.pseed.bridge-canon-v5-aaaa-f01  the old driver on canon_v5 AAAA file 1 (night/bridge/)
   entry     wpc.entry.<gate>      one entry per gate from entry/entry_summary.json, job dir of the gate data
   final     wpc.entry.e1b-v2, wpc.entry.final
                                   the final verdict (entry/entry_verdict.json, verdict.py) with PD15's rr check, job
@@ -594,40 +596,54 @@ PSEED_CONTEXT = ("context, not arms: the 16 Sep run (AAAA, 400 events, barrel on
                  "old truth rules): 76.5 IT mini-tracks and 405 OT tracks per event, 62.8 % matched, 97.2 % right; the "
                  "4-layer barrel dev test (canon_v5 AAAA file 1, 4 events, today's rules): 114 IT mini-tracks per event, "
                  "91 % owned, 69 % matched, 100 % right, 95 % per particle")
+PSEED_SAMPLES = {"ttbar": "canon_v5 TTbar files 1-2 and 5-10 (files 3 and 4, the gate and the known-good, left out)",
+                 "htt": "canon_v5 H->tautau files 1-5 and 7-8 (50 events per file)"}
+
+
+def _pc(t, nd=2):
+    return f"{100 * t['value']:.{nd}f} +- {100 * t['sd']:.{nd}f} %"
+
+
+def _res_line(S):
+    """One population's resolutions over all bins: core (RMS), and the pull cores."""
+    a = S["all"]
+    if not a["n"]:
+        return "none"
+    return (f"n {a['n']}; phi0 {1e3 * a['phi0']['core']:.2f} mrad ({1e3 * a['phi0']['rms']:.1f}), z0 "
+            f"{1e4 * a['z0']['core']:.0f} um ({1e4 * a['z0']['rms']:.0f}), cot {a['cot']['core']:.4f} "
+            f"({a['cot']['rms']:.3f}), 1/pT {100 * a['kappa']['core']:.1f} % ({100 * a['kappa']['rms']:.0f} %), "
+            f"|kappa| {a['kappa_abs']['core']:.4f} /GeV; pull cores phi0 / z0 / cot / kappa "
+            + " / ".join(f"{a[q]['pull_core']:.2f}" for q in ("phi0", "z0", "cot", "kappa")))
+
+
+def _bins(B, key, nd=2):
+    return "; ".join(f"[{b['lo']:g}, {'inf' if b['hi'] is None else format(b['hi'], 'g')}): "
+                     + ", ".join(f"{k} {_pc(b[k], nd)} (of {b[k]['den']})" for k in key) for b in B)
 
 
 def pseed(job_dir, overwrite, ver=None):
-    """The parallel seed study on canon_v5, one scenario (--ver; parallel_seed/PLAN.md): IT-only mini-tracks (3 IT layers
-    minimum, barrel and discs) matched one-to-one to CMSSW's L1TTracks at the 16 Sep default (phi0 + z0 + cot,
-    chi2 < 25)."""
-    scen = ver or "AAAA"
-    p, q = PSEED / "results" / f"match_{scen}.json", PSEED / "results" / f"extras_{scen}.json"
+    """The parallel seed study's overnight run, one sample and build (--ver SAMPLE_BUILD, e.g. ttbar_AAAA, htt_IAAA;
+    parallel_seed/results/night/match_<ver>.json): IT-only mini-tracks (3 IT layers minimum, barrel and discs)
+    matched one-to-one to CMSSW's L1TTracks at the 16 Sep default (phi0 + z0 + cot, chi2 < 25). A TTbar entry
+    supersedes the 2026-10-21 entry of its build, whose sample it contains."""
+    tag = ver or "ttbar_AAAA"
+    sample, scen = tag.split("_")
+    p = PSEED / "results" / "night" / f"match_{tag}.json"
     with open(p) as fh:
         Q = json.load(fh)
-    with open(q) as fh:
-        X = json.load(fh)
-    D, P, H = Q["default"], X["particles"], X["hits"]
-    if P["with_both"] != D["per_particle"]["particles"] or X["n_events"] != Q["n_events"]:
-        raise SystemExit(f"{scen}: the extras and the matching pass disagree on their particles or events")
-    pp = D["per_particle"]["matched_right"]
-    n = D["per_particle"]["particles"]
-
-    def fr(t):
-        return f"{100 * t['value']:.2f} +- {100 * t['sd']:.2f} % (of {t['den']})"
-
-    def bins(lab):
-        return "; ".join(f"[{b['lo']:g}, {'inf' if b['hi'] is None else format(b['hi'], 'g')}): matched "
-                         f"{100 * b['match']['value']:.2f} +- {100 * b['match']['sd']:.2f} %, right "
-                         f"{100 * b['right']['value']:.1f} +- {100 * b['right']['sd']:.1f} %" for b in D[lab])
-    vals = [{"name": "events", "value": Q["n_events"]},
-            {"name": "per particle: particles owning both an IT mini-track and an OT track that are matched to each "
-                     "other", "value": round(pp, 4), "error": round((pp * (1 - pp) / n) ** 0.5, 4),
-             "note": f"of {n} particles ({P['with_both_per_event']:.1f} per event); binomial sd (no event bootstrap)"},
-            {"name": "per particle: particles with an OT track that also own an IT mini-track",
-             "value": round(P["both_share_of_ot"], 4),
-             "note": f"{P['with_ot_track_per_event']:.2f} particles with an OT track per event"},
-            {"name": "per particle: particles with an OT track that are matched to their own IT mini-track",
-             "value": round(pp * P["both_share_of_ot"], 4)},
+    D, H, Rs = Q["default"], Q["hits"], Q["default"]["resolutions"]
+    vals = [{"name": "events", "value": Q["n_events"], "note": Q["label"]},
+            {"name": "per particle: particles with an OT track that also own an IT mini-track, matched to each other",
+             "value": round(D["per_particle"]["value"], 4), "error": round(D["per_particle"]["sd"], 4),
+             "note": f"of {D['per_particle']['den']} particles; event bootstrap"},
+            {"name": "per particle against the true pT (GeV) and |eta|",
+             "value": _bins(D["per_particle_pt"], ("per_particle",), 1) + " | "
+                      + _bins(D["per_particle_abs_eta"], ("per_particle",), 1)},
+            {"name": "particles with an OT track per event", "value": round(D["ot_particles_per_event"], 2)},
+            {"name": "particles with an OT track that also own an IT mini-track",
+             "value": round(D["ot_particles_with_it"]["value"], 4), "error": round(D["ot_particles_with_it"]["sd"], 4)},
+            {"name": "particles with an OT track matched to their own IT mini-track",
+             "value": round(D["per_ot_particle"]["value"], 4), "error": round(D["per_ot_particle"]["sd"], 4)},
             {"name": "IT mini-tracks per event", "value": round(Q["it_per_event"], 1),
              "note": f"{100 * Q['it_owned']:.1f} % owned by a particle"},
             {"name": "IT mini-tracks with exactly 3 hits", "value": round(H["3"]["share"], 4),
@@ -644,26 +660,81 @@ def pseed(job_dir, overwrite, ver=None):
                      "partner"},
             {"name": "per track: matches to the right OT track", "value": round(D["right"]["value"], 4),
              "error": round(D["right"]["sd"], 4)},
-            {"name": "per track against pT (GeV; the matched OT track's, else the IT fit's)", "value": bins("pt")},
-            {"name": "per track against |eta| (the IT fit's)", "value": bins("abs_eta")},
+            {"name": "per track against pT (GeV; the matched OT track's, else the IT fit's)",
+             "value": _bins(D["pt"], ("match", "right"))},
+            {"name": "per track against |eta| (the IT fit's)", "value": _bins(D["abs_eta"], ("match", "right"))},
             {"name": "scan: matched / right per parameter set and chi2 cut",
              "value": json.dumps({k: [round(v["match_fraction"], 4), round(v["right_fraction"], 4)]
-                                  for k, v in Q["scan"].items()})},
-            {"name": "the refit's agreement with the census's exported helix (max)", "value": Q["refit_vs_export_max"]},
-            {"name": "context", "value": "16 Sep run and 4-layer barrel dev test", "note": PSEED_CONTEXT}]
-    jobs = sorted(d.name for d in Path(job_dir).parent.glob(f"*-pseed-census-{scen}-f*"))
-    _reg({"id": f"wpc.pseed.canon-v5-{scen.lower()}",
-          "title": f"Parallel seed study on canon_v5 {scen}: IT-only mini-tracks (3 IT layers minimum, barrel and discs) "
-                   "matched to CMSSW's L1TTracks",
-          "status": "valid", "status_note": "parallel_seed/PLAN.md as approved, with the 3-layer decision (2026-10-21)",
+                                  for k, v in Q["scan"].items()})}]
+    for side, pop, lab in (("IT", "right_pairs", "IT mini-tracks of the right pairs"),
+                           ("OT", "right_pairs", "OT tracks of the right pairs"),
+                           ("OT", "owned", "every owned OT track"),
+                           ("IT", "owned_4_or_more_hits", "owned IT mini-tracks with 4 or more hits"),
+                           ("IT", "clean_3_hits", "owned 3-hit IT mini-tracks with every hit the owner's"),
+                           ("IT", "owned_3_hits", "owned 3-hit IT mini-tracks")):
+        vals.append({"name": f"resolution, {lab}: core (RMS) of estimate - truth", "value": _res_line(Rs[side][pop])})
+    vals += [{"name": "the refit's agreement with the census's exported helix (max)", "value": Q["refit_vs_export_max"]},
+             {"name": "context", "value": "16 Sep run and 4-layer barrel dev test", "note": PSEED_CONTEXT}]
+    rid = f"wpc.pseed.canon-v5-{sample}-{scen.lower()}"
+    prev = f"wpc.pseed.canon-v5-{scen.lower()}"
+    # TTbar files 1-2 are extracted from the 2026-10-21 censuses (their own jobs); every other file's census ran here
+    prov = {"census_jobs_files_1_2": sorted(d.name for d in Path(job_dir).parent.glob(f"*-pseed-census-{scen}-f[12]-*"))
+            } if sample == "ttbar" else {}
+    if sample == "ttbar" and scen == "AAAA":
+        with open(PSEED / "results" / "night" / "match_ttbar_AAAA_f1-2.json") as fh:
+            C = json.load(fh)["default"]
+        with open(PSEED / "results" / "match_AAAA.json") as fh:
+            E = json.load(fh)["default"]
+        vals.append({"name": "check: files 1-2 rerun against the 2026-10-21 entry (matched, right, per particle)",
+                     "value": f"{C['match']['value']:.6f} / {C['right']['value']:.6f} / {C['per_particle']['value']:.6f}"
+                              f" against {E['match']['value']:.6f} / {E['right']['value']:.6f} / "
+                              f"{E['per_particle']['matched_right']:.6f}"})
+    _reg({"id": rid,
+          "title": f"Parallel seed study on canon_v5 {sample} {scen}: IT-only mini-tracks (3 IT layers minimum, barrel "
+                   "and discs) matched to CMSSW's L1TTracks, with each side's resolutions",
+          "status": "valid", "status_note": "parallel_seed/PLAN.md as approved, with the 3-layer decision (2026-10-21) "
+                                            "and the overnight extension (2026-10-22)",
+          "values": vals, "provenance": prov,
+          "bias": f"descriptive: the angles are placeholders and class C the CNN stand-in; {PSEED_SAMPLES[sample]}; the OT "
+                  "side is CMSSW's L1TTracks (the 16 Sep run re-found OT tracks in the census, the one change of input); "
+                  "greedy one-to-one match, no refit on the union of hits (the OT tracks carry no census stub indices); "
+                  "with 3 IT layers the IT side is mostly 3-hit fakes; truth at the beamline (the owner's helix)",
+          "sources": [str(p), str(PSEED / "PLAN.md")] + Q["extracts"] + Q["input"]}, job_dir, overwrite)
+    if sample == "ttbar":
+        R.set_status(prev, "superseded", f"its files 1-2 are part of {rid} (files 1-2 and 5-10, event-bootstrap "
+                                         "per-particle error, resolutions)", by=BY, superseded_by=rid)
+
+
+def pseed_bridge(job_dir, overwrite, ver=None):
+    """The bridge: the old driver (arch_comparison.py, unchanged) on canon_v5 AAAA file 1, 100 events
+    (parallel_seed/night/bridge/bridge_AAAA_f01_100ev.json), against the 16 Sep run (combinatorics/results/
+    arch_comparison_1000.json, untracked in the main tree; copied unchanged to parallel_seed/reference/)."""
+    p = PSEED / "night" / "bridge" / "bridge_AAAA_f01_100ev.json"
+    with open(p) as fh:
+        Q = json.load(fh)
+    old = PSEED / "reference" / "arch_comparison_1000_2026-09-16.json"
+    with open(old) as fh:
+        O = json.load(fh)
+    vals = []
+    for lab, X in (("canon_v5 AAAA file 1, 100 events", Q), ("16 Sep, 400 events", O)):
+        c, m = X["counts"], X["match"]["phi0+z0+cot|25.0"]
+        vals.append({"name": f"{lab}: IT / OT per event (seed-real), matched, right",
+                     "value": f"{c['n_it'] / X['n_events']:.1f} ({100 * c['n_it_real'] / max(c['n_it'], 1):.1f} %) / "
+                              f"{c['n_ot'] / X['n_events']:.1f} ({100 * c['n_ot_real'] / max(c['n_ot'], 1):.1f} %), "
+                              f"{100 * m['n'] / max(c['n_it'], 1):.1f} %, {100 * m['right'] / max(m['n'], 1):.1f} %"})
+        for k, v in X["resolutions"].items():
+            vals.append({"name": f"{lab}: {k.strip()} (n, core kappa [1/GeV], d0 [um], cot, z0 [um])",
+                         "value": " / ".join(f"{x:.4g}" for x in v)})
+    _reg({"id": "wpc.pseed.bridge-canon-v5-aaaa-f01",
+          "title": "Parallel seed study: the bridge, the 16 Sep driver unchanged on canon_v5 AAAA file 1 (100 events)",
+          "status": "valid", "status_note": "parallel_seed/PLAN.md's bridge; old rules, old truth (seed-real), OT tracks "
+                                            "re-found by the census",
           "values": vals,
-          "bias": "descriptive: the angles are placeholders and class C the CNN stand-in; canon_v5 TTbar files 1-2 (200 "
-                  "events); the OT side is CMSSW's L1TTracks (the 16 Sep run re-found OT tracks in the census, the one "
-                  "change of input); greedy one-to-one match, no refit on the union of hits (the OT tracks carry no "
-                  "census stub indices); with 3 IT layers the IT side is mostly 3-hit fakes",
-          "provenance": {"census_jobs": jobs, "extras": "eval_refitq/combinatorics/arch_parallel_extras.py at 03b28f9, "
-                                                        "run directly (read-only, light)"},
-          "sources": [str(p), str(q), str(PSEED / "PLAN.md")] + Q["census"] + Q["input"]}, job_dir, overwrite)
+          "bias": "the old driver as committed: its own IT minimum (effectively 4 layers, the OT rule), barrel seeds, "
+                  "legacy angles, OT tracks re-found by the census; --chunk 4 for memory (the 16 Sep run used the "
+                  "default 8; chunking does not change the result); separates what the new data changes from what the "
+                  "new rules change",
+          "sources": [str(p), str(old), str(PSEED / "PLAN.md")]}, job_dir, overwrite)
 
 
 def main(argv=None):
@@ -672,9 +743,9 @@ def main(argv=None):
                                      "c1b-j1", "c1b-j2", "c1b-j3", "c1b-seed", "c1b-j4", "c1b-j5",
                                      "c1b-j6", "c1b-verdict", "c1b-betasym", "scan-tree2-kg",
                                      "scan-bpre", "scan-nonprompt", "scan-go",
-                                     "scan-truthmod", "v3-closure", "pseed"))
+                                     "scan-truthmod", "v3-closure", "pseed", "pseed-bridge"))
     ap.add_argument("--ver", help="cuts / cutcheck: the cut file's version (default: the one in use); v3-closure: the tag; "
-                                    "pseed: the scenario")
+                                    "pseed: the sample and build, e.g. ttbar_AAAA")
     ap.add_argument("--job-dir", required=True, help="the launcher's job directory (launch-time provenance)")
     ap.add_argument("--overwrite", action="store_true")
     a = ap.parse_args(argv)
@@ -687,7 +758,8 @@ def main(argv=None):
          "c1b-seed": c1b_seed, "c1b-j4": c1b_j4, "c1b-j5": c1b_j5,
          "c1b-j6": c1b_j6, "c1b-verdict": c1b_verdict, "c1b-betasym": c1b_betasym,
          "scan-tree2-kg": scan_tree2_kg, "scan-bpre": scan_bpre, "scan-nonprompt": scan_nonprompt,
-         "scan-go": scan_go, "scan-truthmod": scan_truthmod}[a.what](a.job_dir, a.overwrite)
+         "scan-go": scan_go, "scan-truthmod": scan_truthmod, "pseed-bridge": pseed_bridge}[a.what](a.job_dir,
+                                                                                                  a.overwrite)
     return 0
 
 
