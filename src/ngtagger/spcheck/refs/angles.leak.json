@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:33:23Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:36:41Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "angles.leak",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "the true local cotBeta written into localCotBeta of the linked clusters",
  "rule": "per surface x emitted column: the KS distance between TP-linked and unlinked clusters identical to the reference; the fraction of linked clusters whose emitted angle equals the truth exactly <= 1% (reference 0.02-0.09%)",
  "stat": {

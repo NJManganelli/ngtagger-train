@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:38:13Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:42:31Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "census.sp_it_discs_off_is_ot",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "the same comparison with the SmartPixels discs left on (--it-discs on): the OT seeds then follow into ID1-ID4",
  "rule": "two fresh 4-event censuses of the gate input with the census chain, cuts open (--calibrate), the SmartPixels discs off (--it-discs off): --masks IIII with the default targets (every surface) and --masks IIII with the OT targets only (barrel and discs): the prompt OT seeds' (barrel, disc and overlap doublets) found and found_dr bitmaps, counters and tracks' final stubs are identical; identity of the track and found counts with the reference",
  "stat": {

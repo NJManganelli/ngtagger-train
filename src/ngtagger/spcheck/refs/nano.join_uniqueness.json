@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:33:15Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:36:34Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "nano.join_uniqueness",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "one (trackIdx, otStubIdx) link row of L1TTrackStub duplicated in event 0",
  "rule": "zero duplicates and zero out-of-range indices for every gated key; event identities unique; the reported (non-key) counts identical to the reference",
  "stat": {

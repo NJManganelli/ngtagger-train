@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:33:15Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:36:34Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "truth.tp_phi0_helix",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "the production azimuth (L1TTP_phi) substituted for phi0",
  "rule": "D = median |r dphi| of displaced TPs (r_prod 0.05-2.5 cm) minus that of prompt TPs (r_prod < 0.01 cm), pT > 1 GeV, innermost class-T barrel cluster, agrees with the registered known-good D: |D - D_ref| <= t(1) = 2.58 combined event-bootstrap sigma (300 replicas); stored phi0 = truth_helix.poca_phi0 to 1e-4 rad (pT > 1 GeV; measured max 6.7e-6); identity with the reference on the reference input",
  "stat": {

@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:33:15Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:36:33Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "estimator.units",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "the census pull table's original core (drops |x| >= 1e3, absolute 1e-5 tolerance), applied to the same residuals in cm, in um and in 1e-4 cm",
  "rule": "on the OT track z0 and d0 residuals to their TP (L1TTrack, tpIdx >= 0 as the validity mask) of the gate input: core(k x) / k equal for k = 1e-4, 1, 1e4 to 1e-9 relative; identity of the cm widths with the reference",
  "stat": {

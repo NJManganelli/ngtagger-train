@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:38:51Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:43:09Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "census.disc_angle_import",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "three variants, each of which must be red: (key) the table read at the emitted incidence key instead of the predicted one; (sign) the centre added instead of subtracted; (width) the table's width not applied",
  "rule": "on the first events of the gate input with the SmartPixels discs, every usable class-T IT disc cluster's census-path module-frame pulls (census_angles.Model.disc_pulls, k = 1) against its true local cots as the prediction equal spdefs' (the disc table, key true_local at the predicted incidence key: its centre subtracted, its width applied) to 1e-12 relative; the disc table is p03.table.v1a1e-disclocal and its sha256 the reference's; per disc and angle the class-T (pT >= 1 GeV) pull centre (25 %-trimmed mean) within 0 +- 0.25 and width (95 %-trimmed) within 1 +- 0.1, each widened by t(N = 8) event-bootstrap sd; identity of the cluster counts with the reference",
  "stat": {

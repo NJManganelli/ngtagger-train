@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:38:49Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:43:08Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "census.angle_switches",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "S4a told to use beta only, scored with the alpha term still added",
  "rule": "one IL1+IL2 doublet seed followed into IL3, IL4, OL1, OL2 on the first events of the gate input, weighting stages only (no cut file needed): S4a with no angle == S4a off; S4a with beta only == S4a with both angles and alpha's sigma infinite (the same hits); S5 with no angle == S5 off (bit-identical fit); S5 with alpha only differs from S5 with both; every stage off: hits and fit bit-identical under two different knobs (k = 1 fixed; k = 0.3 scaled), so nothing reads an angle; identity of the track count with the reference",
  "stat": {

@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261018T173313Z-wpdisc-gate36-derive-10095/copy",
- "derived": "2026-10-18T17:38:49Z",
+ "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261021T183632Z-censusscan-gate-derive-38366/copy",
+ "derived": "2026-10-21T18:43:08Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "census.angle_nonfinite",
- "job_id": "20261018T173313Z-wpdisc-gate36-derive-10095",
+ "job_id": "20261021T183632Z-censusscan-gate-derive-38366",
  "known_bad": "a missing table width on one surface: IL2's alpha uncertainty set to NaN on the gate input's first events, through the census's own S1 (alpha_veto) with the cut file; its non-finite statistics must be counted",
  "rule": "the 4-event AAAI+IAAA census with the cut file (census.cut_entries' cut run): the census's NaN-guard counts (non-finite S1, S2a, S2z, S3, S4w, S4a and S6 statistics among IT inputs with a usable direction, M.NONFINITE_STAGES; S6 among the fits that did not diverge, KF.fit_tracks) are present for every stage and all 0; n/a without the cut file",
  "stat": {
