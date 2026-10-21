@@ -104,6 +104,19 @@ STEPS = [  # (label, a, b): a - b ; mask "M" = the SP mask of the column. The fi
     ("L3-L0  total", ("trackmva", "M"), L0),
 ]
 MAIN_STEPS = STEPS[:3]
+# jointly trained track-quality heads (joint_heads.py): reference (uncoupled), A (outputs apart), B (errors apart)
+JOINT_STEPS = [
+    ("Jref  joint heads, reference: SmartPixels - OT", ("joint_ref", "M"), ("joint_ref", "IIII")),
+    ("JA  joint heads, outputs apart: SmartPixels - OT", ("joint_A", "M"), ("joint_A", "IIII")),
+    ("JB  joint heads, errors apart: SmartPixels - OT", ("joint_B", "M"), ("joint_B", "IIII")),
+    ("JA-Jref  outputs apart - reference, SmartPixels", ("joint_A", "M"), ("joint_ref", "M")),
+    ("JB-Jref  errors apart - reference, SmartPixels", ("joint_B", "M"), ("joint_ref", "M")),
+    ("JA-Jref(OT)  outputs apart - reference, OT", ("joint_A", "IIII"), ("joint_ref", "IIII")),
+    ("JB-Jref(OT)  errors apart - reference, OT", ("joint_B", "IIII"), ("joint_ref", "IIII")),
+    ("Jref-L3  joint reference - today's heads, SmartPixels", ("joint_ref", "M"), ("trackmva", "M")),
+]
+# the with-vs-without-SmartPixels step of each input set (the headline pages)
+HEAD_LABEL = {a[0]: lab for lab, a, b in STEPS + JOINT_STEPS if a[0] == b[0] and a[1] == "M" and b[1] == "IIII"}
 KEY_METRICS = ["macro_auc", "b_vs_udsg_auc", "b_vs_udsg_eff@menu", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%",
                "c_vs_udsg_auc", "c_vs_udsg_eff@menu", "c_vs_udsg_eff@10%", "c_vs_udsg_eff@1%",
                "tau_vs_jet_auc", "tau_vs_jet_eff@menu", "tau_vs_jet_eff@10%", "tau_vs_jet_eff@1%",
@@ -353,7 +366,7 @@ def resolve(cell, mask):
 def ladder(M, regs, which="ens"):
     L = {}
     for mask in SP_MASKS:
-        for lab, a, b in STEPS:
+        for lab, a, b in STEPS + JOINT_STEPS:
             for reg in regs:
                 for k in [k for k in M[next(iter(M))][which][reg] if "_thr@" not in k]:
                     v = step_value(M, resolve(a, mask), resolve(b, mask), reg, k, which)
@@ -633,10 +646,10 @@ def main():
                           "kept_mean_sd_incl": {k: seed_stats(M, (v, m), "incl", k)[:2]
                                                 for k in M[(v, m)]["ens"]["incl"]}}
              for (v, m) in P}
-    head = {mask: {lab.split("  ")[1]: L[mask][lab]["incl"] for lab, _, _ in MAIN_STEPS if lab in L[mask]}
+    head = {mask: {lab.split("  ")[1]: L[mask][lab]["incl"] for lab in HEAD_LABEL.values() if lab in L[mask]}
             for mask in L}
     head_best = {mask: {lab.split("  ")[1]: {k: LB[mask][lab]["incl"][k] for k in KEY_METRICS}
-                        for lab, _, _ in MAIN_STEPS if lab in LB.get(mask, {})} for mask in LB}
+                        for lab in HEAD_LABEL.values() if lab in LB.get(mask, {})} for mask in LB}
     summary = {
         "what": "SmartPixels L1 jet multiclass tagging on canon_v5 (refit v3): deployed taggers vs the OT baseline",
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "samples": samples,
@@ -647,7 +660,7 @@ def main():
                   "n_test_events": int(len(ev))},
         "selection_rules": json.load(open(os.path.join(C.OUT, "selection.json")))["rules"],
         "variants": C.VARIANTS, "steps_definition": {lab: [f"{x[0]}@{x[1]}" for x in (a_, b_)]
-                                                     for lab, a_, b_ in STEPS},
+                                                     for lab, a_, b_ in STEPS + JOINT_STEPS},
         "headline_definition": "per SP mask and input set: deployed tagger on the mask minus deployed tagger on "
                                "IIII (inclusive test set); diff, boot_err (paired event bootstrap), seed_err "
                                "(trial spread)",
@@ -727,7 +740,7 @@ def main():
                 row = [k, fmt(*o) if o else "-"]
                 for mask in SP_MASKS:
                     x = cells.get(f"{v}@{mask}", {}).get("deployed", {}).get("incl", {}).get(k)
-                    lab = next(lab for lab, a_, _ in MAIN_STEPS if a_[0] == v)
+                    lab = HEAD_LABEL[v]
                     row += [fmt(*x) if x else "-", fmt_step(L.get(mask, {}).get(lab, {}).get("incl", {}).get(k))]
                 rows.append(row)
             table_page(pdf, f"HEADLINE, input set '{v}': with vs without SmartPixels (deployed taggers, inclusive)",
@@ -761,6 +774,14 @@ def main():
                                                           for lab, _, _ in STEPS])
             table_page(pdf, f"All steps ({mask} vs IIII), inclusive test set", hdr, rows, fontsize=6.0,
                        note=STEP_NOTE + " L0 column: absolute value ± event bootstrap.")
+        for mask in [m for m in SP_MASKS if m in L and any(lab in L[m] for lab, _, _ in JOINT_STEPS)]:
+            hdr = ["metric (inclusive)"] + [short(lab) for lab, _, _ in JOINT_STEPS]
+            rows = [[k] + [fmt_step(L[mask].get(lab, {}).get("incl", {}).get(k)) for lab, _, _ in JOINT_STEPS]
+                    for k in KEY_METRICS + ["b_vs_light_auc", "c_vs_light_auc"] + ALL_AUCS]
+            table_page(pdf, f"Jointly trained track-quality heads ({mask}), inclusive test set", hdr, rows,
+                       fontsize=6.0, note="Steps: " + "; ".join(f"{short(lab)} = {lab.split('  ', 1)[1]}"
+                                                               for lab, _, _ in JOINT_STEPS)
+                       + ". Deployed taggers (best-3 mean); ± (event bootstrap ⊕ trial spread) (significance).")
         for mask in [m for m in SP_MASKS if m in L]:
             aucs = ALL_AUCS + ["b_vs_udsg_auc", "c_vs_udsg_auc", "tau_vs_jet_auc", "b_vs_light_auc", "c_vs_light_auc"]
             plot_steps(pdf, L, mask, "region:incl", aucs, [k.replace("auc_", "").replace("_auc", "") for k in aucs],

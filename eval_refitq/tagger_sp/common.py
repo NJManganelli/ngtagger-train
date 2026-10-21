@@ -75,7 +75,11 @@ VARIANTS = {
     "track": ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres"],
     "trackmva": ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres", "trackmva"],
 }
-LEVEL = {"baseline": 1, "track": 2, "trackmva": 3}
+# jointly trained track-quality heads (joint_heads.py): the "track" inputs + the six heads of one head version
+# (reference = uncoupled, A = outputs apart, B = errors apart), each from its own jet caches (jets_dir)
+JOINT_VERSIONS = ("ref", "A", "B")
+VARIANTS.update({f"joint_{v}": VARIANTS["track"] + ["trackjoint"] for v in JOINT_VERSIONS})
+LEVEL = {"baseline": 1, "track": 2, "trackmva": 3, **{f"joint_{v}": 3 for v in JOINT_VERSIONS}}
 
 def sample_dir(sample: str, mask: str) -> str:
     return os.path.join(CANON[BASELINE_MASK if mask == BASELINE_MASK else "sp"], SAMPLES[sample][0])
@@ -212,6 +216,11 @@ def tf_setup(threads: int = 2, gpu: bool = False):
         tf.config.set_visible_devices([], "GPU")
     tf.config.threading.set_intra_op_parallelism_threads(threads)
     tf.config.threading.set_inter_op_parallelism_threads(threads)
+
+
+def jets_dir(variant: str | None = None) -> str:
+    """The jet caches a variant trains on: the joint-head variants have their own (joint_heads.py jets)."""
+    return cache_dir(f"jets_{variant}") if variant and variant.startswith("joint_") else cache_dir("jets")
 
 
 def masks_with_jets(sample: str) -> list[str]:

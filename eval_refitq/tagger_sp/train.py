@@ -45,9 +45,9 @@ CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp.yam
 CONFIG_LINOUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp_linout.yaml")
 
 
-def load_mask(mask, samples):
+def load_mask(mask, samples, variant=None):
     """Concatenate the jet caches of `mask` over `samples` (study acceptance applied), for
-    exactly the files build.py used (its manifest)."""
+    exactly the files build.py used (its manifest); the variant's caches (common.jets_dir)."""
     with open(C.manifest_path(mask)) as f:
         man = json.load(f)
     if man["samples"] != list(samples):
@@ -58,7 +58,7 @@ def load_mask(mask, samples):
         fs = [n for s2, n, _ in man["files"] if s2 == s]
         if not fs:
             raise FileNotFoundError(f"no {s} files for {mask}")
-        caches = {n: np.load(os.path.join(C.cache_dir("jets"), C.tag(s, mask, n) + ".npz")) for n in fs}
+        caches = {n: np.load(os.path.join(C.jets_dir(variant), C.tag(s, mask, n) + ".npz")) for n in fs}
         val = C.val_table(s, {n: d["evid"] for n, d in caches.items()},
                           {n: d["test_entries"] for n, d in caches.items()})
         for n, d in caches.items():
@@ -129,7 +129,7 @@ def main():
     from ngtagger.data.labels import CLASS_LABELS
     from ngtagger.train.trainer import class_pt_weights, run_training
 
-    D, names = load_mask(a.mask, a.samples)
+    D, names = load_mask(a.mask, a.samples, a.variant)
     X = D["X"]
     cols = resolve_feature_groups(C.VARIANTS[a.variant])
     out, vname = C.OUT, a.variant

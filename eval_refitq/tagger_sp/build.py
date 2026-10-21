@@ -167,17 +167,20 @@ def train_mva(mask, fileset, splits):
 
 
 # ---------------------------------------------------------------- 3. jets
-def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask):
-    out = os.path.join(C.cache_dir("jets"), C.tag(sample, mask, n) + ".npz")
+def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask, groups=None, jets_dir=None, models=None):
+    """`groups` (default common.GROUPS_ALL), `jets_dir` (default the main caches) and `models` (extra
+    load_jets model arguments, e.g. trackjoint_model) serve the joint-head caches (joint_heads.py jets)."""
+    groups = groups or C.GROUPS_ALL
+    out = os.path.join(jets_dir or C.cache_dir("jets"), C.tag(sample, mask, n) + ".npz")
     if os.path.exists(out):
         d = np.load(out)
         if str(d["bundle_sha"]) == sha and [str(x) for x in d["feature_names"]] == \
-                resolve_feature_groups(C.GROUPS_ALL) and "stock_bTagScore" in d.files:
+                resolve_feature_groups(groups) and "stock_bTagScore" in d.files:
             return out
-    jets, const, gen = load_jets([fn], n_const=C.N_CONST, feature_groups=C.GROUPS_ALL,
-                                 track_table=C.TRACK_TABLE, trackmva_model=bundle_dir)
+    jets, const, gen = load_jets([fn], n_const=C.N_CONST, feature_groups=groups,
+                                 track_table=C.TRACK_TABLE, trackmva_model=bundle_dir, **(models or {}))
     label, target_pt, target_pt_phys, keep = label_jets(jets, gen, max_dr=0.4)
-    X, names = build_features(jets, const, n_const=C.N_CONST, feature_groups=C.GROUPS_ALL)
+    X, names = build_features(jets, const, n_const=C.N_CONST, feature_groups=groups)
     nj = ak.to_numpy(ak.num(jets.pt, axis=1))
     entry = np.repeat(np.arange(len(nj)), nj)
     k = ak.to_numpy(ak.flatten(keep))
