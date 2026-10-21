@@ -308,12 +308,28 @@ def objective(P: Problem, idx, variant, lam, seed=0):
     return obj
 
 
+def with_base(b, base):
+    """The booster with its base score set to the heads' base margins, so that its own prediction is the trained
+    function (base margin + trees). Training passes the base as base_margin, which replaces XGBoost's base score;
+    left at its default (0.5) the saved model would predict 0.5 too high on every head."""
+    import xgboost as xgb
+
+    m = json.loads(b.save_raw("json"))
+    lp = m["learner"]["learner_model_param"]
+    base = np.atleast_1d(np.asarray(base, float))
+    lp["base_score"] = "[" + ",".join(repr(float(x)) for x in base) + "]" if len(base) > 1 else repr(float(base[0]))
+    out = xgb.Booster()
+    out.load_model(bytearray(json.dumps(m).encode()))
+    return out
+
+
 def fit(X, P: Problem, idx, variant, lam, rounds=ROUNDS):
     import xgboost as xgb
 
     K = len(P.heads)
     dm = xgb.DMatrix(X[idx], label=np.zeros((len(idx), K)), base_margin=np.tile(P.base, (len(idx), 1)))
-    return xgb.train(dict(XGB, num_target=K), dm, num_boost_round=rounds, obj=objective(P, idx, variant, lam))
+    b = xgb.train(dict(XGB, num_target=K), dm, num_boost_round=rounds, obj=objective(P, idx, variant, lam))
+    return with_base(b, P.base)
 
 
 def fit_independent(X, P: Problem, idx, rounds=ROUNDS):
@@ -330,15 +346,16 @@ def fit_independent(X, P: Problem, idx, rounds=ROUNDS):
             g, h = full(Fk.ravel(), d)
             return g[:, k], h[:, k]
         dm = xgb.DMatrix(X[idx], label=np.zeros(len(idx)), base_margin=np.full(len(idx), P.base[k]))
-        out.append(xgb.train({k2: v for k2, v in XGB.items() if k2 != "multi_strategy"}, dm,
-                             num_boost_round=rounds, obj=objk))
+        bk = xgb.train({k2: v for k2, v in XGB.items() if k2 != "multi_strategy"}, dm, num_boost_round=rounds, obj=objk)
+        out.append(with_base(bk, P.base[k]))
     return out
 
 
-def predict(b, X, base):
+def predict(b, X):
+    """The heads' outputs (margins: logit of P(clean), log sigma_hat) of a booster from fit / fit_independent."""
     import xgboost as xgb
 
-    return b.predict(xgb.DMatrix(X), output_margin=True) + base
+    return b.predict(xgb.DMatrix(X), output_margin=True)
 
 
 def split_booster(b, k):
@@ -451,7 +468,7 @@ def stage_fit(masks):
                 t0 = time.time()
                 b = fit(X, P, tr, "A" if v == "ref" else v, lam)
                 b.save_model(os.path.join(d, sname(v, lam) + ".json"))
-                Fv, Ft = predict(b, X[va], P.base), predict(b, X[te], P.base)
+                Fv, Ft = predict(b, X[va]), predict(b, X[te])
                 np.savez_compressed(out, F_val=Fv.astype(np.float32), F_test=Ft.astype(np.float32),
                                     info_val=P.info(Fv, va), loss_val=P.losses(Fv, va), fit_s=time.time() - t0,
                                     tl_val=P.track_losses(Fv, va).astype(np.float32),
@@ -462,7 +479,7 @@ def stage_fit(masks):
             if not os.path.exists(ip):
                 Fj = np.load(os.path.join(d, sname("ref", 0.0) + ".npz"))["F_val"]
                 ind = fit_independent(X, P, tr)
-                Fi = np.column_stack([predict(bk, X[va], P.base[j]) for j, bk in enumerate(ind)])
+                Fi = np.column_stack([predict(bk, X[va]) for bk in ind])
                 dI = np.abs(P.info(Fj.astype(float), va) - P.info(Fi, va))
                 frac = (np.abs(Fj - Fi) > 1e-4).mean(0)
                 rec = {"max_info_diff": float(dI.max()), "frac_tracks_diff_gt_1e-4": frac.tolist(),
@@ -637,8 +654,7 @@ def joint_mva(mask, version):
             for wname, w in tm.windows(T, coll).items():
                 idx = np.flatnonzero(w)
                 if len(idx):
-                    b, base = self.models[coll][wname]
-                    out[idx] = predict(b, X[idx], base)
+                    out[idx] = predict(self.models[coll][wname], X[idx])
             for k, (_, kind, _) in enumerate(self.heads):
                 if kind == "logistic":
                     out[:, k] = sigmoid(out[:, k])
@@ -652,7 +668,7 @@ def joint_mva(mask, version):
         b = xgb.Booster()
         b.load_model(os.path.join(d, sname(v, lam) + ".json"))
         meta = json.load(open(os.path.join(d, "meta.json")))
-        models[wname] = (b, np.array(meta["base"]))
+        models[wname] = b
         heads = [tuple(h) for h in meta["heads"]]
     m = JointMVA({coll: models}, {"family": C.FAMILY, "config": "", "tables": tm.table_names(C.FAMILY, ""),
                                   "setting": sname(v, lam)})
