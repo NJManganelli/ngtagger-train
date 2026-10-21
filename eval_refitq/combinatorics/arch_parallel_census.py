@@ -18,7 +18,7 @@ This pass, per census chunk:
     owner is the OT track's truth particle.
 Events are taken from the one file both read, and every event is checked by (run, lumi, event).
 
-  python arch_parallel_census.py -c CENSUS_DIR -i FILE -o OUT.json
+  python arch_parallel_census.py -c CENSUS_DIR [CENSUS_DIR ...] -i FILE [FILE ...] -o OUT.json   (one census per file)
 """
 from __future__ import annotations
 
@@ -134,8 +134,10 @@ def key(e, t):
     return e * (1 << 20) + t
 
 
-def run(a):
-    d = Path(TF.census_dir(a.census))
+def load_pair(census, path):
+    """One (census, file) pair: its IT mini-tracks and the file's OT tracks, events numbered from 0 in the file, each
+    event checked by (run, lumi, event); returns (IT or None, OT, n_events, the census's configuration)."""
+    d = Path(TF.census_dir(census))
     meta = json.load(open(d / "manifest.json"))
     cfg = meta["config"]
     OC.set_discs(cfg["ot_chain"]["discs"], fixes=cfg["ot_chain"]["discs"])
@@ -146,30 +148,48 @@ def run(a):
             "model": ang.model, "d0_prior_cm": cfg["kf_opts"].get("d0_prior_cm", KF.D0_PRIOR_CM)}
     sigz = {int(k): float(v) for k, v in meta["calibration"]["sigz_ot"].items()}
     ITs, OTs, ids_all, evs = [], [], [], []
-    for ci, ((U, Q), ev) in enumerate(TF.unified_chunks(a.input, meta["n_events"], cfg["chunk"], sigz, None, model,
+    for ci, ((U, Q), ev) in enumerate(TF.unified_chunks(path, meta["n_events"], cfg["chunk"], sigz, None, model,
                                                         cfg["it_discs"])):
-        shard = np.load(d / f"chunk_{ci:05d}.npz")
-        IT = it_tracks(U, Q, shard, meta, fopt)
-        OT, ids = ot_tracks(a.input, ev)
+        IT = it_tracks(U, Q, np.load(d / f"chunk_{ci:05d}.npz"), meta, fopt)
+        OT, ids = ot_tracks(path, ev)
         ids_all.append(ids)
         evs.append(np.asarray(ev))
         if IT is not None:
             ITs.append(IT)
         OTs.append(OT)
         del U, Q
+    nev = int(np.concatenate(evs).max()) + 1
+    with uproot.open(path) as f:
+        own = np.stack([f["Events"][b].array(library="np") for b in ("run", "luminosityBlock", "event")], 1)[:nev]
+    assert (np.concatenate(ids_all) == own[np.concatenate(evs)]).all(), f"{path}: event identity differs"
+    IT = {k: np.concatenate([x[k] for x in ITs]) for k in ITs[0]} if ITs else None
+    return IT, {k: np.concatenate([x[k] for x in OTs]) for k in OTs[0]}, nev, cfg
+
+
+def run(a):
+    if len(a.census) != len(a.input):
+        raise SystemExit("one census per input file")
+    ITs, OTs, nev, masks = [], [], 0, set()
+    for c, path in zip(a.census, a.input):
+        IT_, OT_, n, cfg = load_pair(c, path)
+        masks.add(tuple(cfg["masks"]))
+        for X in (IT_, OT_):
+            if X is not None:
+                X["event"] = X["event"] + nev                # the files' events in sequence
+        if IT_ is not None:
+            ITs.append(IT_)
+        OTs.append(OT_)
+        nev += n
+    if len(masks) != 1:
+        raise SystemExit(f"the censuses mix builds: {sorted(masks)}")
     IT = {k: np.concatenate([x[k] for x in ITs]) for k in ITs[0]}
     OT = {k: np.concatenate([x[k] for x in OTs]) for k in OTs[0]}
-    nev = int(np.concatenate(evs).max()) + 1
-    with uproot.open(a.input) as f:
-        own = np.stack([f["Events"]["run"].array(library="np"), f["Events"]["luminosityBlock"].array(library="np"),
-                        f["Events"]["event"].array(library="np")], 1)[:nev]
-    assert (np.concatenate(ids_all) == own[np.concatenate(evs)]).all(), "event identity differs between the passes"
     # the census curvature's sign against CMSSW's, from the right owners at the loosest phi0+z0+cot match
     ia, ib = match(IT, OT, PARSETS["phi0+z0+cot"], 25.0, 1.0)
     ok = (IT["owner"][ia] >= 0) & (IT["owner"][ia] == OT["owner"][ib])
     sign = 1.0 if np.mean(np.sign(IT["kappa"][ia][ok]) == np.sign(OT["kappa"][ib][ok])) >= 0.5 else -1.0
     rng = np.random.default_rng(20261021)
-    res = {"plan": "parallel_seed/PLAN.md", "census": str(d), "input": a.input, "mask": cfg["masks"],
+    res = {"plan": "parallel_seed/PLAN.md", "census": a.census, "input": a.input, "mask": list(masks.pop()),
            "n_events": nev, "it_per_event": len(IT["event"]) / nev, "ot_per_event": len(OT["event"]) / nev,
            "it_owned": float(np.mean(IT["owner"] >= 0)), "ot_owned": float(np.mean(OT["owner"] >= 0)),
            "refit_vs_export_max": float(np.max(IT["d_export"])), "kappa_sign": sign, "old": OLD, "scan": {}}
@@ -206,7 +226,7 @@ def run(a):
     with open(a.out, "w") as fh:
         json.dump(res, fh, indent=1, default=float)
     dd = res["default"]
-    print(f"{cfg['masks']} {nev} events: IT {res['it_per_event']:.1f}/ev ({100 * res['it_owned']:.1f} % owned), OT "
+    print(f"{res['mask']} {nev} events: IT {res['it_per_event']:.1f}/ev ({100 * res['it_owned']:.1f} % owned), OT "
           f"{res['ot_per_event']:.1f}/ev; matched {100 * dd['match']['value']:.1f} +- {100 * dd['match']['sd']:.1f} %, "
           f"right {100 * dd['right']['value']:.1f} +- {100 * dd['right']['sd']:.1f} %; refit vs export "
           f"{res['refit_vs_export_max']:.2g}; kappa sign {sign:+.0f}")
@@ -215,8 +235,9 @@ def run(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("-c", "--census", required=True, help="the IT-only census's cache directory")
-    ap.add_argument("-i", "--input", required=True, help="the one canon_v5 file the census ran on")
+    ap.add_argument("-c", "--census", nargs="+", required=True, help="the IT-only censuses' cache directories, one "
+                                                                       "per input file")
+    ap.add_argument("-i", "--input", nargs="+", required=True, help="the canon_v5 files, in the censuses' order")
     ap.add_argument("-o", "--out", required=True)
     return run(ap.parse_args(argv))
 
