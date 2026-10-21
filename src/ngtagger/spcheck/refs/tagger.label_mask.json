@@ -1,16 +1,17 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
- "derived": "2026-10-08T23:38:07Z",
+ "code_root": "/Users/nmangane/smartpixels/ngtagger-train-tagger",
+ "derived": "2026-10-21T19:08:28Z",
  "events": 5,
- "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "tagger.label_mask",
- "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "job_id": null,
  "known_bad": "the kept-jet mask without the label and gen-pT requirements (unmatched pile-up jets admitted)",
- "rule": "on the first 5 events of the gate input: labels.label_jets through nano.load_jets equals the study's jet cache (kept jets, in order); every kept jet has label 0-7 and gen pT > 5 GeV; the b-vs-udsg / c-vs-udsg / tau classes of analyze.PAIRS are those of the definition sheet; every file of each mask's training manifest comes from one production era",
+ "rule": "on the first 5 events of the gate input: every kept jet has label 0-7 and gen pT > 5 GeV; labels.label_jets through nano.load_jets on the study's own AAAA file of that number equals the study's jet cache (kept jets, in order); the b-vs-udsg / c-vs-udsg / tau classes of analyze.PAIRS are those of the definition sheet; every file of each mask's training manifest comes from one production era",
  "stat": {
   "cache_equal": true,
+  "cache_source": "/Volumes/WDMac/smartpixels_scratch/canon_v5/spstudy_AAAA_f03_100ev.root",
   "events": 5,
-  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
   "keep_unlabelled": false,
   "kept_per_class": [
    0,
@@ -25,16 +26,16 @@
   ],
   "manifest_eras": {
    "AAAA": [
-    "canon_v2"
+    "canon_v5"
    ],
    "AAAI": [
-    "canon_v2"
+    "canon_v5"
    ],
    "IAAA": [
-    "canon_v2"
+    "canon_v5"
    ],
    "IIII": [
-    "canon_v2"
+    "canon_v4"
    ]
   },
   "n_jets": 74,
