@@ -20,8 +20,8 @@ on clean matched training tracks), phi [urad, wrapped] against the TP's phi0 (UN
 masks) or the OT track (IIII). HEAD_MODE (plan section 1): "width" heads predict log sigma_hat of their residual
 (Gaussian likelihood, Fisher scoring), "error" heads the residual itself (squared error at the residual's own
 scale), "both" one of each per parameter. Errors (variant B): clean p - y; width log sigma_hat - log|r - mu|
-(floored); error/mean F - r. Features and windows: exactly the existing heads' (trackmva.feature_matrix /
-windows; every d0-derived quantity and the z0 value withheld).
+(floored); error/mean F - r. Features and windows: the existing heads' (trackmva.feature_matrix / windows; every
+d0-derived quantity and the z0 value withheld) WITHOUT the truth-only h_nmerged (TRUTH_ONLY); missing values -999.
 
 Events: the heads are fitted on the tagger's training events minus its validation events (common.split_table,
 common.val_table, by event identity); lambda is chosen on the validation events; the mutual information and
@@ -432,12 +432,25 @@ def mask_problem(mask):
     return T, X, y, R, k, W
 
 
-def features(T, coll):
-    """The existing heads' feature matrix with missing values at MISSING (see the constant)."""
+# TRUTH-ONLY inputs of the existing heads' feature list, dropped here: h_nmerged counts accepted IT hits whose
+# cluster has a second simulated contributor above 10 % of its charge (the producer's clusterMerged, "TRUTH-ONLY";
+# SmartPixelsRecHitProducer qSecond / qTot > clusterMergeFrac). It cannot exist online.
+TRUTH_ONLY = ("h_nmerged",)
+
+
+def feature_names(T, coll):
     from ngtagger.train import trackmva as tm
 
-    X, _ = tm.feature_matrix(T, coll)
-    return np.where(np.isnan(X), MISSING, X)
+    return [n for n in tm.features(T, coll) if n not in TRUTH_ONLY]
+
+
+def features(T, coll):
+    """The existing heads' feature matrix without the truth-only inputs, with missing values at MISSING."""
+    from ngtagger.train import trackmva as tm
+
+    X, names = tm.feature_matrix(T, coll)
+    keep = [i for i, n in enumerate(names) if n not in TRUTH_ONLY]
+    return np.where(np.isnan(X[:, keep]), MISSING, X[:, keep])
 
 
 def stage_extra(masks):
