@@ -23,6 +23,19 @@ CACHE_DIR = Path(os.environ.get("P03_CACHE", str(OUT_DIR / "cache")))
 SCEN = "AAAA"
 HERE = Path(__file__).resolve().parent
 EVENTS_PER_FILE = 100
+# THE ERA'S FILE ROLES (fit on spent files; protect the gate and the known-good). canon_v3: the sheet's (fit 1-2, test
+# 3-10; demonstration fit 7-8, test 3-6, 9-10). canon_v4 (WDMac p03_disc_v4/PLAN.md, approved 2026-10-21): files 3 (the
+# fast gate's input) and 4 (the census known-good) protected; demonstration fit 7-8, test 5, 9, 10; gated fit 1, 2, 5,
+# 7-10, test 6.
+if ERA == "canon_v3":
+    FIT_FILES, TEST_FILES, DEMO_SPLIT = SA.FIT_FILES, SA.TEST_FILES, ((7, 8), (3, 4, 5, 6, 9, 10))
+else:
+    FIT_FILES, TEST_FILES, DEMO_SPLIT = (1, 2, 5, 7, 8, 9, 10), (6,), ((7, 8), (5, 9, 10))
+# THE GLOBAL DISC ROWS' FACING AND EDGES. canon_v3: the clusters' orientation rule and the sheet's edges. canon_v4 (the
+# CMSSW disc sense fix; the clusters' rule splits a module 66/34 there): the geometric facing (the module's position
+# fit) and the 9.5 deg inner edge (SA.DISC_ABS_EDGES_V4).
+GEOMETRIC_FACING = ERA != "canon_v3"
+GLOBAL_DISC_EDGES = None if ERA == "canon_v3" else SA.DISC_ABS_EDGES_V4
 
 
 def table_name(stem: str, suffix: str = "") -> str:

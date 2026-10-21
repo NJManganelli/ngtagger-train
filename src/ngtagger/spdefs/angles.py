@@ -69,6 +69,12 @@ ANGLES = ("alpha", "beta")
 KEYS = ("emitted", "true")
 BARREL_ABS_EDGES = tuple(float(x) for x in _ET["barrel_signed_cot_edges"])
 DISC_ABS_EDGES = tuple(float(x) for x in _ET["disc_signed_tan_edges_per_facing"])
+# THE 9.5 DEG DISC EDGE (the global disc rows on canon_v4; WDMac p03_disc_v4/PLAN.md): no disc cluster lies below
+# |tan theta| = tan(9.5 deg) = 0.167, so those rows bin from there (the sheet's (0, 0.1) bins were always empty and
+# (0.1, 0.2) half filled). A table that uses other disc edges than the sheet's carries them (AngleTable.disc_edges);
+# the module-frame disc table and the canon_v3 tables keep the sheet's.
+DISC_EDGE_INNER_V4 = float(np.tan(np.radians(9.5)))
+DISC_ABS_EDGES_V4 = (0.0, DISC_EDGE_INNER_V4) + DISC_ABS_EDGES[2:]
 LEVELS = tuple(float(x) for x in _ET["quantile_levels"])
 MIN_FIT = int(_ET["min_fit_clusters_per_bin"])
 PT_MIN = float(_ET["pt_min_gev"])
@@ -179,8 +185,11 @@ def incidence_key(surface, cot_theta):
     return np.where(is_disc(surface), inv, cot)
 
 
-def abs_edges(surface: int) -> tuple:
-    return DISC_ABS_EDGES if int(surface) > DISC_SURFACE_OFFSET else BARREL_ABS_EDGES
+def abs_edges(surface: int, disc_edges=None) -> tuple:
+    """|key| edges of a surface: the barrel's, or the discs' (the sheet's unless `disc_edges`)."""
+    if int(surface) > DISC_SURFACE_OFFSET:
+        return DISC_ABS_EDGES if disc_edges is None else tuple(disc_edges)
+    return BARREL_ABS_EDGES
 
 
 def signed_edges(abs_e) -> np.ndarray:
@@ -192,13 +201,14 @@ def signed_edges(abs_e) -> np.ndarray:
 N_FINE = {s: 2 * (len(abs_edges(s)) - 1) for s in SURFACES}
 
 
-def fine_bin(surface, key):
+def fine_bin(surface, key, disc_edges=None):
     """Index of the signed (unmerged) incidence bin, 0 .. N_FINE-1 in signed order; -1 for a
-    non-finite key that is not +-inf (NaN) or an unknown surface."""
+    non-finite key that is not +-inf (NaN) or an unknown surface. `disc_edges`: the discs' |key| edges when
+    not the sheet's (same number of bins)."""
     surface = np.asarray(surface)
     key = np.asarray(key, np.float64)
     out = np.full(key.shape, -1, np.int16)
-    for disc, ae in ((False, BARREL_ABS_EDGES), (True, DISC_ABS_EDGES)):
+    for disc, ae in ((False, BARREL_ABS_EDGES), (True, DISC_ABS_EDGES if disc_edges is None else disc_edges)):
         se = signed_edges(ae)
         m = (is_disc(surface) == disc) & ~np.isnan(key) & np.isin(surface, SURFACES)
         b = np.searchsorted(se, key[m], side="right") - 1
@@ -206,8 +216,8 @@ def fine_bin(surface, key):
     return out
 
 
-def fine_bin_bounds(surface: int, b: int) -> tuple:
-    se = signed_edges(abs_edges(surface))
+def fine_bin_bounds(surface: int, b: int, disc_edges=None) -> tuple:
+    se = signed_edges(abs_edges(surface, disc_edges))
     return float(se[b]), float(se[b + 1])
 
 
@@ -647,6 +657,10 @@ class AngleTable:
             raise ValueError(f"not an angle table ({doc.get('schema')!r} != {TABLE_SCHEMA})")
         self.doc = doc
         self.levels = tuple(float(x) for x in doc["levels"])
+        # the discs' |key| edges of this table (the sheet's unless the table carries its own: DISC_ABS_EDGES_V4)
+        self.disc_edges = tuple(float(x) for x in doc["disc_abs_edges"]) if doc.get("disc_abs_edges") else None
+        if self.disc_edges is not None and len(self.disc_edges) != len(DISC_ABS_EDGES):
+            raise ValueError("a table's disc edges must keep the sheet's number of bins")
         self._maps = {}
         for key, kd in doc["keys"].items():
             # rowmap[surface][facing] -> int array over fine bins (-1 = no row)
@@ -693,7 +707,7 @@ class AngleTable:
     def rows_of(self, key: str, surface, key_value, fac):
         """Row index per cluster in table `key` (-1 where none)."""
         surface = np.asarray(surface)
-        fb = fine_bin(surface, key_value)
+        fb = fine_bin(surface, key_value, self.disc_edges)
         fac = np.asarray(fac)
         out = np.full(fb.shape, -1, np.int32)
         for (s, f), arr in self._maps[key].items():
@@ -714,9 +728,10 @@ class AngleTable:
 
 
 def new_table_doc(keys_rows: dict, orientation: tuple, provenance: dict, era: str, fit_sample: str,
-                  pt_min: float = PT_MIN, levels=LEVELS) -> dict:
+                  pt_min: float = PT_MIN, levels=LEVELS, disc_abs_edges=None) -> dict:
     ids, signs = orientation
-    return {"schema": TABLE_SCHEMA, "definition_sheet": SHEET_VERSION, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    extra = {} if disc_abs_edges is None else {"disc_abs_edges": [float(x) for x in disc_abs_edges]}
+    return {**extra, "schema": TABLE_SCHEMA, "definition_sheet": SHEET_VERSION, "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "representation": "alpha = wrap(globalPhi - globalClusterPhi), beta = atan(cot theta); pulls in published sigma "
                               "(sigGlobalClusterPhi; sigGlobalClusterCotTheta / (1 + cot^2) at the emitted cot)",
             "keys_definition": {"emitted": "incidence key from globalClusterCotTheta",

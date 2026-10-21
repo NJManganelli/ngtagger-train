@@ -38,12 +38,12 @@ COLS = RC.ROC_COLS + ("tpLocalCotAlpha", "tpLocalCotBeta", "tp_d0", "tp_eta", "t
 
 
 # ---------------------------------------------------------------- response
-def response(fit: dict) -> tuple[dict, dict]:
+def response(fit: dict, tab) -> tuple[dict, dict]:
     T = fit["T"] & (fit["tp_pt"] >= SA.PT_MIN)
     arrays, meta = {}, {"pull_edges": RES_PULL.tolist(), "deg_edges": {a: v.tolist() for a, v in RES_DEG.items()},
                         "local_deg_edges": LOCAL_DEG.tolist(), "groups": []}
     kv = SA.incidence_key(fit["surface"], fit["tpGlobalClusterCotTheta"])
-    fb = SA.fine_bin(fit["surface"], kv)
+    fb = SA.fine_bin(fit["surface"], kv, tab.disc_edges)
     for s in SA.SURFACES:
         for f in ((0,) if s in SA.BARREL else (-1, 1)):
             g = T & (fit["surface"] == s) & (fit["facing"] == f)
@@ -201,7 +201,7 @@ def priors(fit: dict, test: dict, tab, table_doc: dict) -> dict:
                           "prior": "barrel beta width steps at |cot| 0.5, 0.55, 0.6, 0.67, 0.8; discs at tan theta ~0.5 "
                                    "(ID1: 1.08 at 0.4-0.5, 0.63 at 0.5-0.6, census-scaled units)"}
     # beta pointing: the luminous region and the other-interaction fraction near the hard-scatter vertex
-    E = CM.load_events(list(SA.TEST_FILES))
+    E = CM.load_events(list(CM.TEST_FILES))
     gz = E["ev_genvtx_z"].astype(np.float64)
     sz = float(np.std(gz, ddof=1))
     from scipy.special import erf
@@ -259,14 +259,14 @@ def main(argv=None) -> int:
     rng = np.random.default_rng(SEED)
     tab = SA.AngleTable.load(a.table)
     out = Path(a.out)
-    fit = RC.prep(CM.load(SA.FIT_FILES, COLS, mask_fn=CM.table_population), tab)
-    arrays, meta = response(fit)
+    fit = RC.prep(CM.load(CM.FIT_FILES, COLS, mask_fn=CM.table_population), tab)
+    arrays, meta = response(fit, tab)
     np.savez_compressed(out / "p03_response.npz", meta=json.dumps(meta), **arrays)
     print(f"response: {len(arrays)} histograms ({time.time() - t0:.0f} s)", flush=True)
-    test = RC.prep(CM.load(SA.TEST_FILES, COLS), tab)
+    test = RC.prep(CM.load(CM.TEST_FILES, COLS), tab)
     res = {"table": a.table, "table_provenance": tab.provenance, "code": CM.git_state(),
            "response_file": str(out / "p03_response.npz"), "response_groups": meta["groups"]}
-    res["shared"] = shared_fraction(list(SA.TEST_FILES), a.rep, rng)
+    res["shared"] = shared_fraction(list(CM.TEST_FILES), a.rep, rng)
     print(f"shared fractions ({time.time() - t0:.0f} s)", flush=True)
     res["class_tell_auc"] = class_tell(test, tab)
     print(f"class tell ({time.time() - t0:.0f} s)", flush=True)

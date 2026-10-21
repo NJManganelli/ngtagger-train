@@ -254,3 +254,25 @@ def test_facing_from_positions_on_synthetic_disc_modules():
     assert 2000 not in got_ids and len(got_ids) == 20
     assert all(fac[i] == want[d] for i, d in enumerate(got_ids))
     assert np.allclose(np.abs(det), 1.0) and np.all(rms < 1e-9) and np.all(n == 30)
+
+
+def test_disc_edges_v4_table_carries_its_edges():
+    """The 9.5 deg inner disc edge (canon_v4 global disc rows): same number of bins as the sheet's; a table built
+    with it carries it and looks rows up with it; a table without keeps the sheet's edges."""
+    import numpy as np
+    from ngtagger.spdefs import angles as SA
+    assert len(SA.DISC_ABS_EDGES_V4) == len(SA.DISC_ABS_EDGES)
+    assert abs(SA.DISC_ABS_EDGES_V4[1] - np.tan(np.radians(9.5))) < 1e-12
+    s, k = np.array([11, 11]), np.array([0.15, 0.18])
+    assert SA.fine_bin(s, k).tolist() == [11, 11]                      # both in the sheet's (0.1, 0.2)
+    assert SA.fine_bin(s, k, SA.DISC_ABS_EDGES_V4).tolist() == [10, 11]
+    n = SA.N_FINE[11]
+    rows = [{"surface": 11, "facing": 1, "lo": 0.0, "hi": 1.0, "fine": [i], "n_fit": 1,
+             "alpha": None, "beta": None} for i in range(n)]
+    doc = SA.new_table_doc({"emitted": rows}, (np.array([1]), np.array([1])), {}, "test", "test",
+                           disc_abs_edges=SA.DISC_ABS_EDGES_V4)
+    t = SA.AngleTable(doc)
+    assert t.disc_edges == SA.DISC_ABS_EDGES_V4
+    assert t.rows_of("emitted", s, k, np.array([1, 1])).tolist() == [10, 11]
+    doc0 = SA.new_table_doc({"emitted": rows}, (np.array([1]), np.array([1])), {}, "test", "test")
+    assert "disc_abs_edges" not in doc0 and SA.AngleTable(doc0).rows_of("emitted", s, k, np.array([1, 1])).tolist() == [11, 11]

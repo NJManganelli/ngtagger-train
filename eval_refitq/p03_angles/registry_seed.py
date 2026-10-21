@@ -179,7 +179,7 @@ def entries() -> list:
             E.append({"id": tab_id, "title": tab_title,
                       "status": st, "status_note": note, "bias": BIAS, "values": vals,
                       "definition_sheet": (gt or tab_res).get("definition_sheet"),
-                      "provenance": {**common_prov, "table_file": tf, "fit_files": list(SA.FIT_FILES),
+                      "provenance": {**common_prov, "table_file": tf, "fit_files": list(CM.FIT_FILES),
                                      "pt_check_refit_rows": tab_res["pt_check"]["flags"]}})
             pc = tab_res["pt_check"]["detail"]
             E.append({"id": f"p03.table.{ftag}.pt-check", "title": f"{head}: pT check (1-2 vs >= 2 GeV, fit sample)",
@@ -250,7 +250,7 @@ def entries() -> list:
         E.append({"id": "p03.response", "title": "Class-T response p(emitted | true) per surface (input of the full "
                   "response model)", "status": "valid", "bias": BIAS,
                   "values": [v(f"{g['tag']} clusters", g["n"]) for g in ex["response_groups"]],
-                  "provenance": {**common_prov, "file": ex["response_file"], "fit_files": list(SA.FIT_FILES)}})
+                  "provenance": {**common_prov, "file": ex["response_file"], "fit_files": list(CM.FIT_FILES)}})
         P = ex["priors"]
         pv = [v(f"alpha core {s}", round(x["core_deg"], 3), unit="deg") for s, x in P["alpha"]["per_surface"].items()]
         pv += [v(f"alpha full RMS {s}", round(x["full_rms_deg"], 3), unit="deg") for s, x in P["alpha"]["per_surface"].items()]

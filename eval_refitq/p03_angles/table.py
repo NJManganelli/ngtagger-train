@@ -84,9 +84,9 @@ LEVELS = SA.LEVELS
 I95 = LEVELS.index(0.95)
 BAND_W, BAND_C = 0.1, 0.25
 REGISTRY_SCALES = Path.home() / "smartpixels" / "sp_registry" / "results" / "appa.census.angle-scales.json"
-DEMO_SPLIT = ((7, 8), (3, 4, 5, 6, 9, 10))   # amendment 1b (amendment 1: fit 9-10, test 3-8)
+DEMO_SPLIT = CM.DEMO_SPLIT   # canon_v3: amendment 1b (amendment 1: fit 9-10, test 3-8); canon_v4: common.DEMO_SPLIT
 SPLITS = {"diagnosis": ((3, 4), (5, 6, 7, 8, 9, 10)), "known-good": DEMO_SPLIT, "known-bad": DEMO_SPLIT,
-          "gated": (SA.FIT_FILES, SA.TEST_FILES), "fit-only": (SA.FIT_FILES, SA.FIT_FILES)}
+          "gated": (CM.FIT_FILES, CM.TEST_FILES), "fit-only": (CM.FIT_FILES, CM.FIT_FILES)}
 KNOWN_BADS = {
     "folded": "the folded |key| table (signs pooled; the round-4 table's binning), read by |key|",
     "cotbinned_disc": "disc rows binned like the barrel in signed cot theta (barrel edges; 75-98% of disc clusters in "
@@ -155,6 +155,12 @@ def _fold(fb, n):
     return np.where(fb >= h, fb - h, h - 1 - fb)
 
 
+def disc_edges(kind: str):
+    """The discs' |key| edges of binning `kind`: the global rows' (common.GLOBAL_DISC_EDGES: the 9.5 deg edge on
+    canon_v4) for the global table and the module frame's global_rows known-bad; the sheet's otherwise."""
+    return CM.GLOBAL_DISC_EDGES if (FRAME is FRAMES["global"] or kind == "global_rows") else None
+
+
 def fine_index(kind: str, C: dict, key: str):
     """(facing used, fine bin index) of each cluster under binning `kind` in table key `key`: from the
     cluster's incidence key C["kv"][key] (global: signed cot theta / 1 / cot theta; module frame: k_loc), or
@@ -172,9 +178,9 @@ def fine_index(kind: str, C: dict, key: str):
         cot = C["cotv"][key]
         se = SA.signed_edges(SA.BARREL_ABS_EDGES)
         fb_cot = np.clip(np.searchsorted(se, cot, side="right") - 1, 0, len(se) - 2).astype(np.int16)
-        fb = np.where(disc, fb_cot, SA.fine_bin(s, kv))
+        fb = np.where(disc, fb_cot, SA.fine_bin(s, kv, disc_edges(kind)))
     else:
-        fb = SA.fine_bin(s, kv)
+        fb = SA.fine_bin(s, kv, disc_edges(kind))
         if kind == "folded":
             for sv in SA.SURFACES:
                 m = (s == sv) & (fb >= 0)
@@ -192,11 +198,11 @@ def n_fine(kind: str, s: int) -> int:
 
 def bounds(kind: str, s: int) -> list:
     if kind == "folded":
-        a = SA.abs_edges(s)
+        a = SA.abs_edges(s, disc_edges(kind))
         return [(a[i], a[i + 1]) for i in range(len(a) - 1)]
     if kind == "cotbinned_disc" and s in SA.DISCS:
         return [SA.fine_bin_bounds(1, b) for b in range(SA.N_FINE[1])]
-    return [SA.fine_bin_bounds(s, b) for b in range(SA.N_FINE[s])]
+    return [SA.fine_bin_bounds(s, b, disc_edges(kind)) for b in range(SA.N_FINE[s])]
 
 
 def facings(kind: str, s: int, C: dict) -> tuple:
@@ -1200,9 +1206,10 @@ def table_doc(P: dict, stack: dict, orient, flags, prov: dict) -> dict:
         keys_rows[key] = rows
     doc = SA.new_table_doc(keys_rows, orient, prov, era=f"{CM.ERA} (150X D121 PU200 TTbar, AAAA)",
                            fit_sample=prov.get("fit_sample_text") or (
-                               f"{CM.ERA} AAAA files {list(SA.FIT_FILES)}, class T, pT >= {SA.PT_MIN:g} GeV (the class-C "
-                               "angles of these files are cluster-CNN training data; class T is truth + 1.5 x a PixelAV "
-                               "residual and is not)"))
+                               f"{CM.ERA} AAAA files {list(prov.get('fit_files', CM.FIT_FILES))}, class T, pT >= "
+                               f"{SA.PT_MIN:g} GeV (the class-C angles of these files are cluster-CNN training data; "
+                               "class T is truth + 1.5 x a PixelAV residual and is not)"),
+                           disc_abs_edges=disc_edges("canonical"))
     doc["recipe"] = f"{FRAME['item']} (sheet {SA.SHEET_VERSION}); tested under {FRAME['rule']}"
     doc["frame"] = "module (cot-unit local pulls, key k_loc, facings pooled)" if FRAME is FRAMES["module"] else "global"
     return doc
@@ -1273,12 +1280,13 @@ def perturbed_bins(P: dict, j: dict) -> dict:
 def run(mode: str, n_rep: int, n_proc: int, out_dir: Path, seed: int = SEED) -> dict:
     fit_files, test_files = SPLITS[mode]
     t0 = time.time()
-    orient = CM.orientation_map(fit_files)
     module = FRAME is FRAMES["module"]
-    facing_map = None
-    if module:
-        facing_map = geometric_facing(fit_files)
+    facing_map = geometric_facing(fit_files) if (module or CM.GEOMETRIC_FACING) else None
+    if facing_map is not None:
         print(f"[{mode}] geometric facing map: {facing_map['summary']}", flush=True)
+    # the global disc rows' facing: geometric on canon_v4 (common.GEOMETRIC_FACING), the clusters' rule on canon_v3
+    orient = ((facing_map["ids"], facing_map["sign"]) if CM.GEOMETRIC_FACING else CM.orientation_map(fit_files))
+    if module:
         fit = derive_local(load_split(fit_files), orient, facing_map)
         test = derive_local(load_split(test_files), orient, facing_map)
     else:
