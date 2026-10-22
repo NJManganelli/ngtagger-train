@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261008T233636Z-wpa1-derive-refs-14324/copy",
- "derived": "2026-10-08T23:38:06Z",
+ "code_root": "/Users/nmangane/smartpixels/ngtagger-train-tagger",
+ "derived": "2026-10-21T19:08:27Z",
  "events": 5,
- "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+ "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "tagger.split_guard",
- "job_id": "20261008T233636Z-wpa1-derive-refs-14324",
+ "job_id": null,
  "known_bad": "common.TTBAR_TRAIN_ONLY emptied (a split that may draw test events from files 1-2)",
  "rule": "common.split_table on the event identities of TTbar files 1-10: no test event in files 1-2; round(0.2 x events) test events; the same test events for AAAA and IIII (different entry orders); no is_test jet in the cached files 1-2 of any mask; identity with the reference",
  "stat": {
@@ -16,7 +16,7 @@
   "IIII_n_test_files_1_2": 0,
   "cached_test_jets_files_1_2": 0,
   "events": 5,
-  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v2/spstudy_AAAA_f03_100ev.root",
+  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
   "same_test_events_AAAA_IIII": true,
   "train_only": [
    1,

@@ -2,8 +2,8 @@
 split guard, the label mask; C.4: working points not matched). They import
 eval_refitq/tagger_sp from THIS code root and read the study's jet caches of file 3
 (tagger_sp/build.py outputs, one per mask) and the event identities of the TTbar files.
-The study reads canon_v4 since 2026-10-17; until its jet caches exist (build.py, after the
-track-MVA heads are trained) every item is n/a (WAITING)."""
+Since 2026-10-21 the study reads canon_v5 (refit v3) for the SmartPixels masks and canon_v4 for IIII
+(tagger_sp/common.py); until its jet caches exist every item is n/a (WAITING)."""
 from __future__ import annotations
 
 import os
@@ -13,9 +13,9 @@ import numpy as np
 from .core import Item, NotApplicable, event_replicas, identity, same_input
 
 TAGGER_DIR = "eval_refitq/tagger_sp"
-JETS = "/Volumes/WDMac/smartpixels_scratch/tagger_sp_canon_v4/cache/jets"   # tagger_sp common.OUT (canon_v4)
-WAITING = ("no canon_v4 jet cache yet: tagger_sp/build.py trains the track-MVA heads before it writes them; "
-           "waiting for the tagger-recipe package")
+JETS = "/Volumes/WDMac/smartpixels_scratch/tagger_v5/cache/jets"   # tagger_sp common.OUT (canon_v5 + canon_v4 IIII)
+WAITING = "no tagger_v5 jet cache yet: tagger_sp/run_all.sh build writes them"
+ERAS = ("canon_v2", "canon_v3", "canon_v4", "canon_v5")
 MASKS = ("IIII", "AAAA", "AAAI", "IAAA")
 STOCK_B_CUT = 0.15
 
@@ -102,8 +102,9 @@ class LabelMask(Item):
     title = "jet labels and the kept-jet mask: labelled jets only, classes as defined, one label era"
     c4_row = "D.1 tagger item: the label mask"
     known_bad_desc = "the kept-jet mask without the label and gen-pT requirements (unmatched pile-up jets admitted)"
-    rule_desc = ("on the first 5 events of the gate input: labels.label_jets through nano.load_jets equals the "
-                 "study's jet cache (kept jets, in order); every kept jet has label 0-7 and gen pT > 5 GeV; the "
+    rule_desc = ("on the first 5 events of the gate input: every kept jet has label 0-7 and gen pT > 5 GeV; "
+                 "labels.label_jets through nano.load_jets on the study's own AAAA file of that number equals the "
+                 "study's jet cache (kept jets, in order); the "
                  "b-vs-udsg / c-vs-udsg / tau classes of analyze.PAIRS are those of the definition sheet; every "
                  "file of each mask's training manifest comes from one production era")
     trees = (TAGGER_DIR,)
@@ -129,22 +130,34 @@ class LabelMask(Item):
         tpt = ak.to_numpy(ak.flatten(target_phys))
         nj = ak.to_numpy(ak.num(jets.pt))
         entry = np.repeat(np.arange(len(nj)), nj)
-        cache = _jets("AAAA", _file_no(ctx.input)) if "AAAA" in os.path.basename(ctx.input) else None
+        n = _file_no(ctx.input)
+        cache = _jets("AAAA", n) if "AAAA" in os.path.basename(ctx.input) else None
         out = {"input": ctx.input, "events": ctx.events, "keep_unlabelled": keep_unlabelled,
                "n_jets": int(len(lab)), "n_kept": int(kp.sum()),
                "kept_per_class": np.bincount(lab[kp] + 1, minlength=9).tolist(),
                "n_kept_unlabelled": int(np.sum(kp & (lab < 0))), "n_kept_genpt_le5": int(np.sum(kp & (tpt <= 5.0)))}
-        if cache is not None:
+        if cache is not None:          # the cache is built from the study's file (canon_v5), not the gate input
+            src = C.path("ttbar", "AAAA", n)
+            if src != ctx.input:
+                sj, _, sg = load_jets([src], feature_groups=["baseline"], max_events=ctx.events,
+                                      track_table=C.TRACK_TABLE)
+                slab, _, _, skeep = label_jets(sj, sg, max_dr=0.4)
+                snj = ak.to_numpy(ak.num(sj.pt))
+                slab, skp, sentry = ak.to_numpy(ak.flatten(slab)), ak.to_numpy(ak.flatten(skeep)), \
+                    np.repeat(np.arange(len(snj)), snj)
+            else:
+                slab, skp, sentry = lab, kp, entry
             sel = cache["entry"] < ctx.events
-            out["cache_equal"] = bool(np.array_equal(cache["label"][sel], lab[kp])
-                                      and np.array_equal(cache["entry"][sel], entry[kp]))
+            out["cache_source"] = src
+            out["cache_equal"] = bool(np.array_equal(cache["label"][sel], slab[skp])
+                                      and np.array_equal(cache["entry"][sel], sentry[skp]))
         out["pairs_as_sheet"] = all(list(AN.PAIRS[k][:2]) == list(v) for k, v in self.PAIRS_SHEET.items())
         eras = {}
         for m in MASKS:
             p = C.manifest_path(m)
             if os.path.exists(p):
                 files = [f[2] for f in json.load(open(p))["files"]]
-                eras[m] = sorted({e for e in ("canon_v2", "canon_v3", "canon_v4") if any(f"/{e}" in f for f in files)})
+                eras[m] = sorted({e for e in ERAS if any(f"/{e}/" in f for f in files)})
         out["manifest_eras"] = eras
         return out
 

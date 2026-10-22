@@ -187,6 +187,7 @@ def load_jets(
     refit_bdt_json: str | None = None,
     vertex_table: str = "L1Vertex",
     trackmva_model: str | None = None,
+    trackjoint_model=None,
 ):
     """Full pipeline: nano files -> (jets awkward record, per-jet constituent
     feature records). Feature engineering and labeling live in features.py /
@@ -203,13 +204,15 @@ def load_jets(
       - "trackmva": the per-track resolution-quality MVA heads of the
         constituent's track (ngtagger.data.trackmva_feature; needs
         trackmva_model, a bundle of the family whose base table is track_table).
+      - "trackjoint": the jointly trained track-quality heads (a TrackMVA-like model
+        object with `outputs`, trackjoint_model), gathered the same way, prefix trkjoint_.
 
     link_cand_table: plain-Puppi tier row-aligned with cand_table that supplies
     a filled l1TrackIdx when the (deregionized) cand_table's own is unfilled.
     """
     groups = feature_groups or ["baseline"]
     need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv",
-                                                "trackmva", "trackres"))
+                                                "trackmva", "trackres", "trackjoint"))
     extra_trk = list(VTX_TRACK_BRANCHES) if "vertexdxy" in groups else []
     trackres_present = []
     if "trackres" in groups:
@@ -217,11 +220,13 @@ def load_jets(
             keys0 = set(f["Events"].keys())
         trackres_present = [c for c in TRACKRES_OPTIONAL if f"{track_table}_{c}" in keys0]
         extra_trk += TRACKRES_BRANCHES + trackres_present
-    if "trackmva" in groups:
+    if "trackmva" in groups or "trackjoint" in groups:
         from ngtagger.data.trackmva_feature import require_jet_tables
 
-        if trackmva_model is None:
+        if "trackmva" in groups and trackmva_model is None:
             raise ValueError("trackmva group requires trackmva_model")
+        if "trackjoint" in groups and trackjoint_model is None:
+            raise ValueError("trackjoint group requires trackjoint_model")
         with uproot.open(files[0]) as f:
             require_jet_tables(f["Events"].keys(), (jet_table, link_table, cand_table), str(files[0]))
     events = read_events(
@@ -315,6 +320,12 @@ def load_jets(
         const.update(trackmva_jet_features(
             files, events, cands, nested_idx, link_idx_field, trackmva_model,
             track_table=track_table, max_events=max_events))
+    if "trackjoint" in groups:
+        from ngtagger.data.trackmva_feature import trackmva_jet_features
+
+        const.update(trackmva_jet_features(
+            files, events, cands, nested_idx, link_idx_field, trackjoint_model,
+            track_table=track_table, max_events=max_events, prefix="trkjoint_"))
 
     constituents = ak.zip(const, depth_limit=3)
     jets = events[jet_table]

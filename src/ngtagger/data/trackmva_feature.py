@@ -100,7 +100,8 @@ def trackmva_per_track(A, model, coll: str | None = None) -> ak.Array:
     T, ntrk = tracks_from_batch(A, mva.family, mva.config, with_truth=False,
                                 base_only=mva.colls == ["base"])
     P = mva.predict(T, _coll(mva, coll))
-    return ak.unflatten(ak.zip({h: P[h].astype(np.float32) for h in OUTPUTS}), ntrk)
+    heads = getattr(mva, "outputs", OUTPUTS)     # a model may define its own heads (joint_heads.JointMVA)
+    return ak.unflatten(ak.zip({h: P[h].astype(np.float32) for h in heads}), ntrk)
 
 
 def trackmva_scores_from_files(files, model, coll: str | None = None, max_events: int | None = None,

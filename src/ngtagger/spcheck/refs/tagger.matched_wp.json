@@ -1,10 +1,10 @@
 {
- "code_root": "/Users/nmangane/smartpixels/sp_jobs/20261017T075020Z-wpd-gate35-derive-76375/copy",
- "derived": "2026-10-17T08:45:36Z",
+ "code_root": "/Users/nmangane/smartpixels/ngtagger-train-tagger",
+ "derived": "2026-10-21T19:08:30Z",
  "events": 5,
  "input": "/Volumes/WDMac/smartpixels_scratch/canon_v4/spstudy_AAAA_f03_100ev.root",
  "item": "tagger.matched_wp",
- "job_id": "20261017T075020Z-wpd-gate35-derive-76375",
+ "job_id": null,
  "known_bad": "the current analyze.thresholds / frac_above (jets tied at the threshold dropped)",
  "rule": "stock bTagScore of the file-3 jet caches, all four arms, b vs udsg in the study acceptance; targets: the menu point (IIII udsg fraction above 0.15 on these jets), 10 %, 1 %; 300 event-bootstrap replicas with thresholds re-derived per replica: max |realised - target| <= 1e-9; identity of the nominal efficiencies with the reference",
  "stat": {
@@ -14,40 +14,40 @@
   "method": "definitions.matched_wp (tie split)",
   "nominal": {
    "AAAA@1%": {
-    "efficiency": 0.08642335766423358,
+    "efficiency": 0.115,
     "realised_background": 0.01
    },
    "AAAA@10%": {
-    "efficiency": 0.47007299270072994,
-    "realised_background": 0.1
+    "efficiency": 0.3560386473429952,
+    "realised_background": 0.09999999999999999
    },
    "AAAA@menu": {
-    "efficiency": 0.8175963152347867,
-    "realised_background": 0.4705882352941177
+    "efficiency": 0.8333333333333334,
+    "realised_background": 0.47058823529411764
    },
    "AAAI@1%": {
-    "efficiency": 0.0948905109489051,
+    "efficiency": 0.09285714285714286,
     "realised_background": 0.01
    },
    "AAAI@10%": {
-    "efficiency": 0.4394160583941606,
+    "efficiency": 0.4171428571428572,
     "realised_background": 0.1
    },
    "AAAI@menu": {
-    "efficiency": 0.8814584227851725,
+    "efficiency": 0.8312237394957983,
     "realised_background": 0.4705882352941177
    },
    "IAAA@1%": {
-    "efficiency": 0.049999999999999996,
+    "efficiency": 0.08397163120567376,
     "realised_background": 0.01
    },
    "IAAA@10%": {
-    "efficiency": 0.4051094890510949,
+    "efficiency": 0.37730496453900714,
     "realised_background": 0.1
    },
    "IAAA@menu": {
-    "efficiency": 0.811507084585659,
-    "realised_background": 0.47058823529411764
+    "efficiency": 0.8176887776387151,
+    "realised_background": 0.4705882352941177
    },
    "IIII@1%": {
     "efficiency": 0.05,
