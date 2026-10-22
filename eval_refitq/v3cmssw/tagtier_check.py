@@ -1,4 +1,4 @@
-"""Checks of the tagger tier, the linked truth and the multi-mask job on the dev outputs (file 4, 10 events):
+"""Checks of the tagger tier (one job per mask) and the linked truth on the dev outputs (file 4, 10 events):
 
   truth   the otlink truth on the SmartPixels track tables (otTp*, otGenuine, ...) equals the OT track's columns at
           l1TrackIdx bit for bit; selTpIdx equals L1TSmartPixelsCluster_tpIdx at selClusterIdx; and the tagger's
@@ -6,8 +6,6 @@
           today reads L1TSmartPixelsCluster) is reproduced exactly without the cluster table
   tier    every branch of the tier file is in the canonical file and bitwise equal by (run, lumi, event); the
           canonical branches it lacks are exactly the dropped tables'; its size per event
-  multi   per mask, the multi-mask job's suffixed SmartPixels tables equal the per-mask canonical job's
-          unsuffixed ones; every other common branch equals the IIII job's; CPU per event against the per-mask jobs
 
     python eval_refitq/v3cmssw/tagtier_check.py --dir DIR [--tagger-src SRC] [--out o.json]
 """
@@ -29,7 +27,6 @@ OTLINK = {"tpIdx": "otTpIdx", "tpPdgId": "otTpPdgId", "genuine": "otGenuine", "l
           "combinatoric": "otCombinatoric", "unknown": "otUnknown", "tpFromHardInteraction": "otTpFromHardInteraction",
           "tp_pt": "otTp_pt", "tp_eta": "otTp_eta", "tp_phi0": "otTp_phi0", "tp_tanL": "otTp_tanL",
           "tp_charge": "otTp_charge", "tp_rInv": "otTp_rInv", "tp_d0": "otTp_d0", "tp_z0": "otTp_z0"}
-SP_PREFIXES = ("L1TSmartPixelsTrack", "L1TSmartPixelsExtTrack", "L1TSmartPixelsRefitHit", "L1TSmartPixelsExtRefitHit")
 
 
 def ids(t):
@@ -55,16 +52,15 @@ def paired(ta, tb):
     return np.array([ka.index(k) for k in common]), np.array([kb.index(k) for k in common])
 
 
-def compare(ta, tb, names_a, rename=lambda n: n):
+def compare(ta, tb, names_a):
     ia, ib = paired(ta, tb)
     diff, missing = [], []
     kb = set(tb.keys())
     for n in names_a:
-        m = rename(n)
-        if m not in kb:
-            missing.append(m)
+        if n not in kb:
+            missing.append(n)
             continue
-        if not same(ta[n].array()[ia], tb[m].array()[ib]):
+        if not same(ta[n].array()[ia], tb[n].array()[ib]):
             diff.append(n)
     return {"common_events": int(len(ia)), "compared": len(names_a) - len(missing), "differing": diff,
             "missing_in_b": missing}
@@ -139,28 +135,6 @@ def check_tier(can, tier):
     return res
 
 
-def check_multi(d, masks):
-    tm_ = uproot.open(f"{d}/multi.root:Events")
-    km = set(tm_.keys())
-    res = {}
-    for m in masks:
-        tc = uproot.open(f"{d}/can_{m}.root:Events")
-        sfx = f"SeedlessRefitV3{m}"
-        names = sorted(n for n in tc.keys() if table_of(n).startswith(SP_PREFIXES) and not excluded(n))
-
-        def rename(n, sfx=sfx):
-            t = table_of(n)
-            return n.replace(t, t.replace("SmartPixelsTrack", f"SmartPixelsTrack{sfx}")
-                             .replace("SmartPixelsExtTrack", f"SmartPixelsExtTrack{sfx}")
-                             .replace("RefitHit", f"RefitHit{sfx}"), 1) if t in n else n
-        res[m] = compare(tc, tm_, names, rename)
-    ti = uproot.open(f"{d}/can_IIII.root:Events")
-    other = sorted(n for n in km & set(ti.keys()) if not table_of(n).startswith(SP_PREFIXES) and not excluded(n))
-    res["downstream_vs_IIII"] = compare(tm_, ti, other)
-    res["multi_mb_per_event"] = sum(b.compressed_bytes for b in tm_.branches) / tm_.num_entries / 1e6
-    return res
-
-
 def cpu(log):
     t = open(log).read()
     m = re.search(r"event loop CPU/event = ([0-9.]+)", t)
@@ -177,12 +151,8 @@ def main():
     masks = ("AAAA", "AAAI", "IAAA")
     res = {"truth": {m: check_truth(f"{a.dir}/can_{m}.root", a.tagger_src) for m in masks},
            "tier": check_tier(f"{a.dir}/can_AAAA.root", f"{a.dir}/tier_AAAA.root"),
-           "multi": check_multi(a.dir, masks),
            "cpu_per_event": {k: cpu(f"{a.dir}/{k}.log") for k in ("can_AAAA", "can_AAAI", "can_IAAA", "can_IIII",
-                                                                  "tier_AAAA", "multi")}}
-    c = res["cpu_per_event"]
-    if all(c[k][0] for k in ("can_AAAA", "can_AAAI", "can_IAAA", "multi")):
-        res["cpu_multi_vs_three_jobs"] = c["multi"][0] / sum(c[k][0] for k in ("can_AAAA", "can_AAAI", "can_IAAA"))
+                                                                  "tier_AAAA")}}
     text = json.dumps(res, indent=1, default=float)
     if a.out:
         with open(a.out, "w") as fh:

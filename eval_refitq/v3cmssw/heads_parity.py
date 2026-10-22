@@ -3,7 +3,7 @@ reference (heads_cmssw/parity/parity_*.json, SPEC.md §5): per track, matched by
 along axis 1), the 13 / 38 features bit for bit in float32 and the six outputs (the width heads' margins exactly,
 P(clean) to float rounding).
 
-    python eval_refitq/v3cmssw/heads_parity.py --nano heads.root --parity parity.json [--suffix ""] [--out o.json]
+    python eval_refitq/v3cmssw/heads_parity.py --nano heads.root --parity parity.json [--out o.json]
 """
 from __future__ import annotations
 
@@ -21,7 +21,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--nano", required=True)
     ap.add_argument("--parity", required=True)
-    ap.add_argument("--suffix", default="", help="the SmartPixels table suffix (multi-mask job)")
     ap.add_argument("--prefix", default="head_")
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
@@ -39,7 +38,7 @@ def main():
 
     res = {}
     for coll in ("OT", "SmartPixels"):
-        table = TABLES[coll] + (a.suffix if coll == "SmartPixels" else "")
+        table = TABLES[coll]
         recs = [r for r in ref["tracks"] if r["collection"] == coll]
         names = list(recs[0]["features"]) if recs else []
         fdiff = {n: 0 for n in names}
