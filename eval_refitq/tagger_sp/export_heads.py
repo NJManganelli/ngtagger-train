@@ -121,7 +121,7 @@ def stage_models(masks, n_check=2000, version="ref"):
     json.dump(man, open(os.path.join(root, "MANIFEST.json"), "w"), indent=1)
 
 
-def stage_parity():
+def stage_parity(version="ref"):
     import awkward as ak
     import uproot
     import xgboost as xgb
@@ -138,6 +138,7 @@ def stage_parity():
     ent = np.repeat(np.arange(nev), ntrk)
     idx = np.concatenate([np.arange(k) for k in ntrk])
     heads = [h[0] for h in J.head_list()]
+    sub, setting = version_setting(version)
     recs, arrays = [], {}
     for coll, model_mask in (("base", C.BASELINE_MASK), ("refit", mask)):
         X = J.features(T, coll)
@@ -146,7 +147,7 @@ def stage_parity():
         F = np.full((len(X), len(heads)), np.nan)
         wname = np.empty(len(X), object)
         for w, m in win.items():
-            b = booster(model_mask, w)
+            b = booster(model_mask, w, setting)
             F[m] = b.predict(xgb.DMatrix(X[m]), output_margin=True)
             wname[m] = w
         for i in range(len(X)):
@@ -159,15 +160,17 @@ def stage_parity():
                          "sigma_hat": {h: float(np.exp(F[i, j])) for j, h in enumerate(heads) if j > 0}})
         arrays[COLL_NAME[coll]] = {"X": X.astype(np.float64), "margin": F, "event_id": ev[ent], "track_index": idx,
                                    "window": wname.astype(str), "feature_names": np.array(names)}
-    os.makedirs(os.path.join(DEST, "parity"), exist_ok=True)
+    pdir = os.path.join(DEST, "parity") if version == "ref" else os.path.join(DEST, "models", sub)
+    os.makedirs(pdir, exist_ok=True)
     out = {"what": "per-track parity reference for the CMSSW heads (SPEC.md)", "file": fn,
+           "head_version": version, "setting": setting,
            "events": [{"entry": e, "run": int(r[0]), "lumi": int(r[1]), "event": int(r[2]), "n_tracks": int(k)}
                       for e, (r, k) in enumerate(zip(ev, ntrk))],
-           "models": "models/MANIFEST.json", "heads": heads, "tracks": recs}
-    json.dump(out, open(os.path.join(DEST, "parity", "parity_AAAA_f04_5ev.json"), "w"))
+           "models": os.path.join("models", sub, "MANIFEST.json"), "heads": heads, "tracks": recs}
+    json.dump(out, open(os.path.join(pdir, "parity_AAAA_f04_5ev.json"), "w"))
     for c, a in arrays.items():
-        np.savez_compressed(os.path.join(DEST, "parity", f"parity_AAAA_f04_5ev_{c}.npz"), heads=np.array(heads), **a)
-    print(f"parity: {len(recs)} tracks ({nev} events), {fn}", flush=True)
+        np.savez_compressed(os.path.join(pdir, f"parity_AAAA_f04_5ev_{c}.npz"), heads=np.array(heads), **a)
+    print(f"parity {version} ({setting}): {len(recs)} tracks ({nev} events), {fn} -> {pdir}", flush=True)
 
 
 def main():
@@ -175,15 +178,15 @@ def main():
     ap.add_argument("stage", choices=["train", "models", "parity"])
     ap.add_argument("--masks", nargs="+", default=C.MASKS)
     ap.add_argument("--version", choices=["ref", "A", "B"], default="ref",
-                    help="models: the reference heads, or a joint variant at its chosen lambda (run with the joint "
-                         "study's TAGGER_SP_OUT); written to models/ or models/joint_<A|B>/ with its own MANIFEST")
+                    help="models / parity: the reference heads, or a joint variant at its chosen lambda (run with "
+                         "the joint study's TAGGER_SP_OUT); written to models/ (parity/) or models/joint_<A|B>/")
     a = ap.parse_args()
     if a.stage == "train":
         stage_train(a.masks)
     elif a.stage == "models":
         stage_models(a.masks, version=a.version)
     else:
-        stage_parity()
+        stage_parity(a.version)
 
 
 if __name__ == "__main__":
