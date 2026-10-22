@@ -69,6 +69,7 @@ def build_tracks(sample, mask, n, fn):
     if os.path.exists(out) and os.path.getmtime(out) > os.path.getmtime(fn):
         return out
     t = uproot.open(fn)["Events"]
+    tm.refuse_truth_inputs(t, C.FAMILY, "", base_only(mask))
     br = list(dict.fromkeys(tm.nano_branches(t.keys(), C.FAMILY, "", True, base_only=base_only(mask))
                             + [f"{C.TRACK_TABLE}_l1TrackIdx"] + EVENT_ID))
     Ts, ntrks, ids = [], [], []
@@ -106,7 +107,7 @@ def train_mva(mask, fileset, splits):
         with open(mpath) as f:
             meta = json.load(f)
         if sorted(x["basename"] for x in meta["training_files"]) == key \
-                and meta.get("refit_truth") == C.REFIT_TRUTH:
+                and meta.get("refit_truth") == C.REFIT_TRUTH and meta.get("spec_version") == tm.SPEC_VERSION:
             log(f"mva {mask}: bundle up to date ({mpath})")
             return odir, meta["model_sha256"]
     parts_tr, parts_te = [], []

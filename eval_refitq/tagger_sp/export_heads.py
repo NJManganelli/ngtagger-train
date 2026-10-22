@@ -131,6 +131,7 @@ def stage_parity(version="ref"):
     mask, n, nev = PARITY
     fn = C.path("ttbar", mask, n)
     t = uproot.open(fn)["Events"]
+    tm.refuse_truth_inputs(t, C.FAMILY, "")
     br = tm.nano_branches(t.keys(), C.FAMILY, "", with_truth=False, with_event_id=True)
     A = t.arrays(br, entry_stop=nev)
     T, ntrk = tm.tracks_from_batch(A, C.FAMILY, "", with_truth=False)

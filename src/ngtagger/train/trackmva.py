@@ -115,7 +115,7 @@ import numpy as np
 from ngtagger.data.spix_nano import CLUSTER_TABLE, TP_TABLE, branch_name, branch_names, column, has_column
 from ngtagger.train.trkquality import nlaymiss_interior
 
-SPEC_VERSION = 1
+SPEC_VERSION = 2           # 2: the truth-derived h_nmerged removed from the inputs (2026-10-22)
 N_FOLDS = 5
 D0_SPLIT = 0.02            # cm, on the FITTED refit d0 (refit windows)
 SIGMA_FLOOR_UM = 1.0       # sigma_hat floor
@@ -146,13 +146,19 @@ REFIT_COLS = ["pt", "tanL", "z0", "d0", "spixRefitPerformed", "spixAnyWindowTrun
               "spixNCrossings", "spixNAcceptedHits", "spixLayerHitMask", "spixMaxWindowMult",
               "spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2ITAtOT",
               "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio"]
-HIT_COLS = ["hitAccepted", "trackIdx", "hasAlpha", "windowMult", "clusterMerged",
+HIT_COLS = ["hitAccepted", "trackIdx", "hasAlpha", "windowMult",
             "pullX", "pullY", "pullAlpha", "chi2IncX", "chi2IncY", "chi2IncAlpha"]
 # truth (labels / bookkeeping only; never a model input)
 BASE_TRUTH = ["genuine", "tpFromHardInteraction", "tp_pt", "tp_d0", "tp_z0", "tpIdx"]
 REFIT_TRUTH = ["tpIdx"]
 HIT_TRUTH = ["selClusterIdx"]
 TP_TRUTH = ["pt", "d0", "z0"]          # L1TTP columns of the refit_truth="sp" residual truth
+# A nano column whose title carries TRUTH_MARK is simulation truth (the SmartPixels producers' convention, e.g. the
+# refit hits' clusterMerged). No model input may be read from one: build_dataset and the scorer refuse it.
+TRUTH_MARK = "TRUTH-ONLY"
+# Inputs once derived from a TRUTH_MARK column (h_nmerged: accepted hits on clusterMerged clusters, removed
+# 2026-10-22); a bundle that lists one was trained on truth and is refused at load.
+TRUTH_DERIVED_FEATURES = ("h_nmerged",)
 REFIT_TRUTH_SOURCES = ("ot", "sp", "otlink")
 EVENT_ID = ["run", "luminosityBlock", "event"]
 
@@ -162,7 +168,7 @@ REFIT_SENTINEL_COLS = ["spixRefitPerformed", "spixAnyWindowTruncated", "spixNCro
                        "spixChi2ITAtOT", "spixChi2ITAtRefit", "spixShiftChi2",
                        "spixLogDetRatio"]
 HIT_FEATURES = ["h_nangle", "h_chi2_angle_per_cl", "h_chi2_pos_per_hit", "h_mean_wmult",
-                "h_nmerged", "h_max_angle_pull", "h_second_angle_pull", "h_max_pos_pull"]
+                "h_max_angle_pull", "h_second_angle_pull", "h_max_pos_pull"]
 
 HEAD_DEFINITIONS = {
     "clean": "P(clean): base = genuine; refit = genuine AND n_it_wrong == 0 "
@@ -189,6 +195,28 @@ def table_names(family: str, config: str) -> dict:
 # ---------------------------------------------------------------------------
 # nano -> flat per-track table
 # ---------------------------------------------------------------------------
+def online_branches(keys, family: str = "prompt", config: str = "AAAA", base_only: bool = False) -> list[str]:
+    """The model-input (online) branches, resolved on a file whose branch names are `keys`."""
+    tn = table_names(family, config)
+    keys = set(keys)
+    br = [branch_name(keys, tn["base"], c) for c in BASE_COLS]
+    if not base_only:
+        br += [branch_name(keys, tn["refit"], c) for c in REFIT_COLS]
+        br += [branch_name(keys, tn["hits"], c) for c in HIT_COLS]
+    return br
+
+
+def refuse_truth_inputs(tree, family: str = "prompt", config: str = "AAAA", base_only: bool = False) -> None:
+    """Raise if any model-input branch of `tree` (an uproot TTree or RNTuple, or a {branch: title} mapping) is
+    marked TRUTH_MARK in its title (a TTree branch) or description (an RNTuple field)."""
+    names = online_branches(tree.keys(), family, config, base_only)
+    doc = lambda f: getattr(f, "title", None) or getattr(f, "description", None) or ""  # noqa: E731
+    titles = {b: (tree[b] if isinstance(tree, dict) else doc(tree[b])) for b in names}
+    bad = sorted(b for b, t in titles.items() if TRUTH_MARK in (t or ""))
+    if bad:
+        raise ValueError(f"model-input branches marked {TRUTH_MARK!r} (simulation truth): {bad}")
+
+
 def nano_branches(keys, family: str = "prompt", config: str = "AAAA",
                   with_truth: bool = True, with_event_id: bool = True,
                   base_only: bool = False) -> list[str]:
@@ -196,10 +224,7 @@ def nano_branches(keys, family: str = "prompt", config: str = "AAAA",
     branch names are `keys`."""
     tn = table_names(family, config)
     keys = set(keys)
-    br = [branch_name(keys, tn["base"], c) for c in BASE_COLS]
-    if not base_only:
-        br += [branch_name(keys, tn["refit"], c) for c in REFIT_COLS]
-        br += [branch_name(keys, tn["hits"], c) for c in HIT_COLS]
+    br = online_branches(keys, family, config, base_only)
     if with_truth:
         br += [branch_name(keys, tn["base"], c) for c in BASE_TRUTH]
         if not base_only:
@@ -246,7 +271,6 @@ def hit_aggregates(hits: dict, g: np.ndarray, n_tracks: int) -> dict:
     out["h_chi2_pos_per_hit"] = (np.bincount(gi, weights=a["chi2IncX"] + a["chi2IncY"], minlength=N)
                                  / np.maximum(nacc, 1))
     out["h_mean_wmult"] = np.bincount(gi, weights=a["windowMult"], minlength=N) / np.maximum(nacc, 1)
-    out["h_nmerged"] = np.bincount(gi, weights=a["clusterMerged"], minlength=N)
     pa = np.where(a["hasAlpha"] > 0, np.abs(a["pullAlpha"]), 0.0)
     pp = np.maximum(np.abs(a["pullX"]), np.abs(a["pullY"]))
     mx_a = np.zeros(N)
@@ -345,6 +369,7 @@ def build_dataset(files, family: str = "prompt", config: str = "AAAA",
     n_done = 0
     for fi, fn in enumerate(files):
         t = uproot.open(fn)["Events"]
+        refuse_truth_inputs(t, family, config, base_only)
         br = nano_branches(t.keys(), family, config, with_truth, base_only=base_only)
         stop = t.num_entries if max_events is None else min(t.num_entries, max_events - n_done)
         for start in range(0, max(stop, 0), step_events):
@@ -828,6 +853,9 @@ def load_bundle(path, family: str | None = None, config: str | None = None,
         mpath = path
     with open(mpath) as f:
         meta = json.load(f)
+    truth = sorted({n for names in meta.get("features", {}).values() for n in names} & set(TRUTH_DERIVED_FEATURES))
+    if truth:
+        raise RuntimeError(f"{mpath}: trained with truth-derived inputs {truth}; retrain")
     if meta.get("spec_version") != SPEC_VERSION:
         raise RuntimeError(f"{mpath}: spec_version {meta.get('spec_version')} != code {SPEC_VERSION}")
     jpath = os.path.join(os.path.dirname(mpath), meta["model_file"])

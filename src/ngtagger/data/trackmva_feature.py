@@ -109,10 +109,13 @@ def trackmva_scores_from_files(files, model, coll: str | None = None, max_events
     """``trackmva_per_track`` over `files` in order, `step_events` at a time."""
     import uproot
 
+    from ngtagger.train.trackmva import refuse_truth_inputs
+
     mva = _as_mva(model)
     parts, n_done = [], 0
     for fn in files:
         t = uproot.open(fn)["Events"]
+        refuse_truth_inputs(t, mva.family, mva.config, base_only=mva.colls == ["base"])
         br = trackmva_branches(t.keys(), mva)
         stop = t.num_entries if max_events is None else min(t.num_entries, max_events - n_done)
         for start in range(0, max(stop, 0), step_events):

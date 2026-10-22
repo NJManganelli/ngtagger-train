@@ -52,6 +52,7 @@ def main():
     Ts, Es = [], []
     for fi, fn in enumerate(FILES):
         t = uproot.open(fn)["Events"]
+        tm.refuse_truth_inputs(t, FAMILY, "")
         br = list(dict.fromkeys(tm.nano_branches(t.keys(), FAMILY, "", True) + EXTRA))
         for start in range(0, t.num_entries, STEP):
             A = t.arrays(br, entry_start=start, entry_stop=min(start + STEP, t.num_entries))

@@ -1,6 +1,7 @@
 """Per-track refit MVAs (ngtagger.train.trackmva) and their on-the-fly scorer /
 jet-constituent gather (ngtagger.data.trackmva_feature), on synthetic nanos."""
 import json
+import os
 
 import awkward as ak
 import numpy as np
@@ -239,6 +240,46 @@ def test_features_withhold_d0_and_z0_value():
         np.testing.assert_allclose(np.nan_to_num(X0), np.nan_to_num(X1), atol=1e-9)
     # sentinel -999 -> NaN
     assert np.isnan(tm.features(T, "refit")["spixChi2IncXTot"]).any()
+
+
+def test_features_carry_no_truth():
+    """No input may come from a TRUTH-ONLY column: h_nmerged (accepted hits on the refit hits' clusterMerged
+    clusters) leaked simulation truth into the heads until 2026-10-22."""
+    assert "clusterMerged" not in tm.HIT_COLS
+    tables, ev = _synth_tables(n_events=5, seed=5)
+    T, _ = tm.tracks_from_batch(_batch(tables, ev), "prompt", CFG)
+    for coll in tm.COLLS:
+        assert not set(tm.features(T, coll)) & set(tm.TRUTH_DERIVED_FEATURES)
+
+
+def test_truth_marked_input_refused():
+    tables, ev = _synth_tables(n_events=2, seed=6)
+    titles = {k: "" for k in _batch(tables, ev).fields}
+    tm.refuse_truth_inputs(titles, "prompt", CFG)
+    hit = tm.online_branches(titles.keys(), "prompt", CFG)[-1]
+    titles[hit] = "TRUTH-ONLY: a second TP contributes"
+    with pytest.raises(ValueError, match="TRUTH-ONLY"):
+        tm.refuse_truth_inputs(titles, "prompt", CFG)
+
+
+def test_bundle_with_truth_input_refused(tmp_path):
+    meta = tmp_path / "trackmva_x_meta.json"
+    meta.write_text(json.dumps({"spec_version": tm.SPEC_VERSION, "features": {"refit": ["inv_pt", "h_nmerged"]}}))
+    with pytest.raises(RuntimeError, match="truth-derived"):
+        tm.load_bundle(str(meta))
+
+
+CANON = "/Volumes/WDMac/smartpixels_scratch/canon_v5/spstudy_AAAA_f05_100ev.root"
+
+
+@pytest.mark.skipif(not os.path.exists(CANON), reason="canonical nano not available")
+def test_canonical_nano_inputs_not_truth_marked():
+    import uproot
+
+    t = uproot.open(CANON)["Events"]
+    assert tm.TRUTH_MARK in t["L1TSmartPixelsExtRefitHit_clusterMerged"].title   # the convention holds
+    for family in ("canonical", "canonical_ext"):
+        tm.refuse_truth_inputs(t, family, "")
 
 
 def test_event_folds_and_train_only():
