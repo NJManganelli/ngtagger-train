@@ -169,5 +169,5 @@ for k, (cn, s) in enumerate(cats.items()):
                    color=["#2a78d6", "#eb6834", "#1baf7a"][k], label=f"{cn} (n={s.sum()})")
 for j, t in enumerate(["disc CNN predicted alpha [deg]", "disc CNN predicted beta [deg]"]):
     ax[j].set_xlabel(t); ax[j].set_ylabel("density"); ax[j].set_yscale("log"); ax[j].grid(alpha=0.25)
-ax[0].legend(fontsize=8, frameon=False); fig.tight_layout(); fig.savefig(os.path.join(FG, "disc_pred_angle_distributions.png"), dpi=110); plt.close(fig)
+ax[0].legend(fontsize=8, frameon=False); fig.tight_layout(); fig.savefig(os.path.join(FG, "disc_pred_angle_distributions.pdf"), dpi=110); plt.close(fig)
 print("done")

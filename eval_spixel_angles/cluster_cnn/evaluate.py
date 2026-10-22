@@ -153,7 +153,7 @@ if "base" in CNNS:
     for j, t in enumerate(["CNN (base) predicted alpha  [deg, atan cotAlpha]", "CNN (base) predicted beta  [deg, atan cotBeta]"]):
         ax[j].set_xlabel(t); ax[j].set_ylabel("density"); ax[j].grid(alpha=0.25); ax[j].set_yscale("log")
     ax[0].legend(fontsize=8, frameon=False)
-    fig.tight_layout(); fig.savefig(os.path.join(FG, "pred_angle_distributions.png"), dpi=120); plt.close(fig)
+    fig.tight_layout(); fig.savefig(os.path.join(FG, "pred_angle_distributions.pdf"), dpi=120); plt.close(fig)
     # same for the payload (noise-v6 draws for unlinked) for reference
     for cn, s in cats.items():
         for ang in ["A", "B"]:
@@ -224,7 +224,7 @@ for j, ang in enumerate(["cotAlpha", "cotBeta"]):
     ax[j].set_xticks(range(5)); ax[j].set_xticklabels(BLAB); ax[j].set_yscale("log"); ax[j].grid(alpha=0.25)
     ax[j].set_xlabel(f"true |{ang}| bin"); ax[j].set_ylabel("sigma_MAD [deg], signed")
 ax[0].legend(fontsize=8, frameon=False)
-fig.tight_layout(); fig.savefig(os.path.join(FG, "resolution_vs_cot.png"), dpi=120); plt.close(fig)
+fig.tight_layout(); fig.savefig(os.path.join(FG, "resolution_vs_cot.pdf"), dpi=120); plt.close(fig)
 
 # ---------------- small / full ratio (on-sensor inflation factor) ----------------
 if "small" in CNNS and "base" in CNNS:
