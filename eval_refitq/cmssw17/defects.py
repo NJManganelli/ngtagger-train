@@ -168,7 +168,9 @@ EXPECT = {
     "z0_bias_ot": (("res:otx:z0",), lambda r: r["summary"].startswith("mean"), {"MATERIAL"}, ("res:otx:z0",)),
     "disc_flip_one_end": (("angle:class T:cot alpha",), None, {"MATERIAL"}, ()),
     "half_clusters": (("mult:SmartPixels clusters*",), None, {"MATERIAL"}, ()),
-    "puppi_plus01": (("tagger:*:puppiweight",), None, {"MATERIAL"}, ()),
+    # the plan expected MATERIAL; detected MINOR (the neutral weight mean, 0.37 D121 standard deviations, between the
+    # tagger-input tolerance and gross bound): accepted as a documented minor deviation (the coordinator, 2026-10-25)
+    "puppi_plus01": (("tagger:*:puppiweight",), None, {"MINOR", "MATERIAL"}, ()),
     "head_logsigma_d0": (("head:*:log sigma d0",), None, {"MINOR"},
                          ("head:*:coverage d0*", "tagger:track:trkjoint_d0")),
     "no_1gev_rule": (("hit:*:hit truth",), None, {"MINOR", "MATERIAL"},

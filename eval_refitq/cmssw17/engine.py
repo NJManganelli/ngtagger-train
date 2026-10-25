@@ -711,7 +711,10 @@ def _effect_kind(q, summ, refv):
 def freeze_quantity(q: Q, sideB: Side, mask, n_boot=100):
     """The cell map of a quantity and mask from the D121 reference alone (plan 3.4.4): a cell is judged if its
     predicted error (sqrt(2) x its D121 bootstrap error at the reference's size) is <= tolerance / 2.93 for the
-    primary summary, with >= 50 contributing events; otherwise merged in the frozen order, else report-only."""
+    primary summary, with >= 50 contributing events; otherwise merged in the frozen order, else report-only.
+    A quantity with a shape test keeps, at its coarsest level, a shape-only cell where no summary qualifies (e.g. a
+    feature without spread on D121, whose mean in units of that spread is undefined): its summaries are report-only
+    and its shape is judged by the permutation rule (pre-data, 2026-10-25: such features were otherwise untested)."""
     d = sideB.m[mask]
     g = get_objects(q, d)
     if q.kind == "frac":
@@ -766,12 +769,13 @@ def freeze_quantity(q: Q, sideB: Side, mask, n_boot=100):
                     ok_any = judged
                 summ[sname] = dict(ref=float(ref) if np.isfinite(ref) else None, se_ref=se, pred=pred, tol=tol,
                                    gross=gross, kind=kind, judged=judged)
-            if not ok_any:
+            shape_only = not ok_any and q.shape and lev == levels[-1]
+            if not ok_any and not shape_only:
                 continue
             cid = len(cells)
             cells.append(dict(level=list(lev), key=[int(x) for x in gk], dims=[q.dims[j] for j in cols],
                               members=[[int(v) for v in uniq[i]] for i in members], nev_ref=int(nev),
-                              n_ref=int(m.sum()), summaries=summ))
+                              n_ref=int(m.sum()), summaries=summ, shape_only=bool(shape_only)))
             for i in members:
                 assigned[i] = cid
     report_only = [[int(v) for v in uniq[i]] for i in range(len(uniq)) if i not in assigned]
@@ -898,6 +902,11 @@ def verdicts(results, mixed_rule="sole", alpha=CM.ALPHA):
     for i, r in enumerate(results):
         if not r.judged:
             r.verdict, r.cls = "report-only", "report"
+            # plan 3.4.6: cells beyond the gross bound on the point estimate alone are listed as "borderline gross",
+            # report-only cells included, so a gross change in an unjudged cell stays visible
+            if (np.isfinite(r.gross) and np.isfinite(r.effect) and abs(r.effect) > r.gross
+                    and CM.SOURCES[r.group] != ("report",)):
+                r.extra["borderline_gross"] = True
             continue
         if r.summary == "shape KS":
             ag = r.extra.get("agrees", False)
