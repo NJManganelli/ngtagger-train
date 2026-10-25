@@ -5,7 +5,7 @@ also move. A defect that is not flagged as expected tightens that tolerance (to 
 passes) or makes the quantity report-only.
 
 Defects 8 (PUPPI weight) and 9 (head log sigma) act on the tagger inputs and the heads, which the ML part of the
-extraction provides; they are run when that part exists. Defect 10 (the 1 GeV rule off on one side) replaces side A
+extraction provides (extract_ml.py); they are run when that part exists. Defect 10 (the 1 GeV rule off on one side) replaces side A
 by a re-extraction of the odd files without the rule:
     extract.py --side d121 --mask <mask> --file 1 3 5 7 9 --tp-pt-min 0 --out $OUT/extract_no1gev
 """
@@ -87,6 +87,23 @@ def d_disc_flip(side):
     d["cl_localCotAlpha"] = np.where(m, -d["cl_localCotAlpha"], d["cl_localCotAlpha"])
 
 
+def d_puppi(side):
+    """Defect 8: every constituent's PUPPI weight raised by 0.1."""
+    for mask in CM.MASKS:
+        d = side.m[mask]
+        d["cn_puppiweight"] = (d["cn_puppiweight"] + 0.1).astype(np.float32)
+
+
+def d_head_logsigma_d0(side):
+    """Defect 9: the heads' log sigma_hat(d0) raised by 0.15 (between the tolerance and the gross bound), on the
+    tracks and on the tagger's head inputs (constituents with a track; -1 = no track)."""
+    for mask in CM.MASKS:
+        d = side.m[mask]
+        d["hd_m1"] = (d["hd_m1"] + 0.15).astype(np.float32)
+        x = d["cn_trkjoint_d0"]
+        d["cn_trkjoint_d0"] = np.where(x != -1, x + 0.15, x).astype(np.float32)
+
+
 def d_no_1gev_rule(side):
     """Defect 10: side A is replaced by the odd files extracted without the 1 GeV rule."""
     import engine as EN
@@ -107,6 +124,8 @@ DEFECTS = {
     "z0_bias_ot": (d_z0_bias, "res:otx:z0 mean (|eta| 0.8-1.4)", "disagrees", "MATERIAL"),
     "disc_flip_one_end": (d_disc_flip, "angle:class T:cot alpha (discs, one end)", "disagrees", "MATERIAL"),
     "half_clusters": (d_half_clusters, "mult:SmartPixels clusters", "disagrees", "MATERIAL"),
+    "puppi_plus01": (d_puppi, "tagger:*:puppiweight", "disagrees", "MATERIAL"),
+    "head_logsigma_d0": (d_head_logsigma_d0, "head:*:log sigma d0", "disagrees", "MINOR"),
     # the plan states the verdict only; hit truth has declared sources, so MATERIAL needs the gross bound
     "no_1gev_rule": (d_no_1gev_rule, "hit:*:hit truth", "disagrees", "MINOR or MATERIAL"),
 }
@@ -114,7 +133,9 @@ DEFECTS = {
 
 def stage(a, run_compare, null_sides, write):
     out = {}
-    names = [a.defect] if a.defect else [n for n in DEFECTS if n != "no_1gev_rule"]
+    ml = os.path.isdir(CM.OUT / "extract_ml" / "d121")       # the ML records exist (as engine.catalogue)
+    names = [a.defect] if a.defect else [n for n in DEFECTS if n != "no_1gev_rule"
+                                         and (ml or n not in ("puppi_plus01", "head_logsigma_d0"))]
     for name in names:
         fn, where, verdict, cls = DEFECTS[name]
         A, B = null_sides("oddeven")
@@ -147,6 +168,9 @@ EXPECT = {
     "z0_bias_ot": (("res:otx:z0",), lambda r: r["summary"].startswith("mean"), {"MATERIAL"}, ("res:otx:z0",)),
     "disc_flip_one_end": (("angle:class T:cot alpha",), None, {"MATERIAL"}, ()),
     "half_clusters": (("mult:SmartPixels clusters*",), None, {"MATERIAL"}, ()),
+    "puppi_plus01": (("tagger:*:puppiweight",), None, {"MATERIAL"}, ()),
+    "head_logsigma_d0": (("head:*:log sigma d0",), None, {"MINOR"},
+                         ("head:*:coverage d0*", "tagger:track:trkjoint_d0")),
     "no_1gev_rule": (("hit:*:hit truth",), None, {"MINOR", "MATERIAL"},
                      ("mult:charged particles*", "angle:*", "res:*", "eff:*", "emu:*", "refit:*", "hit:*")),
 }

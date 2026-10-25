@@ -88,6 +88,10 @@ TOL = {
     "head_pclean": ("diff", 0.05, 0.15),
     "head_coverage": ("diff", 0.05, 0.15),
     "shape": ("distance", 0.05, 0.20),
+    # tagger inputs (pre-data calibration, 2026-10-25: the plan's table has no row for them): the mean difference in
+    # units of the D121 standard deviation of the cell, with the values of the "Means (biases)" row; their shapes use
+    # the "Shapes" row
+    "tagger_input": ("diff_sd", 0.2, 0.5),
     "control_crossings": ("diff", 0.05, None),
     "control_discgoing": ("diff", 0.02, None),
     "control_classT_core": ("logratio", np.log(1.10), None),

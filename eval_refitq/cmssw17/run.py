@@ -49,8 +49,10 @@ def _json(o):
 
 def stage_freeze(a):
     ref = EN.Side("D121", "d121", CM.D121_FILES)
+    edges = EN.compute_ml_edges(ref)          # the sigma_hat deciles (empty without the ML records)
+    EN.set_ml_edges(edges)
     out = {"what": "frozen cell map and tolerances (plan 3.4.4-3.4.6), from all D121 files", "files": list(CM.D121_FILES),
-           "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "quantities": []}
+           "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "ml_edges": edges, "quantities": []}
     for q in EN.catalogue():
         for mask in q.masks:
             t0 = time.time()
@@ -67,6 +69,7 @@ def frozen_map():
     if not FROZEN.exists():
         raise SystemExit(f"no frozen tables ({FROZEN}): run `freeze` first")
     fz = json.load(open(FROZEN))
+    EN.set_ml_edges(fz.get("ml_edges", {}))
     infl = fz.get("se_inflation", {})
     out = {}
     for q in fz["quantities"]:

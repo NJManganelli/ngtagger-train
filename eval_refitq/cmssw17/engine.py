@@ -20,25 +20,44 @@ import common as CM  # noqa: E402
 import stats as ST  # noqa: E402
 
 SIDE_TAG = {"d121": 1, "c17": 2}
+# effects in units of a D121 spread, recomputed in each replica: the summary that holds the unit
+UNIT_OF = {"diff_corerms": "core", "diff_sd": "sd"}
 PAR = ("rInv", "phi", "tanL", "z0", "d0")
 
 
 # ================================================================ data ===============================================
+def ml_records(rec, ml, path):
+    """The ML records (extract_ml.py) of one file, checked against its base record by event identity."""
+    for c, k in (("ev_run", "ev_run"), ("ev_lumi", "ev_lumi"), ("ev_event", "ev_event")):
+        if not np.array_equal(np.asarray(rec[c]), np.asarray(ml[k])):
+            raise RuntimeError(f"{path}: events differ from the base record")
+    return {k: v for k, v in ml.items() if k.startswith(("hd_", "jt_", "cn_")) or k == "ev_heldout"}
+
+
 class Side:
     """Concatenated records of one sample (per mask), with global event indices and event uids."""
 
-    def __init__(self, label, side, files, masks=CM.MASKS, base=None):
+    def __init__(self, label, side, files, masks=CM.MASKS, base=None, ml_base=None):
         self.label, self.side, self.files = label, side, tuple(files)
         base = str(base or CM.OUT / "extract")
+        ml_base = str(ml_base or CM.OUT / "extract_ml")
         self.m = {}
         for mask in masks:
             parts = []
-            for n in self.files:
+            mls = [os.path.join(ml_base, side, f"{mask}_f{n:02d}.npz") for n in self.files]
+            have_ml = [os.path.exists(p) for p in mls]
+            if any(have_ml) and not all(have_ml):
+                raise FileNotFoundError(f"ML records of {side} {mask}: only some files have them ({ml_base})")
+            for n, pml in zip(self.files, mls):
                 p = os.path.join(base, side, f"{mask}_f{n:02d}.npz")
                 if not os.path.exists(p):
                     raise FileNotFoundError(p)
-                parts.append(dict(np.load(p, allow_pickle=True)))
+                rec = dict(np.load(p, allow_pickle=True))
+                if all(have_ml):
+                    rec.update(ml_records(rec, dict(np.load(pml, allow_pickle=True)), pml))
+                parts.append(rec)
             self.m[mask] = self._concat(parts)
+            self.m[mask]["mask"] = mask
 
     @staticmethod
     def _concat(parts):
@@ -65,7 +84,7 @@ class Side:
         # global track indices of refit hits / OT links: rebase per file
         for key in ("sp", "spx"):
             if f"hit_{key}_trk" in out:
-                toff, hoff = 0, 0
+                toff = 0
                 tr = []
                 for p in parts:
                     nt = len(p.get(f"trk_{key}_pt", []))
@@ -91,10 +110,10 @@ class Side:
         for mask, d in self.m.items():
             keep_ev = np.isin(d["ev_file"], keep_files) if keep_fn is None else keep_fn(d)
             newidx = np.cumsum(keep_ev) - 1
-            out = {"nev": int(keep_ev.sum())}
+            out = {"nev": int(keep_ev.sum()), "mask": d.get("mask")}
             # per-object tables: keep the objects of kept events, renumber events; tracks keep their own indexing
             for k, a in d.items():
-                if k == "nev" or k.startswith("meta_"):
+                if k in ("nev", "mask") or k.startswith("meta_"):
                     continue
                 if k.startswith("ev_"):
                     out[k] = a[keep_ev]
@@ -186,9 +205,18 @@ def catalogue():
     for S in CM.SURFACES:
         Qs.append(Q(f"mult:SmartPixels clusters surface {S}", "mult_tracker", "multiplicity", "mean", (CM.CLUSTER_MASK,),
                     lambda d, S=S: dict(x=d[f"ev_ncl_{S}"], ev=ev(d))))
-        Qs.append(Q(f"emu:class-T fraction surface {S}", "emu_class", "frac", "ratio_sums", (CM.CLUSTER_MASK,),
+        # all clusters: this IS declared difference 10 (Trk1GeV truth; measured in phase 2: class T 0.09 against
+        # 0.71), so it is reported against the measured size, never judged (decision of 2026-10-25: declared, no
+        # extra reference run)
+        Qs.append(Q(f"emu:class-T fraction surface {S}", "report", "frac", "ratio_sums", (CM.CLUSTER_MASK,),
                     lambda d, S=S: dict(x=d[f"ev_ncl_{S}_T"], x2=d[f"ev_ncl_{S}_T"] + d[f"ev_ncl_{S}_C"], ev=ev(d)),
-                    note="reported against declared difference 10"))
+                    note="declared difference 10 itself: report-only, against the measured size"))
+        # the clusters whose particle passes the 1 GeV rule (plan 3.4.2): judged (measured: 0.92 against 0.91)
+        Qs.append(Q(f"emu:class-T fraction, particle >= 1 GeV, surface {S}", "emu_class", "frac", "ratio_sums",
+                    (CM.CLUSTER_MASK,),
+                    lambda d, S=S: (lambda m: dict(
+                        x=np.bincount(d["cl_ev"][m & (d["cl_tpEmuClass"] == 1)], minlength=d["nev"]),
+                        x2=np.bincount(d["cl_ev"][m], minlength=d["nev"]), ev=ev(d)))(d["cl_surface"] == S)))
     for key, nm in (("sp", "prompt"), ("spx", "extended")):
         Qs.append(Q(f"mult:refit tracks ({nm})", "mult_tracker", "multiplicity", "mean", sp,
                     lambda d, key=key: dict(x=d[f"ev_n_{key}_refit"], ev=ev(d))))
@@ -313,6 +341,144 @@ def catalogue():
                     lambda d, s=s: (lambda m: dict(x=d[f"jet_{s}"][m].astype(np.float64), ev=d["jet_ev"][m],
                                                    dims=jet_dims(d, m)))(np.isfinite(d["jet_gen_pt"]) & (d["jet_flav"] >= 0)),
                     dims=("pt", "eta", "flav"), merge=("eta", "pt", "flav"), quantiles=(0.1, 0.5, 0.9), shape=True))
+    if os.path.isdir(CM.OUT / "extract_ml" / "d121"):
+        Qs += ml_catalogue()
+    return Qs
+
+
+# ---------------------------------------------------------------- the ML part (extract_ml.py; plan 3.4.3) ---------
+HEAD_NAMES = ("clean", "d0", "z0", "tanl", "rinv", "phi")      # hd_m0..hd_m5; residuals hd_r0..hd_r4
+PBINS = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0 + 1e-9)                   # P(clean) reliability bins
+ML_EDGES = {}       # (mask, head index, window) -> the D121 deciles of the margin; frozen with the tables
+
+
+def compute_ml_edges(side):
+    """The sigma_hat deciles of the D121 held-out tracks, per mask, width head and window (frozen)."""
+    out = {}
+    for mask, d in side.m.items():
+        if "hd_ev" not in d:
+            continue
+        held = d["ev_heldout"][d["hd_ev"]].astype(bool)
+        for j in range(1, len(HEAD_NAMES)):
+            for w in np.unique(d["hd_win"][d["hd_win"] >= 0]):
+                x = d[f"hd_m{j}"][held & (d["hd_win"] == w)].astype(np.float64)
+                x = x[np.isfinite(x)]
+                if len(x) >= 10:
+                    out[f"{mask}|{j}|{int(w)}"] = [float(v) for v in np.quantile(x, np.linspace(0.1, 0.9, 9))]
+    return out
+
+
+def set_ml_edges(edges):
+    ML_EDGES.clear()
+    ML_EDGES.update(edges or {})
+
+
+def _decile(d, j, m):
+    out = np.full(int(m.sum()), -1, np.int64)
+    w = d["hd_win"][m].astype(np.int64)
+    x = d[f"hd_m{j}"][m].astype(np.float64)
+    for wv in np.unique(w):
+        e = ML_EDGES.get(f"{d['mask']}|{j}|{int(wv)}")
+        if e is None:
+            raise KeyError(f"no frozen sigma_hat deciles for {d['mask']} head {j} window {wv}: freeze first")
+        k = w == wv
+        out[k] = np.searchsorted(np.asarray(e), x[k], side="right")
+    return out
+
+
+def _sigmoid(x):
+    return 1.0 / (1.0 + np.exp(-np.asarray(x, np.float64)))
+
+
+def ml_catalogue():
+    """Heads (per track) and tagger inputs (per constituent) from the ML records. On D121 the heads, and the
+    tagger inputs computed from them, use the held-out head test events only (plan 3.4.1)."""
+    Qs = []
+
+    def hsel(d):
+        return d["ev_heldout"][d["hd_ev"]].astype(bool) & (d["hd_win"] >= 0)
+
+    def hdims(d, m):
+        return dict(win=d["hd_win"][m].astype(np.int64), pt=_bin(d["hd_pt"][m], CM.HEAD_PT),
+                    eta=_abs_bin(d["hd_eta"][m], CM.HEAD_ETA))
+
+    for cn, masks in (("OT", (CM.BASELINE_MASK,)), ("SmartPixels", CM.SP_MASKS)):
+        Qs.append(Q(f"head:{cn}:P(clean)", "heads", "head_pclean", "quant", masks,
+                    lambda d: (lambda m: dict(x=_sigmoid(d["hd_m0"][m]), ev=d["hd_ev"][m], dims=hdims(d, m)))(hsel(d)),
+                    dims=("win", "pt", "eta"), merge=("eta", "pt"), quantiles=(0.1, 0.5, 0.9), shape=True))
+        Qs.append(Q(f"head:{cn}:clean rate per P(clean) bin", "heads", "head_coverage", "frac", masks,
+                    lambda d: (lambda m: dict(cat=d["hd_clean"][m].astype(np.int64), ev=d["hd_ev"][m],
+                                              dims=dict(win=d["hd_win"][m].astype(np.int64),
+                                                        pbin=_bin(_sigmoid(d["hd_m0"][m]), PBINS))))(
+                        hsel(d) & d["hd_matched"].astype(bool)),
+                    dims=("win", "pbin"), merge=(), cats=(1,)))
+        for j in range(1, len(HEAD_NAMES)):
+            p = HEAD_NAMES[j]
+            Qs.append(Q(f"head:{cn}:log sigma {p}", "heads", "head_logsigma", "quant", masks,
+                        lambda d, j=j: (lambda m: dict(x=d[f"hd_m{j}"][m].astype(np.float64), ev=d["hd_ev"][m],
+                                                       dims=hdims(d, m)))(hsel(d)),
+                        dims=("win", "pt", "eta"), merge=("eta", "pt"), quantiles=(0.1, 0.5, 0.9), shape=True))
+
+            def cov_sel(d, j):
+                return hsel(d) & d["hd_matched"].astype(bool) & np.isfinite(d[f"hd_r{j - 1}"])
+
+            def cov_cat(d, j, m):
+                return (np.abs(d[f"hd_r{j - 1}"][m]) < np.exp(d[f"hd_m{j}"][m].astype(np.float64))).astype(np.int64)
+            Qs.append(Q(f"head:{cn}:coverage {p}", "heads", "head_coverage", "frac", masks,
+                        lambda d, j=j: (lambda m: dict(cat=cov_cat(d, j, m), ev=d["hd_ev"][m], dims=hdims(d, m)))(
+                            cov_sel(d, j)),
+                        dims=("win", "pt", "eta"), merge=("eta", "pt"), cats=(1,)))
+            Qs.append(Q(f"head:{cn}:coverage {p} per sigma decile", "heads", "head_coverage", "frac", masks,
+                        lambda d, j=j: (lambda m: dict(cat=cov_cat(d, j, m), ev=d["hd_ev"][m],
+                                                       dims=dict(win=d["hd_win"][m].astype(np.int64),
+                                                                 dec=_decile(d, j, m))))(cov_sel(d, j)),
+                        dims=("win", "dec"), merge=(), cats=(1,)))
+
+    # ---- tagger inputs: the deployed tagger's constituent features (plan 3.4.3), in GenJet cells ----
+    def cdims(d, m):
+        return dict(pt=_bin(d["cn_gen_pt"][m], CM.JET_PT), eta=_abs_bin(d["cn_gen_eta"][m], CM.JET_ETA),
+                    flav=d["cn_flav"][m].astype(np.int64))
+
+    def charged(d):
+        return (d["cn_isElectronPlus"] + d["cn_isElectronMinus"] + d["cn_isMuonPlus"] + d["cn_isMuonMinus"]
+                + d["cn_isChargedHadronPlus"] + d["cn_isChargedHadronMinus"]) > 0
+
+    def matched_jet(d):
+        return np.isfinite(d["cn_gen_pt"]) & (d["cn_flav"] >= 0)
+
+    feats = []
+    for f in ("pt", "pt_rel", "deta", "dphi", "mass", "z0", "dxy", "quality"):
+        feats.append((f"charged:{f}", f, "tagger_track", lambda d: charged(d)))
+    for f in ("pt", "pt_rel", "deta", "dphi", "mass", "emid"):
+        feats.append((f"neutral:{f}", f, "tagger_neutral", lambda d: ~charged(d)))
+    feats.append(("charged:puppiweight", "puppiweight", "tagger_neutral", lambda d: charged(d)))
+    feats.append(("neutral:puppiweight", "puppiweight", "tagger_neutral", lambda d: ~charged(d)))
+    for f in ("trk_rInv", "trk_tanL", "trk_z0", "trk_d0", "trk_chi2XYRed", "trk_chi2ZRed", "trk_chi2BendRed",
+              "trk_trkMVA1", "vtxpv_dxy", "vtxpv_dz", "trk_sig_d0", "trk_sig_z0", "trk_nITHits"):
+        feats.append((f"track:{f}", f, "tagger_track", lambda d: charged(d)))
+    for h in HEAD_NAMES:      # the head inputs: computed from the heads, so held-out events only on D121
+        feats.append((f"track:trkjoint_{h}", f"trkjoint_{h}", "tagger_track",
+                      lambda d: charged(d) & d["ev_heldout"][d["cn_ev"]].astype(bool)))
+    for nm, f, grp, sel in feats:
+        Qs.append(Q(f"tagger:{nm}", grp, "tagger_input", "mean", CM.MASKS,
+                    lambda d, f=f, sel=sel: (lambda m: dict(x=d[f"cn_{f}"][m].astype(np.float64), ev=d["cn_ev"][m],
+                                                            dims=cdims(d, m)))(sel(d) & matched_jet(d)),
+                    dims=("pt", "eta", "flav"), merge=("eta", "pt", "flav"), shape=True))
+    TYPES = ("isChargedHadronPlus", "isChargedHadronMinus", "isNeutralHadron", "isPhoton", "isElectronPlus",
+             "isElectronMinus", "isMuonPlus", "isMuonMinus")
+
+    def ctype(d, m):
+        return np.argmax(np.column_stack([d[f"cn_{t}"][m] for t in TYPES]), axis=1).astype(np.int64)
+    Qs.append(Q("tagger:constituent type", "mult_pf_jets", "frac", "frac", CM.MASKS,
+                lambda d: (lambda m: dict(cat=ctype(d, m), ev=d["cn_ev"][m], dims=cdims(d, m)))(matched_jet(d)),
+                dims=("pt", "eta", "flav"), merge=("eta", "pt", "flav")))
+    Qs.append(Q("tagger:constituents per jet", "mult_pf_jets", "multiplicity", "mean", CM.MASKS,
+                lambda d: (lambda m: dict(x=d["jt_nconst"][m].astype(np.float64), ev=d["jt_ev"][m],
+                                          dims=dict(pt=_bin(d["jt_gen_pt"][m], CM.JET_PT),
+                                                    eta=_abs_bin(d["jt_gen_eta"][m], CM.JET_ETA),
+                                                    flav=d["jt_flav"][m].astype(np.int64))))(
+                    np.isfinite(d["jt_gen_pt"]) & (d["jt_flav"] >= 0)),
+                dims=("pt", "eta", "flav"), merge=("eta", "pt", "flav"), shape=True))
     return Qs
 
 
@@ -361,6 +527,9 @@ def summarise(q: Q, sub, w, cat=None):
     out = {}
     if q.kind == "mean":
         out["mean"] = ST.wmean(sub["x"], w)
+        sw = w.sum()
+        out["sd"] = (math.sqrt(max(float((w * (sub["x"] - out["mean"]) ** 2).sum() / sw), 0.0))
+                     if sw > 0 and np.isfinite(out["mean"]) else np.nan)
     elif q.kind == "ratio_sums":
         s2 = (w * sub["x2"]).sum()
         out["ratio"] = float((w * sub["x"]).sum() / s2) if s2 > 0 else np.nan
@@ -417,7 +586,7 @@ def effect(kind, a, b, ref_core=None):
         return math.log(a / b) if a > 0 and b > 0 else (0.0 if a == b else np.nan)
     if kind == "diff":
         return a - b
-    if kind == "diff_corerms":
+    if kind in UNIT_OF:
         return (a - b) / ref_core if ref_core and ref_core > 0 else np.nan
     if kind == "distance":
         return a
@@ -583,8 +752,9 @@ def freeze_quantity(q: Q, sideB: Side, mask, n_boot=100):
                 if t is None:
                     continue
                 kind, tol, gross = t
-                if kind == "diff_corerms":
-                    vals = np.array([r[sname] / r["core"] if r.get("core") else np.nan for r in res[1:]])
+                if kind in UNIT_OF:
+                    u = UNIT_OF[kind]
+                    vals = np.array([r[sname] / r[u] if r.get(u) else np.nan for r in res[1:]])
                 elif kind == "logratio":
                     vals = np.log(np.array([r[sname] for r in res[1:]], np.float64))
                 else:
@@ -646,10 +816,11 @@ def compare_quantity(q: Q, sideA: Side, sideB: Side, mask, fz, n_boot=CM.N_BOOT,
         for sname, fs in cell["summaries"].items():
             kind, tol, gross = fs["kind"], fs["tol"], fs["gross"]
             a, b = resA[0].get(sname, np.nan), resB[0].get(sname, np.nan)
-            refc = resB[0].get("core") if kind == "diff_corerms" else None
+            u = UNIT_OF.get(kind)
+            refc = resB[0].get(u) if u else None
             eff = effect(kind, a, b, refc)
-            reps = [effect(kind, ra.get(sname, np.nan), rb.get(sname, np.nan),
-                           rb.get("core") if kind == "diff_corerms" else None) for ra, rb in zip(resA[1:], resB[1:])]
+            reps = [effect(kind, ra.get(sname, np.nan), rb.get(sname, np.nan), rb.get(u) if u else None)
+                    for ra, rb in zip(resA[1:], resB[1:])]
             reps = np.array(reps, np.float64)
             se = float(np.nanstd(reps, ddof=1)) if np.isfinite(reps).sum() > 2 else np.nan
             se *= fz.get("se_inflation", {}).get(f"{kind}:{sname.split('[')[0]}", 1.0)
