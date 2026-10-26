@@ -42,6 +42,13 @@ VTX_TRACK_BRANCHES = ["pt", "phi", "z0", "d0"]
 # OT-only track table (L1TTrack/L1TExtTrack, or the passthrough SP table of mask IIII)
 # has no such column and gets 0, the physical value for a track without IT hits.
 TRACKRES_BRANCHES = ["cov_d0_d0", "cov_z0_z0"]
+# "trackheads" group: the CMSSW-computed track-quality heads stored on the track tables of the slim tagger tier
+# (<table>_head_<h>: head_clean = P(clean), the others log sigma_hat). Read from the constituent's track
+# table, or, when that table has none (the OT-only passthrough of mask IIII), from the OT table HEADS_OT_TABLE at the
+# track's l1TrackIdx row. Constituents without a track get HEADS_SENTINEL.
+HEAD_NAMES = ["clean", "d0", "z0", "tanl", "rinv", "phi"]
+HEADS_OT_TABLE = "L1TExtTrack"
+HEADS_SENTINEL = -1.0
 TRACKRES_OPTIONAL = {"spixNAcceptedHits": "trk_nITHits"}
 CLUSTER_BRANCHES = ["hOverE", "sigmaRRTot", "zBarycenter", "eMax", "sigmaZZ"]
 JET_BRANCHES = ["pt", "eta", "phi", "et"]
@@ -206,13 +213,15 @@ def load_jets(
         trackmva_model, a bundle of the family whose base table is track_table).
       - "trackjoint": the jointly trained track-quality heads (a TrackMVA-like model
         object with `outputs`, trackjoint_model), gathered the same way, prefix trkjoint_.
+      - "trackheads": the stored CMSSW track-quality heads (slim tagger tier; HEAD_NAMES),
+        prefix trkhead_: P(clean) and the five log sigma_hat.
 
     link_cand_table: plain-Puppi tier row-aligned with cand_table that supplies
     a filled l1TrackIdx when the (deregionized) cand_table's own is unfilled.
     """
     groups = feature_groups or ["baseline"]
     need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv",
-                                                "trackmva", "trackres", "trackjoint"))
+                                                "trackmva", "trackres", "trackjoint", "trackheads"))
     extra_trk = list(VTX_TRACK_BRANCHES) if "vertexdxy" in groups else []
     trackres_present = []
     if "trackres" in groups:
@@ -220,6 +229,17 @@ def load_jets(
             keys0 = set(f["Events"].keys())
         trackres_present = [c for c in TRACKRES_OPTIONAL if f"{track_table}_{c}" in keys0]
         extra_trk += TRACKRES_BRANCHES + trackres_present
+    heads_on_track = None
+    if "trackheads" in groups:
+        with uproot.open(files[0]) as f:
+            keys0 = set(f["Events"].keys())
+        heads_on_track = all(f"{track_table}_head_{h}" in keys0 for h in HEAD_NAMES)
+        if heads_on_track:
+            extra_trk += [f"head_{h}" for h in HEAD_NAMES]
+        elif all(f"{HEADS_OT_TABLE}_head_{h}" in keys0 for h in HEAD_NAMES) and f"{track_table}_l1TrackIdx" in keys0:
+            extra_trk += ["l1TrackIdx"]
+        else:
+            raise KeyError(f"trackheads: no stored heads on {track_table} or {HEADS_OT_TABLE} in {files[0]}")
     if "trackmva" in groups or "trackjoint" in groups:
         from ngtagger.data.trackmva_feature import require_jet_tables
 
@@ -278,6 +298,22 @@ def load_jets(
         for c, name in TRACKRES_OPTIONAL.items():
             const[name] = (crossref_gather(cands, tracks, nested_idx, link_idx_field, c)
                            if c in trackres_present else ak.zeros_like(const["pt"]))
+    if "trackheads" in groups:
+        tracks = events[track_table]
+        if heads_on_track:
+            raw = {h: crossref_gather(cands, tracks, nested_idx, link_idx_field, f"head_{h}", default=np.nan)
+                   for h in HEAD_NAMES}
+        else:                                        # the OT table's heads at the track's l1TrackIdx row
+            ot = uproot.concatenate([f"{f}:Events" for f in files],     # un-zipped: one field per branch
+                                    filter_name=[f"{HEADS_OT_TABLE}_head_{h}" for h in HEAD_NAMES])
+            if max_events is not None:
+                ot = ot[:max_events]
+            ot_row = crossref_gather(cands, tracks, nested_idx, link_idx_field, "l1TrackIdx", default=-1)
+            ok = ot_row >= 0
+            raw = {h: ak.where(ok, _gather2(ot[f"{HEADS_OT_TABLE}_head_{h}"], ak.where(ok, ot_row, 0)), np.nan)
+                   for h in HEAD_NAMES}
+        for h, v in raw.items():                     # stored as the outputs: P(clean) and log sigma_hat
+            const[f"trkhead_{h}"] = ak.values_astype(ak.fill_none(ak.nan_to_none(v), HEADS_SENTINEL), np.float32)
     if "cluster" in groups:
         clusters = events[cluster_table]
         for name in CLUSTER_BRANCHES:

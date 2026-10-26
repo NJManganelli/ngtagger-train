@@ -8,7 +8,8 @@
 #                                                       trial screen and choice (trial_select.py); 10 more
 #                                                       trials for cells with fewer than 3 kept; analysis
 #   eval_refitq/tagger_sp/run_all.sh all SAMPLES...     build, then train
-# SAMPLES: ttbar [htt]. Outputs under common.OUT; logs in OUT/logs (run.log: one line per step, ends with
+# SAMPLES: ttbar [htt]. TAGGER_SP_TIER=slim: the slim tagger tier (slimtier.py; ttbar only). TRIAL_SEEDS / TOPUP_SEEDS:
+# the trials per cell (default 10 + a top-up of 10). Outputs under common.OUT; logs in OUT/logs (run.log: one line per step, ends with
 # "end rc=N"); the selection, summary and PDF are copied to OUT/results_<samples>/ at the end.
 # Exit: 0 ok; 1 a step failed; 3 a cell has no kept trial after the top-up (material: no result for it).
 set -u
@@ -21,10 +22,14 @@ OUT=$($PY -c "import sys; sys.path.insert(0, '$D'); import common as C; print(C.
 LOG=$OUT/logs
 mkdir -p "$LOG"
 TAG=$(IFS=_; echo "${SAMPLES[*]}")
+# trials per cell (the policy: 10, and 10 more for a cell with fewer than 3 kept); a test run may use fewer.
+# Top-up seeds must start at 10 (trial_select.TOPUP_SEEDS).
+TRIAL_SEEDS=${TRIAL_SEEDS:-0 1 2 3 4 5 6 7 8 9}
+TOPUP_SEEDS=${TOPUP_SEEDS:-10 11 12 13 14 15 16 17 18 19}
 export OMP_NUM_THREADS=2 PY D LOG TAG SAMPLES_STR="${SAMPLES[*]}"
 say() { echo "$(date -u +%FT%TZ) tagger $*" | tee -a "$LOG/run.log"; }
 fail() { say "$* FAILED"; say "end rc=1"; exit 1; }
-say "start $PHASE [${SAMPLES[*]}] in $PWD"
+say "start $PHASE [${SAMPLES[*]}] tier ${TAGGER_SP_TIER:-canonical} trials [$TRIAL_SEEDS] top-up [$TOPUP_SEEDS] in $PWD"
 
 build() {
   $PY -c "import sys; sys.path.insert(0, '$D'); import common as C; print('frozen file set:', \
@@ -49,13 +54,13 @@ select_trials() {
 
 train() {
   for m in IIII AAAA AAAI IAAA; do for v in baseline track trackmva; do echo "$m $v"; done; done \
-    | train_cells "0 1 2 3 4 5 6 7 8 9" || fail "training (first 10 trials)"
-  say "first 10 trials per cell done"
+    | train_cells "$TRIAL_SEEDS" || fail "training (first trials)"
+  say "first trials per cell done (seeds $TRIAL_SEEDS)"
   select_trials
   TOP=$(awk '/^TOPUP/ {print $2, $3}' "$LOG/select_$TAG.log")
   if [ -n "$TOP" ]; then
     say "top-up for: $(echo "$TOP" | tr '\n' ',')"
-    echo "$TOP" | train_cells "10 11 12 13 14 15 16 17 18 19" || fail "training (top-up)"
+    echo "$TOP" | train_cells "$TOPUP_SEEDS" || fail "training (top-up)"
     select_trials
   fi
   grep -v '^TOPUP' "$LOG/select_$TAG.log" | while read -r line; do say "  $line"; done

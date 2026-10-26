@@ -85,7 +85,7 @@ def stock_reference():
     sc, lab = [], []
     for s, n, _ in man["files"]:
         d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, C.BASELINE_MASK, n) + ".npz"))
-        sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX)
+        sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX) & C.event_filter(d["evid"])[d["entry"]]
         sc.append(d["stock_bTagScore"][sel])
         lab.append(d["label"][sel])
     sc, lab = np.concatenate(sc), np.concatenate(lab)
@@ -422,7 +422,7 @@ def stock_wp(ev, cnt):
         b, lab, key = [], [], []
         for s, n, _ in man["files"]:
             d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, mask, n) + ".npz"))
-            sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX)
+            sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX) & C.event_filter(d["evid"])[d["entry"]]
             b.append(d["stock_bTagScore"][sel])
             lab.append(d["label"][sel])
             key.append(C.event_key(man["samples"].index(s), n, d["evid"][d["entry"][sel]]))

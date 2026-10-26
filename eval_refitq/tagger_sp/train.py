@@ -67,8 +67,9 @@ def load_mask(mask, samples, variant=None):
                 names = fn
             elif fn != names:
                 raise RuntimeError("feature names differ between caches")
-            test_keys.append(C.event_key(si, n, d["evid"][d["test_entries"]]))
-            acc = (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX)
+            use_ev = C.event_filter(d["evid"])                        # slim tier: events common to every mask
+            test_keys.append(C.event_key(si, n, d["evid"][d["test_entries"] & use_ev]))
+            acc = (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX) & use_ev[d["entry"]]
             ev = d["evid"][d["entry"][acc]]
             parts.append({
                 "X": d["X"][acc], "label": d["label"][acc], "target_pt": d["target_pt"][acc],

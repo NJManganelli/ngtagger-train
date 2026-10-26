@@ -35,8 +35,14 @@ import os
 
 import numpy as np
 
+# TAGGER_SP_TIER: "canonical" (the canon_v5 / canon_v4 nanos, below) or "slim" (the grid-produced slim tagger tier,
+# slimtier.py: its own file inventory, event pairing across masks, hash splits and the stored CMSSW track heads)
+TIER = os.environ.get("TAGGER_SP_TIER", "canonical")
+if TIER not in ("canonical", "slim"):
+    raise ValueError(f"TAGGER_SP_TIER {TIER!r}")
 # TAGGER_SP_OUT: another output folder (dev tests on a few files)
-OUT = os.environ.get("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagger_v5")
+OUT = os.environ.get("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagger_slimtier" if TIER == "slim"
+                     else "/Volumes/WDMac/smartpixels_scratch/tagger_v5")
 MASKS = ["IIII", "AAAA", "AAAI", "IAAA"]       # IIII = OT baseline (passthrough)
 BASELINE_MASK = "IIII"
 # the SP masks read canon_v5 (refit v3); IIII reads canon_v4 (canon_v5 has none: see the docstring)
@@ -64,6 +70,11 @@ ETA_BINS = [0.0, 1.1, 1.8, 2.4]
 PT_BINS = [15, 25, 40, 70, 1e9]
 
 GROUPS_ALL = ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres", "trackmva"]
+# the slim tier carries the CMSSW-computed reference heads (*_head_*): the "plus track-quality heads" cell reads them
+# ("trackheads", the deployed path) instead of fitting the Python heads
+HEAD_GROUP = "trackheads" if TIER == "slim" else "trackmva"
+if TIER == "slim":
+    GROUPS_ALL = [g if g != "trackmva" else HEAD_GROUP for g in GROUPS_ALL]
 # Feature variants (cumulative), all with the same tagger / training protocol. The FACTORISATION
 # LADDER (user): L0 = "baseline" on IIII (the OT reference, NGT-like tagger); L1 = "baseline" on an
 # SP mask (refit tracks only through PF/PUPPI/jets upstream); L2 = "track" (+ the constituent
@@ -73,7 +84,7 @@ GROUPS_ALL = ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres", "tr
 VARIANTS = {
     "baseline": ["baseline"],
     "track": ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres"],
-    "trackmva": ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres", "trackmva"],
+    "trackmva": ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres", HEAD_GROUP],
 }
 # jointly trained track-quality heads (joint_heads.py): the "track" inputs + the six heads of one head version
 # (reference = uncoupled, A = outputs apart, B = errors apart), each from its own jet caches (jets_dir)
@@ -108,6 +119,12 @@ def files(sample: str, mask: str, require_all: bool = False) -> list[tuple[int, 
     return out
 
 
+def slim():
+    import slimtier
+
+    return slimtier
+
+
 def fileset_path() -> str:
     return os.path.join(OUT, "cache", "fileset.json")
 
@@ -117,6 +134,11 @@ def freeze_fileset(samples) -> dict:
     calls it once at the start, so files finishing mid-run cannot split the masks)."""
     import json
 
+    if TIER == "slim":                               # its own inventory (complete files, markers, common events)
+        if list(samples) != ["ttbar"]:
+            raise ValueError("the slim tier holds TTbar only")
+        inv = slim().freeze()
+        return {m: [u["job"] for u in inv["masks"][m]["usable"]] for m in MASKS}
     fs = {s: sorted(set.intersection(*(set(n for n, _ in files(s, m)) for m in MASKS))) for s in samples}
     os.makedirs(os.path.dirname(fileset_path()), exist_ok=True)
     with open(fileset_path(), "w") as f:
@@ -129,6 +151,8 @@ def study_files(sample: str, mask: str) -> list[tuple[int, str]]:
     without one, finished for every mask. TTbar must be complete (the split spans all ten)."""
     import json
 
+    if TIER == "slim":
+        return slim().frozen_files(mask)
     if os.path.exists(fileset_path()):
         common = set(json.load(open(fileset_path()))[sample])
     else:
@@ -156,6 +180,8 @@ def split_table(sample: str, evids: dict[int, np.ndarray]) -> dict[int, np.ndarr
     """{file number: bool test mask in the file's entry order}, from each file's (n, 3)
     (run, lumi, event) array. The choice is made on the events sorted by identity, so it
     is the same set of events in every mask whatever the entry order."""
+    if TIER == "slim":                               # a hash of the identity: stable as files arrive
+        return {n: slim().is_test(e) for n, e in evids.items()}
     order = {n: np.lexsort(e.T[::-1]) for n, e in evids.items()}      # entry indices, sorted by id
     test = {n: np.zeros(len(e), bool) for n, e in evids.items()}
     if sample == "ttbar":
@@ -177,6 +203,8 @@ def val_table(sample: str, evids: dict[int, np.ndarray], test: dict[int, np.ndar
     """{file number: bool validation mask in the file's entry order}: VAL_FRACTION of the sample's
     TRAINING events (not in `test`), chosen on the events sorted by identity, so it is the same set
     of events in every mask, cell and trial."""
+    if TIER == "slim":
+        return {n: slim().is_val(e) & ~test[n] for n, e in evids.items()}
     order = {n: np.lexsort(e.T[::-1]) for n, e in evids.items()}
     val = {n: np.zeros(len(e), bool) for n, e in evids.items()}
     pool = [(n, i) for n in sorted(evids) for i in order[n] if not test[n][i]]
@@ -188,11 +216,20 @@ def val_table(sample: str, evids: dict[int, np.ndarray], test: dict[int, np.ndar
 
 
 def event_key(sample_idx, fileno, evid):
-    """int64 key of (sample, file, lumi, event) -- unique within the study."""
+    """int64 key of (sample, file, lumi, event) -- unique within the study. The slim tier keys by identity only
+    (its job numbers do not identify the same events in another mask)."""
     evid = np.asarray(evid, np.int64)
+    if TIER == "slim":
+        fileno = 0
     if (evid[:, 2] >= 10**7).any() or (evid[:, 1] >= 10**6).any():
         raise ValueError("event / lumi number beyond the key range")
     return ((np.asarray(sample_idx, np.int64) * 100 + fileno) * 10**6 + evid[:, 1]) * 10**7 + evid[:, 2]
+
+
+def event_filter(evid) -> np.ndarray:
+    """Per (run, lumi, event): used by the study? The slim tier uses only the events present in every mask."""
+    evid = np.asarray(evid, np.int64).reshape(-1, 3)
+    return slim().in_common(evid) if TIER == "slim" else np.ones(len(evid), bool)
 
 
 def tag(sample: str, mask: str, n: int) -> str:
