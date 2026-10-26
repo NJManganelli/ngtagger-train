@@ -41,7 +41,7 @@ PATTERN = "slimtaggertier_slimtaggertier_SP{mask}_RelValTTbar_14TeV/*/0000/tagge
 EVENTS_PER_FILE = 100
 TIER_MARK, REFIT_MARK = "SPTaggerTier", "v3 "
 EVENT_ID = ("run", "luminosityBlock", "event")
-HASH_SEEDS = {"test": 0x5EED_7E57, "val": 0x5EED_0A11}
+HASH_SEEDS = {"test": 0x5EED_7E57, "val": 0x5EED_0A11, "subset": 0x5EED_5B5E}
 # dev tests only: restrict the masks scanned and the files used per mask (the study uses every mask and file)
 DEV_MASKS = os.environ.get("SLIMTIER_DEV_MASKS", "").split() or None
 DEV_MAX_FILES = int(os.environ.get("SLIMTIER_DEV_MAX_FILES", "0")) or None
@@ -230,6 +230,15 @@ def _u(ev, which):
         x = (x ^ (x >> np.uint64(27))) * np.uint64(0x94D049BB133111EB)
         x = x ^ (x >> np.uint64(31))
     return (x >> np.uint64(11)).astype(np.float64) / float(1 << 53)
+
+
+def training_subset(ev, n):
+    """The n training events (of the identities `ev`) with the smallest subset hash: a fixed, mask-independent subset
+    (the data-volume check: train on fewer events, test on the same test set)."""
+    ev = np.unique(np.asarray(ev, np.int64).reshape(-1, 3), axis=0)
+    if n > len(ev):
+        raise ValueError(f"{n} training events asked, {len(ev)} available")
+    return np.sort(key64(ev[np.argsort(_u(ev, "subset"), kind="stable")[:n]]))
 
 
 def is_test(ev):

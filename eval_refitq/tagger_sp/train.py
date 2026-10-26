@@ -45,14 +45,16 @@ CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp.yam
 CONFIG_LINOUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tagger_sp_linout.yaml")
 
 
-def load_mask(mask, samples, variant=None):
+def load_mask(mask, samples, variant=None, train_events=None):
     """Concatenate the jet caches of `mask` over `samples` (study acceptance applied), for
-    exactly the files build.py used (its manifest); the variant's caches (common.jets_dir)."""
+    exactly the files build.py used (its manifest); the variant's caches (common.jets_dir).
+    train_events (slim tier only): keep the training (and validation) jets of that many training events only
+    (slimtier.training_subset: the same events for every mask); the test jets are unchanged."""
     with open(C.manifest_path(mask)) as f:
         man = json.load(f)
     if man["samples"] != list(samples):
         raise RuntimeError(f"{mask}: built for samples {man['samples']}, asked for {samples}")
-    parts, test_keys = [], []
+    parts, test_keys, train_ev = [], [], []
     names = None
     for si, s in enumerate(samples):
         fs = [n for s2, n, _ in man["files"] if s2 == s]
@@ -69,6 +71,7 @@ def load_mask(mask, samples, variant=None):
                 raise RuntimeError("feature names differ between caches")
             use_ev = C.event_filter(d["evid"])                        # slim tier: events common to every mask
             test_keys.append(C.event_key(si, n, d["evid"][d["test_entries"] & use_ev]))
+            train_ev.append(d["evid"][~d["test_entries"] & use_ev])
             acc = (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX) & use_ev[d["entry"]]
             ev = d["evid"][d["entry"][acc]]
             parts.append({
@@ -79,6 +82,17 @@ def load_mask(mask, samples, variant=None):
             })
     D = {k: np.concatenate([p[k] for p in parts]) for k in parts[0]}
     D["test_event_keys"] = np.sort(np.concatenate(test_keys))
+    if train_events:
+        if C.TIER != "slim":
+            raise ValueError("--train-events is a slim-tier option")
+        import slimtier
+
+        keep_ev = slimtier.training_subset(np.concatenate(train_ev), train_events)
+        k = slimtier.key64(D["evid"])
+        keep = D["is_test"].astype(bool) | np.isin(k, keep_ev)
+        D = {key: (v[keep] if key != "test_event_keys" else v) for key, v in D.items()}
+        print(f"{mask}: training subset of {train_events} events (of {len(np.unique(np.concatenate(train_ev), axis=0))}): "
+              f"{int((~D['is_test'].astype(bool)).sum())} training jets kept", flush=True)
     if (D["is_val"] & D["is_test"]).any():
         raise RuntimeError(f"{mask}: validation and test jets overlap")
     return D, names
@@ -117,6 +131,8 @@ def main():
     ap.add_argument("--gpu", action="store_true", help="use the Metal GPU (default: CPU only)")
     ap.add_argument("--tag", default="", help="suffix of the output names (dev runs)")
     ap.add_argument("--force", action="store_true", help="retrain trials whose prediction file exists")
+    ap.add_argument("--train-events", type=int, default=None,
+                    help="slim tier: train on this many training events only (the data-volume check)")
     ap.add_argument("--d0", choices=["A", "B", "C", "D"], default=None,
                     help="PV-(x, y) d0 upper-bound variant (d0pv.py); outputs under OUT/d0_upper_bound")
     a = ap.parse_args()
@@ -130,7 +146,7 @@ def main():
     from ngtagger.data.labels import CLASS_LABELS
     from ngtagger.train.trainer import class_pt_weights, run_training
 
-    D, names = load_mask(a.mask, a.samples, a.variant)
+    D, names = load_mask(a.mask, a.samples, a.variant, a.train_events)
     X = D["X"]
     cols = resolve_feature_groups(C.VARIANTS[a.variant])
     out, vname = C.OUT, a.variant
@@ -166,9 +182,11 @@ def main():
         pfile = os.path.join(out, "preds", name + ".npz")
         if os.path.exists(pfile) and not a.force:
             with np.load(pfile) as old:
+                te_old = int(old["train_events"]) if "train_events" in old.files else -1
                 current = [str(x) for x in old["samples"]] == list(a.samples) and \
                     np.array_equal(old["test_event_keys"], D["test_event_keys"]) and \
-                    [str(x) for x in old["features"]] == list(cols)
+                    [str(x) for x in old["features"]] == list(cols) and \
+                    te_old == (-1 if a.train_events is None else a.train_events)
             if current:
                 print(f"{name}: exists, skipped", flush=True)
                 continue
@@ -204,7 +222,8 @@ def main():
             val_closs=val_closs,
             samples=np.array(a.samples), classes=np.array(CLASS_LABELS), features=np.array(cols),
             val_loss=np.array(h.get("val_loss", [])), loss=np.array(h.get("loss", [])),
-            train_counts=json.dumps(counts), seed=seed, test_event_keys=D["test_event_keys"])
+            train_counts=json.dumps(counts), seed=seed, test_event_keys=D["test_event_keys"],
+            train_events=-1 if a.train_events is None else a.train_events)
         os.replace(tmp, pfile)
         print(f"{name}: {len(h.get('loss', []))} epochs, best val_loss {model.best_val_loss():.4f}, "
               f"val_closs {val_closs:.4f}, {time.time() - t0:.0f}s", flush=True)
