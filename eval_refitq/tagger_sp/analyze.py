@@ -103,6 +103,9 @@ STEPS = [  # (label, a, b): a - b ; mask "M" = the SP mask of the column. The fi
     ("L3'-L2'  + MVA scores, OT tracks", ("trackmva", "IIII"), ("track", "IIII")),
     ("L3-L0  total", ("trackmva", "M"), L0),
 ]
+if C.TIER == "slim":      # the third input set reads the stored CMSSW heads (trkhead_*), not Python-fitted MVA scores
+    STEPS = [(lab.replace("+ track-MVA inputs", "+ stored track heads").replace("+ track-MVA scores", "+ stored track heads")
+              .replace("+ MVA scores, OT tracks", "+ stored OT track heads"), a, b) for lab, a, b in STEPS]
 MAIN_STEPS = STEPS[:3]
 # jointly trained track-quality heads (joint_heads.py): reference (uncoupled), A (outputs apart), B (errors apart)
 JOINT_STEPS = [
@@ -597,6 +600,31 @@ def plot_steps(pdf, L, mask, what, regs_or_keys, xlabels, title, ylabel):
     plt.close(fig)
 
 
+SLIM_DATASET = ("/RelValTTbar_14TeV/CMSSW_20_1_0_pre2-PU_150X_mcRun4_realistic_v1_STD_D121_RegeneratedGS_PU_"
+                "20260917_163358_RV24-v1/GEN-SIM-DIGI-RAW")
+SLIM_HEADS = ("the stored CMSSW track-quality heads (reference heads v2p6pre1), read from the slim files as the "
+              "trkhead_* inputs: P(clean) and log sigma_hat of d0, z0, tanL, 1/R and phi; SmartPixels masks from "
+              "L1TSmartPixelsExtTrack_head_*, IIII from L1TExtTrack_head_* at the track's l1TrackIdx")
+
+
+def slim_inputs(n_test_events):
+    """The slim tier's inputs as recorded by its frozen inventory (slimtier.freeze)."""
+    import hashlib
+
+    import slimtier
+
+    ip = slimtier.inventory_path()
+    inv = json.load(open(ip))
+    return {"tier": "slim tagger tier (SPTaggerTier, refit v3; one CRAB task per mask)", "dataset": SLIM_DATASET,
+            "base": inv["base"], "frozen": inv["frozen"],
+            "usable_files": {m: len(x["usable"]) for m, x in inv["masks"].items()},
+            "rejected_files": {m: len(x["rejected"]) for m, x in inv["masks"].items()},
+            "events_common_to_all_masks": inv["common_events"], "n_test_events": int(n_test_events),
+            "inventory": ip, "inventory_sha256": hashlib.sha256(open(ip, "rb").read()).hexdigest(),
+            "pairing": "masks paired by (run, lumi, event); only the events present in every mask are used",
+            "track_heads": SLIM_HEADS}
+
+
 def nominal_boot(m):
     """{reg: {metric: [nominal, bootstrap std]}} of a metric dict of (1+n_boot,) arrays."""
     return {r: {k: [float(v[0]), float(np.nanstd(v[1:], ddof=1)) if np.isfinite(v[1:]).sum() > 2 else None]
@@ -651,13 +679,19 @@ def main():
     head_best = {mask: {lab.split("  ")[1]: {k: LB[mask][lab]["incl"][k] for k in KEY_METRICS}
                         for lab in HEAD_LABEL.values() if lab in LB.get(mask, {})} for mask in LB}
     summary = {
-        "what": "SmartPixels L1 jet multiclass tagging on canon_v5 (refit v3): deployed taggers vs the OT baseline",
+        "what": ("SmartPixels L1 jet multiclass tagging on the grid slim tagger tier (refit v3): deployed taggers vs the "
+                 "OT-only control IIII" if C.TIER == "slim" else
+                 "SmartPixels L1 jet multiclass tagging on canon_v5 (refit v3): deployed taggers vs the OT baseline"),
         "created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "samples": samples,
-        "inputs": {"sp_masks": C.CANON["sp"], "IIII": C.CANON[C.BASELINE_MASK]},
+        "inputs": (slim_inputs(len(ev)) if C.TIER == "slim" else
+                   {"sp_masks": C.CANON["sp"], "IIII": C.CANON[C.BASELINE_MASK]}),
         "acceptance": {"pt_min_GeV": C.PT_MIN, "abs_eta_max": C.ETA_MAX},
-        "split": {"test_fraction": C.TEST_FRACTION, "validation_fraction_of_training_events": C.VAL_FRACTION,
-                  "seed": C.SPLIT_SEED, "ttbar_train_only_files": list(C.TTBAR_TRAIN_ONLY),
-                  "n_test_events": int(len(ev))},
+        "split": ({"method": "splitmix64 hash of (run, lumi, event) (slimtier.is_test / is_val): stable as files arrive",
+                   "test_fraction": C.TEST_FRACTION, "validation_fraction_of_training_events": C.VAL_FRACTION,
+                   "n_test_events": int(len(ev))} if C.TIER == "slim" else
+                  {"test_fraction": C.TEST_FRACTION, "validation_fraction_of_training_events": C.VAL_FRACTION,
+                   "seed": C.SPLIT_SEED, "ttbar_train_only_files": list(C.TTBAR_TRAIN_ONLY),
+                   "n_test_events": int(len(ev))}),
         "selection_rules": json.load(open(os.path.join(C.OUT, "selection.json")))["rules"],
         "variants": C.VARIANTS, "steps_definition": {lab: [f"{x[0]}@{x[1]}" for x in (a_, b_)]
                                                      for lab, a_, b_ in STEPS + JOINT_STEPS},
@@ -691,33 +725,67 @@ def main():
 
     pdfp = os.path.join(a.out, "tagger_sp.pdf")
     with PdfPages(pdfp) as pdf:
-        text_page(pdf, "SmartPixels L1 jet tagging on canon_v5 (refit v3): retrained taggers vs the OT baseline", [
-            "Scenarios: canonical coopt nanos, PU200. The tracks feeding the L1 vertex, PF, PUPPI and SC4 NG jets are the",
-            "SmartPixels (SP) tracks of each IT active-layer mask (A/I = IT layer group active/inactive). SP masks: canon_v5",
-            "(refit v3); IIII (passthrough, SP track = OT track, the OT-only baseline): canon_v4 (canon_v5 has no IIII).",
-            f"Samples: {samples} combined. Split by event identity, identical in all masks: {C.TEST_FRACTION:.0%} test (TTbar",
-            "test events only from f03-f10: f01/f02 trained the cluster-angle CNN); validation = a fixed "
-            f"{C.VAL_FRACTION:.0%} of the training",
-            "events, the same for every trial, cell and mask (early stopping, trial screen and choice only).",
-            f"Jets: SC4 NG (L1puppiJetSC4NG), reco pT > {C.PT_MIN:g} GeV, |eta| < {C.ETA_MAX:g}; <= 16 constituents (framework cap).",
-            "Labels (framework labels.py, identical in every scenario): b charm light gluon tau+ tau- muon electron.",
-            "Tagger (every cell): framework DeepSetHGQ2 with upstream's ReLU on the class logits; framework loss, class",
-            "weighting and callbacks; batch 128 / lr 1e-3 (the stock 2048 / 1e-2 does not learn on ~5k jets). CPU.",
-            "Input sets: baseline = upstream hardware inputs; track = + the constituent track's parameters, fit quality,",
-            "  resolution and IT hits; trackmva = + track-quality head outputs (gradient-boosted, fitted per scenario on",
-            "  the training events).",
-            "TRIALS (training policy): 10 per cell (+10 if fewer than 3 kept); failed = degenerate on the validation jets",
-            "  (> 1% identical outputs or a working-point threshold on a tie block); outliers by a robust rule; the",
-            "  DEPLOYED tagger = mean softmax of the 3 kept trials with the lowest validation loss (single best beside it).",
-            "HEADLINE: with vs without SmartPixels per mask at equal inputs = deployed tagger on the mask minus on IIII.",
-            "Working points: matched fake rates with ties split; menu = udsg fake rate of the stock cut bTagScore > 0.15",
-            "  on IIII; 10%; 1% (weak).",
-            f"Errors: 'boot' = paired event bootstrap ({a.boot} resamples of the common test events); 'seed' = trial",
-            "  spread (kept-trial SD / sqrt(3) for the deployed ensemble); sigma = diff / (boot (+) seed).",
-            "DESCRIPTIVE ONLY: the SmartPixels angles are placeholders and the cluster CNN is a stand-in for the sensor.",
-            "Caveats: limited statistics; head/tagger correlation ignored; 16-constituent cap; recipe not certified",
-            "saturated; SP covariance = KF posterior.",
-        ])
+        if C.TIER == "slim":
+            si = summary["inputs"]
+            n_first = max(sum(1 for t in x["sel"]["seeds"] if t < 10) for x in P.values())
+            n_top = max(sum(1 for t in x["sel"]["seeds"] if t >= 10) for x in P.values())
+            text_page(pdf, "SmartPixels L1 jet tagging on the grid slim tagger tier: retrained taggers vs the OT-only control", [
+                "Input: the grid-produced slim tagger tier (SPTaggerTier, refit v3), one CRAB task per IT active-layer mask:",
+                "  AAAA, AAAI, IAAA (SmartPixels (SP) tracks feed the L1 vertex, PF, PUPPI and SC4 NG jets; A/I = IT layer",
+                "  group active/inactive) and IIII (the OT-only control: OT passthrough, OT heads only).",
+                f"Dataset: {SLIM_DATASET}",
+                f"Files: {si['base']}",
+                f"  usable per mask {si['usable_files']}, rejected {si['rejected_files']} (frozen {si['frozen']}).",
+                f"Events paired across masks by (run, lumi, event): {si['events_common_to_all_masks']} events common to every mask; "
+                f"{si['n_test_events']} test events.",
+                f"Split: a 64-bit hash of (run, lumi, event): {C.TEST_FRACTION:.0%} test, validation {C.VAL_FRACTION:.0%} of the rest "
+                "(early stopping, trial screen and choice only).",
+                f"Jets: SC4 NG (L1puppiJetSC4NG), reco pT > {C.PT_MIN:g} GeV, |eta| < {C.ETA_MAX:g}; <= 16 constituents (framework cap).",
+                "Labels (framework labels.py, identical in every scenario): b charm light gluon tau+ tau- muon electron.",
+                "Tagger (every cell): framework DeepSetHGQ2 with upstream's ReLU on the class logits; framework loss, class",
+                "weighting and callbacks; batch 128 / lr 1e-3. CPU.",
+                "Input sets: baseline = upstream hardware inputs; track = + the constituent track's parameters, fit quality,",
+                "  resolution and IT hits; trackmva = + the stored CMSSW track-quality heads (trkhead_*: P(clean), log sigma_hat",
+                "  of d0, z0, tanL, 1/R, phi; reference heads v2p6pre1 read from the slim files; no head is fitted here).",
+                f"TRIALS (a reduced TEST run): {n_first} per cell (+{n_top} if fewer than 3 kept); failed = degenerate on the",
+                "  validation jets; outliers by a robust rule; the DEPLOYED tagger = mean softmax of the 3 kept trials with the",
+                "  lowest validation loss (single best beside it).",
+                "HEADLINE: with vs without SmartPixels per mask at equal inputs = deployed tagger on the mask minus on IIII.",
+                "Working points: matched fake rates with ties split; menu = udsg fake rate of the stock cut bTagScore > 0.15",
+                "  on IIII; 10%; 1%.",
+                f"Errors: 'boot' = paired event bootstrap ({a.boot} resamples of the common test events); 'seed' = trial",
+                "  spread (kept-trial SD / sqrt(3) for the deployed ensemble); sigma = diff / (boot (+) seed).",
+                "DESCRIPTIVE ONLY: the SmartPixels angles are placeholders and the cluster CNN is a stand-in for the sensor.",
+                "Caveats: a reduced trial count; 16-constituent cap; recipe not certified saturated; SP covariance = KF posterior.",
+            ])
+        else:
+            text_page(pdf, "SmartPixels L1 jet tagging on canon_v5 (refit v3): retrained taggers vs the OT baseline", [
+                "Scenarios: canonical coopt nanos, PU200. The tracks feeding the L1 vertex, PF, PUPPI and SC4 NG jets are the",
+                "SmartPixels (SP) tracks of each IT active-layer mask (A/I = IT layer group active/inactive). SP masks: canon_v5",
+                "(refit v3); IIII (passthrough, SP track = OT track, the OT-only baseline): canon_v4 (canon_v5 has no IIII).",
+                f"Samples: {samples} combined. Split by event identity, identical in all masks: {C.TEST_FRACTION:.0%} test (TTbar",
+                "test events only from f03-f10: f01/f02 trained the cluster-angle CNN); validation = a fixed "
+                f"{C.VAL_FRACTION:.0%} of the training",
+                "events, the same for every trial, cell and mask (early stopping, trial screen and choice only).",
+                f"Jets: SC4 NG (L1puppiJetSC4NG), reco pT > {C.PT_MIN:g} GeV, |eta| < {C.ETA_MAX:g}; <= 16 constituents (framework cap).",
+                "Labels (framework labels.py, identical in every scenario): b charm light gluon tau+ tau- muon electron.",
+                "Tagger (every cell): framework DeepSetHGQ2 with upstream's ReLU on the class logits; framework loss, class",
+                "weighting and callbacks; batch 128 / lr 1e-3 (the stock 2048 / 1e-2 does not learn on ~5k jets). CPU.",
+                "Input sets: baseline = upstream hardware inputs; track = + the constituent track's parameters, fit quality,",
+                "  resolution and IT hits; trackmva = + track-quality head outputs (gradient-boosted, fitted per scenario on",
+                "  the training events).",
+                "TRIALS (training policy): 10 per cell (+10 if fewer than 3 kept); failed = degenerate on the validation jets",
+                "  (> 1% identical outputs or a working-point threshold on a tie block); outliers by a robust rule; the",
+                "  DEPLOYED tagger = mean softmax of the 3 kept trials with the lowest validation loss (single best beside it).",
+                "HEADLINE: with vs without SmartPixels per mask at equal inputs = deployed tagger on the mask minus on IIII.",
+                "Working points: matched fake rates with ties split; menu = udsg fake rate of the stock cut bTagScore > 0.15",
+                "  on IIII; 10%; 1% (weak).",
+                f"Errors: 'boot' = paired event bootstrap ({a.boot} resamples of the common test events); 'seed' = trial",
+                "  spread (kept-trial SD / sqrt(3) for the deployed ensemble); sigma = diff / (boot (+) seed).",
+                "DESCRIPTIVE ONLY: the SmartPixels angles are placeholders and the cluster CNN is a stand-in for the sensor.",
+                "Caveats: limited statistics; head/tagger correlation ignored; 16-constituent cap; recipe not certified",
+                "saturated; SP covariance = KF posterior.",
+            ])
         rows = [[f"{v}@{m}", x["sel"]["launched"], x["sel"]["failed"], x["sel"]["outliers"], x["sel"]["kept"],
                  " ".join(map(str, x["sel"]["deployed_seeds"])),
                  " ".join(f"{x['sel']['trials'][str(s)]['val_closs']:.3f}" for s in x["sel"]["deployed_seeds"]),
@@ -837,8 +905,9 @@ def main():
             table_page(pdf, "Track-quality heads (trackmva inputs): held-out check on the test events' tracks",
                        ["mask", "heads", "test tracks", "AUC P(clean)", "median sigma_hat(d0) [um]",
                         "68% |d0 resid| [um]", "frac |resid| < sigma_hat"], rows,
-                       note="SP masks: refit heads on the SP tracks (canon_v5); IIII: OT-only heads (canon_v4). "
-                            "Truth = the OT track's TP.")
+                       note=("Stored CMSSW heads: " + SLIM_HEADS + "." if C.TIER == "slim" else
+                             "SP masks: refit heads on the SP tracks (canon_v5); IIII: OT-only heads (canon_v4). "
+                             "Truth = the OT track's TP."))
     print(f"wrote {pdfp} ({time.time() - t0:.0f}s)")
 
 
