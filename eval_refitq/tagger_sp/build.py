@@ -199,11 +199,44 @@ def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask, groups=None, jet
     return out
 
 
+def refuse_truth_heads(t, mask):
+    """The slim tier's stored heads: refuse a head column marked as simulation truth, as the inputs of the heads
+    themselves are refused (trackmva.refuse_truth_inputs)."""
+    tabs = [C.TRACK_TABLE, "L1TExtTrack"]
+    bad = [b for b in t.keys() if b.split("_", 1)[0] in tabs and "_head_" in b and tm.TRUTH_MARK in (t[b].title or "")]
+    if bad:
+        raise ValueError(f"stored head columns marked {tm.TRUTH_MARK!r}: {bad}")
+
+
+def main_slim(a):
+    """The slim tier (common.TIER == "slim"): the frozen usable files of the mask (slimtier.freeze, run first), the
+    hash split by event identity, and the jet caches with the STORED CMSSW heads (no Python heads are fitted). Masks are
+    paired later, by event identity (common.event_filter). The truth-input guard runs on every file."""
+    if a.samples != ["ttbar"]:
+        raise ValueError("the slim tier holds TTbar only")
+    fs = C.study_files("ttbar", a.mask)
+    if not fs:
+        raise FileNotFoundError(f"no usable slim-tier files for {a.mask}")
+    sha = "slimtier:stored-heads:v1"
+    for n, p in fs:
+        t = uproot.open(p)["Events"]
+        tm.refuse_truth_inputs(t, C.FAMILY, "", base_only(a.mask))
+        refuse_truth_heads(t, a.mask)
+        ev = event_ids(p)
+        build_jets("ttbar", a.mask, n, p, None, sha, C.split_table("ttbar", {n: ev})[n])
+    with open(C.manifest_path(a.mask), "w") as f:
+        json.dump({"samples": ["ttbar"], "tier": "slim", "files": [["ttbar", n, p] for n, p in fs],
+                   "bundle_sha": sha, "created": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, f, indent=1)
+    log(f"slim {a.mask}: {len(fs)} files")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mask", required=True, choices=C.MASKS)
     ap.add_argument("--samples", nargs="+", default=["ttbar", "htt"], choices=sorted(C.SAMPLES))
     a = ap.parse_args()
+    if C.TIER == "slim":
+        return main_slim(a)
     fileset, splits = [], {}
     for s in a.samples:
         fs = C.study_files(s, a.mask)

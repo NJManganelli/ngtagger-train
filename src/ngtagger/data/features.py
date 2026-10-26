@@ -52,6 +52,9 @@ FEATURE_GROUPS = {
     # jointly trained six-head track-quality BDTs (eval_refitq/tagger_sp/joint_heads.py; a model with
     # `outputs` = these heads, gathered like "trackmva"); -1 for no track
     "trackjoint": ["trkjoint_clean", "trkjoint_d0", "trkjoint_z0", "trkjoint_tanl", "trkjoint_rinv", "trkjoint_phi"],
+    # the CMSSW-computed reference track-quality heads stored in the slim tagger tier (<track table>_head_*): P(clean)
+    # and log sigma_hat of d0, z0, tanL, 1/R, phi (heads_cmssw/SPEC.md); -1 for no track
+    "trackheads": ["trkhead_clean", "trkhead_d0", "trkhead_z0", "trkhead_tanl", "trkhead_rinv", "trkhead_phi"],
 }
 
 
@@ -105,7 +108,7 @@ def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16,
         "quality": c.hwTkQuality,
     }
     for n in names:
-        if n.startswith(("trk_", "cl_", "vtx_", "vtxpv_", "refit_", "trkmva_", "trkjoint_")):
+        if n.startswith(("trk_", "cl_", "vtx_", "vtxpv_", "refit_", "trkmva_", "trkjoint_", "trkhead_")):
             if n == "cl_absZBarycenter":
                 feats[n] = abs(c["cl_zBarycenter"])
             else:
