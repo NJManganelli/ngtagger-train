@@ -139,6 +139,7 @@ def conclusions(fp, sn, nf):
                      + "; d0 by x = y bits: " + ", ".join(f"{b}: {fam[a]['d0']['value']:.1f} µm" for b, a in ((4, 'bending_xy_4b'), (5, 'bending_xy_5b'), (6, 'alloc_6604'), (7, 'bending_xy_7b'), (8, 'bending_xy_8b')) if a in fam) + ".")
         else:
             C.append(f"- {s}: not yet available.")
+    C.append("- The β reading is taken against a reference with float positions, so \"more than 7 bits\" there measures the 37.5 µm position steps of the family, which no number of β bits can recover; the d0 values by β bits show what β itself changes.")
     C.append("")
     C.append("**Controls.**")
     for s in scs:

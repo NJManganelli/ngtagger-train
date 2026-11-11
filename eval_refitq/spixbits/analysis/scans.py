@@ -49,6 +49,11 @@ def plain(arm):
         return lib.PLAIN[arm]
     a = lib.arm_label(REG, arm)
     s = a["smartpixels_frame"] if a else arm
+    import re
+    m = re.match(r"alloc_(\d)(\d)(\d)(\d)", arm)
+    if m and a:  # an allocation: x/y/alpha/beta bits, with the position steps
+        sp = a["spec"]
+        s = "/".join(m.groups()) + f" (x {sp['step_x_um']:g} µm, y {sp['step_y_um']:g} µm)"
     extra = ""
     for tag, txt in (("_globalrange", ", one global angle range"), ("_v3window", ", v3 window unchanged"), ("_flagunusable", ", flagged angles unusable"),
                      ("_allsent", ", all clusters sent"), ("noise_", ", Gaussian noise in place of quantization"), ("forecast_", ", position errors scaled to the network (forecast)")):
