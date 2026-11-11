@@ -9,7 +9,9 @@ arm's refit on today's clusters (forced). The model has two observed states:
                  (forced - today) / sigma_today (knots KNOTS, clamped); lambda per cell from a root find so that the 68 %
                  width of the residual to truth equals the forced refit's. d0 is drawn with u_rank; z0 through a
                  Gaussian copula with d0's draw, tanL with z0's, 1/R and phi0 with d0's (normal-score correlations).
-    covariance   diagonal scaled by the cell's median forced / today ratio; today's correlations kept.
+    covariance   diagonal scaled by exp(a + b ln sigma_today) per cell (a straight-line fit of the log ratio forced /
+                 today against ln sigma_today: an added quantization variance weighs more on a precise track; clipped
+                 to 0.2-50); today's correlations kept.
     scores       (the six deployed-head outputs and the chi2-like inputs, in their natural variable)
                  s' = a + b s + sigma_s * eta, eta from the empirical standardized residual, conditioned on
                  |2 u_rank - 1| in [0, 0.5), [0.5, 0.9), [0.9, 1]; a second map for tracks whose emulated d0 changes window.
@@ -29,6 +31,8 @@ in this order: tercile, multiplicity, pT, |eta|.
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 from scipy import stats
 
@@ -39,6 +43,11 @@ ETA_EDGES = np.array([1.1, 1.8])
 D0_SPLIT = 0.02                                        # cm
 TAIL_EDGES = np.array([0.5, 0.9])                      # |2 u_rank - 1| intervals of the score residual
 N_DONORS = 128
+LAMBDA_MAX = 30.0
+# the donor's parameter values in the changed state: "ratio" = residual (or change) over today's sigma, rescaled by the
+# receiving track's sigma (stats-review-02); "absolute" = the donor's residual (or change) itself
+DONOR_FORM = os.environ.get("SPIXBITS_DONOR_FORM", "ratio")
+COV_CLIP = (float(np.log(0.2)), float(np.log(50.0)))   # limits of ln(covariance ratio) in the same-cluster state
 MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_DONORS, MIN_MAP = 1000, 400, 2000, 200, 400
 HEADS = ("clean", "d0", "z0", "tanl", "rinv", "phi")
 # head inputs 14-38 as stored (ext_scan "inputs"): the columns the parametrization emits
@@ -200,7 +209,8 @@ def param_uniforms(D, rho, C):
 KERNEL_AXES = (("ieta", 3), ("window", 2))
 LAMBDA_AXES = (("window", 2), ("ieta", 3), ("ipt", 3))
 MAP_AXES = (("window_arm", 2), ("ieta", 3))
-DONOR_AXES = (("matched", 2), ("window", 3), ("ieta", 3))
+DONOR_AXES = (("matched", 2), ("window", 3), ("ieta", 3), ("ipt", 3))
+DONOR_DROP = ("ipt", "ieta", "window")                 # thin donor cells pool in this order
 
 
 def sigma_today(today):
@@ -237,9 +247,16 @@ def fit(today, arm, truth, D, terciles, sel):
     for i, p in enumerate(PARAMS):
         T["kernel"][p], _ = pooled_table(Ck, both, lambda m, i=i: inv_cdf(eps[m, i]), MIN_KERNEL, KERNEL_AXES, ("window", "ieta"),
                                          (len(KNOTS),))
-        ratio = arm["forced_cov_diag"][:, i] / np.maximum(today["cov_diag"][:, i], 1e-30)
-        T["cov_scale"][p], _ = pooled_table(Ck, both, lambda m, r=ratio: float(np.median(r[m])) if m.any() else 1.0, MIN_LAMBDA,
-                                            LAMBDA_AXES, ("ipt", "ieta"))
+        lr = np.log(np.maximum(arm["forced_cov_diag"][:, i], 1e-30) / np.maximum(today["cov_diag"][:, i], 1e-30))
+        ls = np.log(sg[:, i])
+
+        def line(m, lr=lr, ls=ls):
+            ok = m & np.isfinite(lr) & np.isfinite(ls)
+            if ok.sum() < 30 or np.std(ls[ok]) < 1e-6:
+                return np.array([float(np.median(lr[ok])) if ok.any() else 0.0, 0.0])
+            b, a_ = np.polyfit(ls[ok], np.clip(lr[ok], COV_CLIP[0], COV_CLIP[1]), 1)
+            return np.array([a_, b])
+        T["cov_scale"][p], _ = pooled_table(Ck, both, line, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"), (2,))
     for p in DRAW_ORDER[1:]:
         i, j = PARAMS.index(p), PARAMS.index(PARTNER[p])
         T["rho"][p], _ = pooled_table(Ck, both, lambda m, i=i, j=j: normal_score_corr(eps[m, i], eps[m, j]), MIN_KERNEL,
@@ -255,7 +272,7 @@ def fit(today, arm, truth, D, terciles, sel):
                 return 1.0
             target = w68(r_forced[m, i])
             f = lambda L: w68(r_today[m, i] + L * sg[m, i] * e[m]) - target
-            lo, hi = 0.0, 3.0
+            lo, hi = 0.0, LAMBDA_MAX
             if f(lo) >= 0:
                 return 0.0
             if f(hi) <= 0:
@@ -289,24 +306,27 @@ def fit(today, arm, truth, D, terciles, sel):
     r_arm = residual(arm["a"].copy(), truth)
     delta = arm["a"] - today["a"]
     delta[:, 1] = wrap(delta[:, 1])
-    cols = {"matched_ratio": np.where(np.isfinite(r_arm), r_arm, 0.0) / sg, "delta_ratio": delta / sg,
+    unit = sg if DONOR_FORM == "ratio" else 1.0
+    cols = {"matched_ratio": np.where(np.isfinite(r_arm), r_arm, 0.0) / unit, "delta_ratio": delta / unit,
             "cov_ratio": arm["cov_diag"] / np.maximum(today["cov_diag"], 1e-30),
             "d_margin": arm["margins"] - today["margins"],
             "counts": np.stack([arm["inputs"][:, IN[c]] for c in COUNTS], 1),
             "chi2": np.stack([arm["inputs"][:, IN[c]] for c in CHI2], 1)}
-    T["donors"] = {k: np.zeros((2, 3, 3, N_DONORS, v.shape[1])) for k, v in cols.items()}
-    T["donor_n"] = np.zeros((2, 3, 3), np.int64)
+    dims = [k for _, k in DONOR_AXES]
+    dnames = [n_ for n_, _ in DONOR_AXES]
+    T["donors"] = {k: np.zeros(dims + [N_DONORS, v.shape[1]]) for k, v in cols.items()}
+    T["donor_n"] = np.zeros(dims, np.int64)
     pool = sel & changed
-    for idx in np.ndindex(2, 3, 3):
-        keep = ["matched", "window", "ieta"]
-        for step in range(3):
+    for idx in np.ndindex(*dims):
+        keep = list(dnames)
+        for step in range(len(DONOR_DROP) + 1):
             m = pool.copy()
-            for n_, i in zip(("matched", "window", "ieta"), idx):
+            for n_, i in zip(dnames, idx):
                 if n_ in keep:
                     m &= C[n_] == i
-            if m.sum() >= MIN_DONORS or step == 2:
+            if m.sum() >= MIN_DONORS or step == len(DONOR_DROP):
                 break
-            keep.remove(("ieta", "window")[step])
+            keep.remove(DONOR_DROP[step])
         rows = np.flatnonzero(m)
         T["donor_n"][idx] = len(rows)
         if not len(rows):
@@ -335,7 +355,8 @@ def apply(T, today, truth, D, terciles):
         e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
         L = lookup(T["lambda"][p], Ck, LAMBDA_AXES)
         a[:, i] += np.where(refit_today, L * sg[:, i] * e, 0.0)
-        cov[:, i] *= np.where(refit_today, lookup(T["cov_scale"][p], Ck, LAMBDA_AXES), 1.0)
+        cs = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
+        cov[:, i] *= np.where(refit_today, np.exp(np.clip(cs[:, 0] + cs[:, 1] * np.log(sg[:, i]), COV_CLIP[0], COV_CLIP[1])), 1.0)
     s_today = scores_of(today["inputs"], today["margins"])
     Cm = dict(Ck, window_arm=(np.abs(a[:, 4]) > D0_SPLIT).astype(int))
     tail = np.searchsorted(TAIL_EDGES, np.abs(2 * D["u_rank"] - 1), side="right")
@@ -350,11 +371,12 @@ def apply(T, today, truth, D, terciles):
     ch = np.flatnonzero(changed)
     if len(ch):
         k = np.minimum((D["u_rank"][ch] * N_DONORS).astype(int), N_DONORS - 1)
-        cell = (C["matched"][ch], C["window"][ch], C["ieta"][ch])
-        g = lambda name: T["donors"][name][cell[0], cell[1], cell[2], k]
+        cell = tuple(C[n_][ch] for n_, _ in DONOR_AXES)
+        g = lambda name: T["donors"][name][cell + (k,)]
         has_truth = np.isfinite(truth[ch]).all(1)
-        a_m = np.where(has_truth[:, None], truth[ch], 0.0) + sg[ch] * g("matched_ratio")
-        a_u = today["a"][ch] + sg[ch] * g("delta_ratio")
+        unit = sg[ch] if DONOR_FORM == "ratio" else 1.0
+        a_m = np.where(has_truth[:, None], truth[ch], 0.0) + unit * g("matched_ratio")
+        a_u = today["a"][ch] + unit * g("delta_ratio")
         a[ch] = np.where(has_truth[:, None], a_m, a_u)
         cov[ch] = today["cov_diag"][ch] * g("cov_ratio")
         dm = g("d_margin")

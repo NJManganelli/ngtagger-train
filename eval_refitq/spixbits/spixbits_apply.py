@@ -102,7 +102,9 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
         e = cset["eps"].evaluate(allocation, p, abs_eta, w2, ndtr(z[p]))
         lam = cset["lambda"].evaluate(allocation, p, w2, abs_eta, pt)
         new_a[:, i] += np.where(refit, lam * sg[:, i] * e, 0.0)
-        new_cov[:, i] *= np.where(refit, cset["cov_scale"].evaluate(allocation, p, w2, abs_eta, pt), 1.0)
+        lr = cset["cov_scale"].evaluate(allocation, p, "a", w2, abs_eta, pt) \
+            + cset["cov_scale"].evaluate(allocation, p, "b", w2, abs_eta, pt) * np.log(sg[:, i])
+        new_cov[:, i] *= np.where(refit, np.exp(np.clip(lr, np.log(0.2), np.log(50.0))), 1.0)
     w_arm = (np.abs(new_a[:, 4]) > D0_SPLIT).astype(np.int64)
     tail = np.abs(2 * draws["u_rank"] - 1)
     today = {f"head_{h}": _natural("head_", margins[:, i]) for i, h in enumerate(HEADS)}
@@ -116,7 +118,7 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
     # ---- changed: the donor's values
     ch = np.flatnonzero(changed)
     if len(ch):
-        don = lambda q: cset["donor"].evaluate(allocation, q, matched[ch], window[ch], abs_eta[ch], draws["u_rank"][ch])
+        don = lambda q: cset["donor"].evaluate(allocation, q, matched[ch], window[ch], abs_eta[ch], pt[ch], draws["u_rank"][ch])
         for i, p in enumerate(PARAMS):
             has = matched[ch] > 0
             new_a[ch, i] = np.where(has, np.where(has, truth[ch, i], 0.0) + sg[ch, i] * don(f"matched_ratio_{p}"),

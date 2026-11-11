@@ -1,0 +1,18 @@
+SmartPixels output bits -> track refit: the per-scenario parametrization (PLAN.md section 7b; stats-review-02).
+Source: the extended-collection scan (30 shipped arms, canon_v5 TTbar files 5, 7, 8, 9, 10, every extended track).
+Model: two observed states. Same clusters: inverse-CDF draw of the parameter change in units of today's sigma, scaled per
+cell to the forced refit's 68 % width, Gaussian copula between parameters; covariance diagonal exp(a + b ln sigma_today);
+head outputs and chi2-like inputs by a linear map in the natural variable with an empirical residual. Changed clusters: the
+observed share per cell and a donor track (residual over today's sigma replaced for tracks with a particle). One hashed
+set of draws per track, shared by all allocations. Cells from today's reconstructed values only.
+Closure, pre-declared (cross-fit by event hash, both folds tested): material if, per allocation and scenario,
+ - a primary cell's d0 or z0 68 % width is off by more than max(25 % of the arm's change from today, 2 %, 3 sd);
+ - the prompt share beyond 3 sigma_today is off by more than max(25 % of the arm's change, 10 % of the share, 3 sd);
+ - the prompt efficiency at 50 / 70 / 90 % b/c-daughter efficiency by |d0| / sigma, or the prompt share with |d0| / sigma > 3,
+   is off by more than max(25 % of the arm's change, 3 sd);
+ - for 4/4/4/4, 6/6/0/4 and 4/4/4/4 whole sensor: the classifier's AUC (actual against emulated) exceeds 0.5 by more than
+   max(25 % of (actual against today) - 0.5, 0.01, 3 sd), judged where actual against today >= 0.52.
+Expected: most cells pass; failures concentrate in thin high-pT forward cells and in the joint (classifier) test, where the
+linear score maps are the weakest part. A failing allocation is not shipped as validated: it is listed as such.
+Slim tier: today's slim-tier tracks against canon_v5's "implemented now" within 3 sd per cell (widths, pulls, head quantiles).
+Bias: in-sample tables for the shipped files (cross-fit only for the closure); TTbar only; placeholder angles; deployed heads.

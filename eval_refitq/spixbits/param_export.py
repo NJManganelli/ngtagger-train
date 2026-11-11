@@ -38,7 +38,7 @@ V = {"allocation": ("string", "shipped allocation name"), "parameter": ("string"
      "mult": ("real", "today's spixMaxWindowMult"), "clean_margin": ("real", "today's clean head as a margin: logit of head_clean"),
      "u": ("real", "a uniform draw in [0, 1)"), "tail": ("real", "|2 u_rank - 1|"),
      "score": ("string", "head_clean (margin), head_d0, head_z0, head_tanl, head_rinv, head_phi (log sigma_hat) or a chi2-like column"),
-     "coefficient": ("string", "a, b or sigma"), "quantity": ("string", "donor quantity"),
+     "coefficient": ("string", "a, b (or sigma for score_map)"), "quantity": ("string", "donor quantity"),
      "run": ("int", "run"), "lumi": ("int", "luminosity block"), "event": ("int", "event"),
      "track": ("int", "index of the track along axis 1 of the event's L1TSmartPixelsExtTrack collection"),
      "draw": ("int", "which draw (see the file description)")}
@@ -103,11 +103,14 @@ def build(tables, terc, meta):
     cs.append(correction("eps", "same-cluster change of a parameter in units of today's sigma: inverse CDF at u",
                          ["allocation", "parameter", "abs_eta", "window", "u"],
                          per(lambda T: par(lambda p: eta_bins(lambda e: ints("window", 2, lambda w: inv_cdf_node(T["kernel"][p][e, w])))))))
-    for nm, key, d in (("lambda", "lambda", "scale of eps so that the 68 % residual width matches the forced refit's"),
-                       ("cov_scale", "cov_scale", "same-cluster ratio of the covariance diagonal, arm / today")):
-        cs.append(correction(nm, d, ["allocation", "parameter", "window", "abs_eta", "pt"],
-                             per(lambda T, key=key: par(lambda p: ints("window", 2, lambda w: eta_bins(lambda e: pt_bins(
-                                 lambda i: float(T[key][p][w, e, i]))))))))
+    cs.append(correction("lambda", "scale of eps so that the 68 % residual width matches the forced refit's",
+                         ["allocation", "parameter", "window", "abs_eta", "pt"],
+                         per(lambda T: par(lambda p: ints("window", 2, lambda w: eta_bins(lambda e: pt_bins(
+                             lambda i: float(T["lambda"][p][w, e, i]))))))))
+    cs.append(correction("cov_scale", "same-cluster covariance-diagonal ratio arm / today = exp(a + b ln sigma_today), clipped to "
+                                      "0.2-50: the coefficient a or b", ["allocation", "parameter", "coefficient", "window", "abs_eta", "pt"],
+                         per(lambda T: par(lambda p: category("coefficient", [(c, ints("window", 2, lambda w: eta_bins(lambda e: pt_bins(
+                             lambda i: float(T["cov_scale"][p][w, e, i, k]))))) for k, c in enumerate(("a", "b"))])))))
     cs.append(correction("rho", "Gaussian-copula correlation of a parameter's draw with its partner's (z0 with d0, tanL with z0, "
                                 "rInv and phi0 with d0); d0 has none", ["allocation", "parameter", "abs_eta", "window"],
                          per(lambda T: category("parameter", [(p, eta_bins(lambda e: ints("window", 2, lambda w: float(T["rho"][p][e, w]))))
@@ -129,9 +132,9 @@ def build(tables, terc, meta):
     cs.append(correction("donor", "changed state: the donor's value, picked by the rank draw u. matched_ratio_<p>: (arm - truth) / "
                                   "sigma_today; delta_ratio_<p>: (arm - today) / sigma_today; cov_ratio_<p>: arm / today covariance diagonal; "
                                   "d_margin_<head>: change of the head output; the spix* columns: the arm's own values",
-                         ["allocation", "quantity", "matched", "window", "abs_eta", "u"],
+                         ["allocation", "quantity", "matched", "window", "abs_eta", "pt", "u"],
                          per(lambda T: category("quantity", [(q, ints("matched", 2, lambda m: ints("window", 3, lambda w: eta_bins(
-                             lambda e: binning("u", edges, [r6(v) for v in T["donors"][g][m, w, e, :, i]])))))
+                             lambda e: pt_bins(lambda j: binning("u", edges, [r6(v) for v in T["donors"][g][m, w, e, j, :, i]]))))))
                                                              for q, g, i in dq]))))
     return {"schema_version": 2, "description": json.dumps(meta), "corrections": cs}
 
