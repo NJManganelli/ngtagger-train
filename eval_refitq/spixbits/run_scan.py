@@ -255,7 +255,7 @@ def arm_rows(S, ctx_a, out, F, pop, cx, B, ctx):
         bits = bits + (K["sb_flagAlpha"][c0] != 0) * 4 + (K["sb_flagBeta"][c0] != 0) * 8
     ev = ctx["tev"][pop]
     # the crossing cluster's emulated position minus the particle's helix, where the slot is barrel layer 1
-    pc = cx[0]
+    pc = cx[0][:, :rec["surface"].shape[1]]               # the visit slots of this scenario (the truth arrays are padded)
     il1 = (rec["surface"][pop] == 1) & (pc >= 0)
     has1 = il1.any(1)
     j1 = np.argmax(il1, 1)
