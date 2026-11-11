@@ -42,7 +42,7 @@ ORIGIN_NAMES = ("prompt", "b/c daughters", "displaced inside IL1", "born beyond 
 HITQ = ("y", "x", "beta", "alpha")  # stored order localX, localY, code alpha, code beta
 OT_ARM = "outer_tracker_only"
 CM2UM = 1.0e4
-VERSION = 3
+VERSION = 4
 
 
 def registry():
@@ -157,6 +157,12 @@ def partitions(truth):
             lab[(truth.origin == o) & (hi == h)] = len(names)
             names.append(f"{ORIGIN_NAMES[o]}, {'pT >= 5' if h else 'pT 2-5'} GeV")
     P["six"] = (lab, names)
+    # the two forward |eta| ranges pooled (the plan's last pooling step), for readings that need 1,000 tracks
+    lab, names = np.full(truth.n, -1, np.int16), []
+    for h in (False, True):
+        lab[truth.prompt & (truth.ieta >= 1) & (hi == h)] = len(names)
+        names.append(f"prompt, |eta| 1.1-2.4, {'pT >= 5' if h else 'pT 2-5'} GeV")
+    P["forward_pooled"] = (lab, names)
     lab, names, _ = pooled_cells(truth, 200)
     P["twelve"] = (lab, ["prompt, " + n for n in names])
     return P
@@ -235,7 +241,7 @@ def summarize(arm, A, T, W, P, ref_clusters, forced_trunc):
     ot = A is None
     a = T.ot_a if ot else A["a"]
     r = {"d0": (a[:, 4] - T.tp_d0) * CM2UM, "z0": (a[:, 3] - T.tp_z0) * CM2UM}
-    for pname in ("origin", "six", "twelve"):
+    for pname in ("origin", "six", "forward_pooled", "twelve"):
         lab, names = P[pname]
         for q, v in r.items():
             pt, rp = boot_widths(np.abs(v).astype(np.float32), T.ev, lab, len(names), W)
