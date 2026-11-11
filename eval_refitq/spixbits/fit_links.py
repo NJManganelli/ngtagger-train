@@ -11,7 +11,7 @@ edge agreement in units of the bootstrap sd of the edges); a +-z mirror is accep
 within 2 sd. Ranges: the central 99.5 % of the pool's network-resolution angles. Global range: all links together.
 
 Angle-error table, per pool and angle, for the network-resolution angles ("net") and for today's emulated angles
-("today"): intervals of the TRUE cot with at least 400 clusters each (equal counts, at most 12); per interval the
+("today"), in the link's own local frame (no sign flips): intervals of the TRUE cot with at least 400 clusters each (equal counts, at most 12); per interval the
 median of (reported - true) (the "mean") and the half-width of its central 68.27 % interval (the "width").
 Quantization variance: the measured variance of (decoded - input) on the pool's in-range target clusters per bit
 count (2-7), for the pool's range ("link") and for the global range ("global").
@@ -209,10 +209,12 @@ def main():
             tr = s * D["true_" + a][sel]
             lo, hi = (float(q) for q in np.quantile(v, [QLO, QHI]))
             P["range"][a] = [lo, hi]
-            P["table"]["net"][a] = table(tr, v - tr)
-            td = s * D["today_" + a][sel]
+            # the tables in the link's own local frame, no sign flips (the network's bias has an even part that a
+            # flip would turn; code review LOW): the pool's signs apply to the ranges and the quantization only
+            trl, vl, td = D["true_" + a][sel], D["net_" + a][sel], D["today_" + a][sel]
+            P["table"]["net"][a] = table(trl, vl - trl)
             ok = D["today_has" + a][sel] & (np.abs(td) <= EM.MEAS_ANGLE_MAX)
-            P["table"]["today"][a] = table(tr[ok], (td - tr)[ok])
+            P["table"]["today"][a] = table(trl[ok], (td - trl)[ok])
             P["qvar"]["link"][a] = qvars(v, lo, hi)
             P["qvar"]["global"][a] = qvars(s * v, glob[a][0], glob[a][1])
             P.setdefault("beyond_each_edge", {})[a] = [int((v < lo).sum()), int((v >= hi).sum())]

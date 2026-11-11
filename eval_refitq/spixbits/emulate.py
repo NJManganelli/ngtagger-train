@@ -165,7 +165,8 @@ class LinkTables:
     Pools: a link belongs to one pool with a sign per angle (sA, sB): value in the pool frame = sign x value in the
     link's frame. Pool 0 is the fallback of links that had no fit clusters (all links pooled, signs +1).
     Per pool: range[source]["A" | "B"] = (lo, hi) in the pool frame (source "net": network-resolution angles);
-    table[source]["A" | "B"] = edges of the true cot (pool frame), mean and width of (reported - true);
+    table[source]["A" | "B"] = edges of the true cot, mean and width of (reported - true), both in the LINK's own
+    local frame (pooled over the pool's links without sign flips);
     qvar[range kind][angle][bits] = the measured variance of (decoded - input). global_range["A" | "B"]: one range
     for all links (link frame)."""
 
@@ -221,16 +222,19 @@ class LinkLookup:
                   "B": LT.qvar(range_kind, "B", bits_B) if qvar_on else np.zeros(LT.npool)}
         self.scale = scale                     # planted defects only
 
-    def lookup(self, K, ci, cot_a_pred, cot_b_pred):
+    def lookup(self, K, ci, cot_a_pred, cot_b_pred, with_qvar=True):
+        """(mean (n, 2), sigma (n, 2)). The tables are in the link's own local frame (the drawn residual depends on
+        the signed local true cot only), pooled over the pool's links without sign flips; the pool signs apply to
+        the ranges alone. with_qvar=False: the table width alone (the one-sided cost of a flag code)."""
         pool = K["sb_pool"][ci]
         mean = np.zeros((len(ci), 2))
         sig = np.ones((len(ci), 2))
-        for col, a, pred, s in ((0, "B", cot_a_pred, K["sb_sB"][ci]), (1, "A", cot_b_pred, K["sb_sA"][ci])):
+        for col, a, pred in ((0, "B", cot_a_pred), (1, "A", cot_b_pred)):
             edges, m, w = self.t[a]
-            x = s * np.nan_to_num(pred)
+            x = np.nan_to_num(pred)
             k = (x[:, None] >= edges[pool]).sum(1)
-            mean[:, col] = s * m[pool, k]
-            sig[:, col] = np.sqrt(w[pool, k] ** 2 + self.q[a][pool]) * self.scale
+            mean[:, col] = m[pool, k]
+            sig[:, col] = np.sqrt(w[pool, k] ** 2 + (self.q[a][pool] if with_qvar else 0.0)) * self.scale
         return mean, sig
 
 

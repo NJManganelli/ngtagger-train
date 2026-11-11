@@ -99,8 +99,8 @@ def test_flag_cost_is_one_sided():
     K = {"sb_flagAlpha": np.array([1, 1, -1, 0], np.int8), "sb_flagBeta": np.zeros(n, np.int8),
          "sb_loAlpha": np.full(n, -1.0), "sb_hiAlpha": np.full(n, 1.0), "sb_loBeta": np.full(n, -1.0),
          "sb_hiBeta": np.full(n, 1.0)}
-    tools = SimpleNamespace(linktable=SimpleNamespace(lookup=lambda K, ci, a, b: (np.zeros((len(ci), 2)),
-                                                                              np.full((len(ci), 2), 0.5))))
+    tools = SimpleNamespace(linktable=SimpleNamespace(lookup=lambda K, ci, a, b, with_qvar=True: (
+        np.zeros((len(ci), 2)), np.full((len(ci), 2), 0.5 if not with_qvar else 99.0))))
     geo = {"surface": np.array([1])}
     arm = AR.Arm("t", flag_mode="onesided", ang_err="linktable")
     pred = np.array([0.0, 1.5, 0.0, 0.0])                # overflow: inside by 1 -> (1 / 0.5)^2; beyond the edge -> 0
@@ -156,7 +156,10 @@ def test_link_lookup_signs_and_quantization_variance(tmp_path):
     pool_, sA, sB = LT.link_index(np.array([10110, 999]))
     assert pool_.tolist() == [1, 0] and sB.tolist() == [-1.0, 1.0]
     K = {"sb_pool": pool_, "sb_sA": sA, "sb_sB": sB}
-    mean, sig = EM.LinkLookup(LT, "net", None, 4).lookup(K, np.array([0, 1]), np.array([0.5, 0.5]), np.array([0.5, 0.5]))
-    # code alpha = SmartPixels beta: link 0 has sign -1 -> pool-frame cot -0.5 -> first interval, mean back in the link frame
-    assert mean[0, 0] == pytest.approx(-0.1) and sig[0, 0] == pytest.approx(np.hypot(0.2, 0.3))
-    assert mean[1, 0] == pytest.approx(0.3) and sig[1, 1] == pytest.approx(0.4)      # alpha float: no quantization term
+    look = EM.LinkLookup(LT, "net", None, 4)
+    mean, sig = look.lookup(K, np.array([0, 1]), np.array([0.5, -0.5]), np.array([0.5, 0.5]))
+    # the tables are in the link's own frame (no sign flip); code alpha = SmartPixels beta carries the 4-bit variance
+    assert mean[0, 0] == pytest.approx(0.3) and sig[0, 0] == pytest.approx(np.hypot(0.4, 0.3))
+    assert mean[1, 0] == pytest.approx(0.1) and sig[1, 1] == pytest.approx(0.4)      # alpha float: no quantization term
+    _, w = look.lookup(K, np.array([0]), np.array([0.5]), np.array([0.5]), with_qvar=False)
+    assert w[0, 0] == pytest.approx(0.4)                 # the one-sided cost's sigma: the table width alone

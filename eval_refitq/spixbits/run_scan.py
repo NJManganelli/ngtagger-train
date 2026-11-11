@@ -239,6 +239,11 @@ def _pad(x, fill):
 IU = np.triu_indices(5)
 
 
+def _f16(x):
+    """float16 for diagnostics (3 significant digits), values beyond its range clipped to +-6e4."""
+    return np.clip(x, -6e4, 6e4).astype(np.float16)
+
+
 def arm_rows(S, ctx_a, out, F, pop, cx, B, ctx):
     """Per population track, what one arm delivered (SCHEMA.md)."""
     f32 = np.float32
@@ -268,14 +273,14 @@ def arm_rows(S, ctx_a, out, F, pop, cx, B, ctx):
     p1 = np.maximum(pc[r, j1], 0)
     dx = np.where(has1, (K["localX"][p1] - cx[2][r, j1]) * 1e4, np.nan)
     dy = np.where(has1, (K["localY"][p1] - cx[3][r, j1]) * 1e4, np.nan)
-    Fa, FC = ctx["a"][pop].copy(), np.einsum("nii->ni", ctx["C"][pop]).copy()
+    Fa, FC = ctx["a"][pop].copy(), ctx["C"][pop][:, IU[0], IU[1]].copy()
     frefit = np.zeros(len(pop), bool)
     if F is not None:
         pos = np.full(ctx["ntrk"], -1, np.int64)
         pos[F.o] = np.arange(len(F.o))
         k = pos[pop]
         ok = (k >= 0) & (F.rec["acc"][np.maximum(k, 0)].sum(1) >= S.cfg.get("minHits", 1))
-        Fa[ok], FC[ok] = F.a[k[ok]], np.einsum("nii->ni", F.C[k[ok]])
+        Fa[ok], FC[ok] = F.a[k[ok]], F.C[k[ok]][:, IU[0], IU[1]]
         frefit = ok
     return {"a": out["a"][pop].astype(f32), "cov": out["C"][pop][:, IU[0], IU[1]].astype(f32),
             "refit": out["refit"][pop], "n_crossings": rec["visited"][pop].sum(1).astype(np.int8),
@@ -288,7 +293,11 @@ def arm_rows(S, ctx_a, out, F, pop, cx, B, ctx):
             "hit_cluster": _pad(np.where(acc, ci - ctx["coff"][ev][:, None], -1), -1).astype(np.int32),
             "hit_code": _pad(code, 0), "hit_choice": _pad(rec["kchoice"][pop], -1).astype(np.int8),
             "il1_crossing_dx_um": dx.astype(f32), "il1_crossing_dy_um": dy.astype(f32),
-            "forced_a": Fa.astype(f32), "forced_cov_diag": FC.astype(f32), "forced_refit": frefit}
+            "hit_rank_chi2": _pad(_f16(rec["rankchi2"][pop]), np.nan), "window_scores": _pad(_f16(rec["kscores"][pop]), np.nan),
+            "hit_candidates_classC": _pad(rec["ncand_c"][pop], 0).astype(np.int16),
+            "crossing_in_window": _pad(rec["watch_in"][pop], False),
+            "crossing_chi2": _pad(_f16(rec["watch_chi2"][pop]), np.nan),
+            "forced_a": Fa.astype(f32), "forced_cov": FC.astype(f32), "forced_refit": frefit}
 
 
 # ---------------------------------------------------------------- one unit ----
@@ -318,7 +327,12 @@ def run_unit(S, reg, f, scen, arm_names, nev=None, defect="", blank=False, emula
         path_, seq = AR.visit_plan(ctx, S.geo, cfg, scen, arms[BASE])
         cx = crossing_clusters(S, ctx, pop, seq, kpt)
         truth.append(truth_rows(S, A, ctx, start, tr, pop, seq, path_, cx, B, has_vz))
-        base_out = AR.run_arm(ctx, S.geo, cfg, scen, arms[BASE], tools)
+        watch = np.full(seq.shape, -1, np.int64)                # the crossing cluster per OT track and visit step
+        watch[pop] = cx[0][:, :seq.shape[1]]
+        diag = {"sb_watch": watch, "sb_classC": (~B["class_T"]).astype(np.float64)}
+        if blank:
+            diag = {}
+        base_out = AR.run_arm({**ctx, **diag}, S.geo, cfg, scen, arms[BASE], tools)
         o = np.flatnonzero(base_out["rec"]["acc"].any(1))
         sel_mi = base_out["rec"]["mi"][o]
         sel_ci = np.where(base_out["rec"]["acc"][o], base_out["rec"]["ci"][o], -1)
@@ -331,7 +345,7 @@ def run_unit(S, reg, f, scen, arm_names, nev=None, defect="", blank=False, emula
                 ctx_a = EM.emulate(ctx, B, spec, S.LT)
             if blank and n != BASE:
                 ctx_a = EM.blank_unsent_information(ctx_a)
-            out = base_out if (n == BASE and not blank) else AR.run_arm(ctx_a, S.geo, cfg, scen, arms[n], t_a)
+            out = base_out if (n == BASE and not blank) else AR.run_arm({**ctx_a, **diag}, S.geo, cfg, scen, arms[n], t_a)
             F = None
             if len(o):
                 F = AR.refit_forced(arms[n], ctx_a, S.geo, cfg, t_a, o, seq[o], sel_mi, sel_ci, path_, kpt)

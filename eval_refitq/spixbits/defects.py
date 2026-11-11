@@ -20,10 +20,15 @@ registry mapping, so that emulation and errors swap together):
   one_draw_per_event     one network residual reused for every class-T cluster of an event: the share of distinct
                          alpha residuals among an event's TARGET clusters falls from >= 0.95 to < 0.01.
   bending_with_code_beta the bending-angle-only arm built with the code's "beta" (the SmartPixels alpha) instead of the
-                         code's "alpha": its IL1 wrong-hit share moves from the correct bending-only arm's value to
-                         the no-angle arm's (closer to the no-angle arm than to the correct arm).
+                         code's "alpha". RE-DECLARED 2026-11-11 after the first run and the code review (the first
+                         signature, "the IL1 wrong-hit share moves to the no-angle arm's", had no power: the correct
+                         and the no-angle arm cannot be told apart on it): read the configuration from the stored
+                         outputs. Correct arm: chi2_sum of the code beta is 0 on every track and chi2_sum of the code
+                         alpha > 0 on more than 90 % of refit tracks; defect: the reverse. The IL1 wrong-hit shares of
+                         the correct arm, the defect and a like-for-like no-angle arm (6/6/0/0) are reported only.
   facing_flipped         the facing bit flipped in the link key when decoding: the share of target clusters on an
-                         underflow / overflow code per link leaves 0.5 % (median over links > 1 %; correct: 0.3-0.8 %).
+                         underflow / overflow code (either angle) per link leaves its correct value (median over links
+                         > 2 %; correct: 0.5-1.3 %, RE-DECLARED from 0.3-0.8 %, which was the per-angle value).
   residual_negated       the network residual applied with the opposite sign: the mean of (reported - true) projected
                          on the sign of the angle table's mean, in units of the table's |mean| (clusters in the upper
                          half of |table mean|), flips: < -0.5 (correct: > +0.5).
@@ -72,12 +77,13 @@ def main():
         r["spec"].update(change)
         reg["arms"].append(r)
         return name
-    names = ["network_float", "down_x_4b", "down_y_4b", "alloc_6604", "positions_only_float",
+    names = ["network_float", "down_x_4b", "down_y_4b", "alloc_6604",
              variant("defect_swap_down_x_4b", "down_x_4b", step_x_um=None, step_y_um=150.0),
              variant("defect_swap_down_y_4b", "down_y_4b", step_y_um=None, step_x_um=150.0),
              variant("ok_y4_x2", "network_float", step_y_um=150.0, step_x_um=600.0),
              variant("defect_errors_y4_x2", "network_float", step_y_um=150.0, step_x_um=600.0, errors_not_following=True),
-             variant("defect_bending_code_beta", "alloc_6604", code_angles_override=["beta"])]
+             variant("defect_bending_code_beta", "alloc_6604", code_angles_override=["beta"]),
+             variant("ref_6600_no_angle", "alloc_6604", send=[])]
     truth, D = RS.run_unit(S, reg, F, SCEN, names, nev=a.nev)
     ss = truth["slot_surface"]
     prompt = truth["origin"] == 0
@@ -101,10 +107,15 @@ def main():
                                                    and bad_["prompt_d0_pull"] > 1.3 * ok_["prompt_d0_pull"]
                                                    and abs(ok_["barrel_localX"] - 1) < 0.15
                                                    and abs(ok_["discs_localX"] - 1) < 0.15)
-    w = {n: wrong_share(D[n], 1, ss) for n in ("alloc_6604", "defect_bending_code_beta", "positions_only_float")}
-    res["bending_with_code_beta"] = {"IL1_wrong_hit_share": w}
-    res["detected"]["bending_with_code_beta"] = bool(abs(w["defect_bending_code_beta"] - w["positions_only_float"])
-                                                     < abs(w["defect_bending_code_beta"] - w["alloc_6604"]))
+    w = {n: wrong_share(D[n], 1, ss) for n in ("alloc_6604", "defect_bending_code_beta", "ref_6600_no_angle")}
+    cs = {n: {"code_alpha_chi2_positive_share_of_refit": float((D[n]["chi2_sum"][:, 2] > 0)[D[n]["refit"]].mean()),
+              "code_beta_chi2_positive_share_of_refit": float((D[n]["chi2_sum"][:, 3] > 0)[D[n]["refit"]].mean())}
+          for n in ("alloc_6604", "defect_bending_code_beta")}
+    res["bending_with_code_beta"] = {"chi2_sum": cs, "IL1_wrong_hit_share (reported only)": w}
+    ok_, bad_ = cs["alloc_6604"], cs["defect_bending_code_beta"]
+    res["detected"]["bending_with_code_beta"] = bool(
+        ok_["code_beta_chi2_positive_share_of_refit"] == 0 and ok_["code_alpha_chi2_positive_share_of_refit"] > 0.9
+        and bad_["code_alpha_chi2_positive_share_of_refit"] == 0 and bad_["code_beta_chi2_positive_share_of_refit"] > 0.9)
     # cluster-level defects
     path = ST.input_path(SCEN, F)
     keys = AR.OP._keys(str(path))
@@ -149,7 +160,7 @@ def main():
     res["detected"]["one_draw_per_event"] = bool(dist["ok"] >= 0.95 and dist["bad"] < 0.01)
     med = {k: float(np.median([v[0] / v[1] for v in flag[k].values() if v[1] >= 200])) for k in flag}
     res["facing_flipped"] = {"median_flagged_share_of_target_per_link": med}
-    res["detected"]["facing_flipped"] = bool(med["flipped"] > 0.01 and 0.003 <= med["ok"] <= 0.008)
+    res["detected"]["facing_flipped"] = bool(med["flipped"] > 0.02 and 0.005 <= med["ok"] <= 0.013)
     tab = np.concatenate(means["table"])
     big = np.abs(tab) > np.quantile(np.abs(tab), 0.5)
     cor = {k: float(np.mean(np.concatenate(means[k])[big] * np.sign(tab[big])) / np.mean(np.abs(tab[big])))

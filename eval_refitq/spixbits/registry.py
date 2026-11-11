@@ -114,10 +114,11 @@ def build():
         for bits in (4, 6):
             add(f"noise_{ax}_{bits}b", "controls", **{ax: bits}, noise=True)
     add("positions_only_float", "controls", "F", "F", 0, 0)
-    # the covariance forecast (PLAN 4a): the anchors with the position errors scaled to the network's
-    # (SmartPixels y: 2.0 / 3.8, x: 7.6 / 15.6); read on the forced refit
-    add("forecast_network_float", "controls", pos_err_scale_x=7.6 / 15.6, pos_err_scale_y=2.0 / 3.8)
-    add("forecast_bending_float", "controls", "F", "F", 0, "F", pos_err_scale_x=7.6 / 15.6, pos_err_scale_y=2.0 / 3.8)
+    # the covariance forecast (PLAN 4a): the anchors with the position errors scaled to the network's. The scaled
+    # table is the size-blind R (built at pT >= 5 GeV: the sensor alone), so the scale is the network's width over
+    # today's sensor-only IL1 width: SmartPixels y 2.0 / 3.1, x 7.6 / 12.3 (code review MEDIUM 3); read on the forced refit
+    add("forecast_network_float", "controls", pos_err_scale_x=7.6 / 12.3, pos_err_scale_y=2.0 / 3.1)
+    add("forecast_bending_float", "controls", "F", "F", 0, "F", pos_err_scale_x=7.6 / 12.3, pos_err_scale_y=2.0 / 3.1)
     names = [r["name"] for r in R]
     assert len(set(names)) == len(names)
     return {"what": "arm registry of the SmartPixels output-bits refit study (PLAN.md section 5)",

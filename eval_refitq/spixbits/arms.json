@@ -2661,8 +2661,8 @@
     "range": "link",
     "window_add": true,
     "flag": "onesided",
-    "pos_err_scale_x": 0.48717948717948717,
-    "pos_err_scale_y": 0.5263157894736842
+    "pos_err_scale_x": 0.6178861788617885,
+    "pos_err_scale_y": 0.6451612903225806
    }
   },
   {
@@ -2686,8 +2686,8 @@
     "range": "link",
     "window_add": true,
     "flag": "onesided",
-    "pos_err_scale_x": 0.48717948717948717,
-    "pos_err_scale_y": 0.5263157894736842
+    "pos_err_scale_x": 0.6178861788617885,
+    "pos_err_scale_y": 0.6451612903225806
    }
   }
  ]

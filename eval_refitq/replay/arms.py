@@ -357,6 +357,11 @@ class State:
                     "rmargin": np.full((n, ns), np.nan),       # the rank margin: runner-up value - best value
                     "rankchi2": np.full((n, ns), np.nan),      # tree2: the applied candidate's two-layer chi2 (the
                                                                # nano's rankChi2)
+                    # spixbits diagnostics, filled only when the context carries "sb_watch" (per OT track and visit
+                    # step, a cluster to watch: the particle's crossing cluster) and "sb_classC" (per cluster):
+                    "watch_in": np.zeros((n, ns), bool),       # the watched cluster is an in-window candidate
+                    "watch_chi2": np.full((n, ns), np.nan),    # its two-layer chi2 (the rank consumer's)
+                    "ncand_c": np.zeros((n, ns), np.int16),    # in-window candidates without angle truth (class C)
                     "kchoice": np.full((n, ns), -1, np.int8)}      # tree2: the committed choice per visit step
 
     ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch", "dg", "pend", "s1", "P1", "j1")
@@ -484,10 +489,11 @@ FLAG_COLS = {"alpha": ("sb_flagAlpha", "sb_loAlpha", "sb_hiAlpha"), "beta": ("sb
 def flag_cost(arm, consumer, ctx, geo, ci, mi, cot_a_pred, cot_b_pred, tools):
     """The one-sided cost of the underflow / overflow angle codes a consumer uses, per cluster: (cost, number of
     such angles). A code says only "below the range" (-1) or "above the range" (+1). Cost 0 if the predicted angle is
-    itself beyond that range edge, else ((edge - predicted) / sigma)^2 with sigma from the angle table (the
-    table's mean shifts the prediction into the reported frame)."""
+    itself beyond that range edge, else ((edge - predicted) / sigma)^2 with sigma the angle table's width (without
+    the value codes' quantization variance; the table's mean shifts the prediction into the reported frame)."""
     K = ctx["K"]
-    mean, sg = tools.linktable.lookup(K, ci, cot_a_pred, cot_b_pred)
+    # sigma: the table width alone; the value codes' quantization variance does not blur a range edge
+    mean, sg = tools.linktable.lookup(K, ci, cot_a_pred, cot_b_pred, with_qvar=False)
     pred = np.stack([cot_a_pred, cot_b_pred], 1) + mean
     disc = SPN.is_disc_surface(np.asarray(geo["surface"][mi]))
     cost, nfl = np.zeros(len(ci)), np.zeros(len(ci), np.int64)
@@ -999,6 +1005,15 @@ def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
         st.rec["ncand"][X["t"], j] = X["ncand"]
         st.rec["trunc"][X["t"], j] = X["trunc"]
         best, runner = _ranked(cands, len(X["t"]))
+        if "sb_watch" in ctx:                                     # diagnostics only: nothing below reads them
+            tt_ = X["t"][cands["x"]]
+            st.rec["ncand_c"][X["t"], j] = np.bincount(cands["x"], weights=ctx["sb_classC"][cands["ci"]],
+                                                       minlength=len(X["t"]))
+            w_ = np.flatnonzero(ctx["sb_watch"][st.o[tt_], j] == cands["ci"])
+            if len(w_):
+                st.rec["watch_in"][tt_[w_], j] = True
+                st.rec["watch_chi2"][tt_[w_], j] = gate_stat(arm, "rank", ctx, geo, cands["ci"][w_], cands["mi"][w_],
+                                                             cands["h0"][w_], cands["Sz"][w_], tools)
         pos = np.searchsorted(t, X["t"])
         kb[pos], kr[pos] = best, runner
         two = runner >= 0
@@ -1230,7 +1245,7 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
         inner_material(arm, st, geo, tools, kpt)
     nacc = st.rec["acc"].sum(1)
     fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan, "kchoice": -1, "kscores": np.nan, "rmargin": np.nan,
-            "rankchi2": np.nan}
+            "rankchi2": np.nan, "watch_chi2": np.nan}
     out = {"a": ctx["a"].copy(), "C": ctx["C"].copy(), "nacc": np.zeros(ntrk, np.int64),
            "refit": np.zeros(ntrk, bool), "branch": np.full(ntrk, -1, np.int8),
            "rec": {k: np.full((ntrk,) + v.shape[1:], fill.get(k, 0), v.dtype) for k, v in st.rec.items()},
