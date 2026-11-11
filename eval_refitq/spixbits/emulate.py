@@ -306,14 +306,11 @@ def emulate(ctx, B, spec, LT):
       bits_alpha, bits_beta  SmartPixels alpha / beta: None = float, an int = bits per link range (2 codes are flags)
       range                  "link" (per link pool) | "global"
       cap                    True: only three clusters per sub-area per event are sent
-      swap_xy                planted defect: the two position steps exchanged
     Returns a shallow copy of ctx with a new cluster dict; the cluster order and indices never change."""
     K = dict(ctx["K"])
     out = dict(ctx)
     out["K"] = K
     sx, sy = spec.get("step_x_um"), spec.get("step_y_um")
-    if spec.get("swap_xy"):
-        sx, sy = sy, sx
     for col, v, v0, ph, g, step in (("localX", B["x"], B["x0"], B["phase_x"], B["gauss_x"], sy),
                                     ("localY", B["y"], B["y0"], B["phase_y"], B["gauss_y"], sx)):
         if step:
