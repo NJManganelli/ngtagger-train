@@ -514,10 +514,10 @@ def main():
             base = sc.stats(anchor)["track_pull"] if sc.has(anchor) else sc.stats("implemented_now")["track_pull"]
             for q in ("d0", "z0"):
                 if abs(tp[q]["rms_within_5"] - 1) > 0.15 and abs(tp[q]["rms_within_5"] - 1) > abs(base[q]["rms_within_5"] - 1) + 0.03:
-                    fl.append(f"{plain(arm)}: {q} pull RMS {tp[q]['rms_within_5']:.2f} outside 1 ± 0.15 and further out than \"implemented now\" ({base[q]['rms_within_5']:.2f})")
+                    fl.append(f"{plain(arm)}: {q} pull RMS {tp[q]['rms_within_5']:.2f} outside 1 ± 0.15 and further out than its float anchor ({base[q]['rms_within_5']:.2f})")
         S["flags"] = fl
         L += [f"### {scen}: flags outside the fixed points", "", "An arm better than its float anchor by more than its band and 2 sd; correct-hit pull RMS outside 1 ± 0.15 (all surfaces); "
-              "d0 or z0 pull RMS outside 1 ± 0.15 and further from 1 than \"implemented now\" (whose own pulls are outside).", ""] + ([f"- {f}" for f in fl] or ["- none"]) + [""]
+              "d0 or z0 pull RMS outside 1 ± 0.15 and more than 0.03 further from 1 than its float anchor (whose own pulls are outside, like those of \"implemented now\").", ""] + ([f"- {f}" for f in fl] or ["- none"]) + [""]
         res["scenarios"][scen] = S
         open(lib.RESULTS / f"scans_{scen}.md", "w").write("\n".join(L) + "\n")
     json.dump(res, open(lib.RESULTS / "scans.json", "w"), indent=1)
