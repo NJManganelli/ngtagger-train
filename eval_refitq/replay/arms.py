@@ -81,8 +81,10 @@ class Arm:
     seed_cov: str = "reported"      # "reported" | "calibrated" (v3's binned deficits) | "smooth" (seedmodel, A16)
     scattering: str = "producer"    # "producer" | "highland"
     inner_material: bool = False
-    pos_err: str = "published"      # "published" | "rtables"
-    ang_err: str = "published"      # "published" | "payload" (ORP's apply_R) | "table"
+    pos_err: str = "published"      # "published" | "rtables" | "rtables_sizeblind" (spixbits: the R table with the
+                                    # cluster size averaged out per predicted-angle interval)
+    ang_err: str = "published"      # "published" | "payload" (ORP's apply_R) | "table" | "linktable" (spixbits: mean
+                                    # and width per link pool at the predicted cot, barrel and discs, tools.linktable)
     use: frozenset = field(default_factory=use_set)
     k_alpha: float = 1.0
     k_beta: float = 1.0
@@ -124,6 +126,16 @@ class Arm:
                                     # TP clusters (OP.evaluate_surface's study-19 target bookkeeping: TRUTH). False
                                     # (v3, since 2026-10-20): the geometric search only. The entry gate, C1b and the
                                     # 2026-10-19 scan ran with True
+    # --- the SmartPixels output-bits study (eval_refitq/spixbits; every default is today's behaviour) ---
+    pos_var_add: tuple = (0.0, 0.0)  # variance [cm^2] added to the (localX, localY) position variance AFTER the
+                                    # position-error lookup (a quantization step^2 / 12, or a Gaussian noise variance)
+    window_var_add: bool = True     # the same variance also on the diagonal of the ellipse window's covariance (only
+                                    # that term); False: v3's prediction-only window (the control)
+    flag_mode: str = "off"          # angle underflow / overflow codes (cluster columns sb_flagAlpha / sb_flagBeta with
+                                    # the range edges sb_loAlpha ... sb_hiBeta): "off" (no such codes) | "onesided" (the
+                                    # angle is usable with a one-sided cost in the ranking, the two-layer choice and
+                                    # the skip-price comparison, never in the Kalman update) | "unusable" (the control:
+                                    # the angle is dropped and the cluster is priced for the angles it has)
 
     @property
     def cov_model(self) -> str:
@@ -341,6 +353,8 @@ class State:
                     "wfallback": np.zeros((n, ns), bool),      # the nearest-module projection failed (window fallback)
                     "kscores": np.full((n, ns, 3), np.nan),    # tree2: the committed window's scores (best, runner, skip)
                     "rmargin": np.full((n, ns), np.nan),       # the rank margin: runner-up value - best value
+                    "rankchi2": np.full((n, ns), np.nan),      # tree2: the applied candidate's two-layer chi2 (the
+                                                               # nano's rankChi2)
                     "kchoice": np.full((n, ns), -1, np.int8)}      # tree2: the committed choice per visit step
 
     ARRAYS = ("o", "a", "C", "seq", "nUpd", "prevR", "prevNT", "Lv", "branch", "dg", "pend", "s1", "P1", "j1")
@@ -409,6 +423,13 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
             sig[:, :2] = Rt[:, :2]
         if arm.ang_err == "payload":
             sig[:, 2:] = Rt[:, 2:]
+    if arm.pos_err == "rtables_sizeblind":
+        sig[:, :2] = sizeblind_R(tools, cot_a_pred, cot_b_pred)
+    if arm.pos_var_add[0] or arm.pos_var_add[1]:
+        sig[:, 0] = np.sqrt(sig[:, 0] ** 2 + arm.pos_var_add[0])
+        sig[:, 1] = np.sqrt(sig[:, 1] ** 2 + arm.pos_var_add[1])
+    if arm.flag_mode != "off":                                   # a flag code carries no central value
+        has = has & ~np.stack([K["sb_flagAlpha"][ci] != 0, K["sb_flagBeta"][ci] != 0], 1)
     surface = geo["surface"][mi]
     knobbed = arm.k_alpha != 1.0 or arm.k_beta != 1.0
     if knobbed:
@@ -430,12 +451,80 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
         disc = SPN.is_disc_surface(surface)
         for i, k in ((2, arm.k_alpha), (3, arm.k_beta)):
             sig[:, i] = np.where(disc, sig[:, i], SA.sigma_k(sig[:, i], k, arm.k_mode))
-    if arm.disc_model:
+    if arm.ang_err == "linktable":                               # one mode for barrel and discs; bypasses both old paths
+        mean, sg = tools.linktable.lookup(K, ci, cot_a_pred, cot_b_pred)
+        meas[:, 2:] = meas[:, 2:] - mean
+        sig[:, 2:] = sg
+    elif arm.disc_model:
         _disc_measurements(ctx, geo, ci, surface, cot_a_pred, cot_b_pred, arm, tools, pub, meas, sig)
     if arm.angle_term == "t9":
         for i, pred in ((2, cot_a_pred), (3, cot_b_pred)):
             sig[:, i] = sig[:, i] * tail_robust_scale((meas[:, i] - pred) / sig[:, i])
     return meas, sig, has
+
+
+def sizeblind_R(tools, cot_a_pred, cot_b_pred):
+    """(n, 2) position errors [cm] from v3's R tables with the cluster size averaged out: per |predicted cot|
+    interval, the count-weighted mean variance over the size intervals of the table's own fit population."""
+    import refit_calibration_fit as RCF
+    sb = getattr(tools, "_sizeblind", None)
+    if sb is None:
+        sb = {}
+        for nm in ("u", "v"):
+            t = tools.cal["R_tables"][nm]
+            W, n = np.asarray(t["width_cm"], np.float64), np.asarray(t["n"], np.float64)
+            tot = n.sum(0)
+            w = np.sqrt((n * W ** 2).sum(0) / np.maximum(tot, 1.0))
+            sb[nm] = (np.where(tot > 0, w, np.nanmax(W)), t["cot_edges"])
+        tools._sizeblind = sb
+    return np.stack([sb[nm][0][RCF._bin(np.abs(c), sb[nm][1])] for nm, c in (("u", cot_a_pred), ("v", cot_b_pred))], 1)
+
+
+FLAG_COLS = {"alpha": ("sb_flagAlpha", "sb_loAlpha", "sb_hiAlpha"), "beta": ("sb_flagBeta", "sb_loBeta", "sb_hiBeta")}
+
+
+def flag_cost(arm, consumer, ctx, geo, ci, mi, cot_a_pred, cot_b_pred, tools):
+    """The one-sided cost of the underflow / overflow angle codes a consumer uses, per cluster: (cost, number of
+    such angles). A code says only "below the range" (-1) or "above the range" (+1). Cost 0 if the predicted angle is
+    itself beyond that range edge, else ((edge - predicted) / sigma)^2 with sigma from the angle table (the
+    table's mean shifts the prediction into the reported frame)."""
+    K = ctx["K"]
+    mean, sg = tools.linktable.lookup(K, ci, cot_a_pred, cot_b_pred)
+    pred = np.stack([cot_a_pred, cot_b_pred], 1) + mean
+    disc = SPN.is_disc_surface(np.asarray(geo["surface"][mi]))
+    cost, nfl = np.zeros(len(ci)), np.zeros(len(ci), np.int64)
+    for i, ang in enumerate(ANGLE_NAMES):
+        fc, lc, hc = FLAG_COLS[ang]
+        f = K[fc][ci]
+        used = (f != 0) & np.where(disc, arm.uses(consumer, ang, "disc"), arm.uses(consumer, ang, "barrel"))
+        inside = np.where(f < 0, pred[:, i] - K[lc][ci], K[hc][ci] - pred[:, i])     # > 0: the prediction is in range
+        with np.errstate(invalid="ignore", divide="ignore"):
+            c = np.where(inside > 0, (inside / sg[:, i]) ** 2, 0.0)
+        cost += np.where(used, np.nan_to_num(c), 0.0)
+        nfl += used
+    return cost, nfl
+
+
+def own_dims_price_shift(arm, st, tt, j, S, ctx, geo, ci, mi, h0, tools):
+    """The "unusable" control: for a cluster with a flagged angle, P(the arm's dims) - P(the dims the cluster has),
+    added to its two-layer chi2 so that comparing it with the window's skip price P(arm) is comparing its chi2 with
+    the skip price of its own usable dims."""
+    K = ctx["K"]
+    _, _, has = measurements(ctx, geo, ci, mi, h0[:, 2], h0[:, 3], arm, tools)
+    dims = angle_dims(arm, "rank", geo["surface"][mi], has)
+    flagged = (K["sb_flagAlpha"][ci] != 0) | (K["sb_flagBeta"][ci] != 0)
+    surf = cut_surface(arm, st, tt, np.full(len(tt), S, np.int64))
+    first = np.full(len(tt), j == 0)
+    key_arm = arm.dims_key("rank")
+    out = np.zeros(len(ci))
+    for da in (False, True):
+        for db in (False, True):
+            key = "xy" + ("a" if da else "") + ("b" if db else "")
+            m = flagged & (dims[:, 0] == da) & (dims[:, 1] == db)
+            if m.any() and key != key_arm:
+                out[m] = tools.cuts.chi2("gate", key_arm, "calibrated", surf[m], first[m]) \
+                    - tools.cuts.chi2("gate", key, "calibrated", surf[m], first[m])
+    return out
 
 
 T9_NU = 9.0
@@ -630,7 +719,10 @@ def gate_stat(arm, consumer, ctx, geo, ci, mi, h0, Sm, tools):
     angle dims, at the prediction (h0, Sm = J C J^T with the guard-zeroed J)."""
     meas, sig, has = measurements(ctx, geo, ci, mi, h0[:, 2], h0[:, 3], arm, tools)
     dims = np.concatenate([np.ones((len(ci), 2), bool), angle_dims(arm, consumer, geo["surface"][mi], has)], 1)
-    return innovation_chi2(meas - h0, Sm, sig, dims)
+    g = innovation_chi2(meas - h0, Sm, sig, dims)
+    if arm.flag_mode == "onesided":
+        g = g + flag_cost(arm, consumer, ctx, geo, ci, mi, h0[:, 2], h0[:, 3], tools)[0]
+    return g
 
 
 def window_z(arm, ctx, geo, ci, mi, h0, Sm, tools):
@@ -679,8 +771,9 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
         on = np.zeros(len(st.o), bool)
         on[t] = True
         nsig = {"nsig": arm.nsig, "gate99": WINDOW_SEARCH_NSIG}[arm.window_cut]
+        wadd = arm.pos_var_add if (arm.window_var_add and (arm.pos_var_add[0] or arm.pos_var_add[1])) else None
         ev = OP.evaluate_surface(_vctx(ctx, st.o), st.a, st.C, S, geo, nsig, on, truth_modules=arm.truth_modules,
-                                 fallback=arm.window_fallback)
+                                 fallback=arm.window_fallback, **({"add_var": wadd} if wadd is not None else {}))
         if ev is None:
             return None
         st.rec["wfallback"][ev["fallback_t"], j] = True
@@ -728,6 +821,9 @@ def _cands(arm, st, j, t, S, ctx, geo, tools, kpt, cfg):
         keep &= window_keep(z, dims, cut)
     rdims = np.concatenate([np.ones((len(ci), 2), bool), angle_dims(arm, "rank", geo["surface"][cmi], has)], 1)
     val = rank_values(arm.metric, r, S_rank, sig, rdims)
+    if arm.flag_mode == "onesided" and arm.metric == "innovation":   # the code's cost in place of the neutral +1
+        fcost, nfl = flag_cost(arm, "rank", ctx, geo, ci, cmi, ch0[:, 2], ch0[:, 3], tools)
+        val = val + fcost - ORP.NEUTRAL * nfl
     val = np.where(np.isfinite(val), val, np.inf)
     ncand = np.bincount(xi[keep], minlength=len(t))
     return {"t": t, "mi": mi, "trunc": trunc, "ncand": ncand}, \
@@ -915,6 +1011,9 @@ def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
                 q = k_[m]
                 x_[m] = gate_stat(arm, "rank", ctx, geo, cands["ci"][q], cands["mi"][q], cands["h0"][q], cands["Sz"][q],
                                   tools)
+                if arm.flag_mode == "unusable":
+                    x_[m] += own_dims_price_shift(arm, st, t[m], j, S, ctx, geo, cands["ci"][q], cands["mi"][q],
+                                                  cands["h0"][q], tools)
     drop = np.zeros(0, np.int64)
     if st.pend[t].any():
         allp = np.flatnonzero(st.pend & np.isin(st.o, st.o[t[st.pend[t]]]))
@@ -944,6 +1043,7 @@ def _tree2_step(arm, st, j, t, S, ctx, geo, tools, kpt, cfg, path):
             st.pend[idx], st.s1[idx], st.P1[idx], st.j1[idx] = True, s1, p, j
         _choose_apply(arm, st, j, {"t": ir}, cands, kr[h2], ctx, geo, tools, path, S, kpt)
         _choose_apply(arm, st, j, {"t": t[h1]}, cands, kb[h1], ctx, geo, tools, path, S, kpt)
+        st.rec["rankchi2"][ir, j], st.rec["rankchi2"][t[h1], j] = xr[h2], xb[h1]
     if len(drop):
         st = st.take(np.setdiff1d(np.arange(len(st.o)), drop))
     return st
@@ -1131,7 +1231,8 @@ def finish(arm, st, ctx, geo, cfg, mask, tools, kpt, path, seq, own_rows, loo=Fa
     if arm.inner_material:
         inner_material(arm, st, geo, tools, kpt)
     nacc = st.rec["acc"].sum(1)
-    fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan, "kchoice": -1, "kscores": np.nan, "rmargin": np.nan}
+    fill = {"mi": -1, "ci": -1, "surface": -1, "gstat": np.nan, "kchoice": -1, "kscores": np.nan, "rmargin": np.nan,
+            "rankchi2": np.nan}
     out = {"a": ctx["a"].copy(), "C": ctx["C"].copy(), "nacc": np.zeros(ntrk, np.int64),
            "refit": np.zeros(ntrk, bool), "branch": np.full(ntrk, -1, np.int8),
            "rec": {k: np.full((ntrk,) + v.shape[1:], fill.get(k, 0), v.dtype) for k, v in st.rec.items()},
