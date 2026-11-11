@@ -359,6 +359,9 @@ class State:
                                                                # nano's rankChi2)
                     # spixbits diagnostics, filled only when the context carries "sb_watch" (per OT track and visit
                     # step, a cluster to watch: the particle's crossing cluster) and "sb_classC" (per cluster):
+                    "sigpos": np.zeros((n, ns, 2)),            # the applied position errors (localX, localY) [cm] of
+                                                               # the accepted hit (the heads' chi2 of the hits at
+                                                               # the final helix)
                     "watch_in": np.zeros((n, ns), bool),       # the watched cluster is an in-window candidate
                     "watch_chi2": np.full((n, ns), np.nan),    # its two-layer chi2 (the rank consumer's)
                     "ncand_c": np.zeros((n, ns), np.int16),    # in-window candidates without angle truth (class C)
@@ -716,6 +719,7 @@ def _apply(arm, st, j, t, mi, ci, h0, J, gr, ctx, geo, tools, path, S):
     st.rec["mi"][t, j], st.rec["ci"][t, j] = mi, ci
     st.rec["acc"][t, j] = True
     st.rec["chi2"][t, j] = chi2
+    st.rec["sigpos"][t, j] = sig[:, :2]
 
 
 def gate_stat(arm, consumer, ctx, geo, ci, mi, h0, Sm, tools):

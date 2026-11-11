@@ -44,6 +44,30 @@ KPT = os.environ.get("WPC_KPT", "")                # the v3 port's closure (v3cm
                                                     # float32 MagConstant x b_field (engine.kpt_value); or a number
 
 
+# The track collection the replay reads. "prompt" (every run so far): L1TTrack and its refit tables. "extended": the
+# displaced-capable collection (L1TExtTrack, L1TExtTrackStub, L1TSmartPixelsExtTrack, L1TSmartPixelsExtRefitHit; the
+# tables have the same columns), read under the prompt tables' names, so no other code changes. Set with
+# set_collection() before any file is read; the default leaves every existing result as it is.
+COLLECTION = os.environ.get("WPC_COLLECTION", "prompt")
+EXT_TABLES = {"L1TTrack": "L1TExtTrack", "L1TTrackStub": "L1TExtTrackStub", SP_TRACK: "L1TSmartPixelsExtTrack",
+              REFIT_HIT: "L1TSmartPixelsExtRefitHit"}
+
+
+def set_collection(name: str) -> None:
+    global COLLECTION
+    if name not in ("prompt", "extended"):
+        raise ValueError(f"unknown track collection {name!r}")
+    COLLECTION = name
+
+
+def file_branch(branch: str) -> str:
+    """The file's branch behind a prompt-named branch for the current collection."""
+    if COLLECTION == "prompt":
+        return branch
+    table, sep, col = branch.partition("_")
+    return f"{EXT_TABLES[table]}{sep}{col}" if table in EXT_TABLES else branch
+
+
 def pt_constant(ctx) -> float:
     """kpt with pT = kpt / |rInv| for the replay arms, per KPT (WPC_KPT)."""
     if not KPT:
@@ -70,9 +94,10 @@ def event_rank(path) -> np.ndarray:
 def producer_config(path) -> dict:
     """The refit producer's configuration (ORP.PRODUCER_DEFAULTS keys plus the guards the
     mirror needs) read from the file's ParameterSets; a missing producer is an error."""
-    lab, params = OSU.producer_params(OSU.pset_blob(str(path)), SP_TRACK)
+    table = file_branch(SP_TRACK + "_x").rpartition("_")[0]
+    lab, params = OSU.producer_params(OSU.pset_blob(str(path)), table)
     if not params:
-        raise SystemExit(f"{path}: no L1SmartPixelsTrackProducer behind {SP_TRACK}")
+        raise SystemExit(f"{path}: no L1SmartPixelsTrackProducer behind {table}")
     cfg = dict(ORP.PRODUCER_DEFAULTS, **OSU.refit_producer_config(params))
     cfg.update({"label": lab,
                 "measAngleMaxAbs": float(params["seedlessRefitMeasAngleMaxAbs"]),
@@ -94,7 +119,12 @@ def mask_of(cfg: dict) -> str:
 def iterate(path, branches, chunk=CHUNK, nev=None):
     """uproot.iterate over one file, at most `nev` events; yields (start entry, arrays)."""
     done = 0
-    for A in uproot.iterate([f"{path}:Events"], branches, step_size=chunk):
+    names = list(branches)
+    read = [file_branch(b) for b in names]
+    for A in uproot.iterate([f"{path}:Events"], read, step_size=chunk):
+        if COLLECTION != "prompt":                     # the extended tables under the prompt tables' names
+            import awkward as ak
+            A = ak.zip({b: A[r] for b, r in zip(names, read)}, depth_limit=1)
         if nev is not None and done >= nev:
             return
         if nev is not None and done + len(A) > nev:

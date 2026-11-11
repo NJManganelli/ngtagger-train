@@ -163,3 +163,40 @@ def test_link_lookup_signs_and_quantization_variance(tmp_path):
     assert mean[1, 0] == pytest.approx(0.1) and sig[1, 1] == pytest.approx(0.4)      # alpha float: no quantization term
     _, w = look.lookup(K, np.array([0]), np.array([0.5]), np.array([0.5]), with_qvar=False)
     assert w[0, 0] == pytest.approx(0.4)                 # the one-sided cost's sigma: the table width alone
+
+
+def test_collection_switch_renames_only_the_track_tables():
+    CM = pytest.importorskip("common")
+    assert CM.COLLECTION == "prompt" and CM.file_branch("L1TTrack_pt") == "L1TTrack_pt"
+    CM.set_collection("extended")
+    try:
+        assert CM.file_branch("L1TTrack_pt") == "L1TExtTrack_pt"
+        assert CM.file_branch("L1TTrackStub_trackIdx") == "L1TExtTrackStub_trackIdx"
+        assert CM.file_branch("L1TSmartPixelsTrack_cov_d0_d0") == "L1TSmartPixelsExtTrack_cov_d0_d0"
+        assert CM.file_branch("L1TSmartPixelsRefitHit_hitAccepted") == "L1TSmartPixelsExtRefitHit_hitAccepted"
+        assert CM.file_branch("L1TSmartPixelsCluster_localX") == "L1TSmartPixelsCluster_localX"
+        assert CM.file_branch("L1TTP_pt") == "L1TTP_pt" and CM.file_branch("run") == "run"
+    finally:
+        CM.set_collection("prompt")
+    with pytest.raises(ValueError):
+        CM.set_collection("other")
+
+
+def test_heads_reader_strict_split_and_mantissa_rounding(tmp_path):
+    HD = pytest.importorskip("heads")
+    tree = {"feature": [0, -2, -2], "threshold": [1.0, 0.0, 0.0], "value": [0.0, -1.0, 2.0], "children_left": [1, -1, -1],
+            "children_right": [2, -1, -1]}
+    model = {"splitting_convention": "<", "n_features": 38, "init_predict": [0.5], "max_depth": 1, "trees": [[tree]]}
+    for w in HD.WINDOWS:
+        d = tmp_path / "SmartPixels" / "AAAA" / w
+        d.mkdir(parents=True)
+        for h in HD.HEADS:
+            (d / f"{h}.json").write_text(json.dumps(model))
+    H = HD.Heads(tmp_path, "AAAA")
+    X = np.zeros((3, 38), np.float32)
+    X[:, 0] = [0.5, 1.0, -999.0]                       # x < 1 goes left; a value ON the threshold goes right
+    m = H.margins(X, np.array([0.0, 0.03, 0.0]))
+    assert m[:, 0].tolist() == [-0.5, 2.5, -0.5] and m.shape == (3, 6)
+    r = HD.round_mantissa(np.array([1.0, 1.0 + 2 ** -13, 1.0 + 2 ** -12, 0.0, 3.14159], np.float32))
+    assert r[0] == 1.0 and r[2] == 1.0 + 2 ** -12 and r[3] == 0.0 and abs(r[4] / 3.14159 - 1) < 2 ** -12
+    assert r[1] in (1.0, 1.0 + 2 ** -12)

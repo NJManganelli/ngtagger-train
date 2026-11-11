@@ -189,9 +189,9 @@ def run(a):
             verdict["material"].append(f"{scen}: covariance beyond 1e-3 + 2 quanta ({r['cov_max_excess']:.3g})")
         if r["refit_flag_mismatch"]:
             verdict["material"].append(f"{scen}: {r['refit_flag_mismatch']} tracks with identical choices but another refit flag")
-    out = {"file": a.file, "nev": a.nev, "positions": a.positions, "verdict": verdict, "scenarios": res}
+    out = {"file": a.file, "nev": a.nev, "positions": a.positions, "collection": a.collection, "verdict": verdict, "scenarios": res}
     (ST.LOCAL / "checks").mkdir(exist_ok=True)
-    name = ST.LOCAL / "checks" / f"first_check_f{a.file:02d}_{a.positions}{'' if a.nev is None else f'_{a.nev}ev'}.json"
+    name = ST.LOCAL / "checks" / f"first_check{'' if a.collection == 'prompt' else '_extended'}_f{a.file:02d}_{a.positions}{'' if a.nev is None else f'_{a.nev}ev'}.json"
     json.dump(out, open(name, "w"), indent=1, default=float)
     print(json.dumps(verdict, indent=1))
     print({s: {k: r[k] for k in ("crossings", "agreeing", "hard", "near_ties", "tracks", "tracks_identical")} for s, r in res.items()})
@@ -206,4 +206,7 @@ if __name__ == "__main__":
                     help="cluster positions: the nano's cluster table (16 mantissa bits; what the study runs on) or, "
                          "for the clusters CMSSW accepted, the refit hit table's float copies")
     ap.add_argument("--scen", nargs="+", default=list(ST.SCENARIOS))
-    run(ap.parse_args())
+    ap.add_argument("--collection", choices=("prompt", "extended"), default="prompt")
+    a_ = ap.parse_args()
+    CM.set_collection(a_.collection)
+    run(a_)
