@@ -211,7 +211,7 @@ def test_parametrization_pieces():
     D1 = PM.draws(np.ones(5), np.ones(5), np.arange(5), np.zeros(5))
     D2 = PM.draws(np.ones(5), np.ones(5), np.arange(5), np.zeros(5))
     assert all(np.array_equal(D1[k], D2[k]) for k in D1) and len(np.unique(D1["u_rank"])) == 5
-    assert set(D1) == {"u_state", "u_rank", "u_score", "n_z0", "n_tanL", "n_rInv", "n_phi0"}
+    assert set(D1) == {"u_state", "u_rank", "u_score", "u_cov", "n_z0", "n_tanL", "n_rInv", "n_phi0"}
     C = {"ieta": np.array([0, 0, 1, 1, 2] * 100), "window": np.array([0, 1] * 250)}
     x = np.arange(500.0)
     tab, level = PM.pooled_table(C, np.ones(500, bool), lambda m: float(x[m].mean()), 150, PM.KERNEL_AXES, ("window", "ieta"))
