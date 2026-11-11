@@ -3,6 +3,7 @@
   python run_scan.py supervise --workers 3     start the workers and wait for them (the command the lane runs)
   python run_scan.py worker --shard 0/3        one worker
   python run_scan.py status                    finished / total units, free disk
+  python run_scan.py invalidate --arms NAME ... [--dry]   set finished units with these arms aside (redone at the next start)
   python run_scan.py unit --file 4 --scen AAAA --arms implemented_now alloc_4444 [--nev 10] --out DIR   (development)
 
 A UNIT is one file x one scenario x a group of at most 8 arms (5-10 minutes). Its output is one compressed npz written
@@ -461,6 +462,35 @@ def status(a):
     return 0
 
 
+def invalidate(a):
+    """Set aside every finished unit that holds one of --arms (renamed to <name>.invalid-<time>, never deleted), so
+    that the next (re)start of the scan redoes exactly those units. A worker that has already passed a unit in its
+    list does not come back to it: relaunch after the running job. --refresh-registry also replaces the registry
+    frozen beside the outputs by the code's arms.json (only if the unit composition is unchanged)."""
+    out = Path(a.out)
+    reg = load_registry(out)
+    units = units_of(reg, a.files, a.scen)
+    if a.refresh_registry:
+        new = json.load(open(HERE / "arms.json"))
+        if [(u["name"], u["arms"]) for u in units_of(new, a.files, a.scen)] != [(u["name"], u["arms"]) for u in units]:
+            log("REFUSED: the new registry changes the unit composition")
+            return 5
+        tmp = out / "arms.json.tmp"
+        shutil.copy(HERE / "arms.json", tmp)
+        os.replace(out / "arms.json", out / f"arms.replaced-{time.strftime('%Y%m%dT%H%M%S')}.json")
+        tmp.rename(out / "arms.json")
+    stamp = time.strftime("%Y%m%dT%H%M%S")
+    hit = []
+    for u in units:
+        f = out / "units" / u["name"]
+        if set(u["arms"]) & set(a.arms) and f.exists():
+            if not a.dry:
+                f.rename(f.with_name(f.name + f".invalid-{stamp}"))
+            hit.append(u["name"])
+    print(json.dumps({"invalidated" if not a.dry else "would_invalidate": hit, "n": len(hit)}, indent=1))
+    return 0
+
+
 def unit_cmd(a):
     S = Study(link_tables=not a.no_link_tables)
     reg = json.load(open(HERE / "arms.json"))
@@ -475,7 +505,7 @@ def unit_cmd(a):
 def main(argv=None):
     import study as ST
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("job", choices=("supervise", "worker", "status", "unit"))
+    ap.add_argument("job", choices=("supervise", "worker", "status", "unit", "invalidate"))
     ap.add_argument("--out", default=str(ST.LOCAL))
     ap.add_argument("--files", type=int, nargs="+", default=list(ST.SCAN_FILES))
     ap.add_argument("--scen", nargs="+", default=list(ST.SCENARIOS))
@@ -487,8 +517,10 @@ def main(argv=None):
     ap.add_argument("--defect", default="")
     ap.add_argument("--blank", action="store_true")
     ap.add_argument("--no-link-tables", action="store_true")
+    ap.add_argument("--refresh-registry", action="store_true")
+    ap.add_argument("--dry", action="store_true", help="invalidate: only list the units")
     a = ap.parse_args(argv)
-    return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd}[a.job](a)
+    return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd, "invalidate": invalidate}[a.job](a)
 
 
 if __name__ == "__main__":
