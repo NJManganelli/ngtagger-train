@@ -129,6 +129,8 @@ class Arm:
     # --- the SmartPixels output-bits study (eval_refitq/spixbits; every default is today's behaviour) ---
     pos_var_add: tuple = (0.0, 0.0)  # variance [cm^2] added to the (localX, localY) position variance AFTER the
                                     # position-error lookup (a quantization step^2 / 12, or a Gaussian noise variance)
+    pos_err_scale: tuple = (1.0, 1.0)  # factors on the looked-up (localX, localY) position errors (the covariance-forecast
+                                    # refits with the network's position errors); applied before pos_var_add
     window_var_add: bool = True     # the same variance also on the diagonal of the ellipse window's covariance (only
                                     # that term); False: v3's prediction-only window (the control)
     flag_mode: str = "off"          # angle underflow / overflow codes (cluster columns sb_flagAlpha / sb_flagBeta with
@@ -425,6 +427,8 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
             sig[:, 2:] = Rt[:, 2:]
     if arm.pos_err == "rtables_sizeblind":
         sig[:, :2] = sizeblind_R(tools, cot_a_pred, cot_b_pred)
+    if arm.pos_err_scale != (1.0, 1.0):
+        sig[:, 0], sig[:, 1] = sig[:, 0] * arm.pos_err_scale[0], sig[:, 1] * arm.pos_err_scale[1]
     if arm.pos_var_add[0] or arm.pos_var_add[1]:
         sig[:, 0] = np.sqrt(sig[:, 0] ** 2 + arm.pos_var_add[0])
         sig[:, 1] = np.sqrt(sig[:, 1] ** 2 + arm.pos_var_add[1])
