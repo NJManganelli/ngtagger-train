@@ -35,6 +35,7 @@ MIN_FREE_GB = 12.0
 ARMS_PER_UNIT = 8
 NSLOT = 8
 BASE = "implemented_now"
+MAX_RESTARTS = 200
 
 
 def log(*a):
@@ -398,18 +399,49 @@ def supervise(a):
     out = Path(a.out)
     (out / "logs").mkdir(parents=True, exist_ok=True)
     load_registry(out)
-    procs = []
-    for i in range(a.workers):
+    pidfile = out / "logs" / "scan.pids"
+    if pidfile.exists():                                        # never two supervisors on the same outputs
+        for line in pidfile.read_text().splitlines():
+            if line.startswith("supervisor "):
+                try:
+                    os.kill(int(line.split()[1]), 0)
+                    log(f"a supervisor is already running (pid {line.split()[1]}); not starting another")
+                    return 4
+                except (OSError, ValueError):
+                    pass
+    def start(i):
         lf = open(out / "logs" / f"scan_worker{i}.log", "a")
         cmd = [sys.executable, str(HERE / "run_scan.py"), "worker", "--shard", f"{i}/{a.workers}", "--out", str(out),
                "--files", *map(str, a.files), "--scen", *a.scen]
-        procs.append(subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL))
+        return subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+
+    def record(procs):
+        pidfile.write_text(" ".join(str(p.pid) for p in procs.values()) + f"\nsupervisor {os.getpid()}\n")
+
+    procs = {}
+    for i in range(a.workers):
+        procs[i] = start(i)
+        record(procs)
         time.sleep(20)                                          # stagger the start-up memory
-    (out / "logs" / "scan.pids").write_text(" ".join(str(p.pid) for p in procs) + f"\nsupervisor {os.getpid()}\n")
-    log(f"supervisor {os.getpid()}: workers {[p.pid for p in procs]}")
-    rc = [p.wait() for p in procs]
-    log(f"supervisor: workers exited {rc}")
-    return max(rc)
+    log(f"supervisor {os.getpid()}: workers {[p.pid for p in procs.values()]}")
+    restarts, final = 0, {}
+    while procs:                                                # a worker killed by a vanished disk (a bus error on a
+        time.sleep(30)                                          # mapped file) or anything else is started again
+        for i, p in list(procs.items()):
+            rc = p.poll()
+            if rc is None:
+                continue
+            if rc in (0, 3) or restarts >= MAX_RESTARTS:        # finished, or stopped for disk space
+                final[i] = rc
+                del procs[i]
+                continue
+            restarts += 1
+            log(f"supervisor: worker {i} exited {rc}; restart {restarts} in 60 s")
+            time.sleep(60)
+            procs[i] = start(i)
+            record(procs)
+    log(f"supervisor: workers exited {final}")
+    return max(final.values(), default=0)
 
 
 def status(a):
