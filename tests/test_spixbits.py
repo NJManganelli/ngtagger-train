@@ -200,3 +200,34 @@ def test_heads_reader_strict_split_and_mantissa_rounding(tmp_path):
     r = HD.round_mantissa(np.array([1.0, 1.0 + 2 ** -13, 1.0 + 2 ** -12, 0.0, 3.14159], np.float32))
     assert r[0] == 1.0 and r[2] == 1.0 + 2 ** -12 and r[3] == 0.0 and abs(r[4] / 3.14159 - 1) < 2 ** -12
     assert r[1] in (1.0, 1.0 + 2 ** -12)
+
+
+def test_parametrization_pieces():
+    PM = pytest.importorskip("param_model")
+    q = np.linspace(-1, 1, len(PM.KNOTS))
+    u = np.array([0.0, 0.01, 0.5, 0.99, 0.999])
+    v = PM.eval_inv_cdf(np.tile(q, (5, 1)), u)
+    assert v[0] == v[1] == -1 and v[3] == v[4] == 1 and abs(v[2]) < 1e-12         # clamped ends, linear between
+    D1 = PM.draws(np.ones(5), np.ones(5), np.arange(5), np.zeros(5))
+    D2 = PM.draws(np.ones(5), np.ones(5), np.arange(5), np.zeros(5))
+    assert all(np.array_equal(D1[k], D2[k]) for k in D1) and len(np.unique(D1["u_rank"])) == 5
+    assert set(D1) == {"u_state", "u_rank", "u_score", "n_z0", "n_tanL", "n_rInv", "n_phi0"}
+    C = {"ieta": np.array([0, 0, 1, 1, 2] * 100), "window": np.array([0, 1] * 250)}
+    x = np.arange(500.0)
+    tab, level = PM.pooled_table(C, np.ones(500, bool), lambda m: float(x[m].mean()), 150, PM.KERNEL_AXES, ("window", "ieta"))
+    assert tab.shape == (3, 2) and level[0, 0] == 1 and tab[0, 0] == tab[0, 1]       # thin cell: window pooled first
+    assert PM.unnatural("spixChi2IncXTot", PM.natural("spixChi2IncXTot", np.array([-999.0, 2.0])))[0] == -999.0
+    assert PM.unnatural("spixChi2IncXTot", PM.natural("spixChi2IncXTot", np.array([2.0])))[0] == pytest.approx(2.0)
+
+
+def test_helper_full_covariance_keeps_correlations():
+    SA = pytest.importorskip("spixbits_apply")
+    rng = np.random.default_rng(0)
+    A = rng.normal(size=(4, 5, 5))
+    C = A @ np.transpose(A, (0, 2, 1)) + 0.1 * np.eye(5)
+    new = np.einsum("nii->ni", C) * rng.uniform(0.5, 2.0, (4, 5))
+    C2 = SA.full_covariance(C, new)
+    assert np.allclose(np.einsum("nii->ni", C2), new) and (np.linalg.eigvalsh(C2) > 0).all()
+    d, d2 = np.sqrt(np.einsum("nii->ni", C)), np.sqrt(new)
+    assert np.allclose(C2 / (d2[:, :, None] * d2[:, None, :]), C / (d[:, :, None] * d[:, None, :]))
+    assert SA.to_p_clean(SA.to_margin(0.9)) == pytest.approx(0.9)
