@@ -55,10 +55,13 @@ def tools(cfg):
         scale = float(json.load(fh)["scale"])
     disc = AR.DiscTools(table=str(PAYLOAD / "angle_table_v1a1e_disclocal_canon_v3.json"),
                         material=str(PAYLOAD / "disc_material_v1.json"), disc_scale=scale)
-    return AR.Tools(cfg, calibration=str(PAYLOAD / "refit_calibration_v3.json"),
+    t = AR.Tools(cfg, calibration=str(PAYLOAD / "refit_calibration_v3.json"),
                     angle_table=str(PAYLOAD / "angle_table_v1a1e_canon_v3.json"),
                     cuts=CU.Cuts.load(str(PAYLOAD / "wpc_cuts_c1b_v1.json")), disc=disc,
                     seed_model=SMOD.SeedModel(str(PAYLOAD / "seed_model_v1.json")))
+    with open(HERE / "sizeblind_R_v3.json") as fh:          # the size-blind position errors (fit_sizeblind.py)
+        t.sizeblind = json.load(fh)
+    return t
 
 
 def input_path(scen, f):

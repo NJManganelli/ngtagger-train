@@ -468,20 +468,14 @@ def measurements(ctx, geo, ci, mi, cot_a_pred, cot_b_pred, arm, tools):
 
 
 def sizeblind_R(tools, cot_a_pred, cot_b_pred):
-    """(n, 2) position errors [cm] from v3's R tables with the cluster size averaged out: per |predicted cot|
-    interval, the count-weighted mean variance over the size intervals of the table's own fit population."""
+    """(n, 2) position errors [cm] with the cluster size averaged out: tools.sizeblind = {"u" | "v": {"cot_edges",
+    "width_cm"}}, per |predicted cot| interval the robust width of the size-pooled truth residual of the R tables' own
+    fit population (eval_refitq/spixbits/fit_sizeblind.py). Never an average of the cells' variances: 1-2 % of the
+    clusters sit in 80-100 um cells and would dominate it."""
     import refit_calibration_fit as RCF
-    sb = getattr(tools, "_sizeblind", None)
-    if sb is None:
-        sb = {}
-        for nm in ("u", "v"):
-            t = tools.cal["R_tables"][nm]
-            W, n = np.asarray(t["width_cm"], np.float64), np.asarray(t["n"], np.float64)
-            tot = n.sum(0)
-            w = np.sqrt((n * W ** 2).sum(0) / np.maximum(tot, 1.0))
-            sb[nm] = (np.where(tot > 0, w, np.nanmax(W)), t["cot_edges"])
-        tools._sizeblind = sb
-    return np.stack([sb[nm][0][RCF._bin(np.abs(c), sb[nm][1])] for nm, c in (("u", cot_a_pred), ("v", cot_b_pred))], 1)
+    sb = tools.sizeblind
+    return np.stack([np.asarray(sb[nm]["width_cm"], np.float64)[RCF._bin(np.abs(c), sb[nm]["cot_edges"])]
+                     for nm, c in (("u", cot_a_pred), ("v", cot_b_pred))], 1)
 
 
 FLAG_COLS = {"alpha": ("sb_flagAlpha", "sb_loAlpha", "sb_hiAlpha"), "beta": ("sb_flagBeta", "sb_loBeta", "sb_hiBeta")}

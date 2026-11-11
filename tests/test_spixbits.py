@@ -111,14 +111,37 @@ def test_flag_cost_is_one_sided():
     assert not cost2.any() and not nfl2.any()            # an angle the arm does not use costs nothing
 
 
-def test_sizeblind_R_is_count_weighted_variance():
+def test_sizeblind_R_lookup_and_not_dominated_by_rare_cells():
     AR = pytest.importorskip("arms")
-    tab = {"size_edges": [1, 2, 99], "cot_edges": [0.0, 1.0, 99.0], "width_cm": [[1.0, 2.0], [3.0, 2.0]],
-           "n": [[1, 5], [3, 0]]}
-    tools = SimpleNamespace(cal={"R_tables": {"u": tab, "v": tab}})
-    r = AR.sizeblind_R(tools, np.array([0.5, 2.0]), np.array([-0.5, 0.5]))
-    assert r[0, 0] == pytest.approx(np.sqrt((1 + 27) / 4)) and r[1, 0] == pytest.approx(2.0)
-    assert r[0, 1] == r[1, 1] == pytest.approx(np.sqrt(7.0))
+    sb = json.load(open(ROOT / "spixbits" / "sizeblind_R_v3.json"))
+    tools = SimpleNamespace(sizeblind=sb)
+    r = AR.sizeblind_R(tools, np.array([0.15, -0.15, 5.0]), np.array([0.1, 2.0, -0.1]))
+    assert r[0, 0] == r[1, 0] == sb["u"]["width_cm"][2] and r[2, 0] == sb["u"]["width_cm"][4]
+    assert r[0, 1] == r[2, 1] == sb["v"]["width_cm"][0] and r[1, 1] == sb["v"]["width_cm"][4]
+    cal = ROOT / "combinatorics" / "results" / "refit_calibration" / "refit_calibration_v3.json"
+    if not cal.exists():
+        pytest.skip("v3 calibration file not in the tree")
+    R = json.load(open(cal))["R_tables"]
+    for nm in "uv":                       # between the smallest cell width and the count-weighted 84 % cell width:
+        W, N = np.array(R[nm]["width_cm"]), np.array(R[nm]["n"], float)      # a 1-2 % cell cannot dominate it
+        for j, w in enumerate(sb[nm]["width_cm"]):
+            o = np.argsort(W[:, j])
+            cum = np.cumsum(N[o, j]) / N[:, j].sum()
+            hi = W[o, j][np.searchsorted(cum, 0.84)]
+            lo = W[N[:, j] > 0, j].min()
+            assert lo <= w <= hi * 1.05, (nm, j, lo, w, hi)
+        assert sb[nm]["n"] == N.sum(0).astype(int).tolist()
+    assert max(sb["u"]["width_cm"]) < 8e-4                                   # r-phi: 2-7 um, never 11-17 um
+
+
+def test_units_mix_scenarios_per_worker():
+    reg = REG.build()
+    u = RS.units_of(reg, (5, 7, 8, 9, 10), ("AAAA", "AAAI", "IAAA"))
+    assert [x["group"] for x in u[:15]] == ["priority"] * 15
+    for i in range(3):
+        mine = [x["scen"] for x in u[i::3]]
+        counts = [mine.count(s) for s in ("AAAA", "AAAI", "IAAA")]
+        assert max(counts) - min(counts) <= 2, counts
 
 
 def test_link_lookup_signs_and_quantization_variance(tmp_path):

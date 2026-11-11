@@ -71,14 +71,18 @@ def load_registry(out):
 
 
 def units_of(reg, files, scens):
-    """The ordered unit list: per group (priority first), per file, per scenario, the group's arms in chunks."""
-    units = []
+    """The ordered unit list: per group (priority first), per chunk of the group's arms, per file, the scenarios in
+    an order rotated with the file and the block of units, so that workers taking every n-th unit each get a mix of scenarios
+    (AAAA units take about 1.7 x the time of IAAA units)."""
+    units, block = [], 0
     for g in reg["group_order"]:
         names = [a["name"] for a in reg["arms"] if a["group"] == g]
         chunks = [names[i:i + ARMS_PER_UNIT] for i in range(0, len(names), ARMS_PER_UNIT)]
-        for f in files:
-            for s in scens:
-                for k, ch in enumerate(chunks):
+        for k, ch in enumerate(chunks):
+            block += 1
+            for fi, f in enumerate(files):
+                for j in range(len(scens)):
+                    s = scens[(j + fi + block) % len(scens)]
                     units.append({"group": g, "file": f, "scen": s, "arms": ch,
                                   "name": f"{g}/{s}_f{f:02d}_{g}_{k:02d}.npz"})
     return units
