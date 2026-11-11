@@ -497,6 +497,27 @@ def main():
             S["secondary"][a] = d
             L.append(f"| {plain(a)} | " + " | ".join(cs) + f" | {t['value']:.4f} ± {t['sd']:.4f} |")
         L.append("")
+        # ---- flags over every analysed arm outside the fixed points (those are flagged in fixed_points.py)
+        fl = []
+        for arm in sc.arms:
+            if arm in FIXED or arm == core.OT_ARM or lib.arm_label(REG, arm) is None:
+                continue
+            anchor = "bending_float" if arm.startswith("bending_") else "network_float"
+            for q in ("d0", "z0"):
+                r = lib.ratio(sc, arm, anchor, q)
+                if r["hi68"] < 1.0 and r["value"] + 2 * r["sd"] < 1.0:
+                    fl.append(f"{plain(arm)}: {q} better than \"{lib.PLAIN[anchor]}\" by more than its band (ratio {lib.fmt_band(r)}, {(1 - r['value']) / max(r['sd'], 1e-9):.1f} sd)")
+            for k, v in sc.stats(arm)["correct_hit_pull"]["all surfaces"].items():
+                if abs(v["rms_within_5"] - 1) > 0.15:
+                    fl.append(f"{plain(arm)}: correct-hit {k} pull RMS {v['rms_within_5']:.2f} outside 1 ± 0.15")
+            tp = sc.stats(arm)["track_pull"]
+            base = sc.stats(anchor)["track_pull"] if sc.has(anchor) else sc.stats("implemented_now")["track_pull"]
+            for q in ("d0", "z0"):
+                if abs(tp[q]["rms_within_5"] - 1) > 0.15 and abs(tp[q]["rms_within_5"] - 1) > abs(base[q]["rms_within_5"] - 1) + 0.03:
+                    fl.append(f"{plain(arm)}: {q} pull RMS {tp[q]['rms_within_5']:.2f} outside 1 ± 0.15 and further out than \"implemented now\" ({base[q]['rms_within_5']:.2f})")
+        S["flags"] = fl
+        L += [f"### {scen}: flags outside the fixed points", "", "An arm better than its float anchor by more than its band and 2 sd; correct-hit pull RMS outside 1 ± 0.15 (all surfaces); "
+              "d0 or z0 pull RMS outside 1 ± 0.15 and further from 1 than \"implemented now\" (whose own pulls are outside).", ""] + ([f"- {f}" for f in fl] or ["- none"]) + [""]
         res["scenarios"][scen] = S
         open(lib.RESULTS / f"scans_{scen}.md", "w").write("\n".join(L) + "\n")
     json.dump(res, open(lib.RESULTS / "scans.json", "w"), indent=1)

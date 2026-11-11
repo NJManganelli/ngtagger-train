@@ -220,6 +220,8 @@ def main():
         other = [f for f in v["flags"] if "pull RMS" not in f or "d0 pull" not in f and "z0 pull" not in f]
         npull = len(v["flags"]) - len(other)
         L += [f"- {s}: d0 or z0 pull RMS outside 1 ± 0.15 in {npull} arm × quantity cases (the baseline's own pulls are outside; see conclusions)."] + [f"- {f}" for f in other]
+    for s in sn["scenarios"]:
+        L += [f"- {s}, outside the fixed points: {f}" for f in sn["scenarios"][s].get("flags", [])]
     L += ["", "## 9. Limitations", "", LIMITS, "", "## 10. Not run", "", NOT_RUN, "",
           "## 11. Files", "",
           "- `results/fixed_points.json`, `results/scans.json`, `results/near_full.json`: all numbers, with the list of arms complete, partial and missing when they were made.",
