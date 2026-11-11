@@ -162,12 +162,19 @@ def closure_of(T, today, arm, em, truth, W):
     return res
 
 
-def features(T, today, x):
-    cols = [x["a"], np.log(np.maximum(x["cov_diag"], 1e-30)), x["margins"]]
-    if "inputs" in x:
-        cols += [np.stack([x["inputs"][:, PM.IN[c]] for c in PM.COUNTS + PM.CHI2], 1)]
+def features(T, today, x, which="tagger"):
+    """The track-input vector of the classifier test. "tagger": what the tagger reads per track (1/R, tanL, z0, d0;
+    sigma(d0), sigma(z0); accepted IT hits; the six head outputs). "parameters": the four parameters only. "all": every
+    emulated column (all five parameters and covariance diagonals, heads, counts, chi2-like inputs). Plus today's window
+    and the track's origin class."""
+    g = (lambda c: x["inputs"][:, PM.IN[c]]) if "inputs" in x else (lambda c: x[c])
+    if which == "parameters":
+        cols = [x["a"][:, [0, 2, 3, 4]]]
+    elif which == "tagger":
+        cols = [x["a"][:, [0, 2, 3, 4]], 0.5 * np.log(np.maximum(x["cov_diag"][:, [3, 4]], 1e-30)), g("spixNAcceptedHits")[:, None],
+                x["margins"]]
     else:
-        cols += [np.stack([x[c] for c in PM.COUNTS + PM.CHI2], 1)]
+        cols = [x["a"], np.log(np.maximum(x["cov_diag"], 1e-30)), x["margins"], np.stack([g(c) for c in PM.COUNTS + PM.CHI2], 1)]
     window = np.where(today["refit"], (np.abs(today["a"][:, 4]) > PM.D0_SPLIT).astype(float), 2.0)
     return np.column_stack(cols + [window, T["origin"].astype(float)])
 
@@ -226,15 +233,18 @@ def run(a):
             c = closure_of(T, today, arms[al], em, truth, W)
             if al in CLASSIFIER_ALLOCS and not a.no_classifier:
                 ev = np.unique(T["event_key"], return_inverse=True)[1]
-                Xa, Xe, X0 = features(T, today, arms[al]), features(T, today, em), features(T, today, today)
-                auc_e, sd_e = classifier_auc(Xa, Xe, ev)
-                auc_0, _ = classifier_auc(Xa, X0, ev)
-                tol = max(0.25 * (auc_0 - 0.5), 0.01, 3 * sd_e)
-                judged = auc_0 - 0.5 >= 0.02
-                c["classifier"] = {"auc_actual_vs_emulated": auc_e, "sd": sd_e, "auc_actual_vs_today": auc_0, "tolerance": tol,
-                                   "judged": bool(judged), "pass": bool((auc_e - 0.5) <= tol or not judged)}
-                if judged and (auc_e - 0.5) > tol:
-                    c["material"].append(f"classifier: AUC actual vs emulated {auc_e:.3f} (tolerance 0.5 + {tol:.3f}; actual vs today {auc_0:.3f})")
+                c["classifier"] = {}
+                for which in ("tagger", "parameters", "all"):          # judged: the tagger's inputs; the others reported
+                    Xa, Xe, X0 = (features(T, today, x, which) for x in (arms[al], em, today))
+                    auc_e, sd_e = classifier_auc(Xa, Xe, ev)
+                    auc_0, _ = classifier_auc(Xa, X0, ev)
+                    tol = max(0.25 * (auc_0 - 0.5), 0.01, 3 * sd_e)
+                    judged = auc_0 - 0.5 >= 0.02
+                    c["classifier"][which] = {"auc_actual_vs_emulated": auc_e, "sd": sd_e, "auc_actual_vs_today": auc_0,
+                                              "tolerance": tol, "judged": bool(judged), "pass": bool((auc_e - 0.5) <= tol or not judged)}
+                    if which == "tagger" and judged and (auc_e - 0.5) > tol:
+                        c["material"].append(f"classifier (tagger inputs): AUC actual vs emulated {auc_e:.3f} "
+                                             f"(tolerance 0.5 + {tol:.3f}; actual vs today {auc_0:.3f})")
                 c["kappa_actual"] = kappa(T, ~arms[al]["same_clusters"])
                 c["kappa_emulated"] = kappa(T, em["changed"])
             res["allocations"][al] = c

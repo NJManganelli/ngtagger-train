@@ -34,7 +34,6 @@ CHI2 = ("spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IT
 SCORES = tuple(f"head_{h}" for h in HEADS) + CHI2
 PARTNER = {"z0": "d0", "tanL": "z0", "rInv": "d0", "phi0": "d0"}
 D0_SPLIT, MISSING = 0.02, -999.0
-EPS_UNIT = "added"      # the unit of eps: the sigma the allocation adds on the track (see the README); must match the file
 
 
 def meta(cset):
@@ -83,7 +82,7 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
         run, lumi, event, track = (np.asarray(x).astype(np.int64) for x in ids)
         uni = lambda k: cset["uniform"].evaluate(run, lumi, event, track, k)
         nor = lambda k: cset["normal"].evaluate(run, lumi, event, track, k)
-        draws = {"u_state": uni(1), "u_rank": uni(2), "u_score": uni(3), "n_z0": nor(11), "n_tanL": nor(12), "n_rInv": nor(13),
+        draws = {"u_state": uni(1), "u_rank": uni(2), "u_score": uni(3), "u_cov": uni(4), "n_z0": nor(11), "n_tanL": nor(12), "n_rInv": nor(13),
                  "n_phi0": nor(14)}
     pt = kpt / np.maximum(np.abs(a[:, 0]), 1e-12)
     abs_eta = np.abs(np.arcsinh(a[:, 2]))
@@ -91,6 +90,7 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
     w2 = np.minimum(window, 1)
     matched = np.isfinite(truth).all(1).astype(np.int64)
     mult = np.asarray(columns["spixMaxWindowMult"], np.float64)
+    n_hits = np.asarray(columns["spixNAcceptedHits"], np.float64)
     sg = np.sqrt(np.maximum(cov_diag, 1e-30))
     with np.errstate(invalid="ignore"):
         pull = np.nan_to_num(np.maximum(np.abs(a[:, 4] - truth[:, 4]) / sg[:, 4], np.abs(a[:, 3] - truth[:, 3]) / sg[:, 3]), nan=0.0)
@@ -105,9 +105,10 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
         e = cset["eps"].evaluate(allocation, p, abs_eta, w2, ndtr(z[p]))
         lam = cset["lambda"].evaluate(allocation, p, w2, abs_eta, pt)
         lr = cset["cov_scale"].evaluate(allocation, p, "a", w2, abs_eta, pt) \
-            + cset["cov_scale"].evaluate(allocation, p, "b", w2, abs_eta, pt) * np.log(sg[:, i])
+            + cset["cov_scale"].evaluate(allocation, p, "b", w2, abs_eta, pt) * np.log(sg[:, i]) \
+            + cset["cov_scale"].evaluate(allocation, p, "sigma", w2, abs_eta, pt) * cset["cov_eta"].evaluate(allocation, p, draws["u_cov"])
         cov_i = cov_diag[:, i] * np.exp(np.clip(lr, np.log(0.2), np.log(1.0e4)))
-        unit = np.sqrt(np.abs(cov_i - cov_diag[:, i]) + (0.05 * sg[:, i]) ** 2) if EPS_UNIT == "added" else sg[:, i]
+        unit = np.sqrt(np.abs(cov_i - cov_diag[:, i]) + (0.05 * sg[:, i]) ** 2)       # the sigma the allocation adds
         new_a[:, i] += np.where(refit, lam * unit * e, 0.0)
         new_cov[:, i] = np.where(refit, cov_i, new_cov[:, i])
     w_arm = (np.abs(new_a[:, 4]) > D0_SPLIT).astype(np.int64)
@@ -116,7 +117,7 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
     today.update({c: _natural(c, columns[c]) for c in CHI2})
     sc = {}
     for s in SCORES:
-        co = [cset["score_map"].evaluate(allocation, s, c, w_arm, abs_eta) for c in ("a", "b", "sigma")]
+        co = [cset["score_map"].evaluate(allocation, s, c, w_arm, n_hits, abs_eta) for c in ("a", "b", "sigma")]
         eta = cset["score_eta"].evaluate(allocation, s, tail, draws["u_score"])
         sc[s] = np.where(refit, co[0] + co[1] * today[s] + co[2] * eta, today[s])
     counts = {c: np.asarray(columns[c], np.float64).copy() for c in COUNTS}

@@ -5,11 +5,12 @@ No fitted mixture. Per allocation the extended scan gives, track by track, today
 arm's refit on today's clusters (forced). The model has two observed states:
 
   SAME CLUSTERS (precision part)
-    parameters   q' = q + lambda * sigma_today(q) * eps_q, eps_q from the empirical inverse CDF of
-                 (forced - today) / sigma_today (knots KNOTS, clamped); lambda per cell from a root find so that the 68 %
+    parameters   q' = q + lambda * s_add(q) * eps_q, with s_add the sigma the allocation adds on this track
+                 (sqrt(|C_arm - C_today| + (0.05 sigma_today)^2), C_arm from the covariance model below) and eps_q from
+                 the empirical inverse CDF of (forced - today) / s_add (knots KNOTS, clamped); lambda per cell from a root find so that the 68 %
                  width of the residual to truth equals the forced refit's. d0 is drawn with u_rank; z0 through a
                  Gaussian copula with d0's draw, tanL with z0's, 1/R and phi0 with d0's (normal-score correlations).
-    covariance   diagonal scaled by exp(a + b ln sigma_today) per cell (a straight-line fit of the log ratio forced /
+    covariance   diagonal scaled by exp(a + b ln sigma_today + s eta) per cell (a straight-line fit of the log ratio forced /
                  today against ln sigma_today: an added quantization variance weighs more on a precise track; clipped
                  to 0.2-10,000); today's correlations kept.
     scores       (the six deployed-head outputs and the chi2-like inputs, in their natural variable)
@@ -34,8 +35,6 @@ multiplicity; the other tables fall back to pooled cells when thin.
 """
 from __future__ import annotations
 
-import os
-
 import numpy as np
 from scipy import stats
 
@@ -43,29 +42,29 @@ PARAMS = ("rInv", "phi0", "tanL", "z0", "d0")          # the helix order of the 
 KNOTS = np.array([0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.975, 0.99])
 PT_EDGES = np.array([3.0, 5.0])
 PULL_EDGES = np.array([1.0, 3.0])
+NACC_EDGES = np.array([2.0, 3.0, 4.0])                 # today's accepted hits: <= 1, 2, 3, >= 4 (the score maps)
 SHRINK = 50.0                                          # pseudo-count of the state share's shrinkage to the coarser cell
 MULT_EDGES = np.array([2.0, 3.0, 6.0])                 # today's largest window multiplicity: <= 1, 2, 3-5, >= 6
-ETA_EDGES = np.array([1.1, 1.8]) if os.environ.get("SPIXBITS_ETA", "3") == "3" else np.array([0.6, 1.1, 1.4, 1.8, 2.1])
+ETA_EDGES = np.array([1.1, 1.8])
 N_ETA = len(ETA_EDGES) + 1
 D0_SPLIT = 0.02                                        # cm
 TAIL_EDGES = np.array([0.5, 0.9])                      # |2 u_rank - 1| intervals of the score residual
 N_DONORS = 128
 LAMBDA_MAX = 30.0
-# the donor's parameter values in the changed state: "ratio" = residual (or change) over today's sigma, rescaled by the
-# receiving track's sigma (stats-review-02); "absolute" = the donor's residual (or change) itself
-DONOR_FORM = os.environ.get("SPIXBITS_DONOR_FORM", "ratio")
-# the unit of the same-cluster parameter change eps: "today" = today's sigma (PLAN 7b as written); "added" = the sigma
-# the arm adds on this track, sqrt(|C_arm - C_today| + (0.05 sigma_today)^2), with C_arm from the covariance model, so
-# that a track's parameter noise and its new covariance move together
-EPS_UNIT = os.environ.get("SPIXBITS_EPS_UNIT", "added")
-ETA_SCHEME = os.environ.get("SPIXBITS_ETA", "3")
+# Choices compared on the first 200 scan events of AAAA (closure failures over five allocations; README of the
+# parametrization): the donor's residual over today's sigma, rescaled by the receiving track's sigma (the donor's absolute
+# residual was much worse); eps in units of the sigma the allocation adds on the track (today's sigma was worse: a track's
+# noise and its new covariance then do not move together); three |eta| cells (six were worse at this sample size); the
+# head outputs and covariance ratios of the same-cluster state from a map with an empirical residual (taking them
+# together from a same-cluster donor track was worse).
 
 
 def eps_unit(sg, cov_today, cov_arm):
-    """(n,) the unit of eps for one parameter."""
-    if EPS_UNIT == "today":
-        return sg
+    """(n,) the unit of the same-cluster change eps of one parameter: the sigma the allocation adds on this track,
+    sqrt(|C_arm - C_today| + (0.05 sigma_today)^2), with C_arm from the covariance model."""
     return np.sqrt(np.abs(cov_arm - cov_today) + (0.05 * sg) ** 2)
+
+
 COV_CLIP = (float(np.log(0.2)), float(np.log(1.0e4)))   # limits of ln(covariance ratio) in the same-cluster state
 MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_DONORS, MIN_MAP = 1000, 150, 2000, 200, 400
 HEADS = ("clean", "d0", "z0", "tanl", "rinv", "phi")
@@ -96,7 +95,7 @@ def _mix(x):
 
 
 def draws(run, lumi, event, track):
-    """The per-track draws (stable, not allocation dependent): uniforms u_state, u_rank, u_score and standard
+    """The per-track draws (stable, not allocation dependent): uniforms u_state, u_rank, u_score, u_cov and standard
     normals n_z0, n_tanL, n_rInv, n_phi0. (The fit and the closure use these; a production may use any stable hash,
     e.g. correctionlib's hashprng, as the reference helper does.)"""
     h = np.full(len(np.atleast_1d(run)), 0x9E3779B97F4A7C15, U64)
@@ -104,7 +103,7 @@ def draws(run, lumi, event, track):
         for i, p in enumerate((run, lumi, event, track)):
             h = _mix(h ^ (np.asarray(p).astype(U64) + U64(0x9E3779B97F4A7C15) * U64(i + 1)))
         u = lambda salt: (_mix(h ^ (U64(salt) * U64(0xD6E8FEB86659FD93))) >> U64(11)).astype(np.float64) * 2.0 ** -53
-        out = {"u_state": u(1), "u_rank": u(2), "u_score": u(3)}
+        out = {"u_state": u(1), "u_rank": u(2), "u_score": u(3), "u_cov": u(4)}
         for i, p in enumerate(("z0", "tanL", "rInv", "phi0")):
             out["n_" + p] = stats.norm.ppf(np.clip(u(10 + i), 1e-12, 1 - 1e-12))
     return out
@@ -152,6 +151,7 @@ def cells(today, terciles, truth=None):
     return {"ipt": np.searchsorted(PT_EDGES, pt, side="right"), "ieta": np.searchsorted(ETA_EDGES, eta, side="right"),
             "window": window, "mult": np.searchsorted(MULT_EDGES, today["inputs"][:, IN["spixMaxWindowMult"]], side="right"),
             "tercile": np.searchsorted(terciles, today["margins"][:, 0], side="right"),
+            "nacc": np.searchsorted(NACC_EDGES, today["inputs"][:, IN["spixNAcceptedHits"]], side="right"),
             "matched": today["matched"].astype(int), "pull": np.searchsorted(PULL_EDGES, today_pull(today, truth), side="right")}
 
 
@@ -264,9 +264,17 @@ def param_uniforms(D, rho, C):
     return {p: stats.norm.cdf(z[p]) for p in DRAW_ORDER}
 
 
+def cov_model_of(T, p, cov_today, sg, Ck, D):
+    """The same-cluster covariance diagonal of parameter p: today's x exp(a + b ln sigma_today + s eta(u_cov)), the
+    exponent clipped to COV_CLIP; one u_cov per track for all five parameters (their ratios move together)."""
+    cs = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
+    eta = eval_inv_cdf(np.broadcast_to(T["cov_eta"][p], (len(sg), len(KNOTS))), D["u_cov"])
+    return cov_today * np.exp(np.clip(cs[:, 0] + cs[:, 1] * np.log(sg) + cs[:, 2] * eta, COV_CLIP[0], COV_CLIP[1]))
+
+
 KERNEL_AXES = (("ieta", N_ETA), ("window", 2))
 LAMBDA_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3))
-MAP_AXES = (("window_arm", 2), ("ieta", N_ETA))
+MAP_AXES = (("window_arm", 2), ("nacc", 4), ("ieta", N_ETA))
 # donors are taken from the same pull class as the receiving track (a track that is off today and changes clusters is
 # not, on average, repaired: without this the emulation repairs it too often and the prompt tails come out too small)
 DONOR_AXES = (("matched", 2), ("window", 3), ("ieta", N_ETA), ("pull", 3))
@@ -313,10 +321,14 @@ def fit(today, arm, truth, D, terciles, sel):
         def line(m, lr=lr, ls=ls):
             ok = m & np.isfinite(lr) & np.isfinite(ls)
             if ok.sum() < 30 or np.std(ls[ok]) < 1e-6:
-                return np.array([float(np.median(lr[ok])) if ok.any() else 0.0, 0.0])
-            b, a_ = np.polyfit(ls[ok], np.clip(lr[ok], COV_CLIP[0], COV_CLIP[1]), 1)
-            return np.array([a_, b])
-        T["cov_scale"][p], _ = pooled_table(Ck, both, line, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"), (2,))
+                return np.array([float(np.median(lr[ok])) if ok.any() else 0.0, 0.0, 0.0])
+            y_ = np.clip(lr[ok], COV_CLIP[0], COV_CLIP[1])
+            b, a_ = np.polyfit(ls[ok], y_, 1)
+            return np.array([a_, b, float(np.std(y_ - a_ - b * ls[ok]))])
+        T["cov_scale"][p], _ = pooled_table(Ck, both, line, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"), (3,))
+        co_ = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
+        zc = (np.clip(lr, COV_CLIP[0], COV_CLIP[1]) - co_[:, 0] - co_[:, 1] * ls) / np.maximum(co_[:, 2], 1e-9)
+        T.setdefault("cov_eta", {})[p] = inv_cdf(zc[both & np.isfinite(zc) & (co_[:, 2] > 0)])
     for p in DRAW_ORDER[1:]:
         i, j = PARAMS.index(p), PARAMS.index(PARTNER[p])
         T["rho"][p], _ = pooled_table(Ck, both, lambda m, i=i, j=j: normal_score_corr(eps[m, i], eps[m, j]), MIN_KERNEL,
@@ -326,8 +338,7 @@ def fit(today, arm, truth, D, terciles, sel):
     has_truth = both & np.isfinite(truth).all(1)
     for i, p in enumerate(PARAMS):
         e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
-        cs_ = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
-        cov_model = today["cov_diag"][:, i] * np.exp(np.clip(cs_[:, 0] + cs_[:, 1] * np.log(sg[:, i]), COV_CLIP[0], COV_CLIP[1]))
+        cov_model = cov_model_of(T, p, today["cov_diag"][:, i], sg[:, i], Ck, D)
         unit_model = eps_unit(sg[:, i], today["cov_diag"][:, i], cov_model)
 
         def lam(m, i=i, e=e, unit_model=unit_model):
@@ -360,7 +371,7 @@ def fit(today, arm, truth, D, terciles, sel):
                 return np.array([float(np.mean(y[m] - x[m])) if m.any() else 0.0, 1.0, 0.0])
             b, a_ = np.polyfit(x[m], y[m], 1)
             return np.array([a_, b, float(np.std(y[m] - a_ - b * x[m]))])
-        T["map"][s], _ = pooled_table(Cm, ok, ols, MIN_MAP, MAP_AXES, ("ieta",), (3,))
+        T["map"][s], _ = pooled_table(Cm, ok, ols, MIN_MAP, MAP_AXES, ("ieta", "nacc"), (3,))
         co = lookup(T["map"][s], Cm, MAP_AXES)
         z = (y - co[:, 0] - co[:, 1] * x) / np.maximum(co[:, 2], 1e-9)
         T["eta"][s] = np.stack([inv_cdf(z[ok & (tail == k)]) for k in range(3)])
@@ -369,8 +380,7 @@ def fit(today, arm, truth, D, terciles, sel):
     r_arm = residual(arm["a"].copy(), truth)
     delta = arm["a"] - today["a"]
     delta[:, 1] = wrap(delta[:, 1])
-    unit = sg if DONOR_FORM == "ratio" else 1.0
-    cols = {"matched_ratio": np.where(np.isfinite(r_arm), r_arm, 0.0) / unit, "delta_ratio": delta / unit,
+    cols = {"matched_ratio": np.where(np.isfinite(r_arm), r_arm, 0.0) / sg, "delta_ratio": delta / sg,
             "cov_ratio": arm["cov_diag"] / np.maximum(today["cov_diag"], 1e-30),
             "d_margin": arm["margins"] - today["margins"],
             "counts": np.stack([arm["inputs"][:, IN[c]] for c in COUNTS], 1),
@@ -417,8 +427,7 @@ def apply(T, today, truth, D, terciles):
     for i, p in enumerate(PARAMS):
         e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
         L = lookup(T["lambda"][p], Ck, LAMBDA_AXES)
-        cs = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
-        cov_new = today["cov_diag"][:, i] * np.exp(np.clip(cs[:, 0] + cs[:, 1] * np.log(sg[:, i]), COV_CLIP[0], COV_CLIP[1]))
+        cov_new = cov_model_of(T, p, today["cov_diag"][:, i], sg[:, i], Ck, D)
         a[:, i] += np.where(refit_today, L * eps_unit(sg[:, i], today["cov_diag"][:, i], cov_new) * e, 0.0)
         cov[:, i] = np.where(refit_today, cov_new, cov[:, i])
     s_today = scores_of(today["inputs"], today["margins"])
@@ -438,9 +447,8 @@ def apply(T, today, truth, D, terciles):
         cell = tuple(C[n_][ch] for n_, _ in DONOR_AXES)
         g = lambda name: T["donors"][name][cell + (k,)]
         has_truth = np.isfinite(truth[ch]).all(1)
-        unit = sg[ch] if DONOR_FORM == "ratio" else 1.0
-        a_m = np.where(has_truth[:, None], truth[ch], 0.0) + unit * g("matched_ratio")
-        a_u = today["a"][ch] + unit * g("delta_ratio")
+        a_m = np.where(has_truth[:, None], truth[ch], 0.0) + sg[ch] * g("matched_ratio")
+        a_u = today["a"][ch] + sg[ch] * g("delta_ratio")
         a[ch] = np.where(has_truth[:, None], a_m, a_u)
         cov[ch] = today["cov_diag"][ch] * g("cov_ratio")
         dm = g("d_margin")

@@ -8,7 +8,7 @@ evaluation, the same draws given to both).
 Corrections in a file (inputs in SmartPixels-study units: cm, GeV, 1/cm; `allocation` is one of the shipped names,
 anything else raises):
   uniform, normal   the per-track draws: hashprng of (run, lumi, event, track, draw); draw 1 = state, 2 = rank,
-                    3 = score (uniform); 11-14 = z0, tanL, 1/R, phi0 (normal)
+                    3 = score, 4 = covariance (uniform); 11-14 = z0, tanL, 1/R, phi0 (normal)
   p_changed         share of tracks changing clusters (or refit flag) against today
   eps               inverse CDF of the same-cluster parameter change in units of today's sigma
   lambda, cov_scale, rho     its scale, the covariance-diagonal ratio, the copula correlations
@@ -35,7 +35,7 @@ V = {"allocation": ("string", "shipped allocation name"), "parameter": ("string"
      "window": ("int", "today's window: 0 prompt (|d0| <= 0.02 cm), 1 displaced, 2 not refit today"),
      "window_arm": ("int", "window of the EMULATED d0: 0 prompt, 1 displaced"),
      "abs_eta": ("real", "|eta| of today's refit track (asinh of tanL)"), "pt": ("real", "today's refit pT [GeV]"),
-     "mult": ("real", "today's spixMaxWindowMult"),
+     "mult": ("real", "today's spixMaxWindowMult"), "n_hits": ("real", "today's spixNAcceptedHits"),
      "pull": ("real", "max(|d0 - truth d0| / sigma_d0, |z0 - truth z0| / sigma_z0) of today's track; 0 for a track without a particle"), "clean_margin": ("real", "today's clean head as a margin: logit of head_clean"),
      "u": ("real", "a uniform draw in [0, 1)"), "tail": ("real", "|2 u_rank - 1|"),
      "score": ("string", "head_clean (margin), head_d0, head_z0, head_tanl, head_rinv, head_phi (log sigma_hat) or a chi2-like column"),
@@ -110,19 +110,24 @@ def build(tables, terc, meta):
                          ["allocation", "parameter", "window", "abs_eta", "pt"],
                          per(lambda T: par(lambda p: ints("window", 2, lambda w: eta_bins(lambda e: pt_bins(
                              lambda i: float(T["lambda"][p][w, e, i]))))))))
-    cs.append(correction("cov_scale", "same-cluster covariance-diagonal ratio arm / today = exp(a + b ln sigma_today), clipped to "
-                                      "0.2-10000: the coefficient a or b", ["allocation", "parameter", "coefficient", "window", "abs_eta", "pt"],
+    cs.append(correction("cov_scale", "same-cluster covariance-diagonal ratio arm / today = exp(a + b ln sigma_today + sigma eta), "
+                                      "the exponent clipped to ln 0.2 ... ln 10000: the coefficient a, b or sigma",
+                         ["allocation", "parameter", "coefficient", "window", "abs_eta", "pt"],
                          per(lambda T: par(lambda p: category("coefficient", [(c, ints("window", 2, lambda w: eta_bins(lambda e: pt_bins(
-                             lambda i: float(T["cov_scale"][p][w, e, i, k]))))) for k, c in enumerate(("a", "b"))])))))
+                             lambda i: float(T["cov_scale"][p][w, e, i, k]))))) for k, c in enumerate(("a", "b", "sigma"))])))))
+    cs.append(correction("cov_eta", "standardized residual of the covariance line: inverse CDF at the covariance draw u (one draw per "
+                                    "track for all five parameters)", ["allocation", "parameter", "u"],
+                         per(lambda T: par(lambda p: inv_cdf_node(T["cov_eta"][p])))))
     cs.append(correction("rho", "Gaussian-copula correlation of a parameter's draw with its partner's (z0 with d0, tanL with z0, "
                                 "rInv and phi0 with d0); d0 has none", ["allocation", "parameter", "abs_eta", "window"],
                          per(lambda T: category("parameter", [(p, eta_bins(lambda e: ints("window", 2, lambda w: float(T["rho"][p][e, w]))))
                                                               for p in PM.DRAW_ORDER[1:]]))))
     sc = lambda fn: category("score", [(s, fn(s)) for s in PM.SCORES])
     cs.append(correction("score_map", "same-cluster map s' = a + b s + sigma eta of a score in its natural variable",
-                         ["allocation", "score", "coefficient", "window_arm", "abs_eta"],
-                         per(lambda T: sc(lambda s: category("coefficient", [(c, ints("window_arm", 2, lambda w: eta_bins(
-                             lambda e: float(T["map"][s][w, e, i])))) for i, c in enumerate(("a", "b", "sigma"))])))))
+                         ["allocation", "score", "coefficient", "window_arm", "n_hits", "abs_eta"],
+                         per(lambda T: sc(lambda s: category("coefficient", [(c, ints("window_arm", 2, lambda w: binning(
+                             "n_hits", [0.0, *PM.NACC_EDGES, INF], [eta_bins(lambda e: float(T["map"][s][w, k, e, i])) for k in range(4)])))
+                                                                             for i, c in enumerate(("a", "b", "sigma"))])))))
     cs.append(correction("score_eta", "standardized residual of the same-cluster score map: inverse CDF at u, by |2 u_rank - 1|",
                          ["allocation", "score", "tail", "u"],
                          per(lambda T: sc(lambda s: binning("tail", [0.0, *PM.TAIL_EDGES, 1.0], [inv_cdf_node(T["eta"][s][k]) for k in range(3)])))))
@@ -176,7 +181,7 @@ def main():
                 "payload_refit_calibration_sha256": payload["refit_calibration_v3.json"]["sha256"],
                 "heads": "heads_cmssw reference models", "kpt_GeV_cm": m["kpt"], "rinv_sign_times_charge": m["rinv_sign"],
                 "clean_margin_tercile_edges": [float(x) for x in terc], "knots": [float(k) for k in PM.KNOTS],
-                "n_donors": PM.N_DONORS, "eps_unit": PM.EPS_UNIT, "donor_form": PM.DONOR_FORM}
+                "n_donors": PM.N_DONORS}
         doc = build(tables, terc, meta)
         path = out / f"spixbits_{scen}.json.gz"
         with gzip.open(path, "wt") as fh:
