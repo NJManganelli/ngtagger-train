@@ -2,6 +2,7 @@
 down here BEFORE it is run. Every defect is compared with the same arms run correctly in the same process.
 
   python defects.py [--nev 100]        -> checks/planted_defects.json
+(postscan.py runs the same parts as checkpointed units: two arm groups, the cluster-level part, the evaluation.)
 
 EXPECTED (pre-declared; the statistics of three defects were re-specified after a 10-event smoke test of this script,
 before any 100-event run: the stored hit pull is the innovation pull, which includes the prediction's variance, so the
@@ -63,11 +64,11 @@ def wrong_share(d, surface, slot_surface):
     return float((d["hit_code"][m] >= 3).mean())
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--nev", type=int, default=100)
-    a = ap.parse_args()
-    S = RS.Study()
+GROUPS = {"A": ["network_float", "down_x_4b", "down_y_4b", "defect_swap_down_x_4b", "defect_swap_down_y_4b"],
+          "B": ["ok_y4_x2", "defect_errors_y4_x2", "alloc_6604", "defect_bending_code_beta", "ref_6600_no_angle"]}
+
+
+def registry_with_defects():
     reg = json.load(open(RS.HERE / "arms.json"))
     by = {r["name"]: r for r in reg["arms"]}
 
@@ -76,47 +77,24 @@ def main():
         r["name"] = name
         r["spec"].update(change)
         reg["arms"].append(r)
-        return name
-    names = ["network_float", "down_x_4b", "down_y_4b", "alloc_6604",
-             variant("defect_swap_down_x_4b", "down_x_4b", step_x_um=None, step_y_um=150.0),
-             variant("defect_swap_down_y_4b", "down_y_4b", step_y_um=None, step_x_um=150.0),
-             variant("ok_y4_x2", "network_float", step_y_um=150.0, step_x_um=600.0),
-             variant("defect_errors_y4_x2", "network_float", step_y_um=150.0, step_x_um=600.0, errors_not_following=True),
-             variant("defect_bending_code_beta", "alloc_6604", code_angles_override=["beta"]),
-             variant("ref_6600_no_angle", "alloc_6604", send=[])]
-    truth, D = RS.run_unit(S, reg, F, SCEN, names, nev=a.nev)
-    ss = truth["slot_surface"]
-    prompt = truth["origin"] == 0
-    res = {"nev": a.nev, "detected": {}}
-    d0 = lambda n: w68((D[n]["a"][:, 4] - truth["tp_d0"])[prompt]) * 1e4
-    r = {n: d0(n) / d0("network_float") for n in ("down_x_4b", "down_y_4b", "defect_swap_down_x_4b", "defect_swap_down_y_4b")}
-    res["x_y_swapped"] = {"d0_w68_ratio_to_network_float": r}
-    res["detected"]["x_y_swapped"] = bool(r["down_y_4b"] > 1.3 and r["down_x_4b"] < 1.1
-                                          and r["defect_swap_down_x_4b"] > 1.3 and r["defect_swap_down_y_4b"] < 1.1)
-    def d0_pull_rms(n):
-        x = ((D[n]["a"][:, 4] - truth["tp_d0"]) / np.sqrt(D[n]["cov"][:, 14]))[prompt & D[n]["refit"]]
-        x = x[np.abs(x) < 5]
-        return float(np.sqrt(np.mean(x ** 2)))
-    e = {n: {"barrel_localX": pull_rms(D[n], 0, [1, 2, 3, 4], ss), "discs_localX": pull_rms(D[n], 0, [11, 12, 13, 14], ss),
-             "barrel_localY": pull_rms(D[n], 1, [1, 2, 3, 4], ss), "discs_localY": pull_rms(D[n], 1, [11, 12, 13, 14], ss),
-             "prompt_d0_pull": d0_pull_rms(n)} for n in ("ok_y4_x2", "defect_errors_y4_x2")}
-    res["errors_not_following"] = e
-    ok_, bad_ = e["ok_y4_x2"], e["defect_errors_y4_x2"]
-    res["detected"]["errors_not_following"] = bool(bad_["barrel_localX"] > 1.5 * ok_["barrel_localX"]
-                                                   and bad_["discs_localX"] > 1.5 * ok_["discs_localX"]
-                                                   and bad_["prompt_d0_pull"] > 1.3 * ok_["prompt_d0_pull"]
-                                                   and abs(ok_["barrel_localX"] - 1) < 0.15
-                                                   and abs(ok_["discs_localX"] - 1) < 0.15)
-    w = {n: wrong_share(D[n], 1, ss) for n in ("alloc_6604", "defect_bending_code_beta", "ref_6600_no_angle")}
-    cs = {n: {"code_alpha_chi2_positive_share_of_refit": float((D[n]["chi2_sum"][:, 2] > 0)[D[n]["refit"]].mean()),
-              "code_beta_chi2_positive_share_of_refit": float((D[n]["chi2_sum"][:, 3] > 0)[D[n]["refit"]].mean())}
-          for n in ("alloc_6604", "defect_bending_code_beta")}
-    res["bending_with_code_beta"] = {"chi2_sum": cs, "IL1_wrong_hit_share (reported only)": w}
-    ok_, bad_ = cs["alloc_6604"], cs["defect_bending_code_beta"]
-    res["detected"]["bending_with_code_beta"] = bool(
-        ok_["code_beta_chi2_positive_share_of_refit"] == 0 and ok_["code_alpha_chi2_positive_share_of_refit"] > 0.9
-        and bad_["code_alpha_chi2_positive_share_of_refit"] == 0 and bad_["code_beta_chi2_positive_share_of_refit"] > 0.9)
-    # cluster-level defects
+    variant("defect_swap_down_x_4b", "down_x_4b", step_x_um=None, step_y_um=150.0)
+    variant("defect_swap_down_y_4b", "down_y_4b", step_y_um=None, step_x_um=150.0)
+    variant("ok_y4_x2", "network_float", step_y_um=150.0, step_x_um=600.0)
+    variant("defect_errors_y4_x2", "network_float", step_y_um=150.0, step_x_um=600.0, errors_not_following=True)
+    variant("defect_bending_code_beta", "alloc_6604", code_angles_override=["beta"])
+    variant("ref_6600_no_angle", "alloc_6604", send=[])
+    return reg
+
+
+def arms_part(S, group, out_dir, nev=None):
+    """One group of defect arms on file 4 -> <out_dir>/defects_<group>_{truth,arms}.npz."""
+    truth, D = RS.run_unit(S, registry_with_defects(), F, SCEN, GROUPS[group], nev=nev)
+    RS.save_npz(out_dir / f"defects_{group}_truth.npz", truth)
+    RS.save_npz(out_dir / f"defects_{group}_arms.npz", {f"{n}__{k}": v for n, d in D.items() for k, v in d.items()})
+
+
+def clusters_part(S, out_dir, nev=50):
+    """The cluster-level defects (one draw per event, facing flipped, residual negated) -> defects_clusters.json."""
     path = ST.input_path(SCEN, F)
     keys = AR.OP._keys(str(path))
     br = list(dict.fromkeys(AR.branches(path) + ["run", "luminosityBlock", "event"]
@@ -127,7 +105,7 @@ def main():
     means = {"ok": [], "negated": [], "table": []}
     flipped = EM.Links(S.geo, CM.GEOMETRY)
     flipped.flip_facing = True
-    for start, A in CM.iterate(path, br, chunk=10, nev=min(a.nev, 50)):
+    for start, A in CM.iterate(path, br, chunk=10, nev=nev):
         ctx = AR.prepare(A, S.geo)
         B = EM.base(ctx, S.geo, A, S.net, S.links, LT)
         B1 = EM.base(ctx, S.geo, A, S.net, S.links, LT, defect="one_draw_per_event")
@@ -148,29 +126,96 @@ def main():
                 e_[0] += int(fl[m].sum())
                 e_[1] += int(m.sum())
         tgt = B["target"]
-        edges, mtab, _ = LT.tables[("net", "B")]
-        x = B["sB"][tgt] * B["true_B"][tgt]
+        edges, mtab, _ = LT.tables[("net", "B")]                 # the tables are in the link's own frame
+        x = B["true_B"][tgt]
         kk = (x[:, None] >= edges[B["pool"][tgt]]).sum(1)
         means["table"].append(mtab[B["pool"][tgt], kk])
-        means["ok"].append(B["sB"][tgt] * (B["net_B"] - B["true_B"])[tgt])
-        means["negated"].append(B["sB"][tgt] * (B3["net_B"] - B3["true_B"])[tgt])
+        means["ok"].append((B["net_B"] - B["true_B"])[tgt])
+        means["negated"].append((B3["net_B"] - B3["true_B"])[tgt])
     dist = {k: float(np.mean(acc["distinct_" + k])) for k in ("ok", "bad")}
     wid = {k: float(np.std(np.concatenate(acc["w_" + k]))) for k in ("ok", "bad")}
-    res["one_draw_per_event"] = {"distinct_share": dist, "alpha_residual_rms_target": wid}
-    res["detected"]["one_draw_per_event"] = bool(dist["ok"] >= 0.95 and dist["bad"] < 0.01)
     med = {k: float(np.median([v[0] / v[1] for v in flag[k].values() if v[1] >= 200])) for k in flag}
-    res["facing_flipped"] = {"median_flagged_share_of_target_per_link": med}
-    res["detected"]["facing_flipped"] = bool(med["flipped"] > 0.02 and 0.005 <= med["ok"] <= 0.013)
     tab = np.concatenate(means["table"])
     big = np.abs(tab) > np.quantile(np.abs(tab), 0.5)
     cor = {k: float(np.mean(np.concatenate(means[k])[big] * np.sign(tab[big])) / np.mean(np.abs(tab[big])))
            for k in ("ok", "negated")}
-    res["residual_negated"] = {"mean_residual_along_table_mean_over_table_mean": cor,
-                               "note": "the mean residual projected on the sign of the table's mean, in units of the "
-                                       "table's mean |mean| (clusters in the upper half of |table mean|): +1 correct, -1 negated"}
+    res = {"nev": nev, "one_draw_per_event": {"distinct_share": dist, "alpha_residual_rms_target": wid},
+           "facing_flipped": {"median_flagged_share_of_target_per_link": med},
+           "residual_negated": {"mean_residual_along_table_mean_over_table_mean": cor}}
+    tmp = out_dir / "defects_clusters.json.tmp"
+    json.dump(res, open(tmp, "w"), indent=1)
+    tmp.rename(out_dir / "defects_clusters.json")
+
+
+def evaluate(out_dir, checks_dir=None):
+    """Every defect against its pre-declared reading, with the margins -> checks/planted_defects.json."""
+    D, truth = {}, None
+    for g in GROUPS:
+        Z = np.load(out_dir / f"defects_{g}_arms.npz")
+        T = np.load(out_dir / f"defects_{g}_truth.npz")
+        truth = truth or {k: T[k] for k in T.files}
+        for k in Z.files:
+            n, fld = k.split("__", 1)
+            D.setdefault(n, {})[fld] = Z[k]
+    ss = truth["slot_surface"]
+    prompt = truth["origin"] == 0
+    res = {"file": F, "scenario": SCEN, "tracks": int(len(ss)), "code": "size-blind error from the MAD; flag cost "
+           "without the quantization variance (branch spixbits, after the code review)", "detected": {}, "margins": {}}
+    d0 = lambda n: w68((D[n]["a"][:, 4] - truth["tp_d0"])[prompt]) * 1e4
+    r = {n: d0(n) / d0("network_float") for n in ("down_x_4b", "down_y_4b", "defect_swap_down_x_4b", "defect_swap_down_y_4b")}
+    res["x_y_swapped"] = {"d0_w68_ratio_to_network_float": r}
+    res["detected"]["x_y_swapped"] = bool(r["down_y_4b"] > 1.3 and r["down_x_4b"] < 1.1
+                                          and r["defect_swap_down_x_4b"] > 1.3 and r["defect_swap_down_y_4b"] < 1.1)
+    res["margins"]["x_y_swapped"] = "thresholds > 1.3 and < 1.1; see the ratios"
+
+    def d0_pull_rms(n):
+        x = ((D[n]["a"][:, 4] - truth["tp_d0"]) / np.sqrt(D[n]["cov"][:, 14]))[prompt & D[n]["refit"]]
+        x = x[np.abs(x) < 5]
+        return float(np.sqrt(np.mean(x ** 2)))
+    e = {n: {"barrel_localX": pull_rms(D[n], 0, [1, 2, 3, 4], ss), "discs_localX": pull_rms(D[n], 0, [11, 12, 13, 14], ss),
+             "barrel_localY": pull_rms(D[n], 1, [1, 2, 3, 4], ss), "discs_localY": pull_rms(D[n], 1, [11, 12, 13, 14], ss),
+             "prompt_d0_pull": d0_pull_rms(n)} for n in ("ok_y4_x2", "defect_errors_y4_x2")}
+    ok_, bad_ = e["ok_y4_x2"], e["defect_errors_y4_x2"]
+    e["ratio_defect_over_correct"] = {k: bad_[k] / ok_[k] for k in ok_}
+    res["errors_not_following"] = e
+    res["detected"]["errors_not_following"] = bool(bad_["barrel_localX"] > 1.5 * ok_["barrel_localX"]
+                                                   and bad_["discs_localX"] > 1.5 * ok_["discs_localX"]
+                                                   and bad_["prompt_d0_pull"] > 1.3 * ok_["prompt_d0_pull"]
+                                                   and abs(ok_["barrel_localX"] - 1) < 0.15
+                                                   and abs(ok_["discs_localX"] - 1) < 0.15)
+    res["margins"]["errors_not_following"] = "declared factors: localX hit pulls x 1.5 (barrel, discs), d0 pull x 1.3"
+    w = {n: wrong_share(D[n], 1, ss) for n in ("alloc_6604", "defect_bending_code_beta", "ref_6600_no_angle")}
+    cs = {n: {"code_alpha_chi2_positive_share_of_refit": float((D[n]["chi2_sum"][:, 2] > 0)[D[n]["refit"]].mean()),
+              "code_beta_chi2_positive_share_of_refit": float((D[n]["chi2_sum"][:, 3] > 0)[D[n]["refit"]].mean())}
+          for n in ("alloc_6604", "defect_bending_code_beta")}
+    res["bending_with_code_beta"] = {"chi2_sum": cs, "IL1_wrong_hit_share (reported only)": w}
+    a_, b_ = cs["alloc_6604"], cs["defect_bending_code_beta"]
+    res["detected"]["bending_with_code_beta"] = bool(
+        a_["code_beta_chi2_positive_share_of_refit"] == 0 and a_["code_alpha_chi2_positive_share_of_refit"] > 0.9
+        and b_["code_alpha_chi2_positive_share_of_refit"] == 0 and b_["code_beta_chi2_positive_share_of_refit"] > 0.9)
+    C = json.load(open(out_dir / "defects_clusters.json"))
+    res.update({k: C[k] for k in ("one_draw_per_event", "facing_flipped", "residual_negated")})
+    dist = C["one_draw_per_event"]["distinct_share"]
+    med = C["facing_flipped"]["median_flagged_share_of_target_per_link"]
+    cor = C["residual_negated"]["mean_residual_along_table_mean_over_table_mean"]
+    res["detected"]["one_draw_per_event"] = bool(dist["ok"] >= 0.95 and dist["bad"] < 0.01)
+    res["detected"]["facing_flipped"] = bool(med["flipped"] > 0.02 and 0.005 <= med["ok"] <= 0.013)
     res["detected"]["residual_negated"] = bool(cor["ok"] > 0.5 and cor["negated"] < -0.5)
-    json.dump(res, open(ST.LOCAL / "checks" / "planted_defects.json", "w"), indent=1)
-    print(json.dumps(res, indent=1))
+    json.dump(res, open((checks_dir or ST.LOCAL / "checks") / "planted_defects.json", "w"), indent=1)
+    return res
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--nev", type=int, default=None)
+    a = ap.parse_args()
+    S = RS.Study()
+    out = ST.LOCAL / "checks" / "postscan"
+    out.mkdir(parents=True, exist_ok=True)
+    for g in GROUPS:
+        arms_part(S, g, out, a.nev)
+    clusters_part(S, out, 50 if a.nev is None else min(a.nev, 50))
+    print(json.dumps(evaluate(out), indent=1))
 
 
 if __name__ == "__main__":

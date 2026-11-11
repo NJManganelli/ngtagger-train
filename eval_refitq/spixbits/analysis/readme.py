@@ -107,6 +107,62 @@ def conclusions(fp, sn, nf):
                 C.append(f"- {o} down-scan, {scs[0]}, {q} ÷ \"network, float\": " + ", ".join(f"{'not sent' if p['bits'] == 0 else str(p['bits']) + ' bits'} × {p[q + '_ratio_to_network_float']['value']:.3f}" for p in pts.values()) + ".")
     except KeyError:
         pass
+    C.append("")
+    C.append("**Up from 4/4/4/4 (the other three outputs stay at 4 bits; bits needed to stay within +10 % of the finest scanned value of the same output).**")
+    for out, txt in (("y", "y (read on d0)"), ("x", "x (read on z0)"), ("beta", "β (read on d0)"), ("alpha", "α (read on z0)")):
+        parts = []
+        for s in scs:
+            bn = sn["scenarios"].get(s, {}).get("bits_needed", {}).get(f"up from 4/4/4/4: {out}", {})
+            if "cells" in bn:
+                dn = bn["design_number_six_cells"]
+                parts.append(f"{s}: prompt total {bn['cells']['prompt, all']['reading']}; design number over six cells {dn.get('bits_90pct', dn.get('reading'))}")
+            else:
+                parts.append(f"{s}: not yet available")
+        C.append(f"- {txt}: " + "; ".join(parts) + ".")
+    try:
+        for o, q in (("y", "d0"), ("x", "z0"), ("beta", "d0"), ("alpha", "z0")):
+            pts = sn["scenarios"][scs[0]]["scans"][o]["up"]["points"]
+            if len(pts) > 1:
+                lab = (lambda p: f"{p['step_um']:.3g} µm") if o in ("x", "y") else (lambda p: "not sent" if p["bits"] == 0 else f"{p['bits']} bits")
+                C.append(f"- {o} up-scan, {scs[0]}, {q} in µm: " + ", ".join(f"{lab(p)}: {p[q]['value']:.1f}" for p in sorted(pts.values(), key=lambda p: p["bits"])) + ".")
+    except KeyError:
+        pass
+    C.append("")
+    C.append("**Bending-angle-only family (from 6/6/0/4; comparison only, a one-angle refit may not be implementable).**")
+    for s in scs:
+        bn = sn["scenarios"].get(s, {}).get("bits_needed", {})
+        fam = sn["scenarios"].get(s, {}).get("bending_family", {}).get("points", {})
+        kb, kd, kz = "bending-angle-only family, beta (d0)", "bending-angle-only family, x = y (d0)", "bending-angle-only family, x = y (z0)"
+        if all("cells" in bn.get(k, {}) for k in (kb, kd, kz)):
+            C.append(f"- {s}: bits needed against \"bending-angle only, float\": β (x = y at 6 bits) {bn[kb]['cells']['prompt, all']['reading']}; x = y (β at 4 bits) for d0 {bn[kd]['cells']['prompt, all']['reading']}, for z0 {bn[kz]['cells']['prompt, all']['reading']}. "
+                     + "d0 by β bits: " + ", ".join(f"{b}: {fam[a]['d0']['value']:.1f} µm" for b, a in ((2, 'bending_beta_2b'), (3, 'bending_beta_3b'), (4, 'alloc_6604'), (5, 'bending_beta_5b'), (6, 'bending_beta_6b'), (7, 'bending_beta_7b')) if a in fam)
+                     + "; d0 by x = y bits: " + ", ".join(f"{b}: {fam[a]['d0']['value']:.1f} µm" for b, a in ((4, 'bending_xy_4b'), (5, 'bending_xy_5b'), (6, 'alloc_6604'), (7, 'bending_xy_7b'), (8, 'bending_xy_8b')) if a in fam) + ".")
+        else:
+            C.append(f"- {s}: not yet available.")
+    C.append("")
+    C.append("**Controls.**")
+    for s in scs:
+        ct = sn["scenarios"].get(s, {}).get("controls", {})
+        def cr(a, q="d0"):
+            return f"× {ct[a][q + '_ratio_to_base']['value']:.3f}" if a in ct else "missing"
+        C.append(f"- {s}, d0 (z0) of the control ÷ its base arm: v3 window unchanged at 4/4/4/4 {cr('alloc_4444_v3window')} ({cr('alloc_4444_v3window', 'z0')}), at 6/6/0/4 {cr('alloc_6604_v3window')} ({cr('alloc_6604_v3window', 'z0')}); "
+                 f"flagged angles unusable at 4/4/4/4 {cr('alloc_4444_flagunusable')} ({cr('alloc_4444_flagunusable', 'z0')}), at 6/6/0/4 {cr('alloc_6604_flagunusable')} ({cr('alloc_6604_flagunusable', 'z0')}); "
+                 f"all clusters sent: network, float {cr('network_float_allsent')} ({cr('network_float_allsent', 'z0')}), 4/4/4/4 {cr('alloc_4444_allsent')} ({cr('alloc_4444_allsent', 'z0')}), 4/4/4/4 whole sensor {cr('alloc_4444_wholesensor_allsent')} ({cr('alloc_4444_wholesensor_allsent', 'z0')}); "
+                 f"one global angle range at 4/4/4/4 {cr('alloc_4444_globalrange')} ({cr('alloc_4444_globalrange', 'z0')}); no angles at all with float positions ÷ network, float {cr('positions_only_float')} ({cr('positions_only_float', 'z0')}).")
+        g = ct.get("gaussian_noise_vs_quantization", {})
+        if g:
+            fl = [f"{pt}, {k}: D = {v['D']:+.3f} ± {v['sd']:.3f}" for pt, d in g.items() for k, v in d.items() if "D" in v and v["minor_flag"]]
+            C.append(f"- {s}, Gaussian noise against quantization at equal single-hit variance (RMS on forced refits): " + ("no comparison beyond max(3 %, 3 sd)." if not fl else "minor flags: " + "; ".join(fl) + "."))
+    C.append("")
+    C.append("**b/c daughters with pT ≥ 5 GeV: is the d0 loss of \"network, float\" the cap of three clusters per sub-area?**")
+    for s in scs:
+        pz = sn["scenarios"].get(s, {}).get("bc_daughters_and_the_cap", {})
+        c = "b/c daughters, pT >= 5 GeV"
+        if "network_float_allsent" in pz:
+            f = lambda a, k="ratio_to_implemented_now": lib.fmt_band(pz[a][c][k])
+            C.append(f"- {s}: d0 ÷ \"implemented now\" in that cell: network, float {f('network_float')} ({pz['network_float'][c]['d0_w68_um']['value']:.1f} µm against {pz['implemented_now'][c]['d0_w68_um']['value']:.1f} µm); "
+                     f"network, float with all clusters sent {f('network_float_allsent')}; implemented now, size-blind {f('implemented_now_sizeblind')}; network, float on forced clusters {pz['network_float'][c]['forced_ratio_to_implemented_now']['value']:.3f}. "
+                     f"All sent ÷ capped: {lib.fmt_band(pz['all_sent_over_capped']['network_float'][c])}.")
     # allocations
     C.append("")
     C.append("**Allocations with 16 bits.**")
@@ -120,6 +176,13 @@ def conclusions(fp, sn, nf):
             bz = min(pts.values(), key=lambda v: v["z0"]["value"])
             C.append(f"- {s}: smallest d0 width: {bd['name']} ({bd['d0']['value']:.1f} µm, × {r3(bd['d0_ratio_to_implemented_now'])} of implemented now; best in {100 * bd['d0_share_of_replicas_best']:.0f} % of replicas); "
                      f"smallest z0 width: {bz['name']} ({bz['z0']['value']:.1f} µm, × {r3(bz['z0_ratio_to_implemented_now'])}; best in {100 * bz['z0_share_of_replicas_best']:.0f} % of replicas).")
+    for s in scs:
+        al = sn["scenarios"].get(s, {}).get("allocations_16_bits", {}).get("points", {})
+        tw = [(k, al[k[:-12]], v) for k, v in al.items() if k.endswith("_globalrange") and k[:-12] in al]
+        if tw:
+            dd = [(v["d0"]["value"] / b["d0"]["value"], v["z0"]["value"] / b["z0"]["value"], b["name"]) for k, b, v in tw]
+            C.append(f"- {s}, one global angle range ÷ per-link ranges over the {len(tw)} allocations with angles: d0 {min(x[0] for x in dd):.3f} to {max(x[0] for x in dd):.3f}, z0 {min(x[1] for x in dd):.3f} to {max(x[1] for x in dd):.3f} "
+                     f"(largest d0 change: {max(dd, key=lambda x: abs(x[0] - 1))[2]}).")
     if not done:
         C.append("- The eleven-allocation table is not complete yet; of the two that exist, 6/6/0/4 has the smaller d0 and z0 widths in every scenario (fixed-point table).")
     # near full
@@ -137,6 +200,36 @@ def conclusions(fp, sn, nf):
     return C
 
 
+def headline(fp, sn):
+    S = fp["scenarios"]
+    scs = list(S)
+    L = ["Prompt tracks, 68 % half-width in µm (ratio to \"implemented now\" of the same scenario). In-sample; placeholder angles.", "",
+         "| arm (x/y/α/β bits) | " + " | ".join(f"{s} d0" for s in scs) + " | " + " | ".join(f"{s} z0" for s in scs) + " |", "|---|" + "---|" * (2 * len(scs))]
+    rows = [("implemented_now", None), ("network_float", None), ("alloc_4444", None), ("alloc_4444_wholesensor", None), ("alloc_6604", None), ("alloc_6604_wholesensor", None), ("bending_float", None)]
+    for arm, _ in rows:
+        cs = []
+        for q in ("d0", "z0"):
+            for s in scs:
+                d = S[s]["arms"].get(arm)
+                cs.append(f"{d[q + '_w68_um']['value']:.1f} ({d[q + '_ratio_to_implemented_now']['value']:.2f})" if d else "missing")
+        L.append(f"| {lib.PLAIN[arm]} ({S[scs[0]]['arms'][arm]['allocation_x_y_alpha_beta']}) | " + " | ".join(cs) + " |")
+    # best 16-bit allocations
+    for s in scs:
+        pts = {k: v for k, v in sn["scenarios"].get(s, {}).get("allocations_16_bits", {}).get("points", {}).items() if not k.endswith("_globalrange")}
+        if len(pts) >= 11:
+            o = sorted(pts.values(), key=lambda v: v["d0"]["value"])
+            L += ["", f"{s}, the eleven 16-bit allocations ordered by d0 width (d0 / z0 in µm): " + "; ".join(f"{v['name'].replace('alpha', 'α').replace('beta', 'β')}: {v['d0']['value']:.1f} / {v['z0']['value']:.1f}" for v in o) + "."]
+    L += ["", "Bits needed to stay within +10 % of \"network, float\", one output at a time with the others float (sub-area bits for positions; whole sensor = +2): prompt total / design number over six prompt cells.", "",
+          "| output (read on) | " + " | ".join(scs) + " |", "|---|" + "---|" * len(scs)]
+    for out, txt in (("y", "y (d0)"), ("x", "x (z0)"), ("beta", "β, bending angle (d0)"), ("alpha", "α (z0)")):
+        cs = []
+        for s in scs:
+            bn = sn["scenarios"].get(s, {}).get("bits_needed", {}).get(out, {})
+            cs.append(f"{bn['cells']['prompt, all']['reading']} / {bn['design_number_six_cells'].get('bits_90pct', 'n/a')}" if "cells" in bn else "not available")
+        L.append(f"| {txt} | " + " | ".join(cs) + " |")
+    return L
+
+
 LIMITS = """- The angles are placeholders: the barrel-trained PixelAV network stands in on the discs as well; clusters without angle truth keep the CNN stand-in, judged with the network's narrower errors. Nothing here is a statement about the angle quality of the real sensor.
 - A particle's secondary clusters (delta rays, fragments) carry the parent's true angle plus a residual, so no angle can reject them here; a real network would not report the parent's direction for them.
 - The simulated sensors are 25 × 100 µm, 150 µm thick; the SmartPixels sensor is 12.5 × 50 µm, 100 µm thick. Occupancy and merging are those of the simulated sensor.
@@ -147,13 +240,15 @@ LIMITS = """- The angles are placeholders: the barrel-trained PixelAV network st
 - Results are in-sample with respect to the v3 calibrations, the angle ranges and the angle table (500 scan events; ranges and tables fitted on all ten files).
 - Positions are built on today's rec-hit positions: near full resolution the measured numbers are an upper bound and the network's own position resolution enters only through the model reading.
 - Whether a refit with one angle (the bending-angle-only arms) is implementable in a real system is doubtful; those arms are for comparison only.
+- Prompt track collection only: the extended (displaced-capable) collection the taggers read was not run, so the displaced-track rows are those of the prompt collection.
+- The d0-sign gate was dropped by the physicist (2026-11-11) as redundant with the first check; a same-sign share is a sanity number only.
 - Nothing downstream of the track is rebuilt: no particle flow, jets or tagger numbers.
-- Input precision: the nano's cluster table keeps 16 mantissa bits of the positions; the first check passed in the form the physicist accepted (one window-edge disagreement and an effect of at most 0.026 σ, common to every arm).
+- First check, accepted by the physicist in the form "cluster choice with cluster-table inputs, arithmetic with CMSSW float positions": the nano's cluster table keeps 16 mantissa bits of the positions, which leaves one window-edge disagreement and an effect of at most 0.026 σ on the state, common to every arm.
 - Forced refits use the clusters "implemented now" accepted even where the cap of three would not have sent them; in capped arms the hit-choice effect therefore includes the cap."""
 
 NOT_RUN = """- Skip price re-derived at the 16-bit point (needs the cut fit; a separate run).
 - The direct network-position point above 50 GeV (helix + drawn network position residual).
-- The extended (displaced-capable) track collection in the replay.
+- The extended (displaced-capable) track collection in the replay (everything here is the prompt collection).
 - The track-MVA heads (deployed heads scored, heads retrained per arm).
 - The parametrization (correctionlib file per scenario, PLAN 7b).
 - Bits-needed readings in the 12-cell split (only the prompt total, the six design cells and the pooled forward cells are read); the "both refit" view (the refit fraction is 0.997-1.000 in every fixed-point arm).
@@ -179,7 +274,9 @@ def main():
           "(outer-tracker tracks of the prompt refitted collection with a tracking particle, pT ≥ 2 GeV, |η| < 2.4; a track whose refit does not run keeps its outer-tracker values). "
           "Scan files 5, 7, 8, 9, 10 (500 TTbar events per scenario). Bands: paired bootstrap by event, 1,000 replicas, the same event weights in every arm and scenario. "
           "**Results are in-sample and the angles are placeholders** (the network on barrel and discs, a CNN stand-in for clusters without angle truth).", "",
-          "## 1. Conclusions", ""]
+          "## 1. Headline", ""]
+    L += headline(fp, sn)
+    L += ["", "## 1a. Conclusions", ""]
     L += conclusions(fp, sn, nf)
     L += ["", "## 2. Fixed points", ""]
     cross = lib.RESULTS / "fixed_points_cross.md"
@@ -213,7 +310,7 @@ def main():
     L += ["## 6. b/c daughters, displaced tracks, and the |d0| separation", ""]
     for s in sn["scenarios"]:
         secs = sections(lib.RESULTS / f"scans_{s}.md")
-        L += pick(secs, "b/c daughters and displaced tracks, d0") + pick(secs, "b/c daughters and displaced tracks, z0") + pick(secs, "secondary")
+        L += pick(secs, "the cap of three clusters per sub-area and the d0 of b/c daughters") + pick(secs, "b/c daughters and displaced tracks, d0") + pick(secs, "b/c daughters and displaced tracks, z0") + pick(secs, "secondary")
     L += ["## 7. Near full resolution", ""]
     L += open(lib.RESULTS / "near_full.md").read().replace("## Near-full-resolution reading (PLAN 4a)\n", "").replace("### ", "#### ").split("\n")
     for s in nf["scenarios"]:

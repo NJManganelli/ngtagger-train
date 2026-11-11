@@ -136,6 +136,9 @@ class Study:
                                                    qvar_on=not key[5])
         t = copy.copy(tools)
         t.linktable = self.lookups[key]
+        if spec.get("cuts_file"):                               # post-scan: the skip price re-derived for an arm
+            import cuts as CU
+            t.cuts = CU.Cuts.load(spec["cuts_file"])
         return t
 
 
@@ -191,7 +194,8 @@ def crossing_clusters(S, ctx, pop, seq, kpt):
         w = o2[f2]
         prim_ci[ti[w], j], prim_u[ti[w], j], prim_v[ti[w], j] = ci[w], u[w], v[w]
     key = ti.astype(np.int64) * (1 << 32) + ci
-    return prim_ci, prim_n, prim_u, prim_v, np.sort(key[is_prim]), np.sort(key)
+    every = {"track": ti[is_prim], "ci": ci[is_prim], "u": u[is_prim], "v": v[is_prim]}   # every crossing cluster
+    return prim_ci, prim_n, prim_u, prim_v, np.sort(key[is_prim]), np.sort(key), every
 
 
 def truth_rows(S, A, ctx, start, tr, pop, seq, path_, cx, B, has_vz):

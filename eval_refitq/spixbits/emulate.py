@@ -310,6 +310,7 @@ def emulate(ctx, B, spec, LT):
       bits_alpha, bits_beta  SmartPixels alpha / beta: None = float, an int = bits per link range (2 codes are flags)
       range                  "link" (per link pool) | "global"
       cap                    True: only three clusters per sub-area per event are sent
+      direct_positions       True: the clusters with finite B["direct_x"], B["direct_y"] take those positions [cm]
     Returns a shallow copy of ctx with a new cluster dict; the cluster order and indices never change."""
     K = dict(ctx["K"])
     out = dict(ctx)
@@ -320,6 +321,9 @@ def emulate(ctx, B, spec, LT):
         if step:
             s_cm = step * 1e-4
             K[col] = v + g * s_cm / np.sqrt(12.0) if spec.get("noise") else quantize_position(v, v0, s_cm, ph)
+    if spec.get("direct_positions"):                      # the direct network-position point (PLAN 4a item 3):
+        for col, v in (("localX", B["direct_x"]), ("localY", B["direct_y"])):   # helix + drawn network position residual
+            K[col] = np.where(np.isfinite(v), v, K[col].astype(np.float64))
     if spec.get("angles", "today") == "network":
         vA, vB, hasA, hasB = B["net_A"].copy(), B["net_B"].copy(), B["net_hasA"], B["net_hasB"]
         n = len(vA)

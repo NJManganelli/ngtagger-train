@@ -376,6 +376,16 @@ def main():
                 S["bits_needed"][out] = {"quantity": READ[out], "anchor": "network, float", "base": "today's positions (measured)", **bn}
             else:
                 S["bits_needed"][out] = {"reading": "not read: the down-scan is not complete", "missing": [a for a in arms.values() if not sc.has(a)]}
+            # up-scan from 4/4/4/4 (others at 4 bits): reference = the finest scanned value of this output, the other three
+            # staying at 4 bits ("what more bits here buy"); the plan's rule is otherwise unchanged
+            uarms = {b: scan_arm("up", out, b) for b in bits_all}
+            ukey = f"up from 4/4/4/4: {out}"
+            if all(sc.has(a) for a in uarms.values()):
+                fin = uarms[max(uarms)]
+                S["bits_needed"][ukey] = {"quantity": READ[out], "anchor": f"{plain(fin)} (finest point of the up-scan)", "base": "today's positions (measured)",
+                                          **bits_needed(sc, uarms, fin, READ[out], cells, not pos)}
+            else:
+                S["bits_needed"][ukey] = {"reading": "not read: the up-scan is not complete", "missing": [a for a in uarms.values() if not sc.has(a)]}
             S.setdefault("figures", []).extend([f"scan_{out}_{scen}"] if fig_scan(sc, out) else [])
             S["figures"].extend([f"scan_cells_{out}_{scen}"] if fig_scan_cells(sc, out) else [])
         # bending-angle-only family, anchor "bending-angle only, float"
@@ -390,6 +400,7 @@ def main():
                     else:
                         S["bits_needed"][key] = {"reading": "not read: the family is not complete", "missing": [a for a in arms.values() if not sc.has(a)]}
         L += [f"### {scen}: bits needed to stay within +10 % of the float arm (today's position base, measured)", "",
+              "Reference: \"network, float\" for the down-scans (others float); \"bending-angle only, float\" for the bending-angle-only family; for the up-scans from 4/4/4/4 (others at 4 bits) the finest scanned value of the same output. "
               "Rule: 68 % width only; in each replica the ratio curve is replaced by its running maximum from the finest value; the smallest passing bit count; "
               "quoted = 90 % quantile over replicas (median in brackets). Position bits are sub-area bits (whole sensor = +2). The design number holds for all its cells at once. "
               "The six-cell design number includes the cell |η| 1.8-2.4, pT ≥ 5 GeV with 995 tracks (5 below the 1,000 rule: minor deviation); the four-cell one pools the two forward |η| ranges as the plan's pooling order says.", "",
@@ -452,6 +463,20 @@ def main():
                     S["controls"][a] = d
                     ctl.append(f"| {txt} | {d['base']} | {lib.fmt(d['d0'])} | {lib.fmt_band(d['d0_ratio_to_base'])} | {lib.fmt(d['z0'])} | {lib.fmt_band(d['z0_ratio_to_base'])} | "
                                f"{d['correct_cluster_attached_innermost']['value']:.4f} ({d['correct_cluster_attached_innermost_base']['value']:.4f}) |")
+        for a, base, txt in (("positions_only_float", "network_float", "no angles at all, float positions (F/F/0/0)"), ("alloc_8800", "positions_only_float", "8/8/0/0 against float positions without angles"),
+                             ("forecast_network_float", "network_float", "position errors scaled to the network (forecast; positions unchanged)"),
+                             ("forecast_bending_float", "bending_float", "position errors scaled to the network (forecast; positions unchanged)")):
+            if sc.has(a) and sc.has(base):
+                d = {"control": txt, "base": lib.PLAIN.get(base, base)}
+                for q in ("d0", "z0"):
+                    d[q] = lib.val(*[sc.w(a, q)[i] for i in (0, 2)])
+                    d[q + "_ratio_to_base"] = lib.ratio(sc, a, base, q)
+                d["correct_cluster_attached_innermost"] = lib.frac(sc, a, "inner_correct", "inner_den")
+                d["correct_cluster_attached_innermost_base"] = lib.frac(sc, base, "inner_correct", "inner_den")
+                d["wrong_cluster_share_innermost"] = [sc.stats(a)["inner"]["wrong_cluster"], sc.stats(base)["inner"]["wrong_cluster"]]
+                S["controls"][a] = d
+                ctl.append(f"| {txt} | {d['base']} | {lib.fmt(d['d0'])} | {lib.fmt_band(d['d0_ratio_to_base'])} | {lib.fmt(d['z0'])} | {lib.fmt_band(d['z0_ratio_to_base'])} | "
+                           f"{d['correct_cluster_attached_innermost']['value']:.4f} ({d['correct_cluster_attached_innermost_base']['value']:.4f}) |")
         if ctl:
             L += [f"### {scen}: controls (ratio = control ÷ its base arm, same tracks)", "",
                   "| control | base arm | d0 [µm] | d0 ratio | z0 [µm] | z0 ratio | correct cluster attached, innermost (base) |", "|---|---|---|---|---|---|---|"] + ctl + [""]
@@ -471,7 +496,7 @@ def main():
             L.append("")
         # ---- other origins
         S["other_origins"] = {}
-        oarms = [a for a in FIXED + ALLOCS[1:] if sc.has(a)]
+        oarms = [a for a in FIXED + ALLOCS[1:] + ["network_float_allsent", "alloc_4444_allsent"] if sc.has(a)]
         names = sc.meta["cells"]["six"]["names"]
         ocells = [(n, "six", g, sc.meta["cells"]["six"]["counts"][g]) for g, n in enumerate(names) if not n.startswith("prompt")]
         ocells += [(f"{core.ORIGIN_NAMES[o]}, all pT", "origin", o, sc.meta["origin_counts"][o]) for o in (1, 2, 3)]
@@ -487,6 +512,33 @@ def main():
                     cellsout.append(f"{w:.1f} ({r['value']:.3f} ± {r['sd']:.3f})" + ("" if k >= 200 else " [fewer than 200 tracks]"))
                 L.append(f"| {plain(a)} | " + " | ".join(cellsout) + " |")
             L.append("")
+        # ---- b/c daughters with pT >= 5 GeV: is the d0 loss of "network, float" the cap of three clusters per sub-area?
+        pz = {}
+        names6 = sc.meta["cells"]["six"]["names"]
+        pcells = [("b/c daughters, pT >= 5 GeV", "six", names6.index("b/c daughters, pT >= 5 GeV")), ("b/c daughters, pT 2-5 GeV", "six", names6.index("b/c daughters, pT 2-5 GeV")), ("prompt, all", "origin", 0)]
+        parms = [a for a in ("implemented_now", "implemented_now_sizeblind", "implemented_now_newtable", "network_float", "network_float_allsent", "bending_float", "bending_float_allsent", "alloc_4444", "alloc_4444_allsent") if sc.has(a)]
+        if "network_float_allsent" in parms:
+            L += [f"### {scen}: the cap of three clusters per sub-area and the d0 of b/c daughters", "",
+                  "d0 68 % half-width [µm] (ratio to \"implemented now\" with 68 % band). \"Forced\" = the arm's measurements on the clusters \"implemented now\" accepted (no hit choice, no cap).", "",
+                  "| arm | " + " | ".join(c for c, *_ in pcells) + " |", "|---|" + "---|" * len(pcells)]
+            for a in parms:
+                cs = []
+                for c, part, g in pcells:
+                    w = sc.w(a, "d0", part, g)
+                    r = lib.ratio(sc, a, "implemented_now", "d0", part, g)
+                    f = lib.ratio(sc, a, "implemented_now", "d0", part, g, forced=True)
+                    pz.setdefault(a, {"name": plain(a)})[c] = {"d0_w68_um": lib.val(w[0], w[2]), "ratio_to_implemented_now": r, "forced_ratio_to_implemented_now": f}
+                    cs.append(f"{w[0]:.1f} ({lib.fmt_band(r)}; forced {f['value']:.3f})")
+                L.append(f"| {plain(a)} | " + " | ".join(cs) + " |")
+            L.append("")
+            for capped in ("network_float", "bending_float", "alloc_4444"):
+                if sc.has(capped + "_allsent"):
+                    for c, part, g in pcells:
+                        r = lib.ratio(sc, capped + "_allsent", capped, "d0", part, g)
+                        pz.setdefault("all_sent_over_capped", {}).setdefault(capped, {})[c] = r
+                        L.append(f"- {plain(capped)}, all clusters sent ÷ capped, {c}: {lib.fmt_band(r)} ({(r['value'] - 1) / max(r['sd'], 1e-9):+.1f} sd)")
+            L.append("")
+        S["bc_daughters_and_the_cap"] = pz
         # ---- secondary
         S["secondary"] = {}
         L += [f"### {scen}: secondary: separation of b/c-daughter tracks from prompt tracks (area under the curve), and prompt tails", "",
