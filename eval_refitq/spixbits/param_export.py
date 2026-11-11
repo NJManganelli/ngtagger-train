@@ -35,7 +35,8 @@ V = {"allocation": ("string", "shipped allocation name"), "parameter": ("string"
      "window": ("int", "today's window: 0 prompt (|d0| <= 0.02 cm), 1 displaced, 2 not refit today"),
      "window_arm": ("int", "window of the EMULATED d0: 0 prompt, 1 displaced"),
      "abs_eta": ("real", "|eta| of today's refit track (asinh of tanL)"), "pt": ("real", "today's refit pT [GeV]"),
-     "mult": ("real", "today's spixMaxWindowMult"), "clean_margin": ("real", "today's clean head as a margin: logit of head_clean"),
+     "mult": ("real", "today's spixMaxWindowMult"),
+     "pull": ("real", "max(|d0 - truth d0| / sigma_d0, |z0 - truth z0| / sigma_z0) of today's track; 0 for a track without a particle"), "clean_margin": ("real", "today's clean head as a margin: logit of head_clean"),
      "u": ("real", "a uniform draw in [0, 1)"), "tail": ("real", "|2 u_rank - 1|"),
      "score": ("string", "head_clean (margin), head_d0, head_z0, head_tanl, head_rinv, head_phi (log sigma_hat) or a chi2-like column"),
      "coefficient": ("string", "a, b (or sigma for score_map)"), "quantity": ("string", "donor quantity"),
@@ -94,13 +95,15 @@ def build(tables, terc, meta):
           correction("normal", "standard normal draw per track", ids, {"nodetype": "hashprng", "inputs": ids, "distribution": "stdnormal"})]
     terc_edges = ["-inf", float(terc[0]), float(terc[1]), INF]
     cs.append(correction("p_changed", "share of tracks whose accepted clusters or refit flag differ from today's",
-                         ["allocation", "matched", "window", "abs_eta", "pt", "mult", "clean_margin"],
+                         ["allocation", "matched", "window", "abs_eta", "pt", "mult", "clean_margin", "pull"],
                          per(lambda T: ints("matched", 2, lambda m: ints("window", 3, lambda w: eta_bins(lambda e: pt_bins(
-                             lambda p: binning("mult", [0.0, 2.0, INF], [binning("clean_margin", terc_edges, [float(T["p"][m, w, e, p, k, t])
-                                                                                                           for t in range(3)])
-                                                                         for k in range(2)]))))))))
+                             lambda p: binning("mult", [0.0, *PM.MULT_EDGES, INF], [binning("clean_margin", terc_edges, [binning("pull", [0.0, *PM.PULL_EDGES, INF],
+                                                                                                                         [float(T["p"][m, w, e, p, k, t, q]) for q in range(3)])
+                                                                                                                 for t in range(3)])
+                                                                                for k in range(4)]))))))))
     par = lambda fn: category("parameter", [(p, fn(p)) for p in PM.PARAMS])
-    cs.append(correction("eps", "same-cluster change of a parameter in units of today's sigma: inverse CDF at u",
+    cs.append(correction("eps", "same-cluster change of a parameter in units of the sigma the allocation adds on the track, "
+                                "sqrt(|C_arm - C_today| + (0.05 sigma_today)^2) with C_arm from cov_scale: inverse CDF at u",
                          ["allocation", "parameter", "abs_eta", "window", "u"],
                          per(lambda T: par(lambda p: eta_bins(lambda e: ints("window", 2, lambda w: inv_cdf_node(T["kernel"][p][e, w])))))))
     cs.append(correction("lambda", "scale of eps so that the 68 % residual width matches the forced refit's",
@@ -108,7 +111,7 @@ def build(tables, terc, meta):
                          per(lambda T: par(lambda p: ints("window", 2, lambda w: eta_bins(lambda e: pt_bins(
                              lambda i: float(T["lambda"][p][w, e, i]))))))))
     cs.append(correction("cov_scale", "same-cluster covariance-diagonal ratio arm / today = exp(a + b ln sigma_today), clipped to "
-                                      "0.2-50: the coefficient a or b", ["allocation", "parameter", "coefficient", "window", "abs_eta", "pt"],
+                                      "0.2-10000: the coefficient a or b", ["allocation", "parameter", "coefficient", "window", "abs_eta", "pt"],
                          per(lambda T: par(lambda p: category("coefficient", [(c, ints("window", 2, lambda w: eta_bins(lambda e: pt_bins(
                              lambda i: float(T["cov_scale"][p][w, e, i, k]))))) for k, c in enumerate(("a", "b"))])))))
     cs.append(correction("rho", "Gaussian-copula correlation of a parameter's draw with its partner's (z0 with d0, tanL with z0, "
@@ -132,9 +135,10 @@ def build(tables, terc, meta):
     cs.append(correction("donor", "changed state: the donor's value, picked by the rank draw u. matched_ratio_<p>: (arm - truth) / "
                                   "sigma_today; delta_ratio_<p>: (arm - today) / sigma_today; cov_ratio_<p>: arm / today covariance diagonal; "
                                   "d_margin_<head>: change of the head output; the spix* columns: the arm's own values",
-                         ["allocation", "quantity", "matched", "window", "abs_eta", "pt", "u"],
+                         ["allocation", "quantity", "matched", "window", "abs_eta", "pull", "u"],
                          per(lambda T: category("quantity", [(q, ints("matched", 2, lambda m: ints("window", 3, lambda w: eta_bins(
-                             lambda e: pt_bins(lambda j: binning("u", edges, [r6(v) for v in T["donors"][g][m, w, e, j, :, i]]))))))
+                             lambda e: binning("pull", [0.0, *PM.PULL_EDGES, INF], [binning("u", edges, [r6(v) for v in T["donors"][g][m, w, e, j, :, i]])
+                                                                                    for j in range(3)])))))
                                                              for q, g, i in dq]))))
     return {"schema_version": 2, "description": json.dumps(meta), "corrections": cs}
 
@@ -172,7 +176,7 @@ def main():
                 "payload_refit_calibration_sha256": payload["refit_calibration_v3.json"]["sha256"],
                 "heads": "heads_cmssw reference models", "kpt_GeV_cm": m["kpt"], "rinv_sign_times_charge": m["rinv_sign"],
                 "clean_margin_tercile_edges": [float(x) for x in terc], "knots": [float(k) for k in PM.KNOTS],
-                "n_donors": PM.N_DONORS}
+                "n_donors": PM.N_DONORS, "eps_unit": PM.EPS_UNIT, "donor_form": PM.DONOR_FORM}
         doc = build(tables, terc, meta)
         path = out / f"spixbits_{scen}.json.gz"
         with gzip.open(path, "wt") as fh:

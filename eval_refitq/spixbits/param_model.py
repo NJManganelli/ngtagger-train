@@ -11,7 +11,7 @@ arm's refit on today's clusters (forced). The model has two observed states:
                  Gaussian copula with d0's draw, tanL with z0's, 1/R and phi0 with d0's (normal-score correlations).
     covariance   diagonal scaled by exp(a + b ln sigma_today) per cell (a straight-line fit of the log ratio forced /
                  today against ln sigma_today: an added quantization variance weighs more on a precise track; clipped
-                 to 0.2-50); today's correlations kept.
+                 to 0.2-10,000); today's correlations kept.
     scores       (the six deployed-head outputs and the chi2-like inputs, in their natural variable)
                  s' = a + b s + sigma_s * eta, eta from the empirical standardized residual, conditioned on
                  |2 u_rank - 1| in [0, 0.5), [0.5, 0.9), [0.9, 1]; a second map for tracks whose emulated d0 changes window.
@@ -26,8 +26,11 @@ allocation: allocations stay comparable track by track.
 
 Cells use only what today's production stores: today's reconstructed pT (2-3, 3-5, >= 5 GeV), |eta| (0-1.1, 1.1-1.8,
 >= 1.8), window (prompt |d0| <= 0.02 cm, displaced, or "not refit today"), today's largest window multiplicity
-(<= 1, >= 2), today's clean-score tercile, and whether the OT track has a particle. Thin cells fall back by dropping,
-in this order: tercile, multiplicity, pT, |eta|.
+(<= 1, 2, 3-5, >= 6), today's clean-score tercile, whether the OT track has a particle and, for the state share of a
+track with a particle, today's pull class (max of the |d0| and |z0| pulls against the particle: < 1, 1-3, >= 3): a track
+that is off today is the one most likely to change clusters, and without this the same-cluster state inherits today's
+worst tracks. The state share is shrunk towards coarser cells (pseudo-count 50) in the order pT, |eta|, tercile, pull,
+multiplicity; the other tables fall back to pooled cells when thin.
 """
 from __future__ import annotations
 
@@ -39,7 +42,11 @@ from scipy import stats
 PARAMS = ("rInv", "phi0", "tanL", "z0", "d0")          # the helix order of the stored states
 KNOTS = np.array([0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.975, 0.99])
 PT_EDGES = np.array([3.0, 5.0])
-ETA_EDGES = np.array([1.1, 1.8])
+PULL_EDGES = np.array([1.0, 3.0])
+SHRINK = 50.0                                          # pseudo-count of the state share's shrinkage to the coarser cell
+MULT_EDGES = np.array([2.0, 3.0, 6.0])                 # today's largest window multiplicity: <= 1, 2, 3-5, >= 6
+ETA_EDGES = np.array([1.1, 1.8]) if os.environ.get("SPIXBITS_ETA", "3") == "3" else np.array([0.6, 1.1, 1.4, 1.8, 2.1])
+N_ETA = len(ETA_EDGES) + 1
 D0_SPLIT = 0.02                                        # cm
 TAIL_EDGES = np.array([0.5, 0.9])                      # |2 u_rank - 1| intervals of the score residual
 N_DONORS = 128
@@ -47,8 +54,20 @@ LAMBDA_MAX = 30.0
 # the donor's parameter values in the changed state: "ratio" = residual (or change) over today's sigma, rescaled by the
 # receiving track's sigma (stats-review-02); "absolute" = the donor's residual (or change) itself
 DONOR_FORM = os.environ.get("SPIXBITS_DONOR_FORM", "ratio")
-COV_CLIP = (float(np.log(0.2)), float(np.log(50.0)))   # limits of ln(covariance ratio) in the same-cluster state
-MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_DONORS, MIN_MAP = 1000, 400, 2000, 200, 400
+# the unit of the same-cluster parameter change eps: "today" = today's sigma (PLAN 7b as written); "added" = the sigma
+# the arm adds on this track, sqrt(|C_arm - C_today| + (0.05 sigma_today)^2), with C_arm from the covariance model, so
+# that a track's parameter noise and its new covariance move together
+EPS_UNIT = os.environ.get("SPIXBITS_EPS_UNIT", "added")
+ETA_SCHEME = os.environ.get("SPIXBITS_ETA", "3")
+
+
+def eps_unit(sg, cov_today, cov_arm):
+    """(n,) the unit of eps for one parameter."""
+    if EPS_UNIT == "today":
+        return sg
+    return np.sqrt(np.abs(cov_arm - cov_today) + (0.05 * sg) ** 2)
+COV_CLIP = (float(np.log(0.2)), float(np.log(1.0e4)))   # limits of ln(covariance ratio) in the same-cluster state
+MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_DONORS, MIN_MAP = 1000, 150, 2000, 200, 400
 HEADS = ("clean", "d0", "z0", "tanl", "rinv", "phi")
 # head inputs 14-38 as stored (ext_scan "inputs"): the columns the parametrization emits
 IN = {"spixRefitPerformed": 5, "spixNCrossings": 7, "spixNAcceptedHits": 8, "spixLayerHitMask": 9, "spixMaxWindowMult": 10,
@@ -120,22 +139,61 @@ def scores_of(inputs, margins):
     return out
 
 
-def cells(today, terciles):
+def cells(today, terciles, truth=None):
     """Cell indices of today's tracks. today: {"a" (n,5), "refit", "inputs" (n,25), "margins" (n,6), "matched"};
-    terciles: the two edges of today's clean margin."""
+    terciles: the two edges of today's clean margin; truth (n, 5): the particle's parameters (NaN without one), for
+    the pull class of the state share: max(|d0 pull|, |z0 pull|) of today's track against its particle in < 1, 1-3,
+    >= 3 (0 for a track without a particle)."""
     a = today["a"]
     kpt = today["kpt"]
     pt = kpt / np.maximum(np.abs(a[:, 0]), 1e-12)
     eta = np.abs(np.arcsinh(a[:, 2]))
     window = np.where(today["refit"], (np.abs(a[:, 4]) > D0_SPLIT).astype(int), 2)
     return {"ipt": np.searchsorted(PT_EDGES, pt, side="right"), "ieta": np.searchsorted(ETA_EDGES, eta, side="right"),
-            "window": window, "mult": (today["inputs"][:, IN["spixMaxWindowMult"]] >= 2).astype(int),
+            "window": window, "mult": np.searchsorted(MULT_EDGES, today["inputs"][:, IN["spixMaxWindowMult"]], side="right"),
             "tercile": np.searchsorted(terciles, today["margins"][:, 0], side="right"),
-            "matched": today["matched"].astype(int)}
+            "matched": today["matched"].astype(int), "pull": np.searchsorted(PULL_EDGES, today_pull(today, truth), side="right")}
 
 
-CELL_AXES = (("matched", 2), ("window", 3), ("ieta", 3), ("ipt", 3), ("mult", 2), ("tercile", 3))
-FALLBACK = ("tercile", "mult", "ipt", "ieta")         # dropped in this order when a cell is thin
+def today_pull(today, truth):
+    """max(|d0 pull|, |z0 pull|) of today's track against its particle; 0 without one."""
+    if truth is None:
+        return np.zeros(len(today["a"]))
+    sg = np.sqrt(np.maximum(today["cov_diag"], 1e-30))
+    with np.errstate(invalid="ignore"):
+        p = np.maximum(np.abs(today["a"][:, 4] - truth[:, 4]) / sg[:, 4], np.abs(today["a"][:, 3] - truth[:, 3]) / sg[:, 3])
+    return np.nan_to_num(p, nan=0.0)
+
+
+def shrunk_share(C, sel, flag, axes, order, prior=SHRINK):
+    """A dense table of the share of `flag` among the selected tracks per cell of `axes`, shrunk towards the coarser
+    cell obtained by dropping the next axis of `order` (pseudo-count `prior`), recursively up to the global share:
+    share = (k + prior * parent share) / (n + prior)."""
+    names = [n for n, _ in axes]
+    dims = [k for _, k in axes]
+    idx = [C[n][sel] for n in names]
+    y = flag[sel].astype(np.float64)
+    parent = np.full(dims, y.mean() if len(y) else 0.0)
+    kept = [n for n in names if n not in order]
+    for nxt in list(order[::-1]):                           # from the coarsest level to the full cell
+        kept.append(nxt)
+        ax = [i for i, n in enumerate(names) if n in kept]
+        shape = [dims[i] for i in ax]
+        flat = np.ravel_multi_index([idx[i] for i in ax], shape) if ax else np.zeros(len(y), np.int64)
+        size = int(np.prod(shape)) if ax else 1
+        k_ = np.bincount(flat, weights=y, minlength=size).reshape(shape or [1])
+        n_ = np.bincount(flat, minlength=size).reshape(shape or [1])
+        view = [slice(None) if i in ax else None for i in range(len(dims))]
+        parent = (k_[tuple(view)] + prior * parent) / (n_[tuple(view)] + prior)
+        parent = np.broadcast_to(parent, dims).copy()
+    return parent
+
+
+CELL_AXES = (("matched", 2), ("window", 3), ("ieta", N_ETA), ("ipt", 3), ("mult", 4), ("tercile", 3), ("pull", 3))
+# Thin cells drop axes in this order. (stats-review-02 proposed tercile, multiplicity, pT, |eta|; on the extended scan the
+# largest window multiplicity is by far the strongest predictor of a track changing clusters (about 10 % at 1, 40-45 % at
+# 2, 60-70 % from 3 on), so it is binned finer and kept longest.)
+FALLBACK = ("ipt", "ieta", "tercile", "pull", "mult")
 
 
 def pooled_table(C, sel, value_fn, min_n, axes=CELL_AXES, drop=FALLBACK, shape_tail=()):
@@ -206,11 +264,13 @@ def param_uniforms(D, rho, C):
     return {p: stats.norm.cdf(z[p]) for p in DRAW_ORDER}
 
 
-KERNEL_AXES = (("ieta", 3), ("window", 2))
-LAMBDA_AXES = (("window", 2), ("ieta", 3), ("ipt", 3))
-MAP_AXES = (("window_arm", 2), ("ieta", 3))
-DONOR_AXES = (("matched", 2), ("window", 3), ("ieta", 3), ("ipt", 3))
-DONOR_DROP = ("ipt", "ieta", "window")                 # thin donor cells pool in this order
+KERNEL_AXES = (("ieta", N_ETA), ("window", 2))
+LAMBDA_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3))
+MAP_AXES = (("window_arm", 2), ("ieta", N_ETA))
+# donors are taken from the same pull class as the receiving track (a track that is off today and changes clusters is
+# not, on average, repaired: without this the emulation repairs it too often and the prompt tails come out too small)
+DONOR_AXES = (("matched", 2), ("window", 3), ("ieta", N_ETA), ("pull", 3))
+DONOR_DROP = ("ieta", "window", "pull")                # thin donor cells pool in this order
 
 
 def sigma_today(today):
@@ -232,16 +292,16 @@ def fit(today, arm, truth, D, terciles, sel):
     """The tables of one allocation from the tracks `sel` (bool). today / arm: {"a", "cov_diag", "refit", "inputs",
     "margins"} (+ arm: "same_clusters", "forced_a", "forced_cov_diag", "forced_refit"; today: "matched", "kpt");
     truth (n, 5): the particle's helix parameters (NaN without one); D: draws()."""
-    C = cells(today, terciles)
+    C = cells(today, terciles, truth)
     sg = sigma_today(today)
     T = {}
     changed = ~arm["same_clusters"]
-    T["p"], T["p_level"] = pooled_table(C, sel, lambda m: float(changed[m].mean()) if m.any() else 0.0, MIN_P)
+    T["p"] = shrunk_share(C, sel, changed, CELL_AXES, FALLBACK)
     # ---- precision part: tracks refit today whose forced refit ran
     both = sel & today["refit"] & arm["forced_refit"]
     dprec = (arm["forced_a"] - today["a"])
     dprec[:, 1] = wrap(dprec[:, 1])
-    eps = dprec / sg
+    eps = dprec / np.stack([eps_unit(sg[:, i], today["cov_diag"][:, i], arm["forced_cov_diag"][:, i]) for i in range(5)], 1)
     Ck = dict(C, window=np.minimum(C["window"], 1))
     T["kernel"], T["rho"], T["lambda"], T["cov_scale"] = {}, {}, {}, {}
     for i, p in enumerate(PARAMS):
@@ -266,12 +326,15 @@ def fit(today, arm, truth, D, terciles, sel):
     has_truth = both & np.isfinite(truth).all(1)
     for i, p in enumerate(PARAMS):
         e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
+        cs_ = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
+        cov_model = today["cov_diag"][:, i] * np.exp(np.clip(cs_[:, 0] + cs_[:, 1] * np.log(sg[:, i]), COV_CLIP[0], COV_CLIP[1]))
+        unit_model = eps_unit(sg[:, i], today["cov_diag"][:, i], cov_model)
 
-        def lam(m, i=i, e=e):
+        def lam(m, i=i, e=e, unit_model=unit_model):
             if m.sum() < 30:
                 return 1.0
             target = w68(r_forced[m, i])
-            f = lambda L: w68(r_today[m, i] + L * sg[m, i] * e[m]) - target
+            f = lambda L: w68(r_today[m, i] + L * unit_model[m] * e[m]) - target
             lo, hi = 0.0, LAMBDA_MAX
             if f(lo) >= 0:
                 return 0.0
@@ -340,7 +403,7 @@ def fit(today, arm, truth, D, terciles, sel):
 # ---------------------------------------------------------------- apply ----
 def apply(T, today, truth, D, terciles):
     """The emulated arm for today's tracks: {"a", "cov_diag", "margins", "changed", <COUNTS and CHI2 columns>}."""
-    C = cells(today, terciles)
+    C = cells(today, terciles, truth)
     Ck = dict(C, window=np.minimum(C["window"], 1))
     sg = sigma_today(today)
     n = len(sg)
@@ -354,9 +417,10 @@ def apply(T, today, truth, D, terciles):
     for i, p in enumerate(PARAMS):
         e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
         L = lookup(T["lambda"][p], Ck, LAMBDA_AXES)
-        a[:, i] += np.where(refit_today, L * sg[:, i] * e, 0.0)
         cs = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
-        cov[:, i] *= np.where(refit_today, np.exp(np.clip(cs[:, 0] + cs[:, 1] * np.log(sg[:, i]), COV_CLIP[0], COV_CLIP[1])), 1.0)
+        cov_new = today["cov_diag"][:, i] * np.exp(np.clip(cs[:, 0] + cs[:, 1] * np.log(sg[:, i]), COV_CLIP[0], COV_CLIP[1]))
+        a[:, i] += np.where(refit_today, L * eps_unit(sg[:, i], today["cov_diag"][:, i], cov_new) * e, 0.0)
+        cov[:, i] = np.where(refit_today, cov_new, cov[:, i])
     s_today = scores_of(today["inputs"], today["margins"])
     Cm = dict(Ck, window_arm=(np.abs(a[:, 4]) > D0_SPLIT).astype(int))
     tail = np.searchsorted(TAIL_EDGES, np.abs(2 * D["u_rank"] - 1), side="right")

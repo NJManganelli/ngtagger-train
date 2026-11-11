@@ -34,6 +34,7 @@ CHI2 = ("spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2IT
 SCORES = tuple(f"head_{h}" for h in HEADS) + CHI2
 PARTNER = {"z0": "d0", "tanL": "z0", "rInv": "d0", "phi0": "d0"}
 D0_SPLIT, MISSING = 0.02, -999.0
+EPS_UNIT = "added"      # the unit of eps: the sigma the allocation adds on the track (see the README); must match the file
 
 
 def meta(cset):
@@ -91,7 +92,9 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
     matched = np.isfinite(truth).all(1).astype(np.int64)
     mult = np.asarray(columns["spixMaxWindowMult"], np.float64)
     sg = np.sqrt(np.maximum(cov_diag, 1e-30))
-    changed = draws["u_state"] < cset["p_changed"].evaluate(allocation, matched, window, abs_eta, pt, mult, margins[:, 0])
+    with np.errstate(invalid="ignore"):
+        pull = np.nan_to_num(np.maximum(np.abs(a[:, 4] - truth[:, 4]) / sg[:, 4], np.abs(a[:, 3] - truth[:, 3]) / sg[:, 3]), nan=0.0)
+    changed = draws["u_state"] < cset["p_changed"].evaluate(allocation, matched, window, abs_eta, pt, mult, margins[:, 0], pull)
     # ---- same clusters
     z = {"d0": ndtri(np.clip(draws["u_rank"], 1e-12, 1 - 1e-12))}
     for p in ("z0", "tanL", "rInv", "phi0"):
@@ -101,10 +104,12 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
     for i, p in enumerate(PARAMS):
         e = cset["eps"].evaluate(allocation, p, abs_eta, w2, ndtr(z[p]))
         lam = cset["lambda"].evaluate(allocation, p, w2, abs_eta, pt)
-        new_a[:, i] += np.where(refit, lam * sg[:, i] * e, 0.0)
         lr = cset["cov_scale"].evaluate(allocation, p, "a", w2, abs_eta, pt) \
             + cset["cov_scale"].evaluate(allocation, p, "b", w2, abs_eta, pt) * np.log(sg[:, i])
-        new_cov[:, i] *= np.where(refit, np.exp(np.clip(lr, np.log(0.2), np.log(50.0))), 1.0)
+        cov_i = cov_diag[:, i] * np.exp(np.clip(lr, np.log(0.2), np.log(1.0e4)))
+        unit = np.sqrt(np.abs(cov_i - cov_diag[:, i]) + (0.05 * sg[:, i]) ** 2) if EPS_UNIT == "added" else sg[:, i]
+        new_a[:, i] += np.where(refit, lam * unit * e, 0.0)
+        new_cov[:, i] = np.where(refit, cov_i, new_cov[:, i])
     w_arm = (np.abs(new_a[:, 4]) > D0_SPLIT).astype(np.int64)
     tail = np.abs(2 * draws["u_rank"] - 1)
     today = {f"head_{h}": _natural("head_", margins[:, i]) for i, h in enumerate(HEADS)}
@@ -118,7 +123,7 @@ def apply(cset, allocation, a, cov_diag, refit, margins, columns, truth, kpt, id
     # ---- changed: the donor's values
     ch = np.flatnonzero(changed)
     if len(ch):
-        don = lambda q: cset["donor"].evaluate(allocation, q, matched[ch], window[ch], abs_eta[ch], pt[ch], draws["u_rank"][ch])
+        don = lambda q: cset["donor"].evaluate(allocation, q, matched[ch], window[ch], abs_eta[ch], pull[ch], draws["u_rank"][ch])
         for i, p in enumerate(PARAMS):
             has = matched[ch] > 0
             new_a[ch, i] = np.where(has, np.where(has, truth[ch, i], 0.0) + sg[ch, i] * don(f"matched_ratio_{p}"),
