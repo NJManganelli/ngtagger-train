@@ -99,18 +99,27 @@ def matrix(T):
     return X.astype(np.float32), list(F)
 
 
+def _extended_only():
+    """The heads exist for the extended collection only; FAMILY names the prompt tables, which are the extended ones
+    only while common.COLLECTION says so."""
+    import common as CM
+    assert CM.COLLECTION == "extended", "the deployed heads are defined on the extended track collection"
+
+
 def nano_branches(keys):
     return TM.nano_branches(keys, FAMILY, "", with_truth=False)
 
 
 def stored_columns(A):
     """The per-track columns of the nano's own (CMSSW) refit result: trackmva.tracks_from_batch."""
+    _extended_only()
     return TM.tracks_from_batch(A, FAMILY, "", with_truth=False)[0]
 
 
 def refuse_truth(path):
     import uproot
     import common as CM
+    _extended_only()
     with uproot.open(str(path)) as fh:
         t = fh["Events"]
         titles = {b: t[CM.file_branch(b)].title for b in TM.online_branches(t.keys(), FAMILY, "")}

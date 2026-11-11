@@ -1,24 +1,27 @@
 """The parametrization of PLAN.md section 7b (rules: reviews/stats-review-02-parametrization.md): from today's
 extended-collection tracks ("implemented now") to the tracks a shipped bit allocation delivers, per scenario.
 
-No fitted mixture. Per allocation the extended scan gives, track by track, today's result, the arm's result and the
-arm's refit on today's clusters (forced). The model has two observed states:
+No fitted mixture. Per allocation the extended scan gives, track by track, today's result, the arm's result (free)
+and the arm's refit on today's clusters (forced): precision part = forced - today, hit-choice part = free - forced.
 
-  SAME CLUSTERS (precision part)
+  PRECISION PART, for every track that today refits
     parameters   q' = q + lambda * s_add(q) * eps_q, with s_add the sigma the allocation adds on this track
                  (sqrt(|C_arm - C_today| + (0.05 sigma_today)^2), C_arm from the covariance model below) and eps_q from
-                 the empirical inverse CDF of (forced - today) / s_add (knots KNOTS, clamped); lambda per cell from a root find so that the 68 %
-                 width of the residual to truth equals the forced refit's. d0 is drawn with u_rank; z0 through a
-                 Gaussian copula with d0's draw, tanL with z0's, 1/R and phi0 with d0's (normal-score correlations).
-    covariance   diagonal scaled by exp(a + b ln sigma_today + s eta) per cell (a straight-line fit of the log ratio forced /
-                 today against ln sigma_today: an added quantization variance weighs more on a precise track; clipped
-                 to 0.2-10,000); today's correlations kept.
+                 the empirical inverse CDF of (forced - today) / s_add over all forced refits (knots KNOTS, clamped);
+                 lambda per cell from a root find so that the 68 % width of the residual to truth equals the forced
+                 refit's. d0 is drawn with u_rank; z0 through a Gaussian copula with d0's draw, tanL with z0's, 1/R and
+                 phi0 with d0's (normal-score correlations).
+    covariance   diagonal scaled by exp(a + b ln sigma_today + s eta) per cell (a straight-line fit of the log ratio
+                 forced / today against ln sigma_today with its empirical scatter: an added quantization variance weighs
+                 more on a precise track; clipped to 0.2-10,000); today's correlations kept.
     scores       (the six deployed-head outputs and the chi2-like inputs, in their natural variable)
-                 s' = a + b s + sigma_s * eta, eta from the empirical standardized residual, conditioned on
-                 |2 u_rank - 1| in [0, 0.5), [0.5, 0.9), [0.9, 1]; a second map for tracks whose emulated d0 changes window.
+                 s' = a + b s + sigma_s * eta, fitted on the tracks without a material hit-choice part; eta from the
+                 empirical standardized residual, conditioned on |2 u_rank - 1| in [0, 0.5), [0.5, 0.9), [0.9, 1].
     hits, mask   unchanged.
-  CHANGED (hit-choice part; also refit flips), with the observed share p per cell
-    a donor from the cell's changed tracks, picked by u_rank, supplies everything together: residuals to truth over
+  HIT-CHOICE PART, with the observed share p per cell: the tracks whose free result differs materially from the forced
+  one (more than CHOICE_SIGMA of today's sigma in d0 or z0, or another refit flag or layer mask). A swap between the
+  particle's two clusters on overlapping modules, which is most cluster changes, is below that and stays above.
+    a donor from the cell's such tracks, picked by u_rank, supplies everything together: residuals to truth over
     today's sigma (tracks with a particle: the residual is replaced) or changes over today's sigma (tracks without),
     covariance ratios, the changes of the head outputs, and the arm's own hit counts, layer mask and chi2-like inputs.
 
@@ -272,6 +275,23 @@ def cov_model_of(T, p, cov_today, sg, Ck, D):
     return cov_today * np.exp(np.clip(cs[:, 0] + cs[:, 1] * np.log(sg) + cs[:, 2] * eta, COV_CLIP[0], COV_CLIP[1]))
 
 
+CHOICE_SIGMA = 1.0
+
+
+def choice_changed(today, arm):
+    """The hit-choice part of a track is material: the arm's free result differs from its refit on today's clusters
+    (forced) by more than CHOICE_SIGMA of today's sigma in d0 or z0, or its refit flag or layer mask differ. A swap
+    between the particle's two clusters on overlapping modules (most cluster changes) moves the track by less and
+    stays in the precision part, where the track keeps its identity. (Code review round 2. Trial on 200 events of AAAA,
+    five allocations: the share of tracks sent to the donor part falls from 29-43 % with "any cluster differs" to 14-35 %;
+    closure failures 9 / 11 / 10 at thresholds 0 / 0.3 / 1 sigma; adding the donor's free - forced on top of the precision
+    part instead of replacing the residual gave 30.)"""
+    sg = sigma_today(today)
+    d = np.abs(arm["a"] - arm["forced_a"]) / sg
+    return (d[:, 3] > CHOICE_SIGMA) | (d[:, 4] > CHOICE_SIGMA) | (arm["refit"] != arm["forced_refit"]) \
+        | (arm["inputs"][:, IN["spixLayerHitMask"]] != today["inputs"][:, IN["spixLayerHitMask"]])
+
+
 KERNEL_AXES = (("ieta", N_ETA), ("window", 2))
 LAMBDA_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3))
 MAP_AXES = (("window_arm", 2), ("nacc", 4), ("ieta", N_ETA))
@@ -303,7 +323,7 @@ def fit(today, arm, truth, D, terciles, sel):
     C = cells(today, terciles, truth)
     sg = sigma_today(today)
     T = {}
-    changed = ~arm["same_clusters"]
+    changed = choice_changed(today, arm)
     T["p"] = shrunk_share(C, sel, changed, CELL_AXES, FALLBACK)
     # ---- precision part: tracks refit today whose forced refit ran
     both = sel & today["refit"] & arm["forced_refit"]
@@ -357,7 +377,7 @@ def fit(today, arm, truth, D, terciles, sel):
             return 0.5 * (lo + hi)
         T["lambda"][p], _ = pooled_table(Ck, has_truth, lam, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"))
     # ---- scores in the same-cluster state: linear map in the natural variable + empirical residual
-    same = sel & arm["same_clusters"] & today["refit"]
+    same = sel & ~changed & today["refit"]
     s_today, s_arm = scores_of(today["inputs"], today["margins"]), scores_of(arm["inputs"], arm["margins"])
     Cm = dict(Ck, window_arm=(np.abs(arm["a"][:, 4]) > D0_SPLIT).astype(int))
     tail = np.searchsorted(TAIL_EDGES, np.abs(2 * D["u_rank"] - 1), side="right")

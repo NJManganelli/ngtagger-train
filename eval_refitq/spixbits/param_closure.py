@@ -155,7 +155,8 @@ def closure_of(T, today, arm, em, truth, W):
         if abs(v["emu"] - v["act"]) > tol:
             res["material"].append(f"end to end {name}: emulated {v['emu']:.4f} vs actual {v['act']:.4f} (tolerance {tol:.4f})")
     # reported only
-    res["changed_share"] = {"actual": float((~arm["same_clusters"]).mean()), "emulated": float(em["changed"].mean())}
+    res["changed_share"] = {"actual": float(PM.choice_changed(today, arm).mean()), "emulated": float(em["changed"].mean()),
+                            "accepted_clusters_differ_from_today": float((~arm["same_clusters"]).mean())}
     hq = lambda x: [float(v) for v in np.quantile(x[np.isfinite(x)], [0.16, 0.5, 0.84])]
     res["head_outputs_q16_q50_q84"] = {h: {"today": hq(today["margins"][:, i]), "actual": hq(arm["margins"][:, i]),
                                            "emulated": hq(em["margins"][:, i])} for i, h in enumerate(PM.HEADS)}
@@ -245,7 +246,7 @@ def run(a):
                     if which == "tagger" and judged and (auc_e - 0.5) > tol:
                         c["material"].append(f"classifier (tagger inputs): AUC actual vs emulated {auc_e:.3f} "
                                              f"(tolerance 0.5 + {tol:.3f}; actual vs today {auc_0:.3f})")
-                c["kappa_actual"] = kappa(T, ~arms[al]["same_clusters"])
+                c["kappa_actual"] = kappa(T, PM.choice_changed(today, arms[al]))
                 c["kappa_emulated"] = kappa(T, em["changed"])
             res["allocations"][al] = c
             res["material"] += [f"{al}: {m}" for m in c["material"]]
