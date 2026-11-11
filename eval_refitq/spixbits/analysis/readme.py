@@ -88,6 +88,9 @@ def conclusions(fp, sn, nf):
             else:
                 parts.append(f"{s}: not yet available")
         C.append(f"- {txt}: " + "; ".join(parts) + ("." if out in ("alpha", "beta") else " (sub-area bits; whole sensor = +2)."))
+    C.append("- Reading of the angle rows: with float positions, the 68 % widths of prompt tracks move by well under 1 % whether α or β is sent at 2-7 bits or not at all, so the +10 % rule passes even for \"not sent\". "
+             "This is a statement about this replay and this quantity only: the angles are placeholders, the skip prices are not re-derived, and the widths of prompt tracks are not where angles are expected to act "
+             "(hit choice, tails, displaced tracks and the track-MVA heads; the scan tables give attachment, wrong-cluster shares and tails per point). It is reported, not a case for dropping an angle.")
     if not any_bits:
         C.append("- No down-scan was complete on all five files when this draft was made; the curves below show the points that exist.")
     # y curve sentence from whatever exists

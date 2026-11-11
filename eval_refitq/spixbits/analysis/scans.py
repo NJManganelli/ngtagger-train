@@ -349,6 +349,10 @@ def main():
                     rows[a]["hit_pull_rms"] = {k: v["rms_within_5"] for k, v in sc.stats(a)["correct_hit_pull"]["all surfaces"].items()}
                     rows[a]["track_pull_rms"] = {q: sc.stats(a)["track_pull"][q]["rms_within_5"] for q in ("d0", "z0")}
                     rows[a]["single_hit_layer1_p40"] = sc.stats(a)["single_hit_layer1_p40"]
+                    rows[a]["correct_cluster_attached_innermost"] = lib.frac(sc, a, "inner_correct", "inner_den")
+                    rows[a]["wrong_cluster_share_innermost"] = sc.stats(a)["inner"]["wrong_cluster"]
+                    rows[a]["wrong_cluster_share_of_accepted"] = sc.stats(a)["hits"]["wrong_cluster_share_of_accepted"]
+                    rows[a]["prompt_share_d0_off_by_more_than_100um"] = lib.frac(sc, a, "tail100", "n")
                 S["scans"][out][anchor] = {"points": rows, "missing": missing}
                 if len(rows) > 1:
                     ttl = "others float (down from \"network, float\")" if anchor == "down" else "others at 4 bits (up from 4/4/4/4)"
@@ -359,7 +363,11 @@ def main():
                         ex = (("step [µm] / sub-area bits / whole-sensor bits", lambda a, d: f"{d['step_um']:.3g} / {d['sub_area_bits']} / {d['whole_sensor_bits']}"),)
                     else:
                         ex = (("bits", lambda a, d: "not sent" if d["bits"] == 0 else str(d["bits"])),)
-                    ex += (("d0 / z0 pull RMS", lambda a, d: f"{d['track_pull_rms']['d0']:.2f} / {d['track_pull_rms']['z0']:.2f}"),)
+                    ex += (("d0 / z0 pull RMS", lambda a, d: f"{d['track_pull_rms']['d0']:.2f} / {d['track_pull_rms']['z0']:.2f}"),
+                           ("d0 / z0 95 % half-width [µm] (plotted, not read)", lambda a, d: f"{d['d0_w95']:.0f} / {d['z0_w95']:.0f}"),
+                           ("correct cluster attached, innermost", lambda a, d: f"{d['correct_cluster_attached_innermost']['value']:.4f} ± {d['correct_cluster_attached_innermost']['sd']:.4f}"),
+                           ("wrong-cluster share: innermost / all accepted hits", lambda a, d: f"{d['wrong_cluster_share_innermost']:.4f} / {d['wrong_cluster_share_of_accepted']:.4f}"),
+                           ("prompt share with \\|d0 − true\\| > 100 µm", lambda a, d: f"{d['prompt_share_d0_off_by_more_than_100um']['value']:.4f}"))
                     L += md_rows(rows, extra=ex) + [""]
             # bits needed: down-scan, anchor "network, float"
             arms = {b: scan_arm("down", out, b) for b in bits_all}

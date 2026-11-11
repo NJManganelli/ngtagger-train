@@ -127,7 +127,7 @@ def analyse(sc, s_base, T, P):
             if d.get("no_measurable_sensitivity"):
                 d["reading"] = f"no measurable sensitivity to the {o} step: network value = measured {w0:.1f} um"
                 d["value_um"], d["band_um"] = float(w0), [float(lib.band(r0)[0]), float(lib.band(r0)[1])]
-            elif WA is not None and not reasons:
+            elif WA is not None and WB is not None and not reasons:
                 vals = [WA] + ([WB] if WB else [])
                 lo = min(lib.band(v[1])[0] for v in vals)
                 hi = max(lib.band(v[1])[1] for v in vals)
@@ -142,7 +142,7 @@ def analyse(sc, s_base, T, P):
                 d["value_um"], d["band_um"] = None, None
                 d["reading"] = f"not given yet (forecast arm not complete); measured upper bound {w0:.1f} um"
                 if WA is not None:
-                    d["reading"] += f"; straight line, informational only: {WA[0]:.1f} um"
+                    d["reading"] += f"; straight line{', informational only' if reasons else ' (meets the rule; band pending the forecast arm)'}: {WA[0]:.1f} um"
             # bits needed at the network's base (model based): numerator measured where step^2/12 >= gap
             if WA is not None and len(pts) == len(POS_BITS[o]):
                 s_all = np.array([s0] + [s0 + step_um(b) ** 2 / 12 for b, _ in pts[::-1]])  # ascending in s
