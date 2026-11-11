@@ -364,6 +364,8 @@ def worker(a):
     units = units_of(reg, a.files, a.scen)
     i, n = (int(x) for x in a.shard.split("/"))
     mine = units[i::n]
+    if a.reverse:                                               # an extra worker helping a slow shard from its end
+        mine = mine[::-1]
     log(f"worker {i}/{n}: {len(mine)} of {len(units)} units, pid {os.getpid()}")
     S = None
     for u in mine:
@@ -518,6 +520,7 @@ def main(argv=None):
     ap.add_argument("--blank", action="store_true")
     ap.add_argument("--no-link-tables", action="store_true")
     ap.add_argument("--refresh-registry", action="store_true")
+    ap.add_argument("--reverse", action="store_true", help="worker: take the shard's units from the end")
     ap.add_argument("--dry", action="store_true", help="invalidate: only list the units")
     a = ap.parse_args(argv)
     return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd, "invalidate": invalidate}[a.job](a)
