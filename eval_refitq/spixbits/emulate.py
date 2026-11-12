@@ -335,6 +335,9 @@ def base(ctx, geo, A, net, links, LT=None, defect=""):
     # network's float bending angle (SmartPixels beta) of every cluster, whatever the arm then sends. A cluster without
     # angle truth (class C) is ranked with the bending angle it has (the CNN stand-in's: the chip ranks what it
     # measures, it does not know the truth class); a cluster with no bending angle at all ranks last (pT 0).
+    # The angle is used as the network gives it: its median residual of about -0.025 in cot (three times a 2 GeV track's
+    # bend on barrel layer 1) is NOT removed. Removing it would narrow sigma(1 / pT) by 6 % there (4.06 -> 3.80 / GeV); the
+    # estimate is noise on the inner layers either way and the angles are placeholders: documented (PLAN.md 4c), not tuned.
     B["pt_bend"] = np.where(B["net_hasB"], pt_from_bending_angle(
         B["net_B"], K["globalPhi"].astype(np.float64), X["globalR"].astype(np.float64), X["globalZ"].astype(np.float64),
         geo["ex"][m], geo["ez"][m]), 0.0)

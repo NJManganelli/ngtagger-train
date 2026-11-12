@@ -13,5 +13,8 @@ true angle (median pT ratio 1.00); with the network's angle the estimate is nois
 layer 1: a 2 GeV track bends by 0.008 in cot there against a resolution of about 0.075).
 Expected: results close to version 1's for the 30 common scenarios (the cap changes which clusters are sent on about 2 % of
 layer-1 clusters); the up-scans approach the network-float values monotonically.
+Left out on purpose (physicist, 2026-11-11: not requested): bending_float, alloc_6604_wholesensor, the bending-angle-only
+family beyond 6/6/0/4 and the global-range twins. (Line added 2026-11-12 after the run, code review round 3 LOW 5; the run's
+own copy of this text is in the lane job's launch.json.)
 Outputs: /Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2 (about 4.4 GB; the internal disk has 14 GB free against a 12 GB
 stop rule). Version 1's outputs are untouched.

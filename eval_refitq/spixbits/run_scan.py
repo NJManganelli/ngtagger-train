@@ -223,6 +223,8 @@ def truth_rows(S, A, ctx, start, tr, pop, seq, path_, cx, B, has_vz):
          "origin": tr["origin"][pop].astype(np.int8), "disc_going": AR.disc_going(path_)[pop],
          "slot_surface": _pad(seq[pop], -1).astype(np.int8),
          "crossing_cluster": np.where(prim_ci >= 0, prim_ci - ctx["coff"][ev][:, None], -1).astype(np.int32),
+         # "..._sent_under_cap": the pT-ranked cap. In the first scan's truth files (scratch_local/spixbits/units) the same
+         # name meant the random cap: never read one scan's truth files with the other's units (PLAN.md 4c)
          "n_crossing_clusters": cx[1], "crossing_cluster_sent_under_cap": sent,
          "crossing_cluster_sent_under_random_cap": sent_random, "crossing_cluster_pt_from_bending_GeV": pt_bend.astype(f32),
          "crossing_cluster_n_in_subarea": np.minimum(nsub, 127).astype(np.int8),
