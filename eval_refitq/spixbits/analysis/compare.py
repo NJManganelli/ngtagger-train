@@ -12,6 +12,7 @@ import sys
 
 import core
 import lib
+import scans
 
 
 def cache_of(tag):
@@ -20,7 +21,8 @@ def cache_of(tag):
 
 def main(tag, ref=""):
     lib.check_disk()
-    reg = {a["name"] for a in core.registry()}
+    scans.REG = core.registry()
+    reg = {a["name"] for a in scans.REG}
     refname = ref or "first scan"
     res, L = {}, [f"## {tag} against {refname}: same tracks, paired by event", "",
                   "68 % half-width of |delivered − true| in µm; ratio = " + tag + " ÷ " + refname + " with its 68 % paired bootstrap band. In-sample; placeholder angles.", ""]
@@ -44,7 +46,8 @@ def main(tag, ref=""):
                     r = lib.val(wa[0] / wb[0], wa[2] / wb[2])
                     res[scen].setdefault(arm, {}).setdefault(q, {})[c] = {"w68_um": wa[0], "reference_w68_um": wb[0], "ratio": r}
                     cs.append(f"{wa[0]:.1f} / {wb[0]:.1f} | {lib.fmt_band(r)}")
-                L.append(f"| {arm} | " + " | ".join(cs) + " |")
+                res[scen][arm]["name"] = scans.plain(arm)
+                L.append(f"| {scans.plain(arm)} | " + " | ".join(cs) + " |")
             L.append("")
     out = lib.STUDY / "results" / f"compare_{tag}_vs_{(ref or 'first_scan')}"
     json.dump(res, open(str(out) + ".json", "w"), indent=1)

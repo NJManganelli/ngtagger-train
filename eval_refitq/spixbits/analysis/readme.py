@@ -109,7 +109,9 @@ def conclusions(fp, sn, nf):
     except KeyError:
         pass
     C.append("")
-    C.append("**Up from 4/4/4/4 (the other three outputs stay at 4 bits; bits needed to stay within +10 % of the finest scanned value of the same output).**")
+    endp = any(sn["detector_scenarios"].get(s, {}).get("bits_needed", {}).get("up from 4/4/4/4: y", {}).get("reference_is_unquantized_end_point") for s in scs)
+    C.append("**Up from the 4/4/4/4 floor, one output at a time towards the unquantized limit, the other three held at 4 bits (bits needed to stay within +10 % of "
+             + ("the unquantized end point of the same output" if endp else "the finest scanned value of the same output; this scan has no unquantized end point") + ").**")
     for out, txt in (("y", "y (read on d0)"), ("x", "x (read on z0)"), ("beta", "β (read on d0)"), ("alpha", "α (read on z0)")):
         parts = []
         for s in scs:
@@ -125,7 +127,8 @@ def conclusions(fp, sn, nf):
             pts = sn["detector_scenarios"][scs[0]]["scans"][o]["up"]["points"]
             if len(pts) > 1:
                 lab = (lambda p: f"{p['step_um']:.3g} µm") if o in ("x", "y") else (lambda p: "not sent" if p["bits"] == 0 else f"{p['bits']} bits")
-                C.append(f"- {o} up-scan, {scs[0]}, {q} in µm: " + ", ".join(f"{lab(p)}: {p[q]['value']:.1f}" for p in sorted(pts.values(), key=lambda p: p["bits"])) + ".")
+                lab2 = lambda p: "unquantized" if p["bits"] == 99 else lab(p)
+                C.append(f"- {o} up-scan, {scs[0]}, {q} in µm: " + ", ".join(f"{lab2(p)}: {p[q]['value']:.1f}" for p in sorted(pts.values(), key=lambda p: p["bits"])) + ".")
     except KeyError:
         pass
     C.append("")
@@ -235,7 +238,7 @@ def headline(fp, sn):
 LIMITS = """- The angles are placeholders: the barrel-trained PixelAV network stands in on the discs as well; clusters without angle truth keep the CNN stand-in, judged with the network's narrower errors. Nothing here is a statement about the angle quality of the real sensor.
 - A particle's secondary clusters (delta rays, fragments) carry the parent's true angle plus a residual, so no angle can reject them here; a real network would not report the parent's direction for them.
 - The simulated sensors are 25 × 100 µm, 150 µm thick; the SmartPixels sensor is 12.5 × 50 µm, 100 µm thick. Occupancy and merging are those of the simulated sensor.
-- At most three clusters per 2.4 mm sub-area are sent, chosen at random (the chip's real choice is not known); clusters straddling a sub-area edge are not modelled.
+- At most three clusters per 2.4 mm sub-area are sent, CAPRULE; clusters straddling a sub-area edge are not modelled.
 - Position and angle residuals of one cluster are uncorrelated here (they are correlated in the network).
 - Skip prices, seed model and material scale are today's in every quantization scenario; the one bound on the skip price was not run.
 - v3's window already loses correct clusters in every quantization scenario; quantization scenarios with quantized positions widen it by the quantization variance and recover some.
@@ -257,6 +260,22 @@ NOT_RUN = """- Skip price re-derived at the 16-bit point (needs the cut fit; a s
 - Stale or pending launch checks of the implementation (planted defects, bit-equal rerun of a unit): see ~/smartpixels/scratch_local/spixbits/RESUME.md."""
 
 
+def partial_note(prov):
+    """A line that marks the write-up as partial and names the groups of the registry that are not complete."""
+    reg = core.registry()
+    pend = {}
+    for s, v in prov["detector_scenarios"].items():
+        miss = set(v["quantization_scenarios_missing"]) | set(v["quantization_scenarios_partial"])
+        for a in reg:
+            if a["name"] in miss:
+                pend.setdefault(a["group"], set()).add(s)
+    names = {"scan_down": "down-scans", "scan_up": "up-scans", "controls": "controls", "bending": "bending-angle-only family", "allocations": "16-bit allocations", "fixed": "fixed points", "priority": "anchors"}
+    if not pend:
+        return []
+    return ["**PARTIAL WRITE-UP.** Units directory: `" + str(core.UNITS) + "`. Pending (not complete on all five files): "
+            + "; ".join(f"{names.get(g, g)} ({', '.join(sorted(ss))})" for g, ss in pend.items()) + ". Sections that need them say \"not yet available\" or \"missing\".", ""]
+
+
 def main():
     lib.check_disk()
     fp = json.load(open(lib.RESULTS / "fixed_points.json"))
@@ -267,6 +286,7 @@ def main():
          f"Draft made {prov['run_at_local']} (machine-local time) from the scan units that existed then. The scan was "
          + ("still running" if any(v["quantization_scenarios_analysed"] < prov["quantization_scenarios_in_registry"] for v in prov["detector_scenarios"].values()) else "complete") + ". Specification: `PLAN.md`. "
          "Re-make at any time: `python eval_refitq/spixbits/analysis/run_all.py` in the worktree `ngtagger-train-spixbits` (branch `spixbits`).", "",
+         *partial_note(prov),
          "| detector scenario | quantization scenarios complete on all five scan files (of %d) | quantization scenarios present on some files only |" % prov["quantization_scenarios_in_registry"], "|---|---|---|"]
     for s, v in prov["detector_scenarios"].items():
         L.append(f"| {s} | {v['quantization_scenarios_analysed']} | {len(v['quantization_scenarios_partial'])} |")
@@ -324,7 +344,9 @@ def main():
         L += [f"- {s}: d0 or z0 pull RMS outside 1 ± 0.15 in {npull} quantization scenario × quantity cases (the baseline's own pulls are outside; see conclusions)."] + [f"- {f}" for f in other]
     for s in sn["detector_scenarios"]:
         L += [f"- {s}, outside the fixed points: {f}" for f in sn["detector_scenarios"][s].get("flags", [])]
-    L += ["", "## 9. Limitations", "", LIMITS, "", "## 10. Not run", "", NOT_RUN, "",
+    cap = next((a["spec"].get("cap") for a in core.registry() if a["name"] == "network_float"), True)
+    caprule = ("the three of highest pT, the pT taken from the bending angle assuming d0 = 0" if cap == "pt" else "chosen at random (the chip's real choice is not known)")
+    L += ["", "## 9. Limitations", "", LIMITS.replace("CAPRULE", caprule), "", "## 10. Not run", "", NOT_RUN, "",
           "## 11. Files", "",
           "- `results/fixed_points.json`, `results/scans.json`, `results/near_full.json`: all numbers, with the list of quantization scenarios complete, partial and missing when they were made.",
           "- `results/fixed_points_<detector scenario>.md`, `results/fixed_points_cross.md`, `results/scans_<detector scenario>.md`, `results/near_full.md`: tables.",

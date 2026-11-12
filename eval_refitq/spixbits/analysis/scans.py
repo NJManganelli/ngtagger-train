@@ -37,6 +37,22 @@ def scan_arm(anchor, out, b):
     return f"{anchor}_{out}_" + ("notsent" if b == 0 else f"{b}b")
 
 
+def up_bits(out):
+    """Bit counts of the up-scan of one output in this scan's registry (the first scan: y to 10, x to 8; the rerun:
+    y to 11, x to 9), 0 = not sent for the angles; 4 bits is 4/4/4/4 itself."""
+    names = {a["name"] for a in REG}
+    return [b for b in range(0, 13) if b == 4 or scan_arm("up", out, b) in names]
+
+
+def up_reference(sc, out):
+    """Reference of the up-scan's +10 % rule: the unquantized end point of this output with the other three at 4 bits
+    where the scan has it (the rerun), otherwise the finest scanned value (the first scan). Returns (name, is end point)."""
+    if sc.has(f"up_{out}_float"):
+        return f"up_{out}_float", True
+    have = [b for b in up_bits(out) if sc.has(scan_arm("up", out, b))]
+    return (scan_arm("up", out, max(have)), False) if have else (None, False)
+
+
 def bending_arm(kind, b):
     """Bending-angle-only family from 6/6/0/4: kind 'beta' (beta bits) or 'xy' (x = y bits)."""
     if (kind == "beta" and b == 4) or (kind == "xy" and b == 6):
@@ -56,7 +72,7 @@ def plain(arm):
         s = "/".join(m.groups()) + f" (x {sp['step_x_um']:g} µm, y {sp['step_y_um']:g} µm)"
     extra = ""
     for tag, txt in (("_globalrange", ", one global angle range"), ("_v3window", ", v3 window unchanged"), ("_flagunusable", ", flagged angles unusable"),
-                     ("_allsent", ", all clusters sent"), ("noise_", ", Gaussian noise in place of quantization"), ("forecast_", ", position errors scaled to the network (forecast)")):
+                     ("_allsent", ", all clusters sent"), ("_caprandom", ", cap of three chosen at random"), ("noise_", ", Gaussian noise in place of quantization"), ("forecast_", ", position errors scaled to the network (forecast)")):
         if tag in arm:
             extra += txt
     if a and "whole" in a["position_range"]:
@@ -173,12 +189,12 @@ def save(fig, name):
 def fig_scan(sc, out):
     """d0 and z0 68 % width (prompt, all) against the scanned output, both anchors; 95 % width dashed."""
     pos = out in ("x", "y")
-    bits_all = POS_BITS[out] if pos else ANG_BITS
+    bits_all = sorted(set(POS_BITS[out] if pos else ANG_BITS) | set(up_bits(out)))
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.8))
     drew = False
     for ax, q in zip(axes, ("d0", "z0")):
         for anchor, lab in (("down", "others float (down from network, float)"), ("up", "others at 4 bits (up from 4/4/4/4)")):
-            pts = [(b, scan_arm(anchor, out, b)) for b in bits_all if sc.has(scan_arm(anchor, out, b))]
+            pts = [(b, scan_arm(anchor, out, b)) for b in (bits_all if anchor == "up" else (POS_BITS[out] if pos else ANG_BITS)) if sc.has(scan_arm(anchor, out, b))]
             if len(pts) < 2:
                 continue
             drew = True
@@ -194,6 +210,8 @@ def fig_scan(sc, out):
             if sc.has(ref):
                 v = sc.w(ref, q)
                 l = ax.axhline(v[0], linestyle=":", color="k" if ref == "network_float" else "gray", label=f"68 %: {txt}")
+        if sc.has(f"up_{out}_float"):
+            ax.axhline(sc.w(f"up_{out}_float", q)[0], linestyle="-.", color="C1", label=f"68 %: {out} unquantized, others at 4 bits")
         ax.set_yscale("log")
         ax.set_ylabel(f"{q} half-width about zero [um]")
         if pos:
@@ -342,14 +360,16 @@ def main():
             bits_all = POS_BITS[out] if pos else ANG_BITS
             S["scans"][out] = {}
             for anchor in ("down", "up"):
-                arms = {b: scan_arm(anchor, out, b) for b in bits_all}
+                arms = {b: scan_arm(anchor, out, b) for b in (bits_all if anchor == "down" else up_bits(out))}
+                if anchor == "up" and f"up_{out}_float" in {a["name"] for a in REG}:
+                    arms[99] = f"up_{out}_float"  # the unquantized end point, listed last
                 have = {b: a for b, a in arms.items() if sc.has(a)}
                 missing = [a for b, a in arms.items() if not sc.has(a)]
                 rows = {a: row(sc, a) for b, a in have.items()}
                 for b, a in have.items():
                     rows[a]["bits"] = b
                     if pos:
-                        rows[a].update(step_um=step_um(b), sub_area_bits=b, whole_sensor_bits=b + 2)
+                        rows[a].update(step_um=step_um(b) if b != 99 else 0.0, sub_area_bits=b, whole_sensor_bits=b + 2)
                     rows[a]["same_clusters_share"] = sc.stats(a)["same_clusters_share"]
                     rows[a]["hit_pull_rms"] = {k: v["rms_within_5"] for k, v in sc.stats(a)["correct_hit_pull"]["all surfaces"].items()}
                     rows[a]["track_pull_rms"] = {q: sc.stats(a)["track_pull"][q]["rms_within_5"] for q in ("d0", "z0")}
@@ -365,9 +385,9 @@ def main():
                     if missing:
                         L += [f"Missing (units not complete): {', '.join(missing)}", ""]
                     if pos:
-                        ex = (("step [µm] / sub-area bits / whole-sensor bits", lambda a, d: f"{d['step_um']:.3g} / {d['sub_area_bits']} / {d['whole_sensor_bits']}"),)
+                        ex = (("step [µm] / sub-area bits / whole-sensor bits", lambda a, d: "unquantized" if d["bits"] == 99 else f"{d['step_um']:.3g} / {d['sub_area_bits']} / {d['whole_sensor_bits']}"),)
                     else:
-                        ex = (("bits", lambda a, d: "not sent" if d["bits"] == 0 else str(d["bits"])),)
+                        ex = (("bits", lambda a, d: "not sent" if d["bits"] == 0 else "unquantized" if d["bits"] == 99 else str(d["bits"])),)
                     ex += (("d0 / z0 pull RMS", lambda a, d: f"{d['track_pull_rms']['d0']:.2f} / {d['track_pull_rms']['z0']:.2f}"),
                            ("d0 / z0 95 % half-width [µm] (plotted, not read)", lambda a, d: f"{d['d0_w95']:.0f} / {d['z0_w95']:.0f}"),
                            ("correct cluster attached, innermost", lambda a, d: f"{d['correct_cluster_attached_innermost']['value']:.4f} ± {d['correct_cluster_attached_innermost']['sd']:.4f}"),
@@ -383,11 +403,12 @@ def main():
                 S["bits_needed"][out] = {"reading": "not read: the down-scan is not complete", "missing": [a for a in arms.values() if not sc.has(a)]}
             # up-scan from 4/4/4/4 (others at 4 bits): reference = the finest scanned value of this output, the other three
             # staying at 4 bits ("what more bits here buy"); the plan's rule is otherwise unchanged
-            uarms = {b: scan_arm("up", out, b) for b in bits_all}
+            uarms = {b: scan_arm("up", out, b) for b in up_bits(out)}
             ukey = f"up from 4/4/4/4: {out}"
-            if all(sc.has(a) for a in uarms.values()):
-                fin = uarms[max(uarms)]
-                S["bits_needed"][ukey] = {"quantity": READ[out], "anchor": f"{plain(fin)} (finest point of the up-scan)", "base": "today's positions (measured)",
+            fin, is_end = up_reference(sc, out)
+            if fin and all(sc.has(a) for a in uarms.values()):
+                S["bits_needed"][ukey] = {"quantity": READ[out], "anchor": f"{plain(fin)} ({'the unquantized end point of the up-scan' if is_end else 'finest point of the up-scan'})",
+                                          "reference_is_unquantized_end_point": is_end, "scanned_bits": sorted(uarms), "base": "today's positions (measured)",
                                           **bits_needed(sc, uarms, fin, READ[out], cells, not pos)}
             else:
                 S["bits_needed"][ukey] = {"reading": "not read: the up-scan is not complete", "missing": [a for a in uarms.values() if not sc.has(a)]}
@@ -405,7 +426,7 @@ def main():
                     else:
                         S["bits_needed"][key] = {"reading": "not read: the family is not complete", "missing": [a for a in arms.values() if not sc.has(a)]}
         L += [f"### {scen}: bits needed to stay within +10 % of the float reference (today's position base, measured)", "",
-              "Reference: \"network, float\" for the down-scans (others float); \"bending-angle only, float\" for the bending-angle-only family; for the up-scans from 4/4/4/4 (others at 4 bits) the finest scanned value of the same output. "
+              "Reference: \"network, float\" for the down-scans (others float); \"bending-angle only, float\" for the bending-angle-only family; for the up-scans from 4/4/4/4 (others at 4 bits) the same output unquantized with the other three at 4 bits where the scan has that end point (the rerun with the pT-ranked cap), otherwise the finest scanned value (the first scan). "
               "Rule: 68 % width only; in each replica the ratio curve is replaced by its running maximum from the finest value; the smallest passing bit count; "
               "quoted = 90 % quantile over replicas (median in brackets). Position bits are sub-area bits (whole sensor = +2). The design number holds for all its cells at once. "
               "The six-cell design number includes the cell |η| 1.8-2.4, pT ≥ 5 GeV with 995 tracks (5 below the 1,000 rule: minor deviation); the four-cell one pools the two forward |η| ranges as the plan's pooling order says.", "",

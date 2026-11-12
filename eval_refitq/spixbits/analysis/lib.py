@@ -10,7 +10,7 @@ import core
 
 STUDY = Path.home() / "smartpixels/doc-archive/spix-bits-refit-study"
 RESULTS = STUDY / "results" if not core.TAG else STUDY / "results" / core.TAG
-MIN_FREE_GB = 14.5
+MIN_FREE_GB = 10.5  # the outputs of one scan are about 80 MB (caches) + 12 MB (results)
 
 
 def check_disk():
