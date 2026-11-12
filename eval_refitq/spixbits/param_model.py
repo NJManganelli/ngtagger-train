@@ -74,10 +74,16 @@ HEADS = ("clean", "d0", "z0", "tanl", "rinv", "phi")
 # head inputs 14-38 as stored (ext_scan "inputs"): the columns the parametrization emits
 IN = {"spixRefitPerformed": 5, "spixNCrossings": 7, "spixNAcceptedHits": 8, "spixLayerHitMask": 9, "spixMaxWindowMult": 10,
       "spixChi2IncXTot": 11, "spixChi2IncYTot": 12, "spixChi2IncAlphaTot": 13, "spixChi2ITAtRefit": 15,
-      "spixShiftChi2": 16, "spixLogDetRatio": 17}
+      "spixShiftChi2": 16, "spixLogDetRatio": 17, "h_nangle": 18, "h_chi2_angle_per_cl": 19, "h_chi2_pos_per_hit": 20,
+      "h_mean_wmult": 21, "h_max_angle_pull": 22, "h_second_angle_pull": 23, "h_max_pos_pull": 24}
 COUNTS = ("spixRefitPerformed", "spixNCrossings", "spixNAcceptedHits", "spixLayerHitMask", "spixMaxWindowMult")
 CHI2 = ("spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio")
-SCORES = tuple(f"head_{h}" for h in HEADS) + CHI2
+AGG = ("h_nangle", "h_chi2_angle_per_cl", "h_chi2_pos_per_hit", "h_mean_wmult", "h_max_angle_pull", "h_second_angle_pull",
+       "h_max_pos_pull")                              # the heads' aggregates over the accepted hits
+SCORES = CHI2 + AGG                                   # mapped in the precision part (natural variable)
+LINEAR = ("spixLogDetRatio", "h_nangle", "h_mean_wmult")     # natural variable = the value itself; the others log(x + 1e-3)
+N_MASK = 12                                           # layer-mask classes of the covariance map: the 12 most frequent, and "other"
+COV_SCATTER = True                                    # the covariance line's empirical scatter (False: deterministic)
 MISSING = -999.0
 # copula partners: parameter -> (the parameter whose normal draw it follows)
 PARTNER = {"z0": "d0", "tanL": "z0", "rInv": "d0", "phi0": "d0"}
@@ -114,31 +120,51 @@ def draws(run, lumi, event, track):
 
 # ---------------------------------------------------------------- today's tracks and cells ----
 def natural(name, x):
-    """A score in its natural variable: head outputs as they are (margins); chi2-like sums as log(x + 1e-3); the
-    log-determinant ratio as it is. Missing (-999) stays NaN."""
+    """A mapped input in its natural variable: chi2-like sums and pulls as log(x + 1e-3); the log-determinant ratio,
+    the number of hits with an angle and the mean window multiplicity as they are. Missing (-999) stays NaN."""
     x = np.asarray(x, np.float64)
-    miss = x <= -998
-    if name.startswith("head_") or name == "spixLogDetRatio":
-        y = x.copy()
-    else:
-        y = np.log(np.maximum(x, 0.0) + 1e-3)
-    return np.where(miss, np.nan, y)
+    y = x.copy() if name in LINEAR else np.log(np.maximum(x, 0.0) + 1e-3)
+    return np.where(x <= -998, np.nan, y)
 
 
 def unnatural(name, y):
-    if name.startswith("head_") or name == "spixLogDetRatio":
-        x = np.asarray(y, np.float64).copy()
-    else:
-        x = np.maximum(np.exp(y) - 1e-3, 0.0)
+    x = np.asarray(y, np.float64).copy() if name in LINEAR else np.maximum(np.exp(y) - 1e-3, 0.0)
     return np.where(np.isfinite(y), x, MISSING)
 
 
-def scores_of(inputs, margins):
-    """{score name: natural variable} from the stored head inputs 14-38 and the six margins."""
-    out = {f"head_{h}": natural("head_", margins[:, i]) for i, h in enumerate(HEADS)}
-    for c in CHI2:
-        out[c] = natural(c, inputs[:, IN[c]])
-    return out
+def scores_of(inputs):
+    """{name: natural variable} of the mapped inputs from the stored head inputs 14-38."""
+    return {c: natural(c, inputs[:, IN[c]]) for c in SCORES}
+
+
+def assemble_inputs(today, a, counts, values, kpt):
+    """The heads' inputs 14-38 (n, 25) of emulated tracks: the first five follow from the emulated parameters and the OT
+    track (today["ot_a"], today["ot_inputs"]); counts {COUNTS}; values {CHI2 + AGG} as stored values (-999 missing).
+    A track whose refit does not run carries the OT track's parameters, as the producer writes it."""
+    n = len(a)
+    X = np.zeros((n, 25))
+    refit = counts["spixRefitPerformed"] > 0
+    aa = np.where(refit[:, None], a, today["ot_a"])
+    inv_pt = 1.0 / np.maximum(kpt / np.maximum(np.abs(aa[:, 0]), 1e-12), 1e-3)
+    ot_inv = today["ot_inputs"][:, 0].astype(np.float64)
+    X[:, 0] = np.where(refit, inv_pt, ot_inv)
+    X[:, 1] = aa[:, 2]
+    X[:, 2] = np.abs(aa[:, 3] - today["ot_a"][:, 3])
+    X[:, 3] = np.abs(aa[:, 2] - today["ot_a"][:, 2])
+    X[:, 4] = X[:, 0] - ot_inv
+    for c in COUNTS:
+        X[:, IN[c]] = counts[c]
+    X[:, 6] = today["inputs"][:, 6]                      # spixAnyWindowTruncated: today's value
+    X[:, 14] = MISSING                                   # spixChi2ITAtOT: always missing in refit v3
+    for c in SCORES:
+        X[:, IN[c]] = values[c]
+    X[:, IN["h_nangle"]] = np.clip(np.rint(X[:, IN["h_nangle"]]), 0, np.maximum(counts["spixNAcceptedHits"], 0))
+    return X.astype(np.float32), aa
+
+
+def head_margins(heads, today, inputs, d0):
+    """The six head outputs: the real head models on (the OT track's 13 inputs, the 25 given inputs)."""
+    return heads.margins(np.hstack([today["ot_inputs"].astype(np.float32), inputs.astype(np.float32)]), d0)
 
 
 def cells(today, terciles, truth=None):
@@ -155,7 +181,16 @@ def cells(today, terciles, truth=None):
             "window": window, "mult": np.searchsorted(MULT_EDGES, today["inputs"][:, IN["spixMaxWindowMult"]], side="right"),
             "tercile": np.searchsorted(terciles, today["margins"][:, 0], side="right"),
             "nacc": np.searchsorted(NACC_EDGES, today["inputs"][:, IN["spixNAcceptedHits"]], side="right"),
+            "maskc": mask_class(today["inputs"][:, IN["spixLayerHitMask"]], today["mask_classes"]),
             "matched": today["matched"].astype(int), "pull": np.searchsorted(PULL_EDGES, today_pull(today, truth), side="right")}
+
+
+def mask_class(mask, classes):
+    """Index of the layer mask among `classes` (sorted mask values), len(classes) for any other mask."""
+    classes = np.asarray(classes, np.int64)
+    m = np.asarray(mask).astype(np.int64)
+    i = np.minimum(np.searchsorted(classes, m), len(classes) - 1)
+    return np.where(classes[i] == m, i, len(classes))
 
 
 def today_pull(today, truth):
@@ -268,11 +303,14 @@ def param_uniforms(D, rho, C):
 
 
 def cov_model_of(T, p, cov_today, sg, Ck, D):
-    """The same-cluster covariance diagonal of parameter p: today's x exp(a + b ln sigma_today + s eta(u_cov)), the
-    exponent clipped to COV_CLIP; one u_cov per track for all five parameters (their ratios move together)."""
-    cs = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
-    eta = eval_inv_cdf(np.broadcast_to(T["cov_eta"][p], (len(sg), len(KNOTS))), D["u_cov"])
-    return cov_today * np.exp(np.clip(cs[:, 0] + cs[:, 1] * np.log(sg) + cs[:, 2] * eta, COV_CLIP[0], COV_CLIP[1]))
+    """The precision part's covariance diagonal of parameter p: today's x exp(a + b ln sigma_today [+ s eta(u_cov)]),
+    the exponent clipped to COV_CLIP; a, b, s per cell and layer-mask class; one u_cov per track for all five
+    parameters (their ratios move together). COV_SCATTER False: the deterministic line alone."""
+    cs = lookup(T["cov_scale"][p], Ck, COV_AXES)
+    lr = cs[:, 0] + cs[:, 1] * np.log(sg)
+    if COV_SCATTER:
+        lr = lr + cs[:, 2] * eval_inv_cdf(np.broadcast_to(T["cov_eta"][p], (len(sg), len(KNOTS))), D["u_cov"])
+    return cov_today * np.exp(np.clip(lr, COV_CLIP[0], COV_CLIP[1]))
 
 
 CHOICE_SIGMA = 1.0
@@ -294,6 +332,9 @@ def choice_changed(today, arm):
 
 KERNEL_AXES = (("ieta", N_ETA), ("window", 2))
 LAMBDA_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3))
+# the covariance map also by today's layer mask (the hit pattern fixes most of the covariance's response)
+COV_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3), ("maskc", N_MASK + 1))
+COV_DROP = ("ipt", "ieta", "maskc")
 MAP_AXES = (("window_arm", 2), ("nacc", 4), ("ieta", N_ETA))
 # donors are taken from the same pull class as the receiving track (a track that is off today and changes clusters is
 # not, on average, repaired: without this the emulation repairs it too often and the prompt tails come out too small)
@@ -345,8 +386,8 @@ def fit(today, arm, truth, D, terciles, sel):
             y_ = np.clip(lr[ok], COV_CLIP[0], COV_CLIP[1])
             b, a_ = np.polyfit(ls[ok], y_, 1)
             return np.array([a_, b, float(np.std(y_ - a_ - b * ls[ok]))])
-        T["cov_scale"][p], _ = pooled_table(Ck, both, line, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"), (3,))
-        co_ = lookup(T["cov_scale"][p], Ck, LAMBDA_AXES)
+        T["cov_scale"][p], _ = pooled_table(Ck, both, line, MIN_LAMBDA, COV_AXES, COV_DROP, (3,))
+        co_ = lookup(T["cov_scale"][p], Ck, COV_AXES)
         zc = (np.clip(lr, COV_CLIP[0], COV_CLIP[1]) - co_[:, 0] - co_[:, 1] * ls) / np.maximum(co_[:, 2], 1e-9)
         T.setdefault("cov_eta", {})[p] = inv_cdf(zc[both & np.isfinite(zc) & (co_[:, 2] > 0)])
     for p in DRAW_ORDER[1:]:
@@ -378,7 +419,7 @@ def fit(today, arm, truth, D, terciles, sel):
         T["lambda"][p], _ = pooled_table(Ck, has_truth, lam, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"))
     # ---- scores in the same-cluster state: linear map in the natural variable + empirical residual
     same = sel & ~changed & today["refit"]
-    s_today, s_arm = scores_of(today["inputs"], today["margins"]), scores_of(arm["inputs"], arm["margins"])
+    s_today, s_arm = scores_of(today["inputs"]), scores_of(arm["inputs"])
     Cm = dict(Ck, window_arm=(np.abs(arm["a"][:, 4]) > D0_SPLIT).astype(int))
     tail = np.searchsorted(TAIL_EDGES, np.abs(2 * D["u_rank"] - 1), side="right")
     T["map"], T["eta"] = {}, {}
@@ -402,9 +443,8 @@ def fit(today, arm, truth, D, terciles, sel):
     delta[:, 1] = wrap(delta[:, 1])
     cols = {"matched_ratio": np.where(np.isfinite(r_arm), r_arm, 0.0) / sg, "delta_ratio": delta / sg,
             "cov_ratio": arm["cov_diag"] / np.maximum(today["cov_diag"], 1e-30),
-            "d_margin": arm["margins"] - today["margins"],
             "counts": np.stack([arm["inputs"][:, IN[c]] for c in COUNTS], 1),
-            "chi2": np.stack([arm["inputs"][:, IN[c]] for c in CHI2], 1)}
+            "values": np.stack([arm["inputs"][:, IN[c]] for c in SCORES], 1)}
     dims = [k for _, k in DONOR_AXES]
     dnames = [n_ for n_, _ in DONOR_AXES]
     T["donors"] = {k: np.zeros(dims + [N_DONORS, v.shape[1]]) for k, v in cols.items()}
@@ -431,16 +471,16 @@ def fit(today, arm, truth, D, terciles, sel):
 
 
 # ---------------------------------------------------------------- apply ----
-def apply(T, today, truth, D, terciles):
-    """The emulated arm for today's tracks: {"a", "cov_diag", "margins", "changed", <COUNTS and CHI2 columns>}."""
+def apply(T, today, truth, D, terciles, heads):
+    """The emulated quantization scenario for today's tracks: {"a", "cov_diag", "inputs" (n, 25: the heads' inputs
+    14-38), "margins" (the real head models `heads` on the emulated inputs), "changed", and the COUNTS / CHI2 columns}."""
     C = cells(today, terciles, truth)
     Ck = dict(C, window=np.minimum(C["window"], 1))
     sg = sigma_today(today)
-    n = len(sg)
     changed = D["u_state"] < lookup(T["p"], C, CELL_AXES)
     refit_today = today["refit"]
     out = {"changed": changed}
-    # same-cluster state
+    # precision part
     U = param_uniforms(D, T["rho"], Ck)
     a = today["a"].astype(np.float64).copy()
     cov = today["cov_diag"].astype(np.float64).copy()
@@ -450,17 +490,17 @@ def apply(T, today, truth, D, terciles):
         cov_new = cov_model_of(T, p, today["cov_diag"][:, i], sg[:, i], Ck, D)
         a[:, i] += np.where(refit_today, L * eps_unit(sg[:, i], today["cov_diag"][:, i], cov_new) * e, 0.0)
         cov[:, i] = np.where(refit_today, cov_new, cov[:, i])
-    s_today = scores_of(today["inputs"], today["margins"])
+    s_today = scores_of(today["inputs"])
     Cm = dict(Ck, window_arm=(np.abs(a[:, 4]) > D0_SPLIT).astype(int))
     tail = np.searchsorted(TAIL_EDGES, np.abs(2 * D["u_rank"] - 1), side="right")
-    sc = {}
+    values = {}
     for s in SCORES:
         co = lookup(T["map"][s], Cm, MAP_AXES)
         eta = eval_inv_cdf(T["eta"][s][tail], D["u_score"])
         y = co[:, 0] + co[:, 1] * s_today[s] + co[:, 2] * eta
-        sc[s] = np.where(refit_today, y, s_today[s])             # a track not refit today keeps its values
+        values[s] = unnatural(s, np.where(refit_today, y, s_today[s]))    # a track not refit today keeps its values
     counts = {c: today["inputs"][:, IN[c]].astype(np.float64).copy() for c in COUNTS}
-    # changed state: the donor's values
+    # hit-choice part: everything from one donor
     ch = np.flatnonzero(changed)
     if len(ch):
         k = np.minimum((D["u_rank"][ch] * N_DONORS).astype(int), N_DONORS - 1)
@@ -471,18 +511,16 @@ def apply(T, today, truth, D, terciles):
         a_u = today["a"][ch] + sg[ch] * g("delta_ratio")
         a[ch] = np.where(has_truth[:, None], a_m, a_u)
         cov[ch] = today["cov_diag"][ch] * g("cov_ratio")
-        dm = g("d_margin")
-        for i, h in enumerate(HEADS):
-            sc[f"head_{h}"][ch] = today["margins"][ch, i] + dm[:, i]
-        gc, gx = g("counts"), g("chi2")
+        gc, gv = g("counts"), g("values")
         for i, c in enumerate(COUNTS):
             counts[c][ch] = gc[:, i]
-        for i, c in enumerate(CHI2):
-            sc[c][ch] = natural(c, gx[:, i])
+        for i, c in enumerate(SCORES):
+            values[c][ch] = gv[:, i]
     a[:, 1] = wrap(a[:, 1])
-    out["a"], out["cov_diag"] = a, cov
-    out["margins"] = np.stack([sc[f"head_{h}"] for h in HEADS], 1)
+    inputs, a = assemble_inputs(today, a, counts, values, today["kpt"])
+    not_refit = counts["spixRefitPerformed"] <= 0
+    cov[not_refit] = today["ot_cov_diag"][not_refit]
+    out.update(a=a, cov_diag=cov, inputs=inputs, margins=head_margins(heads, today, inputs, a[:, 4]))
     out.update(counts)
-    for c in CHI2:
-        out[c] = unnatural(c, sc[c])
+    out.update({c: values[c] for c in CHI2})
     return out

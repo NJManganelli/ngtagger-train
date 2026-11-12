@@ -218,6 +218,35 @@ def test_parametrization_pieces():
     assert tab.shape == (3, 2) and level[0, 0] == 1 and tab[0, 0] == tab[0, 1]       # thin cell: window pooled first
     assert PM.unnatural("spixChi2IncXTot", PM.natural("spixChi2IncXTot", np.array([-999.0, 2.0])))[0] == -999.0
     assert PM.unnatural("spixChi2IncXTot", PM.natural("spixChi2IncXTot", np.array([2.0])))[0] == pytest.approx(2.0)
+    # the heads' inputs rebuilt from emulated parameters: a track whose refit does not run carries the OT track
+    today = {"ot_a": np.array([[1e-3, 0.1, 0.5, 1.0, 0.0]] * 2), "ot_inputs": np.full((2, 13), 0.25, np.float32),
+             "inputs": np.zeros((2, 25))}
+    a = np.array([[2e-3, 0.1, 0.6, 1.5, 0.01]] * 2)
+    counts = {c: np.array([1.0, 0.0]) if c == "spixRefitPerformed" else np.array([3.0, 0.0]) for c in PM.COUNTS}
+    values = {c: np.array([2.4, PM.MISSING]) for c in PM.SCORES}
+    X, aa = PM.assemble_inputs(today, a, counts, values, kpt=0.01)
+    assert X.shape == (2, 25) and np.array_equal(aa[1], today["ot_a"][1]) and np.array_equal(aa[0], a[0])
+    assert X[0, 0] == pytest.approx(0.2) and X[1, 0] == pytest.approx(0.25) and X[1, 4] == 0.0       # 1/pT and its change
+    assert X[0, 2] == pytest.approx(0.5) and X[0, 3] == pytest.approx(0.1) and X[1, 2] == 0.0
+    assert X[0, PM.IN["h_nangle"]] == 2.0 and X[1, PM.IN["h_nangle"]] == 0.0 and X[0, 14] == PM.MISSING
+    assert PM.mask_class([3, 7, 15, 9], [3, 15]).tolist() == [0, 2, 1, 2]
+
+
+def test_helper_reads_head_models(tmp_path):
+    SA = pytest.importorskip("spixbits_apply")
+    tree = {"feature": [0, -2, -2], "threshold": [0.5, 0.0, 0.0], "value": [0.0, -1.0, 2.0], "children_left": [1, -1, -1],
+            "children_right": [2, -1, -1]}
+    for w in SA.WINDOWS:
+        d = tmp_path / "SmartPixels" / "AAAA" / w
+        d.mkdir(parents=True)
+        for h in SA.HEADS:
+            (d / f"{h}.json").write_text(json.dumps({"splitting_convention": "<", "n_features": 38, "max_depth": 1,
+                                                      "init_predict": [0.5], "trees": [[tree], [tree]]}))
+    H = SA.load_heads(tmp_path, "AAAA")
+    X = np.zeros((3, 38), np.float32)
+    X[:, 0] = [0.0, 0.5, -999.0]                              # strict "<": 0.5 goes right; missing (-999) goes left
+    m = SA.head_margins(H, X, np.array([0.0, 0.0, 0.05]))
+    assert m.shape == (3, 6) and m[:, 0].tolist() == [-1.5, 4.5, -1.5]
 
 
 def test_helper_full_covariance_keeps_correlations():

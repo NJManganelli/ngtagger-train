@@ -397,11 +397,13 @@ def worker(a):
         target = out / "units" / u["name"]
         if target.exists():
             continue
-        if free_gb(out) < MIN_FREE_GB:
-            log(f"STOP: free space {free_gb(out):.1f} GB < {MIN_FREE_GB} GB")
+        path = f"{MOUNT}/smartpixels_scratch/canon_v5/spstudy_{u['scen']}_f{u['file']:02d}_100ev.root"
+        wait_for_input(path)                                    # the outputs may sit on the same external disk
+        free = min(free_gb(out), free_gb(Path.home()))          # the output disk and the internal disk (swap)
+        if free < MIN_FREE_GB:
+            log(f"STOP: free space {free:.1f} GB < {MIN_FREE_GB} GB")
             return 3
         for attempt in range(1, 6):
-            path = f"{MOUNT}/smartpixels_scratch/canon_v5/spstudy_{u['scen']}_f{u['file']:02d}_100ev.root"
             wait_for_input(path)
             try:
                 if S is None:

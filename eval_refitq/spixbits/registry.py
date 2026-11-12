@@ -11,7 +11,9 @@ import json
 import sys
 
 SUBAREA_UM = 2400.0
-GROUP_ORDER = ("priority", "fixed", "scan_down", "scan_up", "bending", "allocations", "controls")
+# the order the scan works through (the rerun with the pT-ranked cap, physicist 2026-11-11): fixed points, up-scans,
+# allocations, down-scans, controls, the bending-angle-only family. (The first scan's order is frozen with its outputs.)
+GROUP_ORDER = ("priority", "fixed", "scan_up", "allocations", "scan_down", "controls", "bending")
 
 
 def step(bits):

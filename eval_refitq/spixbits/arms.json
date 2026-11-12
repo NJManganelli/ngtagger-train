@@ -7,11 +7,11 @@
  "group_order": [
   "priority",
   "fixed",
-  "scan_down",
   "scan_up",
-  "bending",
   "allocations",
-  "controls"
+  "scan_down",
+  "controls",
+  "bending"
  ],
  "arms": [
   {
