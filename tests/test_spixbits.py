@@ -246,6 +246,8 @@ def test_tree_maps_fit_draw_and_shipped_arrays():
     Z = rng.normal(size=(n, 3))
     Y = np.column_stack([2 * (Z[:, 0] > 0) + 0.1 * rng.normal(size=n), Z[:, 1] + 0.5 * np.abs(Z[:, 2]) * rng.normal(size=n)])
     Y[rng.random(n) < 0.1, 1] = np.nan                                        # missing values are left out of their column
+    Bc = PM.fit_block(Z, np.column_stack([Y[:, 0], np.full(n, 3.0)]), np.ones(n, bool), rng.integers(0, 2, n), [False, False])
+    assert np.allclose(PM.draw_block(Bc, Z, rng.normal(size=(n, 2)))[:, 1], 3.0)          # a constant column stays constant
     B = PM.fit_block(Z, Y, np.ones(n, bool), rng.integers(0, 2, n), [False, True])
     got = PM.draw_block(B, Z, rng.normal(size=(n, 2)))
     assert abs(np.std(got[:, 0] - 2 * (Z[:, 0] > 0)) - 0.1) < 0.03            # the residual's size is reproduced ...

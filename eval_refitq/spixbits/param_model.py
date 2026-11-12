@@ -386,7 +386,8 @@ def fit_block(Z, Y, ok, half, big):
         for j in range(i):
             m = np.isfinite(E[:, i]) & np.isfinite(E[:, j])
             if m.sum() >= 200:
-                C[i, j] = C[j, i] = np.corrcoef(E[m, i], E[m, j])[0, 1]
+                r = np.corrcoef(E[m, i], E[m, j])[0, 1] if min(np.std(E[m, i]), np.std(E[m, j])) > 1e-9 else 0.0
+                C[i, j] = C[j, i] = r if np.isfinite(r) else 0.0       # a constant column (an angle that is not sent) has none
     w, v = np.linalg.eigh(C)
     C = (v * np.maximum(w, 1e-4)) @ v.T
     d = np.sqrt(np.diag(C))
