@@ -74,6 +74,41 @@ def normal(h, salt_a, salt_b):
     return np.sqrt(-2.0 * np.log(u1)) * np.cos(2.0 * np.pi * uniform(h, salt_b))
 
 
+# ---------------------------------------------------------------- pT from the bending angle ----
+KPT_GEV_CM = 0.299792458 * 3.8112 / 100.0       # pT [GeV] = KPT / |1/R [1/cm]| (the producer's constant x field)
+
+
+def pt_from_bending_angle(cot_bend, phi, r, z, ex, ez):
+    """pT [GeV] of the track through a cluster under the hypothesis d0 = 0 (and z0 = 0 on the discs), from its
+    bending angle alone: the SmartPixels beta = CMS local cot alpha = p_x / p_z in the module frame.
+
+    A track from the beam line with radius of curvature R = pT / KPT crosses the cylinder of radius r with its
+    transverse direction turned by psi from the radial direction, sin(psi) = r / (2 R) in magnitude. With the
+    cluster's global azimuth phi (unit vectors r_hat, phi_hat), the transverse direction is t = r_hat cos(psi) +
+    phi_hat sin(psi), and the longitudinal slope is z / r (straight line from the origin in r-z). In the module frame
+    (unit vectors ex, ez as GLOBAL vectors from the geometry, so the module's tilt and its facing are in them)
+    cot alpha = (d . ex) / (d . ez) with d = t + (z / r) z_hat. Solving for psi, with w = ex - cot_alpha * ez:
+        (r_hat . w) cos(psi) + (phi_hat . w) sin(psi) = - (z / r) w_z
+    (on the barrel ex and ez are transverse, w_z = 0). Of the two solutions the one with the smaller |sin psi| is
+    taken (the stiffer track). pT = KPT * r / (2 |sin psi|).
+
+    The Lorentz drift needs no correction here: the network reports the track's incidence angle (it is trained on
+    the true cot beta), not the charge cloud's apparent direction. Returns 0 where the angle is not finite."""
+    rh = np.stack([np.cos(phi), np.sin(phi), np.zeros_like(phi)], -1)
+    ph = np.stack([-np.sin(phi), np.cos(phi), np.zeros_like(phi)], -1)
+    w = ex - np.asarray(cot_bend, np.float64)[:, None] * ez
+    a, b = (rh * w).sum(-1), (ph * w).sum(-1)
+    c = -(z / np.maximum(r, 1e-9)) * w[:, 2]
+    amp = np.hypot(a, b)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        s = np.arcsin(np.clip(c / amp, -1.0, 1.0))
+        psi0 = np.arctan2(a, b)                          # a cos + b sin = amp sin(psi + psi0)
+        sin1, sin2 = np.abs(np.sin(s - psi0)), np.abs(np.sin(np.pi - s - psi0))
+        sp = np.minimum(sin1, sin2)
+        pt = KPT_GEV_CM * r / (2.0 * np.maximum(sp, 1e-12))
+    return np.where(np.isfinite(pt) & np.isfinite(cot_bend) & (amp > 0), pt, 0.0)
+
+
 # ---------------------------------------------------------------- quantizers ----
 def quantize_position(x, x0, step, phase):
     """q = x0 + (floor((x - x0) / step - phase) + phase + 1/2) step: a grid of the given step whose phase is the
@@ -258,18 +293,22 @@ def base(ctx, geo, A, net, links, LT=None, defect=""):
     B = {"hash": h, "x": x, "y": y, "x0": -hw + tx * SUBAREA_CM, "y0": -hl + ty * SUBAREA_CM,
          "phase_x": uniform(h, SALT["phase_localX"]), "phase_y": uniform(h, SALT["phase_localY"]),
          "gauss_x": normal(h, SALT["noise1"], SALT["noise2"]), "gauss_y": normal(h, SALT["noise3"], SALT["noise1"] + 100)}
-    # the cap: at most three clusters per sub-area per event, three kept at random by the cluster's hash
+    # the cap: at most three clusters per sub-area per event. "random": three kept at random by the cluster's hash
+    # (filled here); "pt": the three of highest pT from the bending angle (filled below, once the angles exist)
     tile = ((ev.astype(np.int64) * 8192 + m) * 64 + tx.astype(np.int64)) * 64 + ty.astype(np.int64)
     capkey = uniform(h, SALT["cap"])
-    o = np.lexsort((capkey, tile))
-    first = np.r_[True, tile[o][1:] != tile[o][:-1]]
-    start = np.maximum.accumulate(np.where(first, np.arange(n), 0))
-    rank = np.empty(n, np.int64)
-    rank[o] = np.arange(n) - start
-    B["sent"] = (rank < CAP_PER_SUBAREA) | (mi < 0)
-    B["n_in_subarea"] = np.empty(n, np.int64)
-    cnt = np.diff(np.r_[np.flatnonzero(first), n])
-    B["n_in_subarea"][o] = np.repeat(cnt, cnt)
+
+    def keep_three(key):
+        o = np.lexsort((capkey, key, tile))              # ties (and the random cap: key = 0) by the cluster's hash
+        first = np.r_[True, tile[o][1:] != tile[o][:-1]]
+        start = np.maximum.accumulate(np.where(first, np.arange(n), 0))
+        rank = np.empty(n, np.int64)
+        rank[o] = np.arange(n) - start
+        cnt = np.diff(np.r_[np.flatnonzero(first), n])
+        per = np.empty(n, np.int64)
+        per[o] = np.repeat(cnt, cnt)
+        return (rank < CAP_PER_SUBAREA) | (mi < 0), per
+    B["sent"], B["n_in_subarea"] = keep_three(np.zeros(n))
     # angles: today's (class C keeps them), and the network-resolution ones for class T
     tA, tB = K["tpLocalCotBeta"].astype(np.float64), K["tpLocalCotAlpha"].astype(np.float64)
     T = (K["tpEmuClass"] == 1) & (np.abs(tA) < 50) & (np.abs(tB) < 50)
@@ -292,6 +331,14 @@ def base(ctx, geo, A, net, links, LT=None, defect=""):
     B["draw_row"][T] = j
     B["exact_cell"] = np.zeros(n, bool)
     B["exact_cell"][T] = exact
+    # the pT-ranked cap (physicist, 2026-11-11): on the chip the choice precedes the output quantization, so it uses the
+    # network's float bending angle (SmartPixels beta) of every cluster, whatever the arm then sends. A cluster without
+    # angle truth (class C) is ranked with the bending angle it has (the CNN stand-in's: the chip ranks what it
+    # measures, it does not know the truth class); a cluster with no bending angle at all ranks last (pT 0).
+    B["pt_bend"] = np.where(B["net_hasB"], pt_from_bending_angle(
+        B["net_B"], K["globalPhi"].astype(np.float64), X["globalR"].astype(np.float64), X["globalZ"].astype(np.float64),
+        geo["ex"][m], geo["ez"][m]), 0.0)
+    B["sent_pt"], _ = keep_three(-B["pt_bend"])
     B["link"] = links.code(mi, X["ring"], X["globalZ"])
     B["eta"] = np.arcsinh(X["globalZ"].astype(np.float64) / np.maximum(X["globalR"].astype(np.float64), 1e-9))
     tpg = K["tp_global"]
@@ -309,7 +356,9 @@ def emulate(ctx, B, spec, LT):
       angles                 "today" (untouched) | "network" (true cot + drawn network residual on class T)
       bits_alpha, bits_beta  SmartPixels alpha / beta: None = float, an int = bits per link range (2 codes are flags)
       range                  "link" (per link pool) | "global"
-      cap                    True: only three clusters per sub-area per event are sent
+      cap                    False: every cluster is sent. "pt": per sub-area and event only the three clusters of
+                             highest pT from the bending angle (d0 = 0 hypothesis, pt_from_bending_angle). "random" (or
+                             True, the first scan's registry): three at random by the cluster's hash (control)
       direct_positions       True: the clusters with finite B["direct_x"], B["direct_y"] take those positions [cm]
     Returns a shallow copy of ctx with a new cluster dict; the cluster order and indices never change."""
     K = dict(ctx["K"])
@@ -352,7 +401,8 @@ def emulate(ctx, B, spec, LT):
     if "pool" in B:
         K["sb_pool"], K["sb_sA"], K["sb_sB"] = B["pool"], B["sA"], B["sB"]
     if spec.get("cap"):
-        kkey = np.where(B["sent"], ctx["kkey"], -1)       # a cluster that is not sent is in no window
+        sent = B["sent_pt"] if spec["cap"] == "pt" else B["sent"]
+        kkey = np.where(sent, ctx["kkey"], -1)            # a cluster that is not sent is in no window
         out["kkey"] = kkey
         out["ko"] = np.argsort(kkey, kind="stable")
     return out

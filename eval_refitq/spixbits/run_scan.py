@@ -206,7 +206,9 @@ def truth_rows(S, A, ctx, start, tr, pop, seq, path_, cx, B, has_vz):
     TP = ctx["TP"]
     f32 = np.float32
     prim_ci = cx[0]
-    sent = np.where(prim_ci >= 0, B["sent"][np.maximum(prim_ci, 0)], True)
+    sent = np.where(prim_ci >= 0, B["sent_pt"][np.maximum(prim_ci, 0)], True)
+    sent_random = np.where(prim_ci >= 0, B["sent"][np.maximum(prim_ci, 0)], True)
+    pt_bend = np.where(prim_ci >= 0, B["pt_bend"][np.maximum(prim_ci, 0)], np.nan)
     nsub = np.where(prim_ci >= 0, B["n_in_subarea"][np.maximum(prim_ci, 0)], 0)
     d = {"run": np.asarray(A["run"])[ev].astype(np.int64), "lumi": np.asarray(A["luminosityBlock"])[ev].astype(np.int64),
          "event": np.asarray(A["event"])[ev].astype(np.int64), "track": (pop - toff[ev]).astype(np.int32),
@@ -222,6 +224,7 @@ def truth_rows(S, A, ctx, start, tr, pop, seq, path_, cx, B, has_vz):
          "slot_surface": _pad(seq[pop], -1).astype(np.int8),
          "crossing_cluster": np.where(prim_ci >= 0, prim_ci - ctx["coff"][ev][:, None], -1).astype(np.int32),
          "n_crossing_clusters": cx[1], "crossing_cluster_sent_under_cap": sent,
+         "crossing_cluster_sent_under_random_cap": sent_random, "crossing_cluster_pt_from_bending_GeV": pt_bend.astype(f32),
          "crossing_cluster_n_in_subarea": np.minimum(nsub, 127).astype(np.int8),
          "crossing_helix_localX_cm": cx[2], "crossing_helix_localY_cm": cx[3]}
     if has_vz:

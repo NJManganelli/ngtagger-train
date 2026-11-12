@@ -39,16 +39,40 @@ BASE = RS.BASE
 SHIPPED = (["implemented_now", "network_float", "alloc_4444", "alloc_6604", "alloc_8800", "alloc_4444_wholesensor",
             "alloc_5533", "alloc_6622", "alloc_5623", "alloc_4633", "alloc_4723", "alloc_5722", "alloc_6703", "alloc_7702"]
            + [f"down_y_{b}b" for b in range(2, 11)] + [f"down_x_{b}b" for b in range(2, 9)])
+# version 2 (physicist's rulings, 2026-11-11): the cap of three per sub-area by pT from the bending angle (the registry's
+# default from then on), plus the up-scans from the 4/4/4/4 floor one output at a time to the unquantized limit and the
+# alpha and beta down-scans including "not sent"
+SHIPPED_V2 = (SHIPPED + [f"up_x_{b}b" for b in range(5, 10)] + ["up_x_float"] + [f"up_y_{b}b" for b in range(5, 12)] + ["up_y_float"]
+              + [f"up_alpha_{b}b" for b in (5, 6, 7)] + ["up_alpha_float"] + [f"up_beta_{b}b" for b in (5, 6, 7)] + ["up_beta_float"]
+              + [f"down_alpha_{b}b" for b in range(2, 8)] + ["down_alpha_notsent"]
+              + [f"down_beta_{b}b" for b in range(2, 8)] + ["down_beta_notsent"])
+SETS = {"v1": SHIPPED, "v2": SHIPPED_V2}
+ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2"}    # v1: the internal disk (ST.LOCAL / "ext")
+VERSION = os.environ.get("SPIXBITS_EXT_VERSION", "v1")
 IU = np.triu_indices(5)
 
 
 def out_root():
     import study as ST
-    return ST.LOCAL / "ext"
+    return Path(ROOTS[VERSION]) if ROOTS[VERSION] else ST.LOCAL / "ext"
+
+
+def registry():
+    """The arm registry frozen beside the outputs at the first start (the internal copy for v1, as it ran)."""
+    frozen = out_root() / "arms.json"
+    if VERSION == "v1" and not frozen.exists():
+        return json.load(open(HERE / "arms.json"))
+    if not frozen.exists():
+        frozen.parent.mkdir(parents=True, exist_ok=True)
+        tmp = frozen.with_suffix(".tmp")
+        tmp.write_text((HERE / "arms.json").read_text())
+        tmp.rename(frozen)
+    return json.load(open(frozen))
 
 
 def units_of(files, scens):
-    chunks = [SHIPPED[i:i + ARMS_PER_UNIT] for i in range(0, len(SHIPPED), ARMS_PER_UNIT)]
+    shipped = SETS[VERSION]
+    chunks = [shipped[i:i + ARMS_PER_UNIT] for i in range(0, len(shipped), ARMS_PER_UNIT)]
     return [{"file": f, "scen": s, "arms": ch, "name": f"{s}_f{f:02d}_{k:02d}"}
             for k, ch in enumerate(chunks) for f in files for s in scens]
 
@@ -160,17 +184,21 @@ def worker(a):
     import study as ST
     ST.CM.set_collection("extended")
     S = RS.Study()
-    reg = json.load(open(HERE / "arms.json"))
+    while not os.path.ismount(RS.MOUNT):
+        log(f"waiting for {RS.MOUNT}")
+        time.sleep(60)
+    reg = registry()
     us = units_of(a.files, a.scen)
-    log(f"extended-scan worker pid {os.getpid()}: {len(us)} units")
+    log(f"extended-scan {VERSION} worker pid {os.getpid()}: {len(us)} units -> {out_root()}")
     fails = {}
     while True:
         todo = [u for u in us if not done(u) and fails.get(u["name"], 0) < 2]
         if not todo:
             log("worker: nothing left to do")
             return 0 if all(done(u) for u in us) else 1
-        if RS.free_gb(ST.LOCAL) < RS.MIN_FREE_GB:
-            log(f"STOP: free space {RS.free_gb(ST.LOCAL):.1f} GB < {RS.MIN_FREE_GB} GB")
+        if RS.free_gb(ST.LOCAL) < RS.MIN_FREE_GB or (os.path.ismount(RS.MOUNT) and RS.free_gb(RS.MOUNT) < 20.0):
+            log(f"STOP: free space internal {RS.free_gb(ST.LOCAL):.1f} GB (limit {RS.MIN_FREE_GB}), {RS.MOUNT} "
+                f"{RS.free_gb(RS.MOUNT) if os.path.ismount(RS.MOUNT) else float('nan'):.1f} GB (limit 20)")
             return 3
         u = next((x for x in todo if claim(x)), None)
         if u is None:
@@ -205,14 +233,14 @@ def supervise(a):
     logs = ST.LOCAL / "logs"
 
     def start(i):
-        lf = open(logs / f"ext_worker{i}.log", "a")
-        cmd = [sys.executable, str(HERE / "ext_scan.py"), "worker", "--files", *map(str, a.files), "--scen", *a.scen]
+        lf = open(logs / f"ext{'' if VERSION == 'v1' else '_' + VERSION}_worker{i}.log", "a")
+        cmd = [sys.executable, str(HERE / "ext_scan.py"), "worker", "--version", VERSION, "--files", *map(str, a.files), "--scen", *a.scen]
         return subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     procs = {}
     for i in range(a.workers):
         procs[i] = start(i)
         time.sleep(20)
-    (logs / "ext.pids").write_text(" ".join(str(p.pid) for p in procs.values()) + f"\nsupervisor {os.getpid()}\n")
+    (logs / f"ext{'' if VERSION == 'v1' else '_' + VERSION}.pids").write_text(" ".join(str(p.pid) for p in procs.values()) + f"\nsupervisor {os.getpid()}\n")
     restarts, final = 0, {}
     while procs:
         time.sleep(30)
@@ -247,7 +275,7 @@ def unit_cmd(a):
     ST.CM.set_collection("extended")
     S = RS.Study()
     t0 = time.time()
-    truth, arms = run_unit(S, json.load(open(HERE / "arms.json")), a.file, a.scen[0], a.arms, nev=a.nev)
+    truth, arms = run_unit(S, json.load(open(HERE / "arms.json")), a.file, a.scen[0], a.arms, nev=a.nev)   # development: the code's registry
     RS.save_npz(Path(a.out) / f"{a.scen[0]}_f{a.file:02d}_truth.npz", truth)
     RS.save_npz(Path(a.out) / f"{a.scen[0]}_f{a.file:02d}_arms.npz", {f"{n}__{k}": v for n, d in arms.items() for k, v in d.items()})
     log(f"{len(a.arms)} arms, {len(truth['run'])} tracks, {time.time() - t0:.1f} s")
@@ -255,6 +283,7 @@ def unit_cmd(a):
 
 
 def main(argv=None):
+    global VERSION
     import study as ST
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("job", choices=("supervise", "worker", "status", "unit"))
@@ -265,7 +294,11 @@ def main(argv=None):
     ap.add_argument("--arms", nargs="+", default=[BASE])
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--out", default="")
+    ap.add_argument("--version", choices=tuple(SETS), default=VERSION, help="v1: the first extended scan (30 arms, random cap, "
+                    "internal disk); v2: pT-ranked cap, 66 arms, outputs on the external disk")
     a = ap.parse_args(argv)
+    VERSION = a.version
+    os.environ["SPIXBITS_EXT_VERSION"] = a.version              # the workers inherit it
     return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd}[a.job](a)
 
 

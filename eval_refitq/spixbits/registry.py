@@ -36,7 +36,7 @@ def arm(name, group, x="F", y="F", a="F", b="F", today=False, whole=False, **ext
         spec.update(angles="today", cap=False)
     else:
         send = [n for n, v in (("alpha", a), ("beta", b)) if v != 0]
-        spec.update(angles="network", cap=True, send=send, pos_err="sizeblind", ang_err="linktable",
+        spec.update(angles="network", cap="pt", send=send, pos_err="sizeblind", ang_err="linktable",
                     bits_alpha=a if isinstance(a, int) and a > 0 else None,
                     bits_beta=b if isinstance(b, int) and b > 0 else None, range="link", window_add=True,
                     flag="onesided")
@@ -88,6 +88,15 @@ def build():
         add(f"up_alpha_{bits}b" if bits else "up_alpha_notsent", "scan_up", 4, 4, bits, 4)
     for bits in (2, 3, 5, 6, 7, 0):
         add(f"up_beta_{bits}b" if bits else "up_beta_notsent", "scan_up", 4, 4, 4, bits)
+    # the physicist's up-scans (2026-11-11): from the 4/4/4/4 floor, one output at a time towards the unquantized limit,
+    # the other three at 4 bits: every bit count from 5 until the step is below the network's resolution (x: 7.6 um ->
+    # 9 bits, 4.7 um; y: 2.0 um -> 11 bits, 1.2 um; alpha and beta: 7 bits), then the scanned output unquantized
+    add("up_x_9b", "scan_up", 9, 4, 4, 4)
+    add("up_y_11b", "scan_up", 4, 11, 4, 4)
+    add("up_x_float", "scan_up", "F", 4, 4, 4)
+    add("up_y_float", "scan_up", 4, "F", 4, 4)
+    add("up_alpha_float", "scan_up", 4, 4, "F", 4)
+    add("up_beta_float", "scan_up", 4, 4, 4, "F")
     # ---- the bending-angle-only family, from 6/6/0/4
     for bits in (2, 3, 5, 6, 7):
         add(f"bending_beta_{bits}b", "bending", 6, 6, 0, bits)
@@ -114,6 +123,10 @@ def build():
         for bits in (4, 6):
             add(f"noise_{ax}_{bits}b", "controls", **{ax: bits}, noise=True)
     add("positions_only_float", "controls", "F", "F", 0, 0)
+    # the cap of three per sub-area chosen at random (the first scan's rule) in place of the pT-ranked choice
+    add("network_float_caprandom", "controls", cap="random")
+    add("alloc_4444_caprandom", "controls", 4, 4, 4, 4, cap="random")
+    add("alloc_6604_caprandom", "controls", 6, 6, 0, 4, cap="random")
     # the covariance forecast (PLAN 4a): the anchors with the position errors scaled to the network's. The scaled
     # table is the size-blind R (built at pT >= 5 GeV: the sensor alone), so the scale is the network's width over
     # today's sensor-only IL1 width: SmartPixels y 2.0 / 3.1, x 7.6 / 12.3 (code review MEDIUM 3); read on the forced refit

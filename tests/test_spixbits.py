@@ -231,3 +231,26 @@ def test_helper_full_covariance_keeps_correlations():
     d, d2 = np.sqrt(np.einsum("nii->ni", C)), np.sqrt(new)
     assert np.allclose(C2 / (d2[:, :, None] * d2[:, None, :]), C / (d[:, :, None] * d[:, None, :]))
     assert SA.to_p_clean(SA.to_margin(0.9)) == pytest.approx(0.9)
+
+
+def test_pt_from_bending_angle_on_ideal_modules():
+    # a d0 = 0 track of known pT crossing a barrel module (both facings, tilted) and a disc module (both facings)
+    k = EM.KPT_GEV_CM
+    for pt_true, q in ((2.0, 1), (5.0, -1), (30.0, 1)):
+        for r, z in ((3.0, 4.0), (11.0, -20.0)):
+            R = pt_true / k
+            psi = q * np.arcsin(r / (2 * R))
+            phi = 0.7
+            rh, ph = np.array([np.cos(phi), np.sin(phi), 0.0]), np.array([-np.sin(phi), np.cos(phi), 0.0])
+            d = rh * np.cos(psi) + ph * np.sin(psi) + np.array([0, 0, z / r])
+            for tilt in (0.0, 0.2):
+                for facing in (1.0, -1.0):
+                    ezb = facing * (rh * np.cos(tilt) + ph * np.sin(tilt))            # barrel: normal about radial
+                    exb = facing * (-rh * np.sin(tilt) + ph * np.cos(tilt))
+                    for ex, ez in ((exb, ezb), (ph * facing, np.array([0, 0, facing]))):   # barrel module, disc module
+                        cot = (d @ ex) / (d @ ez)
+                        got = EM.pt_from_bending_angle(np.array([cot]), np.array([phi]), np.array([r]), np.array([z]),
+                                                       ex[None, :], ez[None, :])[0]
+                        assert got == pytest.approx(pt_true, rel=1e-6), (pt_true, q, r, tilt, facing)
+    assert EM.pt_from_bending_angle(np.array([np.nan]), np.array([0.0]), np.array([3.0]), np.array([0.0]),
+                                    np.array([[0, 1.0, 0]]), np.array([[1.0, 0, 0]]))[0] == 0.0

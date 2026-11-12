@@ -65,7 +65,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -89,7 +89,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -113,7 +113,7 @@
     "step_x_um": 600.0,
     "step_y_um": 600.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -137,7 +137,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -160,7 +160,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -183,7 +183,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -206,7 +206,7 @@
     "step_x_um": null,
     "step_y_um": 600.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -230,7 +230,7 @@
     "step_x_um": null,
     "step_y_um": 300.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -254,7 +254,7 @@
     "step_x_um": null,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -278,7 +278,7 @@
     "step_x_um": null,
     "step_y_um": 75.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -302,7 +302,7 @@
     "step_x_um": null,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -326,7 +326,7 @@
     "step_x_um": null,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -350,7 +350,7 @@
     "step_x_um": null,
     "step_y_um": 9.375,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -374,7 +374,7 @@
     "step_x_um": null,
     "step_y_um": 4.6875,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -398,7 +398,7 @@
     "step_x_um": null,
     "step_y_um": 2.34375,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -422,7 +422,7 @@
     "step_x_um": 600.0,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -446,7 +446,7 @@
     "step_x_um": 300.0,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -470,7 +470,7 @@
     "step_x_um": 150.0,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -494,7 +494,7 @@
     "step_x_um": 75.0,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -518,7 +518,7 @@
     "step_x_um": 37.5,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -542,7 +542,7 @@
     "step_x_um": 18.75,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -566,7 +566,7 @@
     "step_x_um": 9.375,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -590,7 +590,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -614,7 +614,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -638,7 +638,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -662,7 +662,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -686,7 +686,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -710,7 +710,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -734,7 +734,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -757,7 +757,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -781,7 +781,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -805,7 +805,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -829,7 +829,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -853,7 +853,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -877,7 +877,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -901,7 +901,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha"
     ],
@@ -924,7 +924,7 @@
     "step_x_um": 150.0,
     "step_y_um": 600.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -948,7 +948,7 @@
     "step_x_um": 150.0,
     "step_y_um": 300.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -972,7 +972,7 @@
     "step_x_um": 150.0,
     "step_y_um": 75.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -996,7 +996,7 @@
     "step_x_um": 150.0,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1020,7 +1020,7 @@
     "step_x_um": 150.0,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1044,7 +1044,7 @@
     "step_x_um": 150.0,
     "step_y_um": 9.375,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1068,7 +1068,7 @@
     "step_x_um": 150.0,
     "step_y_um": 4.6875,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1092,7 +1092,7 @@
     "step_x_um": 150.0,
     "step_y_um": 2.34375,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1116,7 +1116,7 @@
     "step_x_um": 600.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1140,7 +1140,7 @@
     "step_x_um": 300.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1164,7 +1164,7 @@
     "step_x_um": 75.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1188,7 +1188,7 @@
     "step_x_um": 37.5,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1212,7 +1212,7 @@
     "step_x_um": 18.75,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1236,7 +1236,7 @@
     "step_x_um": 9.375,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1260,7 +1260,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1284,7 +1284,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1308,7 +1308,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1332,7 +1332,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1356,7 +1356,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1380,7 +1380,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1403,7 +1403,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1427,7 +1427,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1451,7 +1451,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1475,7 +1475,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1499,7 +1499,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1523,9 +1523,153 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_9b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 4.6875um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 4.6875um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 4.6875,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_11b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 1.17188um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 1.17188um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 1.171875,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x F / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY F / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y F / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX F / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha F / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta F / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta F",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
     ],
     "pos_err": "sizeblind",
     "ang_err": "linktable",
@@ -1546,7 +1690,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1569,7 +1713,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1592,7 +1736,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1615,7 +1759,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1638,7 +1782,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1661,7 +1805,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1684,7 +1828,7 @@
     "step_x_um": 75.0,
     "step_y_um": 75.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1707,7 +1851,7 @@
     "step_x_um": 18.75,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1730,7 +1874,7 @@
     "step_x_um": 9.375,
     "step_y_um": 9.375,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1753,7 +1897,7 @@
     "step_x_um": 75.0,
     "step_y_um": 75.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1777,7 +1921,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1801,7 +1945,7 @@
     "step_x_um": 75.0,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1825,7 +1969,7 @@
     "step_x_um": 150.0,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1849,7 +1993,7 @@
     "step_x_um": 150.0,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1873,7 +2017,7 @@
     "step_x_um": 75.0,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1897,7 +2041,7 @@
     "step_x_um": 37.5,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1920,7 +2064,7 @@
     "step_x_um": 18.75,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -1943,7 +2087,7 @@
     "step_x_um": 9.375,
     "step_y_um": 9.375,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [],
     "pos_err": "sizeblind",
     "ang_err": "linktable",
@@ -1964,7 +2108,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -1988,7 +2132,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2011,7 +2155,7 @@
     "step_x_um": 75.0,
     "step_y_um": 75.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2035,7 +2179,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2059,7 +2203,7 @@
     "step_x_um": 75.0,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2083,7 +2227,7 @@
     "step_x_um": 150.0,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2107,7 +2251,7 @@
     "step_x_um": 150.0,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2131,7 +2275,7 @@
     "step_x_um": 75.0,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2155,7 +2299,7 @@
     "step_x_um": 37.5,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2178,7 +2322,7 @@
     "step_x_um": 18.75,
     "step_y_um": 18.75,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2201,7 +2345,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2224,7 +2368,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2247,7 +2391,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2270,7 +2414,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2293,7 +2437,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2316,7 +2460,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2340,7 +2484,7 @@
     "step_x_um": 150.0,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2388,7 +2532,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2411,7 +2555,7 @@
     "step_x_um": 37.5,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
@@ -2528,7 +2672,7 @@
     "step_x_um": 150.0,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2553,7 +2697,7 @@
     "step_x_um": 37.5,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2578,7 +2722,7 @@
     "step_x_um": null,
     "step_y_um": 150.0,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2603,7 +2747,7 @@
     "step_x_um": null,
     "step_y_um": 37.5,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2628,12 +2772,83 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [],
     "pos_err": "sizeblind",
     "ang_err": "linktable",
     "bits_alpha": null,
     "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "network_float_caprandom",
+   "group": "controls",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "random",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444_caprandom",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "random",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6604_caprandom",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 4b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "random",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
     "range": "link",
     "window_add": true,
     "flag": "onesided"
@@ -2649,7 +2864,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "alpha",
      "beta"
@@ -2675,7 +2890,7 @@
     "step_x_um": null,
     "step_y_um": null,
     "angles": "network",
-    "cap": true,
+    "cap": "pt",
     "send": [
      "beta"
     ],
