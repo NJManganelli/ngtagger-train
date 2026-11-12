@@ -183,6 +183,11 @@ def main():
                 shutil.rmtree(dst)
             shutil.copytree(src / "SmartPixels" / scen, dst)
     commit = subprocess.run(["git", "-C", str(Path(__file__).parent), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+    if not commit:                                  # a lane job's frozen copy is not a repository: its manifest has the commit
+        for d in Path(__file__).resolve().parents:
+            if (d / "manifest.json").exists():
+                commit = json.load(open(d / "manifest.json")).get("commit", "")
+                break
     payload = json.load(open(ST.CACHE / "checksums.json"))
     tmp = out / f"spixbits_apply.py.{os.getpid()}.tmp"       # several exports (one per detector scenario) may run side by side
     shutil.copy(Path(__file__).parent / "spixbits_apply.py", tmp)
