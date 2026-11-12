@@ -11,28 +11,33 @@ and the arm's refit on today's clusters (forced): precision part = forced - toda
                  lambda per cell from a root find so that the 68 % width of the residual to truth equals the forced
                  refit's. d0 is drawn with u_rank; z0 through a Gaussian copula with d0's draw, tanL with z0's, 1/R and
                  phi0 with d0's (normal-score correlations).
-    covariance   diagonal scaled by exp(a + b ln sigma_today + s eta) per cell (a straight-line fit of the log ratio
-                 forced / today against ln sigma_today with its empirical scatter: an added quantization variance weighs
-                 more on a precise track; clipped to 0.2-10,000); today's correlations kept.
-    scores       (the six deployed-head outputs and the chi2-like inputs, in their natural variable)
-                 s' = a + b s + sigma_s * eta, fitted on the tracks without a material hit-choice part; eta from the
-                 empirical standardized residual, conditioned on |2 u_rank - 1| in [0, 0.5), [0.5, 0.9), [0.9, 1].
     hits, mask   unchanged.
   HIT-CHOICE PART, with the observed share p per cell: the tracks whose free result differs materially from the forced
   one (more than CHOICE_SIGMA of today's sigma in d0 or z0, or another refit flag or layer mask). A swap between the
   particle's two clusters on overlapping modules, which is most cluster changes, is below that and stays above.
-    a donor from the cell's such tracks, picked by u_rank, supplies everything together: residuals to truth over
-    today's sigma (tracks with a particle: the residual is replaced) or changes over today's sigma (tracks without),
-    covariance ratios, the changes of the head outputs, and the arm's own hit counts, layer mask and chi2-like inputs.
+    a donor from the cell's such tracks, picked by u_rank, supplies together: residuals to truth over today's sigma
+    (tracks with a particle: the residual is replaced) or changes over today's sigma (tracks without), and the arm's
+    own refit flag, hit counts, layer mask and largest window multiplicity.
+  BOTH PARTS: the covariance diagonal and the heads' continuous inputs are functions of the track (a Kalman covariance;
+  sums over its hits), so they are emulated as functions of the track too, by regression trees (MAPS below):
+    covariance   ln(C_arm / C_today) per parameter from today's track (the heads' 38 inputs, parameters, ln covariance,
+                 layer-mask bits) and the emulated hit counts and layer mask;
+    head inputs  the chi2-like inputs and the hit aggregates (natural variable) from the same and the emulated
+                 parameters and covariance (how far the track moved, from the OT track and from today's refit);
+    each with a second tree model for the size of its residual and the measured distribution of the standardized
+    residual, the residuals of the columns of a block tied by a Gaussian copula; a tree classifier gives the chance
+    that an input is missing. The models are trained on the arm's own (free) results; mean models on two halves of the
+    events, the residuals taken out of fold.
+  The six head outputs are not emulated: the head models are evaluated on the emulated inputs.
 
-One set of draws per track (u_state, u_rank and the normals), hashed from (run, lumi, event, track) and NOT from the
+One set of draws per track (u_state, u_rank, the normals and the per-column draws of the maps), hashed from (run, lumi, event, track) and NOT from the
 allocation: allocations stay comparable track by track.
 
 Cells use only what today's production stores: today's reconstructed pT (2-3, 3-5, >= 5 GeV), |eta| (0-1.1, 1.1-1.8,
 >= 1.8), window (prompt |d0| <= 0.02 cm, displaced, or "not refit today"), today's largest window multiplicity
 (<= 1, 2, 3-5, >= 6), today's clean-score tercile, whether the OT track has a particle and, for the state share of a
 track with a particle, today's pull class (max of the |d0| and |z0| pulls against the particle: < 1, 1-3, >= 3): a track
-that is off today is the one most likely to change clusters, and without this the same-cluster state inherits today's
+that is off today is the one most likely to change clusters, and without this the precision part inherits today's
 worst tracks. The state share is shrunk towards coarser cells (pseudo-count 50) in the order pT, |eta|, tercile, pull,
 multiplicity; the other tables fall back to pooled cells when thin.
 """
@@ -45,31 +50,29 @@ PARAMS = ("rInv", "phi0", "tanL", "z0", "d0")          # the helix order of the 
 KNOTS = np.array([0.01, 0.025, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.975, 0.99])
 PT_EDGES = np.array([3.0, 5.0])
 PULL_EDGES = np.array([1.0, 3.0])
-NACC_EDGES = np.array([2.0, 3.0, 4.0])                 # today's accepted hits: <= 1, 2, 3, >= 4 (the score maps)
 SHRINK = 50.0                                          # pseudo-count of the state share's shrinkage to the coarser cell
 MULT_EDGES = np.array([2.0, 3.0, 6.0])                 # today's largest window multiplicity: <= 1, 2, 3-5, >= 6
 ETA_EDGES = np.array([1.1, 1.8])
 N_ETA = len(ETA_EDGES) + 1
 D0_SPLIT = 0.02                                        # cm
-TAIL_EDGES = np.array([0.5, 0.9])                      # |2 u_rank - 1| intervals of the score residual
 N_DONORS = 128
 LAMBDA_MAX = 30.0
 # Choices compared on the first 200 scan events of AAAA (closure failures over five allocations; README of the
 # parametrization): the donor's residual over today's sigma, rescaled by the receiving track's sigma (the donor's absolute
 # residual was much worse); eps in units of the sigma the allocation adds on the track (today's sigma was worse: a track's
-# noise and its new covariance then do not move together); three |eta| cells (six were worse at this sample size); the
-# head outputs and covariance ratios of the same-cluster state from a map with an empirical residual (taking them
-# together from a same-cluster donor track was worse).
+# noise and its new covariance then do not move together); three |eta| cells (six were worse at this sample size).
+# Covariance and head inputs, classifier AUC actual against emulated on the tagger's track inputs (alloc_4444, tolerance
+# 0.62): head outputs from a table with a random residual 0.88; head inputs from per-cell linear maps and the real head
+# models 0.77 (a deterministic covariance line: 0.78); the tree maps 0.62.
 
 
 def eps_unit(sg, cov_today, cov_arm):
-    """(n,) the unit of the same-cluster change eps of one parameter: the sigma the allocation adds on this track,
+    """(n,) the unit of the precision-part change eps of one parameter: the sigma the allocation adds on this track,
     sqrt(|C_arm - C_today| + (0.05 sigma_today)^2), with C_arm from the covariance model."""
     return np.sqrt(np.abs(cov_arm - cov_today) + (0.05 * sg) ** 2)
 
 
-COV_CLIP = (float(np.log(0.2)), float(np.log(1.0e4)))   # limits of ln(covariance ratio) in the same-cluster state
-MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_DONORS, MIN_MAP = 1000, 150, 2000, 200, 400
+MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_DONORS, MIN_MAP = 1000, 150, 2000, 200, 400   # MIN_MAP: below it a map is a constant
 HEADS = ("clean", "d0", "z0", "tanl", "rinv", "phi")
 # head inputs 14-38 as stored (ext_scan "inputs"): the columns the parametrization emits
 IN = {"spixRefitPerformed": 5, "spixNCrossings": 7, "spixNAcceptedHits": 8, "spixLayerHitMask": 9, "spixMaxWindowMult": 10,
@@ -80,10 +83,11 @@ COUNTS = ("spixRefitPerformed", "spixNCrossings", "spixNAcceptedHits", "spixLaye
 CHI2 = ("spixChi2IncXTot", "spixChi2IncYTot", "spixChi2IncAlphaTot", "spixChi2ITAtRefit", "spixShiftChi2", "spixLogDetRatio")
 AGG = ("h_nangle", "h_chi2_angle_per_cl", "h_chi2_pos_per_hit", "h_mean_wmult", "h_max_angle_pull", "h_second_angle_pull",
        "h_max_pos_pull")                              # the heads' aggregates over the accepted hits
-SCORES = CHI2 + AGG                                   # mapped in the precision part (natural variable)
+SCORES = CHI2 + AGG                                   # the mapped head inputs (natural variable)
 LINEAR = ("spixLogDetRatio", "h_nangle", "h_mean_wmult")     # natural variable = the value itself; the others log(x + 1e-3)
-N_MASK = 12                                           # layer-mask classes of the covariance map: the 12 most frequent, and "other"
-COV_SCATTER = True                                    # the covariance line's empirical scatter (False: deterministic)
+N_BITS = 16                                           # layer-mask bits given to the maps as separate features
+MAP_MEAN = dict(max_iter=100, max_depth=4, learning_rate=0.1, min_samples_leaf=40, random_state=0)
+MAP_SCALE = dict(max_iter=40, max_depth=3, learning_rate=0.1, min_samples_leaf=100, random_state=0)
 MISSING = -999.0
 # copula partners: parameter -> (the parameter whose normal draw it follows)
 PARTNER = {"z0": "d0", "tanL": "z0", "rInv": "d0", "phi0": "d0"}
@@ -104,17 +108,19 @@ def _mix(x):
 
 
 def draws(run, lumi, event, track):
-    """The per-track draws (stable, not allocation dependent): uniforms u_state, u_rank, u_score, u_cov and standard
-    normals n_z0, n_tanL, n_rInv, n_phi0. (The fit and the closure use these; a production may use any stable hash,
+    """The per-track draws (stable, not allocation dependent): uniforms u_state, u_rank, u_miss (n, 13: one per mapped
+    input); standard normals n_z0, n_tanL, n_rInv, n_phi0, n_cov (n, 5) and n_score (n, 13). (The fit and the closure use these; a production may use any stable hash,
     e.g. correctionlib's hashprng, as the reference helper does.)"""
     h = np.full(len(np.atleast_1d(run)), 0x9E3779B97F4A7C15, U64)
     with np.errstate(over="ignore"):
         for i, p in enumerate((run, lumi, event, track)):
             h = _mix(h ^ (np.asarray(p).astype(U64) + U64(0x9E3779B97F4A7C15) * U64(i + 1)))
         u = lambda salt: (_mix(h ^ (U64(salt) * U64(0xD6E8FEB86659FD93))) >> U64(11)).astype(np.float64) * 2.0 ** -53
-        out = {"u_state": u(1), "u_rank": u(2), "u_score": u(3), "u_cov": u(4)}
+        nor = lambda salt: stats.norm.ppf(np.clip(u(salt), 1e-12, 1 - 1e-12))
+        out = {"u_state": u(1), "u_rank": u(2), "u_miss": np.stack([u(60 + j) for j in range(len(SCORES))], 1),
+               "n_cov": np.stack([nor(20 + i) for i in range(5)], 1), "n_score": np.stack([nor(40 + j) for j in range(len(SCORES))], 1)}
         for i, p in enumerate(("z0", "tanL", "rInv", "phi0")):
-            out["n_" + p] = stats.norm.ppf(np.clip(u(10 + i), 1e-12, 1 - 1e-12))
+            out["n_" + p] = nor(10 + i)
     return out
 
 
@@ -130,11 +136,6 @@ def natural(name, x):
 def unnatural(name, y):
     x = np.asarray(y, np.float64).copy() if name in LINEAR else np.maximum(np.exp(y) - 1e-3, 0.0)
     return np.where(np.isfinite(y), x, MISSING)
-
-
-def scores_of(inputs):
-    """{name: natural variable} of the mapped inputs from the stored head inputs 14-38."""
-    return {c: natural(c, inputs[:, IN[c]]) for c in SCORES}
 
 
 def assemble_inputs(today, a, counts, values, kpt):
@@ -180,17 +181,7 @@ def cells(today, terciles, truth=None):
     return {"ipt": np.searchsorted(PT_EDGES, pt, side="right"), "ieta": np.searchsorted(ETA_EDGES, eta, side="right"),
             "window": window, "mult": np.searchsorted(MULT_EDGES, today["inputs"][:, IN["spixMaxWindowMult"]], side="right"),
             "tercile": np.searchsorted(terciles, today["margins"][:, 0], side="right"),
-            "nacc": np.searchsorted(NACC_EDGES, today["inputs"][:, IN["spixNAcceptedHits"]], side="right"),
-            "maskc": mask_class(today["inputs"][:, IN["spixLayerHitMask"]], today["mask_classes"]),
             "matched": today["matched"].astype(int), "pull": np.searchsorted(PULL_EDGES, today_pull(today, truth), side="right")}
-
-
-def mask_class(mask, classes):
-    """Index of the layer mask among `classes` (sorted mask values), len(classes) for any other mask."""
-    classes = np.asarray(classes, np.int64)
-    m = np.asarray(mask).astype(np.int64)
-    i = np.minimum(np.searchsorted(classes, m), len(classes) - 1)
-    return np.where(classes[i] == m, i, len(classes))
 
 
 def today_pull(today, truth):
@@ -302,15 +293,125 @@ def param_uniforms(D, rho, C):
     return {p: stats.norm.cdf(z[p]) for p in DRAW_ORDER}
 
 
-def cov_model_of(T, p, cov_today, sg, Ck, D):
-    """The precision part's covariance diagonal of parameter p: today's x exp(a + b ln sigma_today [+ s eta(u_cov)]),
-    the exponent clipped to COV_CLIP; a, b, s per cell and layer-mask class; one u_cov per track for all five
-    parameters (their ratios move together). COV_SCATTER False: the deterministic line alone."""
-    cs = lookup(T["cov_scale"][p], Ck, COV_AXES)
-    lr = cs[:, 0] + cs[:, 1] * np.log(sg)
-    if COV_SCATTER:
-        lr = lr + cs[:, 2] * eval_inv_cdf(np.broadcast_to(T["cov_eta"][p], (len(sg), len(KNOTS))), D["u_cov"])
-    return cov_today * np.exp(np.clip(lr, COV_CLIP[0], COV_CLIP[1]))
+# ---------------------------------------------------------------- maps ----
+class Trees:
+    """One boosted tree model of scikit-learn (HistGradientBoosting; x <= threshold goes left), or a constant.
+    raw(Z): the regression value, or the classifier's margin."""
+
+    def __init__(self, sk=None, const=0.0):
+        self.sk, self.const = sk, float(const)
+
+    def raw(self, Z):
+        if self.sk is None:
+            return np.full(len(Z), self.const)
+        return self.sk.decision_function(Z) if hasattr(self.sk, "decision_function") else self.sk.predict(Z)
+
+    def arrays(self):
+        """(base, feature, threshold, left, right, value): one line per tree, padded; feature -1 = leaf."""
+        if self.sk is None:
+            z = np.zeros((0, 1))
+            return self.const, z.astype(np.int16), z, z.astype(np.uint8), z.astype(np.uint8), z.astype(np.float32)
+        nodes = [p[0].nodes for p in self.sk._predictors]
+        n = max(len(t) for t in nodes)
+        pad = lambda fn, fill, dt: np.array([list(fn(t)) + [fill] * (n - len(t)) for t in nodes], dt)
+        return (float(np.ravel(self.sk._baseline_prediction)[0]),
+                pad(lambda t: np.where(t["is_leaf"], -1, t["feature_idx"].astype(np.int64)), -1, np.int16),
+                pad(lambda t: t["num_threshold"], 0.0, np.float64), pad(lambda t: t["left"], 0, np.uint8),
+                pad(lambda t: t["right"], 0, np.uint8), pad(lambda t: t["value"], 0.0, np.float32))
+
+
+def mask_bits(mask):
+    return ((np.asarray(mask).astype(np.int64)[:, None] >> np.arange(N_BITS)) & 1).astype(np.float64)
+
+
+def features_cov(today, counts):
+    """The covariance maps' inputs: today's track (the heads' 38 inputs, ln covariance diagonal, parameters, layer-mask
+    bits) and the emulated structure `counts` (n, 6: head inputs 19-24 = spixRefitPerformed ... spixMaxWindowMult) with
+    its layer-mask bits."""
+    return np.column_stack([today["ot_inputs"], today["inputs"], np.log(np.maximum(today["cov_diag"], 1e-30)), today["a"],
+                            mask_bits(today["inputs"][:, IN["spixLayerHitMask"]]), counts, mask_bits(counts[:, 4])])
+
+
+def features_scores(today, counts, a, cov):
+    """The head-input maps' inputs: those of the covariance maps and the emulated parameters and covariance: the change
+    from the OT track, the change from today's refit over today's sigma, ln covariance and its change, the parameters,
+    the change from the OT track over the OT sigma."""
+    d_ot = a - today["ot_a"]
+    d_ot[:, 1] = wrap(d_ot[:, 1])
+    d_today = a - today["a"]
+    d_today[:, 1] = wrap(d_today[:, 1])
+    lc, lc_today = np.log(np.maximum(cov, 1e-30)), np.log(np.maximum(today["cov_diag"], 1e-30))
+    return np.column_stack([features_cov(today, counts), d_ot, np.abs(d_today) / sigma_today(today), lc, lc - lc_today, a,
+                            np.abs(d_ot) / np.sqrt(np.maximum(today["ot_cov_diag"], 1e-30))])
+
+
+def fit_column(Z, y, half):
+    """One mapped column: two mean models, each trained on one half of the events (their average is the map), the
+    out-of-fold residual, a model of ln |residual| and the quantiles of the standardized residual."""
+    from sklearn.ensemble import HistGradientBoostingRegressor as HR
+    if len(y) < MIN_MAP or min((half == 0).sum(), (half == 1).sum()) < MIN_MAP // 4:
+        med = float(np.median(y)) if len(y) else 0.0
+        r = y - med
+        mean, scale = [Trees(const=med)] * 2, Trees(const=float(np.log(np.median(np.abs(r)) + 1e-4)) if len(y) else 0.0)
+    else:
+        mean = [Trees(HR(**MAP_MEAN).fit(Z[half == k], y[half == k])) for k in (0, 1)]
+        r = y.astype(np.float64).copy()
+        for k in (0, 1):
+            r[half == k] -= mean[1 - k].raw(Z[half == k])
+        scale = Trees(HR(**MAP_SCALE).fit(Z, np.log(np.abs(r) + 1e-4)))
+    e = r / np.exp(scale.raw(Z)) if len(y) else r
+    return {"mean": mean, "scale": scale, "q": inv_cdf(e), "lo": float(y.min()) if len(y) else 0.0,
+            "hi": float(y.max()) if len(y) else 0.0}, e
+
+
+def fit_block(Z, Y, ok, half):
+    """The maps of the columns of Y (NaN = missing, left out of that column) on the tracks `ok`, and the Cholesky factor
+    of the normal-score correlation of their standardized residuals (pairwise complete, made positive definite)."""
+    cols, E = [], np.full(Y.shape, np.nan)
+    for j in range(Y.shape[1]):
+        m = ok & np.isfinite(Y[:, j])
+        c, e = fit_column(Z[m], Y[m, j], half[m])
+        cols.append(c)
+        if m.sum() >= 50:
+            E[m, j] = stats.norm.ppf((stats.rankdata(e) - 0.5) / len(e))
+    C = np.eye(Y.shape[1])
+    for i in range(Y.shape[1]):
+        for j in range(i):
+            m = np.isfinite(E[:, i]) & np.isfinite(E[:, j])
+            if m.sum() >= 200:
+                C[i, j] = C[j, i] = np.corrcoef(E[m, i], E[m, j])[0, 1]
+    w, v = np.linalg.eigh(C)
+    C = (v * np.maximum(w, 1e-4)) @ v.T
+    d = np.sqrt(np.diag(C))
+    return {"cols": cols, "chol": np.linalg.cholesky(C / d[:, None] / d[None, :])}
+
+
+def draw_block(B, Z, normals):
+    """(n, columns): map + residual scale x the standardized residual at the copula's draw, kept within the fitted range."""
+    u = stats.norm.cdf(normals @ B["chol"].T)
+    out = []
+    for j, c in enumerate(B["cols"]):
+        mu = 0.5 * (c["mean"][0].raw(Z) + c["mean"][1].raw(Z))
+        y = mu + np.exp(c["scale"].raw(Z)) * eval_inv_cdf(np.broadcast_to(c["q"], (len(Z), len(KNOTS))), u[:, j])
+        out.append(np.clip(y, c["lo"], c["hi"]))
+    return np.column_stack(out)
+
+
+def emulated_cov(T, today, counts, D):
+    """(n, 5) covariance diagonal for the emulated structure: today's x exp(map) where the refit runs, else the OT track's."""
+    lr = draw_block(T["cov_map"], features_cov(today, counts), D["n_cov"])
+    return np.where(counts[:, :1] > 0, today["cov_diag"] * np.exp(lr), today["ot_cov_diag"])
+
+
+def emulated_values(T, today, counts, a, cov, D):
+    """{mapped input: stored value (-999 missing)} for the emulated structure, parameters and covariance."""
+    Z = features_scores(today, counts, a, cov)
+    Y = draw_block(T["score_map"], Z, D["n_score"])
+    out = {}
+    for j, c in enumerate(SCORES):
+        p_miss = 1.0 / (1.0 + np.exp(-T["missing"][j].raw(Z)))
+        out[c] = unnatural(c, np.where((D["u_miss"][:, j] < p_miss) | (counts[:, 0] <= 0), np.nan, Y[:, j]))
+    return out
 
 
 CHOICE_SIGMA = 1.0
@@ -332,10 +433,6 @@ def choice_changed(today, arm):
 
 KERNEL_AXES = (("ieta", N_ETA), ("window", 2))
 LAMBDA_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3))
-# the covariance map also by today's layer mask (the hit pattern fixes most of the covariance's response)
-COV_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3), ("maskc", N_MASK + 1))
-COV_DROP = ("ipt", "ieta", "maskc")
-MAP_AXES = (("window_arm", 2), ("nacc", 4), ("ieta", N_ETA))
 # donors are taken from the same pull class as the receiving track (a track that is off today and changes clusters is
 # not, on average, repaired: without this the emulation repairs it too often and the prompt tails come out too small)
 DONOR_AXES = (("matched", 2), ("window", 3), ("ieta", N_ETA), ("pull", 3))
@@ -372,35 +469,38 @@ def fit(today, arm, truth, D, terciles, sel):
     dprec[:, 1] = wrap(dprec[:, 1])
     eps = dprec / np.stack([eps_unit(sg[:, i], today["cov_diag"][:, i], arm["forced_cov_diag"][:, i]) for i in range(5)], 1)
     Ck = dict(C, window=np.minimum(C["window"], 1))
-    T["kernel"], T["rho"], T["lambda"], T["cov_scale"] = {}, {}, {}, {}
+    T["kernel"], T["rho"], T["lambda"] = {}, {}, {}
     for i, p in enumerate(PARAMS):
         T["kernel"][p], _ = pooled_table(Ck, both, lambda m, i=i: inv_cdf(eps[m, i]), MIN_KERNEL, KERNEL_AXES, ("window", "ieta"),
                                          (len(KNOTS),))
-        lr = np.log(np.maximum(arm["forced_cov_diag"][:, i], 1e-30) / np.maximum(today["cov_diag"][:, i], 1e-30))
-        ls = np.log(sg[:, i])
-
-        def line(m, lr=lr, ls=ls):
-            ok = m & np.isfinite(lr) & np.isfinite(ls)
-            if ok.sum() < 30 or np.std(ls[ok]) < 1e-6:
-                return np.array([float(np.median(lr[ok])) if ok.any() else 0.0, 0.0, 0.0])
-            y_ = np.clip(lr[ok], COV_CLIP[0], COV_CLIP[1])
-            b, a_ = np.polyfit(ls[ok], y_, 1)
-            return np.array([a_, b, float(np.std(y_ - a_ - b * ls[ok]))])
-        T["cov_scale"][p], _ = pooled_table(Ck, both, line, MIN_LAMBDA, COV_AXES, COV_DROP, (3,))
-        co_ = lookup(T["cov_scale"][p], Ck, COV_AXES)
-        zc = (np.clip(lr, COV_CLIP[0], COV_CLIP[1]) - co_[:, 0] - co_[:, 1] * ls) / np.maximum(co_[:, 2], 1e-9)
-        T.setdefault("cov_eta", {})[p] = inv_cdf(zc[both & np.isfinite(zc) & (co_[:, 2] > 0)])
     for p in DRAW_ORDER[1:]:
         i, j = PARAMS.index(p), PARAMS.index(PARTNER[p])
         T["rho"][p], _ = pooled_table(Ck, both, lambda m, i=i, j=j: normal_score_corr(eps[m, i], eps[m, j]), MIN_KERNEL,
                                       KERNEL_AXES, ("window", "ieta"))
+    # ---- the maps, trained on the arm's own results (every track whose refit runs in the arm)
+    from sklearn.ensemble import HistGradientBoostingClassifier as HC
+    okm = sel & (arm["inputs"][:, IN["spixRefitPerformed"]] > 0)
+    c_arm = arm["inputs"][:, 5:11].astype(np.float64)
+    lc = lambda c: np.log(np.maximum(c, 1e-30))
+    T["cov_map"] = fit_block(features_cov(today, c_arm), lc(arm["cov_diag"]) - lc(today["cov_diag"]), okm, today["half"])
+    Zs = features_scores(today, c_arm, arm["a"].astype(np.float64), arm["cov_diag"])
+    Ys = np.column_stack([natural(c, arm["inputs"][:, IN[c]]) for c in SCORES])
+    T["score_map"] = fit_block(Zs, Ys, okm, today["half"])
+    T["missing"] = []
+    for j in range(len(SCORES)):
+        miss = ~np.isfinite(Ys[okm, j])
+        share = float(miss.mean()) if okm.any() else 1.0
+        if okm.sum() >= MIN_MAP and min(miss.sum(), (~miss).sum()) >= 20:
+            T["missing"].append(Trees(HC(**MAP_SCALE).fit(Zs[okm], miss)))
+        else:
+            T["missing"].append(Trees(const=float(np.log(max(share, 1e-9) / max(1 - share, 1e-9)))))
+    cov_same = emulated_cov(T, today, today["inputs"][:, 5:11].astype(np.float64), D)     # the structure kept: the precision part
     U = param_uniforms(D, T["rho"], Ck)
     r_today, r_forced = residual(today["a"].copy(), truth), residual(arm["forced_a"].copy(), truth)
     has_truth = both & np.isfinite(truth).all(1)
     for i, p in enumerate(PARAMS):
         e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
-        cov_model = cov_model_of(T, p, today["cov_diag"][:, i], sg[:, i], Ck, D)
-        unit_model = eps_unit(sg[:, i], today["cov_diag"][:, i], cov_model)
+        unit_model = eps_unit(sg[:, i], today["cov_diag"][:, i], cov_same[:, i])
 
         def lam(m, i=i, e=e, unit_model=unit_model):
             if m.sum() < 30:
@@ -417,34 +517,13 @@ def fit(today, arm, truth, D, terciles, sel):
                 lo, hi = (mid, hi) if f(mid) < 0 else (lo, mid)
             return 0.5 * (lo + hi)
         T["lambda"][p], _ = pooled_table(Ck, has_truth, lam, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"))
-    # ---- scores in the same-cluster state: linear map in the natural variable + empirical residual
-    same = sel & ~changed & today["refit"]
-    s_today, s_arm = scores_of(today["inputs"]), scores_of(arm["inputs"])
-    Cm = dict(Ck, window_arm=(np.abs(arm["a"][:, 4]) > D0_SPLIT).astype(int))
-    tail = np.searchsorted(TAIL_EDGES, np.abs(2 * D["u_rank"] - 1), side="right")
-    T["map"], T["eta"] = {}, {}
-    for s in SCORES:
-        x, y = s_today[s], s_arm[s]
-        ok = same & np.isfinite(x) & np.isfinite(y)
-
-        def ols(m, x=x, y=y):
-            if m.sum() < 20 or np.std(x[m]) < 1e-9:
-                return np.array([float(np.mean(y[m] - x[m])) if m.any() else 0.0, 1.0, 0.0])
-            b, a_ = np.polyfit(x[m], y[m], 1)
-            return np.array([a_, b, float(np.std(y[m] - a_ - b * x[m]))])
-        T["map"][s], _ = pooled_table(Cm, ok, ols, MIN_MAP, MAP_AXES, ("ieta", "nacc"), (3,))
-        co = lookup(T["map"][s], Cm, MAP_AXES)
-        z = (y - co[:, 0] - co[:, 1] * x) / np.maximum(co[:, 2], 1e-9)
-        T["eta"][s] = np.stack([inv_cdf(z[ok & (tail == k)]) for k in range(3)])
     # ---- changed state: donors per cell (the cell's changed tracks, a fixed random subset of N_DONORS)
     rng = np.random.default_rng(20261111)
     r_arm = residual(arm["a"].copy(), truth)
     delta = arm["a"] - today["a"]
     delta[:, 1] = wrap(delta[:, 1])
     cols = {"matched_ratio": np.where(np.isfinite(r_arm), r_arm, 0.0) / sg, "delta_ratio": delta / sg,
-            "cov_ratio": arm["cov_diag"] / np.maximum(today["cov_diag"], 1e-30),
-            "counts": np.stack([arm["inputs"][:, IN[c]] for c in COUNTS], 1),
-            "values": np.stack([arm["inputs"][:, IN[c]] for c in SCORES], 1)}
+            "counts": np.stack([arm["inputs"][:, IN[c]] for c in COUNTS], 1)}
     dims = [k for _, k in DONOR_AXES]
     dnames = [n_ for n_, _ in DONOR_AXES]
     T["donors"] = {k: np.zeros(dims + [N_DONORS, v.shape[1]]) for k, v in cols.items()}
@@ -478,49 +557,39 @@ def apply(T, today, truth, D, terciles, heads):
     Ck = dict(C, window=np.minimum(C["window"], 1))
     sg = sigma_today(today)
     changed = D["u_state"] < lookup(T["p"], C, CELL_AXES)
-    refit_today = today["refit"]
-    out = {"changed": changed}
-    # precision part
-    U = param_uniforms(D, T["rho"], Ck)
-    a = today["a"].astype(np.float64).copy()
-    cov = today["cov_diag"].astype(np.float64).copy()
-    for i, p in enumerate(PARAMS):
-        e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
-        L = lookup(T["lambda"][p], Ck, LAMBDA_AXES)
-        cov_new = cov_model_of(T, p, today["cov_diag"][:, i], sg[:, i], Ck, D)
-        a[:, i] += np.where(refit_today, L * eps_unit(sg[:, i], today["cov_diag"][:, i], cov_new) * e, 0.0)
-        cov[:, i] = np.where(refit_today, cov_new, cov[:, i])
-    s_today = scores_of(today["inputs"])
-    Cm = dict(Ck, window_arm=(np.abs(a[:, 4]) > D0_SPLIT).astype(int))
-    tail = np.searchsorted(TAIL_EDGES, np.abs(2 * D["u_rank"] - 1), side="right")
-    values = {}
-    for s in SCORES:
-        co = lookup(T["map"][s], Cm, MAP_AXES)
-        eta = eval_inv_cdf(T["eta"][s][tail], D["u_score"])
-        y = co[:, 0] + co[:, 1] * s_today[s] + co[:, 2] * eta
-        values[s] = unnatural(s, np.where(refit_today, y, s_today[s]))    # a track not refit today keeps its values
+    refit_today = today["refit"].astype(bool)
+    # the structure: today's, or the donor's in the hit-choice part
     counts = {c: today["inputs"][:, IN[c]].astype(np.float64).copy() for c in COUNTS}
-    # hit-choice part: everything from one donor
     ch = np.flatnonzero(changed)
     if len(ch):
         k = np.minimum((D["u_rank"][ch] * N_DONORS).astype(int), N_DONORS - 1)
         cell = tuple(C[n_][ch] for n_, _ in DONOR_AXES)
         g = lambda name: T["donors"][name][cell + (k,)]
+        gc = g("counts")
+        for i, c in enumerate(COUNTS):
+            counts[c][ch] = gc[:, i]
+    c6 = today["inputs"][:, 5:11].astype(np.float64).copy()
+    for c in COUNTS:
+        c6[:, IN[c] - 5] = counts[c]
+    cov = emulated_cov(T, today, c6, D)
+    # parameters: the precision part ...
+    U = param_uniforms(D, T["rho"], Ck)
+    a = today["a"].astype(np.float64).copy()
+    for i, p in enumerate(PARAMS):
+        e = eval_inv_cdf(lookup(T["kernel"][p], Ck, KERNEL_AXES), U[p])
+        L = lookup(T["lambda"][p], Ck, LAMBDA_AXES)
+        a[:, i] += np.where(refit_today, L * eps_unit(sg[:, i], today["cov_diag"][:, i], cov[:, i]) * e, 0.0)
+    # ... and the hit-choice part: the donor's residual
+    if len(ch):
         has_truth = np.isfinite(truth[ch]).all(1)
         a_m = np.where(has_truth[:, None], truth[ch], 0.0) + sg[ch] * g("matched_ratio")
         a_u = today["a"][ch] + sg[ch] * g("delta_ratio")
         a[ch] = np.where(has_truth[:, None], a_m, a_u)
-        cov[ch] = today["cov_diag"][ch] * g("cov_ratio")
-        gc, gv = g("counts"), g("values")
-        for i, c in enumerate(COUNTS):
-            counts[c][ch] = gc[:, i]
-        for i, c in enumerate(SCORES):
-            values[c][ch] = gv[:, i]
     a[:, 1] = wrap(a[:, 1])
+    a = np.where(c6[:, :1] > 0, a, today["ot_a"])         # a track whose refit does not run carries the OT track
+    values = emulated_values(T, today, c6, a, cov, D)
     inputs, a = assemble_inputs(today, a, counts, values, today["kpt"])
-    not_refit = counts["spixRefitPerformed"] <= 0
-    cov[not_refit] = today["ot_cov_diag"][not_refit]
-    out.update(a=a, cov_diag=cov, inputs=inputs, margins=head_margins(heads, today, inputs, a[:, 4]))
+    out = {"changed": changed, "a": a, "cov_diag": cov, "inputs": inputs, "margins": head_margins(heads, today, inputs, a[:, 4])}
     out.update(counts)
     out.update({c: values[c] for c in CHI2})
     return out

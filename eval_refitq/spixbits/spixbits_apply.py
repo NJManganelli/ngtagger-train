@@ -1,11 +1,13 @@
 """Reference helper: apply a shipped SmartPixels quantization scenario to today's extended-collection tracks through
-the correctionlib file of the detector scenario (spixbits_<AAAA|AAAI|IAAA>.json.gz) and the head models shipped beside
-it. Needs numpy, scipy, correctionlib >= 2.6.
+the files of the detector scenario: the correctionlib file spixbits_<AAAA|AAAI|IAAA>.json.gz (shares, parameter noise,
+donors), the tree maps spixbits_<...>_maps.npz (covariance, the heads' inputs) and the head models. Needs numpy, scipy,
+correctionlib >= 2.6.
 
     import spixbits_apply as SA
     cset, meta = SA.load("spixbits_AAAA.json.gz")
+    maps = SA.load_maps("spixbits_AAAA_maps.npz")
     heads = SA.load_heads("heads/retrained", "AAAA")          # or "heads/deployed"
-    out = SA.apply(cset, meta, "alloc_4444", heads, a=a, cov_diag=cov_diag, refit=refit, clean_margin=m, inputs=inputs,
+    out = SA.apply(cset, meta, maps, "alloc_4444", heads, a=a, cov_diag=cov_diag, refit=refit, clean_margin=m, inputs=inputs,
                    ot_inputs=ot_inputs, ot_a=ot_a, ot_cov_diag=ot_cov_diag, truth=truth, ids=(run, lumi, event, track))
 
 Inputs, one entry per track of L1TSmartPixelsExtTrack as produced today (flattened over events):
@@ -39,6 +41,7 @@ COUNTS = ("spixRefitPerformed", "spixNCrossings", "spixNAcceptedHits", "spixLaye
 LINEAR = ("spixLogDetRatio", "h_nangle", "h_mean_wmult")
 PARTNER = {"z0": "d0", "tanL": "z0", "rInv": "d0", "phi0": "d0"}
 D0_SPLIT, MISSING = 0.02, -999.0
+N_COV, N_BITS = 5, 16                                 # covariance columns; layer-mask bits given to the maps
 
 
 def load_heads(directory, scenario):
@@ -111,12 +114,6 @@ def full_covariance(cov_today, cov_diag_new):
     return cov_today / (d0[:, :, None] * d0[:, None, :]) * (d1[:, :, None] * d1[:, None, :])
 
 
-def _natural(name, x):
-    x = np.asarray(x, np.float64)
-    y = x.copy() if name in LINEAR else np.log(np.maximum(x, 0.0) + 1e-3)
-    return np.where(x <= -998, np.nan, y)
-
-
 def _unnatural(name, y):
     x = np.asarray(y, np.float64).copy() if name in LINEAR else np.maximum(np.exp(y) - 1e-3, 0.0)
     return np.where(np.isfinite(y), x, MISSING)
@@ -126,85 +123,139 @@ def _wrap(x):
     return (x + np.pi) % (2 * np.pi) - np.pi
 
 
-def apply(cset, M, allocation, heads, a, cov_diag, refit, clean_margin, inputs, ot_inputs, ot_a, ot_cov_diag, truth, ids=None,
+def load_maps(path):
+    """The tree maps of one detector scenario (spixbits_<detector scenario>_maps.npz)."""
+    return np.load(path)
+
+
+def _raw(m, k, Z):
+    """Model k of an allocation's maps on the features Z: base + the sum over its trees (x <= threshold goes left)."""
+    s, e = int(m["start"][k]), int(m["start"][k + 1])
+    out = np.full(len(Z), float(m["base"][k]))
+    if e == s:
+        return out
+    feat, thr, left, right, val = (m[key][s:e] for key in ("feature", "threshold", "left", "right", "value"))
+    tt = np.arange(e - s)[:, None]
+    for lo in range(0, len(Z), 20000):
+        z = Z[lo:lo + 20000]
+        rows = np.arange(len(z))[None, :]
+        node = np.zeros((e - s, len(z)), np.int64)
+        for _ in range(feat.shape[1]):
+            f = feat[tt, node]
+            if (f < 0).all():
+                break
+            nxt = np.where(z[rows, np.maximum(f, 0)] <= thr[tt, node], left[tt, node], right[tt, node])
+            node = np.where(f < 0, node, nxt)
+        out[lo:lo + 20000] += val[tt, node].sum(0, dtype=np.float64)
+    return out
+
+
+def _inv_cdf(q, knots, u):
+    u = np.clip(u, knots[0], knots[-1])
+    k = np.clip(np.searchsorted(knots, u, side="right") - 1, 0, len(knots) - 2)
+    t = (u - knots[k]) / (knots[k + 1] - knots[k])
+    return q[k] + t * (q[k + 1] - q[k])
+
+
+def _block(m, name, first, Z, normals, knots):
+    """The columns of a block of maps: mean of the two mean models + residual scale x standardized residual at the
+    copula's draw, kept within the fitted range. Models of column j: first + 3 j (mean), + 1 (mean), + 2 (ln scale)."""
+    u = ndtr(normals @ m[name + "_chol"].T)
+    out = []
+    for j in range(normals.shape[1]):
+        k = first + 3 * j
+        y = 0.5 * (_raw(m, k, Z) + _raw(m, k + 1, Z)) + np.exp(_raw(m, k + 2, Z)) * _inv_cdf(m[name + "_q"][j], knots, u[:, j])
+        out.append(np.clip(y, m[name + "_lo"][j], m[name + "_hi"][j]))
+    return np.column_stack(out)
+
+
+def _bits(mask):
+    return ((np.asarray(mask).astype(np.int64)[:, None] >> np.arange(N_BITS)) & 1).astype(np.float64)
+
+
+def apply(cset, M, maps, allocation, heads, a, cov_diag, refit, clean_margin, inputs, ot_inputs, ot_a, ot_cov_diag, truth, ids=None,
           draws=None):
-    kpt, names = M["kpt_GeV_cm"], M["head_inputs_14_38"]
+    kpt, names, knots = M["kpt_GeV_cm"], M["head_inputs_14_38"], np.asarray(M["knots"])
     IN = {c: i for i, c in enumerate(names)}
-    scores = names[11:14] + names[15:]                 # the mapped inputs: chi2-like (without spixChi2ITAtOT) and aggregates
+    scores = M["mapped_inputs"]
     a = np.asarray(a, np.float64)
     cov_diag = np.asarray(cov_diag, np.float64)
     inputs = np.asarray(inputs, np.float64)
+    ot_inputs = np.asarray(ot_inputs, np.float64)
     ot_a = np.asarray(ot_a, np.float64)
+    ot_cov_diag = np.asarray(ot_cov_diag, np.float64)
     refit = np.asarray(refit).astype(bool)
     if draws is None:
         run, lumi, event, track = (np.asarray(x).astype(np.int64) for x in ids)
         uni = lambda k: cset["uniform"].evaluate(run, lumi, event, track, k)
         nor = lambda k: cset["normal"].evaluate(run, lumi, event, track, k)
-        draws = {"u_state": uni(1), "u_rank": uni(2), "u_score": uni(3), "u_cov": uni(4), "n_z0": nor(11), "n_tanL": nor(12), "n_rInv": nor(13),
-                 "n_phi0": nor(14)}
+        draws = {"u_state": uni(1), "u_rank": uni(2), "n_z0": nor(11), "n_tanL": nor(12), "n_rInv": nor(13), "n_phi0": nor(14),
+                 "n_cov": np.stack([nor(21 + i) for i in range(N_COV)], 1),
+                 "n_score": np.stack([nor(41 + j) for j in range(len(scores))], 1),
+                 "u_miss": np.stack([uni(61 + j) for j in range(len(scores))], 1)}
+    m = {key: maps[f"{allocation}/{key}"] for key in ("base", "start", "feature", "threshold", "left", "right", "value", "cov_q", "cov_lo",
+                                                      "cov_hi", "cov_chol", "score_q", "score_lo", "score_hi", "score_chol")}
     pt = kpt / np.maximum(np.abs(a[:, 0]), 1e-12)
     abs_eta = np.abs(np.arcsinh(a[:, 2]))
     window = np.where(refit, (np.abs(a[:, 4]) > D0_SPLIT).astype(np.int64), 2)
     w2 = np.minimum(window, 1)
     matched = np.isfinite(truth).all(1).astype(np.int64)
-    mult, n_hits = inputs[:, IN["spixMaxWindowMult"]], inputs[:, IN["spixNAcceptedHits"]]
-    mask = inputs[:, IN["spixLayerHitMask"]].astype(np.int64)
     sg = np.sqrt(np.maximum(cov_diag, 1e-30))
     with np.errstate(invalid="ignore"):
         pull = np.nan_to_num(np.maximum(np.abs(a[:, 4] - truth[:, 4]) / sg[:, 4], np.abs(a[:, 3] - truth[:, 3]) / sg[:, 3]), nan=0.0)
-    changed = draws["u_state"] < cset["p_changed"].evaluate(allocation, matched, window, abs_eta, pt, mult, np.asarray(clean_margin, np.float64), pull)
-    # ---- precision part
+    changed = draws["u_state"] < cset["p_changed"].evaluate(allocation, matched, window, abs_eta, pt, inputs[:, IN["spixMaxWindowMult"]],
+                                                           np.asarray(clean_margin, np.float64), pull)
+    # ---- the structure (refit flag, crossings, accepted hits, layer mask, largest window multiplicity): today's, or the
+    # donor's in the hit-choice part
+    X = np.zeros((len(a), 25))
+    X[:, 5:11] = inputs[:, 5:11]
+    ch = np.flatnonzero(changed)
+    don = lambda q: cset["donor"].evaluate(allocation, q, matched[ch], window[ch], abs_eta[ch], pull[ch], draws["u_rank"][ch])
+    if len(ch):
+        for c in COUNTS:
+            X[ch, IN[c]] = don(c)
+    ran = X[:, IN["spixRefitPerformed"]] > 0
+    # ---- covariance diagonal: today's x exp(map)
+    lc_today = np.log(np.maximum(cov_diag, 1e-30))
+    Zc = np.column_stack([ot_inputs, inputs, lc_today, a, _bits(inputs[:, IN["spixLayerHitMask"]]), X[:, 5:11],
+                          _bits(X[:, IN["spixLayerHitMask"]])])
+    new_cov = np.where(ran[:, None], cov_diag * np.exp(_block(m, "cov", 0, Zc, draws["n_cov"], knots)), ot_cov_diag)
+    # ---- parameters: the precision part, then the donor's residual in the hit-choice part
     z = {"d0": ndtri(np.clip(draws["u_rank"], 1e-12, 1 - 1e-12))}
     for p in ("z0", "tanL", "rInv", "phi0"):
         r = cset["rho"].evaluate(allocation, p, abs_eta, w2)
         z[p] = r * z[PARTNER[p]] + np.sqrt(1 - r * r) * draws["n_" + p]
-    new_a, new_cov = a.copy(), cov_diag.copy()
+    new_a = a.copy()
     for i, p in enumerate(PARAMS):
         e = cset["eps"].evaluate(allocation, p, abs_eta, w2, ndtr(z[p]))
         lam = cset["lambda"].evaluate(allocation, p, w2, abs_eta, pt)
-        co = [cset["cov_scale"].evaluate(allocation, p, c, w2, abs_eta, pt, mask) for c in ("a", "b", "sigma")]
-        lr = co[0] + co[1] * np.log(sg[:, i])
-        if M.get("cov_scatter", True):
-            lr = lr + co[2] * cset["cov_eta"].evaluate(allocation, p, draws["u_cov"])
-        cov_i = cov_diag[:, i] * np.exp(np.clip(lr, np.log(0.2), np.log(1.0e4)))
-        unit = np.sqrt(np.abs(cov_i - cov_diag[:, i]) + (0.05 * sg[:, i]) ** 2)       # the sigma the scenario adds
+        unit = np.sqrt(np.abs(new_cov[:, i] - cov_diag[:, i]) + (0.05 * sg[:, i]) ** 2)       # the sigma the scenario adds
         new_a[:, i] += np.where(refit, lam * unit * e, 0.0)
-        new_cov[:, i] = np.where(refit, cov_i, new_cov[:, i])
-    w_arm = (np.abs(new_a[:, 4]) > D0_SPLIT).astype(np.int64)
-    tail = np.abs(2 * draws["u_rank"] - 1)
-    X = np.zeros((len(a), 25))
-    for s in scores:
-        t = _natural(s, inputs[:, IN[s]])
-        co = [cset["score_map"].evaluate(allocation, s, c, w_arm, n_hits, abs_eta) for c in ("a", "b", "sigma")]
-        eta = cset["score_eta"].evaluate(allocation, s, tail, draws["u_score"])
-        X[:, IN[s]] = _unnatural(s, np.where(refit, co[0] + co[1] * t + co[2] * eta, t))
-    for c in COUNTS:
-        X[:, IN[c]] = inputs[:, IN[c]]
-    # ---- hit-choice part: everything from one donor
-    ch = np.flatnonzero(changed)
     if len(ch):
-        don = lambda q: cset["donor"].evaluate(allocation, q, matched[ch], window[ch], abs_eta[ch], pull[ch], draws["u_rank"][ch])
         has = matched[ch] > 0
         for i, p in enumerate(PARAMS):
             new_a[ch, i] = np.where(has, np.where(has, truth[ch, i], 0.0) + sg[ch, i] * don(f"matched_ratio_{p}"),
                                     a[ch, i] + sg[ch, i] * don(f"delta_ratio_{p}"))
-            new_cov[ch, i] = cov_diag[ch, i] * don(f"cov_ratio_{p}")
-        for c in list(COUNTS) + scores:
-            X[ch, IN[c]] = don(c)
     new_a[:, 1] = _wrap(new_a[:, 1])
-    # ---- the heads' inputs that follow from the parameters; a track whose refit does not run carries the OT track
-    ran = X[:, IN["spixRefitPerformed"]] > 0
-    new_a = np.where(ran[:, None], new_a, ot_a)
-    new_cov[~ran] = np.asarray(ot_cov_diag, np.float64)[~ran]
-    ot_inv = np.asarray(ot_inputs)[:, 0].astype(np.float64)
+    new_a = np.where(ran[:, None], new_a, ot_a)            # a track whose refit does not run carries the OT track
+    # ---- the heads' mapped inputs
+    d_ot, d_today = new_a - ot_a, new_a - a
+    d_ot[:, 1], d_today[:, 1] = _wrap(d_ot[:, 1]), _wrap(d_today[:, 1])
+    lc = np.log(np.maximum(new_cov, 1e-30))
+    Zs = np.column_stack([Zc, d_ot, np.abs(d_today) / sg, lc, lc - lc_today, new_a, np.abs(d_ot) / np.sqrt(np.maximum(ot_cov_diag, 1e-30))])
+    Y = _block(m, "score", 3 * N_COV, Zs, draws["n_score"], knots)
+    for j, s in enumerate(scores):
+        p_miss = 1.0 / (1.0 + np.exp(-_raw(m, 3 * (N_COV + len(scores)) + j, Zs)))
+        X[:, IN[s]] = _unnatural(s, np.where((draws["u_miss"][:, j] < p_miss) | ~ran, np.nan, Y[:, j]))
+    # ---- the heads' inputs that follow from the parameters
+    ot_inv = ot_inputs[:, 0]
     X[:, 0] = np.where(ran, 1.0 / np.maximum(kpt / np.maximum(np.abs(new_a[:, 0]), 1e-12), 1e-3), ot_inv)
     X[:, 1] = new_a[:, 2]
     X[:, 2] = np.abs(new_a[:, 3] - ot_a[:, 3])
     X[:, 3] = np.abs(new_a[:, 2] - ot_a[:, 2])
     X[:, 4] = X[:, 0] - ot_inv
-    X[:, IN["spixAnyWindowTruncated"]] = inputs[:, IN["spixAnyWindowTruncated"]]
     X[:, IN["spixChi2ITAtOT"]] = MISSING                # always missing in refit v3
     X[:, IN["h_nangle"]] = np.clip(np.rint(X[:, IN["h_nangle"]]), 0, np.maximum(X[:, IN["spixNAcceptedHits"]], 0))
     X = X.astype(np.float32)
-    margins = head_margins(heads, np.hstack([np.asarray(ot_inputs, np.float32), X]), new_a[:, 4])
+    margins = head_margins(heads, np.hstack([ot_inputs.astype(np.float32), X]), new_a[:, 4])
     return {"a": new_a, "cov_diag": new_cov, "inputs": X, "margins": margins, "changed": changed}

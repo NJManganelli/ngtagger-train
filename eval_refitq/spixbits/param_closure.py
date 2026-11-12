@@ -60,13 +60,14 @@ def load(root, scen, files, allocs=()):
     m = T["matched"] & today["refit"] & (T["tp_pt"] > 3)
     kpt = float(np.median(np.abs(today["a"][m, 0]) * T["tp_pt"][m]))
     sgn = float(np.sign(np.median(today["a"][m, 0] * T["tp_charge"][m])))
-    masks, cnt = np.unique(today["inputs"][today["refit"], PM.IN["spixLayerHitMask"]].astype(np.int64), return_counts=True)
     today.update(matched=T["matched"], kpt=kpt, ot_a=T["ot_a"].astype(np.float64), ot_inputs=T["ot_inputs"],
-                 ot_cov_diag=T["ot_cov_diag"].astype(np.float64), mask_classes=np.sort(masks[np.argsort(-cnt)[:PM.N_MASK]]))
+                 ot_cov_diag=T["ot_cov_diag"].astype(np.float64))
     truth = np.stack([sgn * T["tp_charge"] * kpt / np.maximum(T["tp_pt"], 1e-9), T["tp_phi0"], np.sinh(T["tp_eta"]),
                       T["tp_z0"], T["tp_d0"]], 1).astype(np.float64)
     truth[~T["matched"]] = np.nan
     T["event_key"] = (T["run"] * 1000003 + T["lumi"]) * 1000003 + T["event"]
+    # the maps' two halves of the events (not the cross-fit's fold: other bits of the event hash)
+    today["half"] = ((PM._mix(T["event_key"].astype(np.uint64)) >> np.uint64(7)) % np.uint64(2)).astype(int)
     return T, today, arms, truth, {"kpt": kpt, "rinv_sign": sgn}
 
 

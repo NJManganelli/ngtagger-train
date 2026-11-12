@@ -211,7 +211,8 @@ def test_parametrization_pieces():
     D1 = PM.draws(np.ones(5), np.ones(5), np.arange(5), np.zeros(5))
     D2 = PM.draws(np.ones(5), np.ones(5), np.arange(5), np.zeros(5))
     assert all(np.array_equal(D1[k], D2[k]) for k in D1) and len(np.unique(D1["u_rank"])) == 5
-    assert set(D1) == {"u_state", "u_rank", "u_score", "u_cov", "n_z0", "n_tanL", "n_rInv", "n_phi0"}
+    assert set(D1) == {"u_state", "u_rank", "u_miss", "n_cov", "n_score", "n_z0", "n_tanL", "n_rInv", "n_phi0"}
+    assert D1["n_cov"].shape == (5, 5) and D1["n_score"].shape == D1["u_miss"].shape == (5, len(PM.SCORES))
     C = {"ieta": np.array([0, 0, 1, 1, 2] * 100), "window": np.array([0, 1] * 250)}
     x = np.arange(500.0)
     tab, level = PM.pooled_table(C, np.ones(500, bool), lambda m: float(x[m].mean()), 150, PM.KERNEL_AXES, ("window", "ieta"))
@@ -229,7 +230,32 @@ def test_parametrization_pieces():
     assert X[0, 0] == pytest.approx(0.2) and X[1, 0] == pytest.approx(0.25) and X[1, 4] == 0.0       # 1/pT and its change
     assert X[0, 2] == pytest.approx(0.5) and X[0, 3] == pytest.approx(0.1) and X[1, 2] == 0.0
     assert X[0, PM.IN["h_nangle"]] == 2.0 and X[1, PM.IN["h_nangle"]] == 0.0 and X[0, 14] == PM.MISSING
-    assert PM.mask_class([3, 7, 15, 9], [3, 15]).tolist() == [0, 2, 1, 2]
+    assert PM.mask_bits([5]).tolist() == [[1, 0, 1] + [0] * 13]
+
+
+def test_tree_maps_fit_draw_and_shipped_arrays():
+    PM = pytest.importorskip("param_model")
+    SA = pytest.importorskip("spixbits_apply")
+    pytest.importorskip("sklearn")
+    rng = np.random.default_rng(3)
+    n = 4000
+    Z = rng.normal(size=(n, 3))
+    Y = np.column_stack([2 * (Z[:, 0] > 0) + 0.1 * rng.normal(size=n), Z[:, 1] + 0.5 * np.abs(Z[:, 2]) * rng.normal(size=n)])
+    Y[rng.random(n) < 0.1, 1] = np.nan                                        # missing values are left out of their column
+    B = PM.fit_block(Z, Y, np.ones(n, bool), rng.integers(0, 2, n))
+    got = PM.draw_block(B, Z, rng.normal(size=(n, 2)))
+    assert abs(np.std(got[:, 0] - 2 * (Z[:, 0] > 0)) - 0.1) < 0.03            # the residual's size is reproduced ...
+    wide, narrow = np.abs(Z[:, 2]) > 1, np.abs(Z[:, 2]) < 0.3
+    assert np.std(got[wide, 1] - Z[wide, 1]) > 2 * np.std(got[narrow, 1] - Z[narrow, 1])      # ... and follows the track
+    assert np.allclose(B["chol"] @ B["chol"].T, np.eye(2), atol=0.1)          # independent residuals: no correlation
+    # the shipped arrays, read by the helper, give the fitted model
+    t = B["cols"][0]["mean"][0]
+    base, feat, thr, left, right, val = t.arrays()
+    m = {"base": np.array([base]), "start": np.array([0, len(feat)]), "feature": feat, "threshold": thr, "left": left,
+         "right": right, "value": val}
+    assert np.allclose(SA._raw(m, 0, Z), t.raw(Z), atol=1e-5)
+    const = PM.Trees(const=1.5)
+    assert const.raw(Z[:3]).tolist() == [1.5] * 3 and const.arrays()[1].shape[0] == 0
 
 
 def test_helper_reads_head_models(tmp_path):

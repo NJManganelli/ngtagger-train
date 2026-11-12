@@ -1,0 +1,25 @@
+SmartPixels output bits -> track refit: parametrization, version 2 (PLAN.md 7b; physicist's rulings of 2026-11-11: emulate the
+heads' inputs and evaluate the real head models, retrained per detector scenario; width bias of +1.4-2.3 % accepted; the joint
+classifier test on the tagger's track inputs is the thing to fix; covered = every quantization scenario of extended scan
+version 2).
+Model (param_model.py): shares, parameter noise (precision part) and donors (hit-choice part) as in version 1; the covariance
+diagonal and the heads' continuous inputs (six chi2-like inputs, seven hit aggregates) from boosted regression trees of the
+track's own quantities (today's 38 head inputs, parameters, covariance, layer-mask bits, the emulated hit counts / mask,
+parameters and covariance), each with a tree model of its residual's size and the measured standardized residual, residuals
+tied per block by a Gaussian copula, mean models on two halves of the events with out-of-fold residuals; the six head outputs
+= the head models on the emulated inputs (retrained best of 20 per detector scenario; deployed heads reported alongside).
+Fitted on extended scan version 2 (canon_v5 TTbar files 5, 7, 8, 9, 10; 500 events per detector scenario; 65 quantization
+scenarios besides "implemented now").
+Closure: cross-fit by event (two folds), the checks and tolerances of param_closure.py unchanged from version 1 (core d0 / z0
+68 % widths in six cells, prompt tails, end-to-end prompt efficiency at fixed b/c efficiency, classifier actual against
+emulated on alloc_4444, alloc_6604, alloc_4444_wholesensor: (AUC - 0.5) <= max(0.25 (AUC_0 - 0.5), 0.01, 3 sd)).
+Seen before this run, on 200 events of AAAA of extended scan version 1 (cross-fit, retrained heads): classifier AUC on the
+tagger's track inputs 0.644 (alloc_4444; tolerance 0.618), 0.616 (alloc_6604; 0.604), 0.586 (network float; 0.524); version 1
+of the parametrization on the same events: 0.88 / 0.81; the per-cell linear maps tried first: 0.77 / 0.70. On the four
+parameters 0.51 (pass). Width and tail checks: 0 / 3 / 1 findings for the three scenarios.
+Expected with 500 events: the classifier AUC on the tagger's inputs between 0.58 and 0.65, at or slightly above tolerance (a
+miss by the letter of a few hundredths is expected for some scenarios and will be reported as it is, not tuned away); widths
+a few percent too wide as in version 1 (accepted).
+Outputs: checks/param_closure_v2_<detector scenario>.json (+ one file per quantization scenario under
+checks/param_closure_v2_parts/), doc-archive/spix-bits-refit-study/parametrization/v2/ (correctionlib file, tree maps and
+head models per detector scenario, about 60 MB each; helper). Version 1's files stay in the folder above.
