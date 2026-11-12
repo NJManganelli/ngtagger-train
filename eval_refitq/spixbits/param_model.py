@@ -15,9 +15,11 @@ and the arm's refit on today's clusters (forced): precision part = forced - toda
   HIT-CHOICE PART, with the observed share p per cell: the tracks whose free result differs materially from the forced
   one (more than CHOICE_SIGMA of today's sigma in d0 or z0, or another refit flag or layer mask). A swap between the
   particle's two clusters on overlapping modules, which is most cluster changes, is below that and stays above.
-    a donor from the cell's such tracks, picked by u_rank, supplies together: residuals to truth over today's sigma
-    (tracks with a particle: the residual is replaced) or changes over today's sigma (tracks without), and the arm's
-    own refit flag, hit counts, layer mask and largest window multiplicity.
+    a donor track supplies together: residuals to truth over today's sigma (tracks with a particle: the residual is
+    replaced) or changes over today's sigma (tracks without), and the arm's own refit flag, hit counts, layer mask and
+    largest window multiplicity. The donor is one of the K_DONORS hit-choice tracks nearest to the receiving track
+    (same class: particle or not x today's window; distance in today's ln pT, |eta|, ln sigma(d0), ln sigma(z0), pull
+    against the particle, window multiplicity, accepted hits, clean margin), picked by u_rank.
   BOTH PARTS: the covariance diagonal and the heads' continuous inputs are functions of the track (a Kalman covariance;
   sums over its hits), so they are emulated as functions of the track too, by regression trees (MAPS below):
     covariance   ln(C_arm / C_today) per parameter from today's track (the heads' 38 inputs, parameters, ln covariance,
@@ -55,7 +57,6 @@ MULT_EDGES = np.array([2.0, 3.0, 6.0])                 # today's largest window 
 ETA_EDGES = np.array([1.1, 1.8])
 N_ETA = len(ETA_EDGES) + 1
 D0_SPLIT = 0.02                                        # cm
-N_DONORS = 128
 LAMBDA_MAX = 30.0
 # Choices compared on the first 200 scan events of AAAA (closure failures over five allocations; README of the
 # parametrization): the donor's residual over today's sigma, rescaled by the receiving track's sigma (the donor's absolute
@@ -72,7 +73,7 @@ def eps_unit(sg, cov_today, cov_arm):
     return np.sqrt(np.abs(cov_arm - cov_today) + (0.05 * sg) ** 2)
 
 
-MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_DONORS, MIN_MAP = 1000, 150, 2000, 200, 400   # MIN_MAP: below it a map is a constant
+MIN_P, MIN_LAMBDA, MIN_KERNEL, MIN_MAP = 1000, 150, 2000, 400   # MIN_MAP: below it a map is a constant
 HEADS = ("clean", "d0", "z0", "tanl", "rinv", "phi")
 # head inputs 14-38 as stored (ext_scan "inputs"): the columns the parametrization emits
 IN = {"spixRefitPerformed": 5, "spixNCrossings": 7, "spixNAcceptedHits": 8, "spixLayerHitMask": 9, "spixMaxWindowMult": 10,
@@ -439,10 +440,35 @@ def choice_changed(today, arm):
 
 KERNEL_AXES = (("ieta", N_ETA), ("window", 2))
 LAMBDA_AXES = (("window", 2), ("ieta", N_ETA), ("ipt", 3))
-# donors are taken from the same pull class as the receiving track (a track that is off today and changes clusters is
-# not, on average, repaired: without this the emulation repairs it too often and the prompt tails come out too small)
-DONOR_AXES = (("matched", 2), ("window", 3), ("ieta", N_ETA), ("pull", 3))
-DONOR_DROP = ("ieta", "window", "pull")                # thin donor cells pool in this order
+# Donors: nearest neighbours in today's track quantities, the pull against the particle among them (a track that is off
+# today and changes clusters is not, on average, repaired). Against a random donor from a cell of (particle, window, |eta|,
+# pull class): classifier AUC on the tagger's inputs 0.657 -> 0.633 (alloc_4444_wholesensor, 35 % of tracks in this part),
+# 0.597 -> 0.588 (alloc_4444); no width / tail finding either way (200 events).
+K_DONORS, MAX_POOL = 4, 8000                           # MAX_POOL: donors kept per quantization scenario (a random subset)
+
+
+def donor_features(today, truth):
+    """What a hit-choice track and its donor are matched on (today's track): ln pT, |eta|, ln sigma(d0), ln sigma(z0),
+    ln(1 + pull against the particle), the largest window multiplicity (capped at 8), accepted hits, clean margin."""
+    a, sg = today["a"], sigma_today(today)
+    return np.column_stack([np.log(today["kpt"] / np.maximum(np.abs(a[:, 0]), 1e-12)), np.abs(np.arcsinh(a[:, 2])), np.log(sg[:, 4]),
+                            np.log(sg[:, 3]), np.log1p(today_pull(today, truth)), np.minimum(today["inputs"][:, IN["spixMaxWindowMult"]], 8.0),
+                            today["inputs"][:, IN["spixNAcceptedHits"]], today["margins"][:, 0]])
+
+
+def nearest_donors(P, cls, F, u):
+    """Index into the pool P of each track's donor: among its K_DONORS nearest pool tracks of the same class (particle or
+    not x today's window; every pool track when the class is thin) in the features over their pool sd, the one picked by u."""
+    from scipy.spatial import cKDTree
+    pick = np.zeros(len(cls), np.int64)
+    for c in np.unique(cls):
+        r = np.flatnonzero(cls == c)
+        p = np.flatnonzero(P["cls"] == c)
+        if len(p) < 10 * K_DONORS:
+            p = np.arange(len(P["cls"]))
+        _, idx = cKDTree(P["feat"][p].astype(np.float64) / P["scale"]).query(F[r] / P["scale"].astype(np.float64), k=K_DONORS)
+        pick[r] = p[idx[np.arange(len(r)), np.minimum((u[r] * K_DONORS).astype(int), K_DONORS - 1)]]
+    return pick
 
 
 def sigma_today(today):
@@ -523,35 +549,21 @@ def fit(today, arm, truth, D, terciles, sel):
                 lo, hi = (mid, hi) if f(mid) < 0 else (lo, mid)
             return 0.5 * (lo + hi)
         T["lambda"][p], _ = pooled_table(Ck, has_truth, lam, MIN_LAMBDA, LAMBDA_AXES, ("ipt", "ieta"))
-    # ---- changed state: donors per cell (the cell's changed tracks, a fixed random subset of N_DONORS)
+    # ---- hit-choice part: the donor pool (float32, as shipped)
     rng = np.random.default_rng(20261111)
     r_arm = residual(arm["a"].copy(), truth)
     delta = arm["a"] - today["a"]
     delta[:, 1] = wrap(delta[:, 1])
     cols = {"matched_ratio": np.where(np.isfinite(r_arm), r_arm, 0.0) / sg, "delta_ratio": delta / sg,
             "counts": np.stack([arm["inputs"][:, IN[c]] for c in COUNTS], 1)}
-    dims = [k for _, k in DONOR_AXES]
-    dnames = [n_ for n_, _ in DONOR_AXES]
-    T["donors"] = {k: np.zeros(dims + [N_DONORS, v.shape[1]]) for k, v in cols.items()}
-    T["donor_n"] = np.zeros(dims, np.int64)
-    pool = sel & changed
-    for idx in np.ndindex(*dims):
-        keep = list(dnames)
-        for step in range(len(DONOR_DROP) + 1):
-            m = pool.copy()
-            for n_, i in zip(dnames, idx):
-                if n_ in keep:
-                    m &= C[n_] == i
-            if m.sum() >= MIN_DONORS or step == len(DONOR_DROP):
-                break
-            keep.remove(DONOR_DROP[step])
-        rows = np.flatnonzero(m)
-        T["donor_n"][idx] = len(rows)
-        if not len(rows):
-            rows = np.flatnonzero(pool)[:1] if pool.any() else np.zeros(1, np.int64)
-        pick = rows[rng.integers(0, len(rows), N_DONORS)] if len(rows) > N_DONORS else np.resize(rows, N_DONORS)
-        for k, v in cols.items():
-            T["donors"][k][idx] = v[pick]
+    pool = np.flatnonzero(sel & changed)
+    if len(pool) > MAX_POOL:
+        pool = np.sort(rng.choice(pool, MAX_POOL, replace=False))
+    F = donor_features(today, truth)
+    f32 = lambda x: x.astype(np.float32)
+    T["pool"] = {"cls": (C["matched"] * 3 + C["window"])[pool], "feat": f32(F[pool]),
+                 "scale": f32(np.maximum(F[pool].std(0), 1e-6) if len(pool) else np.ones(F.shape[1])),
+                 **{k: f32(v[pool]) for k, v in cols.items()}}
     return T
 
 
@@ -568,9 +580,8 @@ def apply(T, today, truth, D, terciles, heads):
     counts = {c: today["inputs"][:, IN[c]].astype(np.float64).copy() for c in COUNTS}
     ch = np.flatnonzero(changed)
     if len(ch):
-        k = np.minimum((D["u_rank"][ch] * N_DONORS).astype(int), N_DONORS - 1)
-        cell = tuple(C[n_][ch] for n_, _ in DONOR_AXES)
-        g = lambda name: T["donors"][name][cell + (k,)]
+        pick = nearest_donors(T["pool"], (C["matched"] * 3 + C["window"])[ch], donor_features(today, truth)[ch], D["u_rank"][ch])
+        g = lambda name: T["pool"][name][pick]
         gc = g("counts")
         for i, c in enumerate(COUNTS):
             counts[c][ch] = gc[:, i]

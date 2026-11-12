@@ -231,6 +231,10 @@ def test_parametrization_pieces():
     assert X[0, 2] == pytest.approx(0.5) and X[0, 3] == pytest.approx(0.1) and X[1, 2] == 0.0
     assert X[0, PM.IN["h_nangle"]] == 2.0 and X[1, PM.IN["h_nangle"]] == 0.0 and X[0, 14] == PM.MISSING
     assert PM.mask_bits([5]).tolist() == [[1, 0, 1] + [0] * 13]
+    # hit-choice donors: among the nearest pool tracks of the track's own class, picked by the draw
+    P = {"cls": np.array([0, 0, 0, 0, 1, 1, 1, 1] * 10), "feat": np.arange(80, dtype=np.float32)[:, None], "scale": np.ones(1, np.float32)}
+    pick = PM.nearest_donors(P, np.array([0, 1, 1]), np.array([[1.2], [1.2], [77.0]]), np.array([0.0, 0.0, 0.99]))
+    assert pick[0] == 1 and pick[1] == 4 and P["cls"][pick].tolist() == [0, 1, 1] and pick[2] in (76, 77, 78, 79) and pick[2] != 77
 
 
 def test_tree_maps_fit_draw_and_shipped_arrays():

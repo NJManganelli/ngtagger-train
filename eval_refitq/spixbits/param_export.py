@@ -12,9 +12,9 @@ anything else raises):
   p_changed         share of tracks with a material hit-choice part against today
   eps, lambda, rho  precision part: inverse CDF of the parameter change in units of the sigma the scenario adds, its
                     scale, the copula correlations
-  donor             hit-choice part: the donor's values, picked by the rank draw
-Beside each file: spixbits_<scenario>_maps.npz, the tree maps of the covariance diagonal and of the heads' inputs (per
-quantization scenario: 67 boosted tree models as arrays, the residual quantiles, ranges and copula factors),
+Beside each file: spixbits_<scenario>_maps.npz, per quantization scenario the tree maps of the covariance diagonal and of
+the heads' inputs (67 boosted tree models as arrays, the residual quantiles, ranges and copula factors) and the donor
+pool of the hit-choice part (pool_*: class, matching features and their scale, the donors' values),
 and the head models (heads/retrained: the best of 20 per detector scenario; heads/deployed) that the helper evaluates
 on the emulated inputs. The uniform / normal draws: 1 = state, 2 = rank (uniform); 11-14 = z0, tanL, 1/R, phi0,
 21-25 = covariance columns, 41-53 = mapped inputs (normal); 61-73 = "input missing" (uniform).
@@ -45,7 +45,7 @@ V = {"allocation": ("string", "shipped allocation name"), "parameter": ("string"
      "abs_eta": ("real", "|eta| of today's refit track (asinh of tanL)"), "pt": ("real", "today's refit pT [GeV]"),
      "mult": ("real", "today's spixMaxWindowMult"),
      "pull": ("real", "max(|d0 - truth d0| / sigma_d0, |z0 - truth z0| / sigma_z0) of today's track; 0 for a track without a particle"), "clean_margin": ("real", "today's clean head as a margin: logit of head_clean"),
-     "u": ("real", "a uniform draw in [0, 1)"), "quantity": ("string", "donor quantity"),
+     "u": ("real", "a uniform draw in [0, 1)"),
      "run": ("int", "run"), "lumi": ("int", "luminosity block"), "event": ("int", "event"),
      "track": ("int", "index of the track along axis 1 of the event's L1TSmartPixelsExtTrack collection"),
      "draw": ("int", "which draw (see the file description)")}
@@ -120,19 +120,6 @@ def build(tables, terc, meta):
                                 "rInv and phi0 with d0); d0 has none", ["allocation", "parameter", "abs_eta", "window"],
                          per(lambda T: category("parameter", [(p, eta_bins(lambda e: ints("window", 2, lambda w: float(T["rho"][p][e, w]))))
                                                               for p in PM.DRAW_ORDER[1:]]))))
-    dq = []
-    for grp, names in (("matched_ratio", PM.PARAMS), ("delta_ratio", PM.PARAMS), ("counts", PM.COUNTS)):
-        dq += [(f"{grp}_{n}" if grp != "counts" else n, grp, i) for i, n in enumerate(names)]
-    edges = [float(x) for x in np.linspace(0, 1, PM.N_DONORS + 1)]
-    r6 = lambda x: float(f"{x:.6g}")
-    cs.append(correction("donor", "changed state: the donor's value, picked by the rank draw u. matched_ratio_<p>: (arm - truth) / "
-                                  "sigma_today; delta_ratio_<p>: (arm - today) / sigma_today; the spix* names: the donor's own refit flag, "
-                                  "crossings, accepted hits, layer mask and largest window multiplicity",
-                         ["allocation", "quantity", "matched", "window", "abs_eta", "pull", "u"],
-                         per(lambda T: category("quantity", [(q, ints("matched", 2, lambda m: ints("window", 3, lambda w: eta_bins(
-                             lambda e: binning("pull", [0.0, *PM.PULL_EDGES, INF], [binning("u", edges, [r6(v) for v in T["donors"][g][m, w, e, j, :, i]])
-                                                                                    for j in range(3)])))))
-                                                             for q, g, i in dq]))))
     return {"schema_version": 2, "description": json.dumps(meta), "corrections": cs}
 
 
@@ -146,6 +133,7 @@ def maps_arrays(T):
     out = {"base": np.array([a[0] for a in arr]), "tree_start": np.cumsum([0] + [len(a[1]) for a in arr]),
            "node_start": np.cumsum(np.concatenate([[0]] + [a[1] for a in arr])),
            **{k: np.concatenate([a[i] for a in arr]) for i, k in ((2, "feature"), (3, "threshold"), (4, "left"), (5, "right"), (6, "value"))}}
+    out.update({"pool_" + k: v for k, v in T["pool"].items()})
     for name, blk in (("cov", "cov_map"), ("score", "score_map")):
         out[name + "_q"] = np.array([c["q"] for c in T[blk]["cols"]])
         out[name + "_lo"] = np.array([c["lo"] for c in T[blk]["cols"]])
@@ -213,7 +201,7 @@ def main():
                 "payload_refit_calibration_sha256": payload["refit_calibration_v3.json"]["sha256"],
                 "kpt_GeV_cm": m["kpt"], "rinv_sign_times_charge": m["rinv_sign"],
                 "clean_margin_tercile_edges": [float(x) for x in terc], "knots": [float(k) for k in PM.KNOTS],
-                "n_donors": PM.N_DONORS, "head_inputs_14_38": HD_NAMES, "mapped_inputs": list(PM.SCORES),
+                "k_donors": PM.K_DONORS, "head_inputs_14_38": HD_NAMES, "mapped_inputs": list(PM.SCORES),
                 "maps_file": f"spixbits_{scen}_maps.npz"}
         doc = build(tables, terc, meta)
         path = out / f"spixbits_{scen}.json.gz"

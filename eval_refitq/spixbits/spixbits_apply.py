@@ -1,6 +1,6 @@
 """Reference helper: apply a shipped SmartPixels quantization scenario to today's extended-collection tracks through
-the files of the detector scenario: the correctionlib file spixbits_<AAAA|AAAI|IAAA>.json.gz (shares, parameter noise,
-donors), the tree maps spixbits_<...>_maps.npz (covariance, the heads' inputs) and the head models. Needs numpy, scipy,
+the files of the detector scenario: the correctionlib file spixbits_<AAAA|AAAI|IAAA>.json.gz (shares, parameter noise),
+spixbits_<...>_maps.npz (the tree maps of the covariance and of the heads' inputs; the donor pool) and the head models. Needs numpy, scipy,
 correctionlib >= 2.6.
 
     import spixbits_apply as SA
@@ -37,7 +37,6 @@ from scipy.special import ndtr, ndtri
 PARAMS = ("rInv", "phi0", "tanL", "z0", "d0")
 HEADS = ("clean", "d0", "z0", "tanl", "rinv", "phi")
 WINDOWS = ("prompt", "displaced")
-COUNTS = ("spixRefitPerformed", "spixNCrossings", "spixNAcceptedHits", "spixLayerHitMask", "spixMaxWindowMult")
 LINEAR = ("spixLogDetRatio", "h_nangle", "h_mean_wmult")
 PARTNER = {"z0": "d0", "tanL": "z0", "rInv": "d0", "phi0": "d0"}
 D0_SPLIT, MISSING = 0.02, -999.0
@@ -209,10 +208,24 @@ def apply(cset, M, maps, allocation, heads, a, cov_diag, refit, clean_margin, in
     X = np.zeros((len(a), 25))
     X[:, 5:11] = inputs[:, 5:11]
     ch = np.flatnonzero(changed)
-    don = lambda q: cset["donor"].evaluate(allocation, q, matched[ch], window[ch], abs_eta[ch], pull[ch], draws["u_rank"][ch])
     if len(ch):
-        for c in COUNTS:
-            X[ch, IN[c]] = don(c)
+        # the donor: one of the k nearest pool tracks of the same class (particle or not x today's window), by the rank draw
+        from scipy.spatial import cKDTree
+        k, cls = int(M["k_donors"]), (matched * 3 + window)[ch]
+        F = np.column_stack([np.log(pt), abs_eta, np.log(sg[:, 4]), np.log(sg[:, 3]), np.log1p(pull),
+                             np.minimum(inputs[:, IN["spixMaxWindowMult"]], 8.0), inputs[:, IN["spixNAcceptedHits"]],
+                             np.asarray(clean_margin, np.float64)])[ch]
+        pool = {key: maps[f"{allocation}/pool_{key}"] for key in ("cls", "feat", "scale", "matched_ratio", "delta_ratio", "counts")}
+        scale = pool["scale"].astype(np.float64)
+        pick = np.zeros(len(ch), np.int64)
+        for c in np.unique(cls):
+            r = np.flatnonzero(cls == c)
+            p = np.flatnonzero(pool["cls"] == c)
+            if len(p) < 10 * k:
+                p = np.arange(len(pool["cls"]))
+            _, idx = cKDTree(pool["feat"][p].astype(np.float64) / scale).query(F[r] / scale, k=k)
+            pick[r] = p[idx[np.arange(len(r)), np.minimum((draws["u_rank"][ch][r] * k).astype(int), k - 1)]]
+        X[ch, 5], X[ch, 7:11] = pool["counts"][pick, 0], pool["counts"][pick, 1:]
     ran = X[:, IN["spixRefitPerformed"]] > 0
     # ---- covariance diagonal: today's x exp(map)
     lc_today = np.log(np.maximum(cov_diag, 1e-30))
@@ -232,9 +245,8 @@ def apply(cset, M, maps, allocation, heads, a, cov_diag, refit, clean_margin, in
         new_a[:, i] += np.where(refit, lam * unit * e, 0.0)
     if len(ch):
         has = matched[ch] > 0
-        for i, p in enumerate(PARAMS):
-            new_a[ch, i] = np.where(has, np.where(has, truth[ch, i], 0.0) + sg[ch, i] * don(f"matched_ratio_{p}"),
-                                    a[ch, i] + sg[ch, i] * don(f"delta_ratio_{p}"))
+        new_a[ch] = np.where(has[:, None], np.where(has[:, None], truth[ch], 0.0) + sg[ch] * pool["matched_ratio"][pick],
+                             a[ch] + sg[ch] * pool["delta_ratio"][pick])
     new_a[:, 1] = _wrap(new_a[:, 1])
     new_a = np.where(ran[:, None], new_a, ot_a)            # a track whose refit does not run carries the OT track
     # ---- the heads' mapped inputs
