@@ -100,18 +100,18 @@ def table(scen, sc, res, ot):
     L = [f"### {scen}: fixed points, prompt tracks (n = {sc.meta['origin_counts'][0]:,} of {sc.meta['n_tracks']:,} in the population; {sc.meta['n_events']} events)", ""]
     L += ["Widths: 68 % of |delivered − true| about zero, µm, ± bootstrap sd. Ratios with 68 % paired bootstrap bands. "
           "x = along the 50 µm pitch (z in the barrel, drives z0); y = along the 12.5 µm pitch (r-φ, drives d0); β = bending angle.", ""]
-    L += ["| arm | x/y/α/β bits | d0 [µm] | z0 [µm] | d0 ÷ implemented now | z0 ÷ implemented now | d0 ÷ network, float | z0 ÷ network, float | refit fraction |",
+    L += ["| quantization scenario | x/y/α/β bits | d0 [µm] | z0 [µm] | d0 ÷ implemented now | z0 ÷ implemented now | d0 ÷ network, float | z0 ÷ network, float | refit fraction |",
           "|---|---|---|---|---|---|---|---|---|"]
     for arm, d in res.items():
         L.append(f"| {lib.PLAIN[arm]} | {d['allocation_x_y_alpha_beta']} | {lib.fmt(d['d0_w68_um'])} | {lib.fmt(d['z0_w68_um'])} | "
                  f"{lib.fmt_band(d['d0_ratio_to_implemented_now'])} | {lib.fmt_band(d['z0_ratio_to_implemented_now'])} | "
                  f"{lib.fmt_band(d['d0_ratio_to_network_float'])} | {lib.fmt_band(d['z0_ratio_to_network_float'])} | {d['refit_fraction']['value']:.4f} |")
     L += [f"| outer tracker only (scale; its d0 is not a measurement) | – | – | {lib.fmt(ot['z0'])} | – | – | – | – | – |", ""]
-    L += ["Why it moved, and honesty of the errors. Precision effect = the arm's measurements and errors on the clusters "
-          "\"implemented now\" accepted, ÷ \"implemented now\". Hit-choice effect = free-running ÷ that (in arms with the cap of "
+    L += ["Why it moved, and honesty of the errors. Precision effect = the quantization scenario's measurements and errors on the clusters "
+          "\"implemented now\" accepted, ÷ \"implemented now\". Hit-choice effect = free-running ÷ that (in quantization scenarios with the cap of "
           "three clusters per sub-area it includes the cap). Attachment = share of prompt tracks with a crossing cluster on their "
           "innermost visited surface that accepted it. Pull RMS within ±5; hit pulls are the innovation pulls of accepted crossing clusters, all surfaces.", ""]
-    L += ["| arm | d0 precision | d0 hit choice | z0 precision | z0 hit choice | correct cluster attached, innermost | same clusters as implemented now | hit pull RMS y / x / β / α | d0 pull RMS | z0 pull RMS |",
+    L += ["| quantization scenario | d0 precision | d0 hit choice | z0 precision | z0 hit choice | correct cluster attached, innermost | same clusters as implemented now | hit pull RMS y / x / β / α | d0 pull RMS | z0 pull RMS |",
           "|---|---|---|---|---|---|---|---|---|---|"]
     for arm, d in res.items():
         hp = d["hit_pull_rms"]
@@ -143,14 +143,14 @@ def main():
         ot = {q: lib.val(*[sc.w(core.OT_ARM, q)[i] for i in (0, 2)]) for q in ("d0", "z0")}
         fl = flags(scen, res)
         allflags += fl
-        allres[scen] = {"population": sc.meta, "arms": res, "outer_tracker_only_z0_w68_um": ot["z0"], "flags": fl}
+        allres[scen] = {"population": sc.meta, "quantization_scenarios": res, "outer_tracker_only_z0_w68_um": ot["z0"], "flags": fl}
         L = table(scen, sc, res, ot)
         L += ["Flags:", ""] + ([f"- {f}" for f in fl] or ["- none"]) + [""]
         open(lib.RESULTS / f"fixed_points_{scen}.md", "w").write("\n".join(L))
         cross.append((scen, res))
-    json.dump({"provenance": prov, "scenarios": allres}, open(lib.RESULTS / "fixed_points.json", "w"), indent=1)
-    L = ["### Fixed points across scenarios, prompt tracks: 68 % half-width in µm (ratio to \"implemented now\" of the same scenario ± bootstrap sd)", "",
-         "| arm | x/y/α/β bits | " + " | ".join(f"{s} d0" for s, _ in cross) + " | " + " | ".join(f"{s} z0" for s, _ in cross) + " |",
+    json.dump({"provenance": prov, "detector_scenarios": allres}, open(lib.RESULTS / "fixed_points.json", "w"), indent=1)
+    L = ["### Fixed points across scenarios, prompt tracks: 68 % half-width in µm (ratio to \"implemented now\" of the same detector scenario ± bootstrap sd)", "",
+         "| quantization scenario | x/y/α/β bits | " + " | ".join(f"{s} d0" for s, _ in cross) + " | " + " | ".join(f"{s} z0" for s, _ in cross) + " |",
          "|---|---|" + "---|" * (2 * len(cross))]
     for arm in ARMS:
         if not all(arm in r for _, r in cross):

@@ -132,7 +132,7 @@ def analyse(sc, s_base, T, P):
                 lo = min(lib.band(v[1])[0] for v in vals)
                 hi = max(lib.band(v[1])[1] for v in vals)
                 d["value_um"], d["band_um"] = float(WA[0]), [float(lo), float(hi)]
-                d["reading"] = f"model: {WA[0]:.1f} um, band {lo:.1f}-{hi:.1f} um" + ("" if WB else " (form B missing: forecast arm not complete)") + f"; measured upper bound {w0:.1f} um"
+                d["reading"] = f"model: {WA[0]:.1f} um, band {lo:.1f}-{hi:.1f} um" + ("" if WB else " (form B missing: forecast quantization scenario not complete)") + f"; measured upper bound {w0:.1f} um"
             elif WB is not None:
                 d["value_um"], d["band_um"] = None, [float(lib.band(WB[1])[0]), float(lib.band(r0)[1])]
                 d["reading"] = f"interval only: {WB[0]:.1f} um (covariance forecast) to {w0:.1f} um (measured stand-in)"
@@ -140,9 +140,9 @@ def analyse(sc, s_base, T, P):
                     d["reading"] += f"; straight line, informational only: {WA[0]:.1f} um"
             else:
                 d["value_um"], d["band_um"] = None, None
-                d["reading"] = f"not given yet (forecast arm not complete); measured upper bound {w0:.1f} um"
+                d["reading"] = f"not given yet (forecast quantization scenario not complete); measured upper bound {w0:.1f} um"
                 if WA is not None:
-                    d["reading"] += f"; straight line{', informational only' if reasons else ' (meets the rule; band pending the forecast arm)'}: {WA[0]:.1f} um"
+                    d["reading"] += f"; straight line{', informational only' if reasons else ' (meets the rule; band pending the forecast quantization scenario)'}: {WA[0]:.1f} um"
             # bits needed at the network's base (model based): numerator measured where step^2/12 >= gap
             if WA is not None and len(pts) == len(POS_BITS[o]):
                 s_all = np.array([s0] + [s0 + step_um(b) ** 2 / 12 for b, _ in pts[::-1]])  # ascending in s
@@ -221,7 +221,7 @@ def main():
     if s_base is None:
         raise SystemExit("network_float not summarized yet")
     res = {"provenance": lib.provenance(core.SCENARIOS), "single_hit_today_barrel_layer1_p40": sh, "single_hit_source_scenario": src,
-           "direct_point_above_50_GeV": "not run in this scan", "scenarios": {}}
+           "direct_point_above_50_GeV": "not run in this scan", "detector_scenarios": {}}
     L = ["## Near-full-resolution reading (PLAN 4a)", "",
          f"Single-hit resolution of today's positions on barrel layer 1 (prompt, p ≥ 40 GeV, {sh['y']['n']} clusters, {src}): core RMS {sh['y']['rms_um']:.1f} µm in y, {sh['x']['rms_um']:.1f} µm in x "
          f"(68 % half-widths {sh['y']['w68_um']:.1f} / {sh['x']['w68_um']:.1f} µm). Network: sensor term 2.0 µm (y) / 7.6 µm (x) in place of today's 3.1 / 12.3 µm.", "",
@@ -234,7 +234,7 @@ def main():
         T = core.Truth(scen)
         P = core.partitions(T)
         r = analyse(sc, s_base, T, P)
-        res["scenarios"][scen] = r
+        res["detector_scenarios"][scen] = r
         figure(sc, r)
         for o, ax in AXES.items():
             L += [f"### {scen}: {ax['q']} against the {o} resolution", "",

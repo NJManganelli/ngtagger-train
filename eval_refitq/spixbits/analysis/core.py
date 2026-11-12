@@ -19,6 +19,7 @@ code alpha, code beta) = SmartPixels (y, x, beta, alpha); everything written her
 """
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -27,9 +28,14 @@ from pathlib import Path
 import numpy as np
 
 HOME = Path.home()
-SCAN = HOME / "smartpixels/scratch_local/spixbits"
+# Which scan is analysed: SPIXBITS_SCAN_DIR = the scan's output directory (holding units/ and arms.json), SPIXBITS_TAG =
+# a short name that keeps this scan's caches and results apart (results/<tag>/, README_<tag>.md). Unset = the first
+# scan (random choice under the cap of three clusters per sub-area). run_all.py sets both from --scan-dir and --tag.
+SCAN = Path(os.environ.get("SPIXBITS_SCAN_DIR") or HOME / "smartpixels/scratch_local/spixbits").expanduser()
+TAG = os.environ.get("SPIXBITS_TAG", "")
 UNITS = SCAN / "units"
-CACHE = HOME / "smartpixels/scratch_local/spixbits_analysis/cache"
+CACHE_ROOT = HOME / "smartpixels/scratch_local/spixbits_analysis"
+CACHE = CACHE_ROOT / "cache" if not TAG else CACHE_ROOT / f"cache_{TAG}"
 FILES = (5, 7, 8, 9, 10)
 SCENARIOS = ("AAAA", "AAAI", "IAAA")
 NREP = 1000

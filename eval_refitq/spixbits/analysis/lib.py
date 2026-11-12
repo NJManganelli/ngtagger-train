@@ -8,7 +8,8 @@ import numpy as np
 
 import core
 
-RESULTS = Path.home() / "smartpixels/doc-archive/spix-bits-refit-study/results"
+STUDY = Path.home() / "smartpixels/doc-archive/spix-bits-refit-study"
+RESULTS = STUDY / "results" if not core.TAG else STUDY / "results" / core.TAG
 MIN_FREE_GB = 14.5
 
 
@@ -23,9 +24,9 @@ def check_disk():
 class Scenario:
     """Caches of one scenario, loaded lazily."""
 
-    def __init__(self, scen):
+    def __init__(self, scen, cache=None):
         self.scen = scen
-        self.dir = core.CACHE / scen
+        self.dir = (cache or core.CACHE) / scen
         self.meta = json.load(open(self.dir / "_meta.json")) if (self.dir / "_meta.json").exists() else None
         self.arms = sorted(p.stem for p in self.dir.glob("*.npz") if not p.stem.endswith(".tmp")) if self.dir.exists() else []
         self._c, self._s = {}, {}
@@ -112,7 +113,7 @@ def provenance(scens):
     """What existed when the analysis ran: per scenario, the arms complete on all five files, and the unit files."""
     disc = core.discover()
     reg = [a["name"] for a in core.registry()]
-    out = {"run_at_local": time.strftime("%Y-%m-%d %H:%M %Z"), "scan_files": list(core.FILES), "arms_in_registry": len(reg), "scenarios": {}}
+    out = {"run_at_local": time.strftime("%Y-%m-%d %H:%M %Z"), "scan_files": list(core.FILES), "units_directory": str(core.UNITS), "quantization_scenarios_in_registry": len(reg), "detector_scenarios": {}}
     try:
         out["analysis_commit"] = subprocess.run(["git", "-C", str(Path(__file__).parent), "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
     except Exception:
@@ -120,9 +121,9 @@ def provenance(scens):
     for s in scens:
         comp = core.complete(disc, s)
         cached = Scenario(s).arms
-        out["scenarios"][s] = {"arms_complete_on_all_files": len(comp), "arms_analysed": len([a for a in cached if a in reg]),
-                               "arms_partial": {a: sorted(d) for a, d in disc[s].items() if a not in comp},
-                               "arms_missing": [a for a in reg if a not in disc[s]]}
+        out["detector_scenarios"][s] = {"quantization_scenarios_complete_on_all_files": len(comp), "quantization_scenarios_analysed": len([a for a in cached if a in reg]),
+                               "quantization_scenarios_partial": {a: sorted(d) for a, d in disc[s].items() if a not in comp},
+                               "quantization_scenarios_missing": [a for a in reg if a not in disc[s]]}
     return out
 
 

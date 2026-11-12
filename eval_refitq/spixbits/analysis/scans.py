@@ -282,7 +282,7 @@ def fig_bending(sc):
 
 # ------------------------------------------------------------------ tables
 def md_rows(rows, refs=("implemented_now", "network_float"), extra=()):
-    head = "| arm | d0 [µm] | z0 [µm] | " + " | ".join(f"d0 ÷ {lib.PLAIN[r]} | z0 ÷ {lib.PLAIN[r]}" for r in refs) + "".join(f" | {e}" for e, _ in extra) + " |"
+    head = "| quantization scenario | d0 [µm] | z0 [µm] | " + " | ".join(f"d0 ÷ {lib.PLAIN[r]} | z0 ÷ {lib.PLAIN[r]}" for r in refs) + "".join(f" | {e}" for e, _ in extra) + " |"
     L = [head, "|---|---|---|" + "---|---|" * len(refs) + "---|" * len(extra)]
     for arm, d in rows.items():
         L.append(f"| {d['name']} | {lib.fmt(d['d0'])} | {lib.fmt(d['z0'])} | " +
@@ -324,14 +324,14 @@ def main():
     REG = core.registry()
     lib.check_disk()
     prov = lib.provenance(core.SCENARIOS)
-    res = {"provenance": prov, "scenarios": {}}
+    res = {"provenance": prov, "detector_scenarios": {}}
     for scen in core.SCENARIOS:
         sc = lib.Scenario(scen)
         if sc.meta is None or not sc.has("network_float"):
             continue
         S = {}
         L = [f"## {scen}: scans, allocations, controls", "",
-             f"Run {prov['run_at_local']}. Arms analysed: {prov['scenarios'][scen]['arms_analysed']} of {prov['arms_in_registry']} "
+             f"Run {prov['run_at_local']}. Quantization scenarios analysed: {prov['detector_scenarios'][scen]['quantization_scenarios_analysed']} of {prov['quantization_scenarios_in_registry']} "
              f"(complete on all five scan files). Prompt tracks unless stated: n = {sc.meta['origin_counts'][0]:,}. "
              "Widths = 68 % of |delivered − true| about zero in µm ± bootstrap sd; ratios with 68 % paired bootstrap bands. In-sample; the angles are placeholders.", ""]
         cells = read_cells(sc)
@@ -404,7 +404,7 @@ def main():
                                                  **bits_needed(sc, arms, "bending_float", q, cells, False)}
                     else:
                         S["bits_needed"][key] = {"reading": "not read: the family is not complete", "missing": [a for a in arms.values() if not sc.has(a)]}
-        L += [f"### {scen}: bits needed to stay within +10 % of the float arm (today's position base, measured)", "",
+        L += [f"### {scen}: bits needed to stay within +10 % of the float reference (today's position base, measured)", "",
               "Reference: \"network, float\" for the down-scans (others float); \"bending-angle only, float\" for the bending-angle-only family; for the up-scans from 4/4/4/4 (others at 4 bits) the finest scanned value of the same output. "
               "Rule: 68 % width only; in each replica the ratio curve is replaced by its running maximum from the finest value; the smallest passing bit count; "
               "quoted = 90 % quantile over replicas (median in brackets). Position bits are sub-area bits (whole sensor = +2). The design number holds for all its cells at once. "
@@ -483,8 +483,8 @@ def main():
                 ctl.append(f"| {txt} | {d['base']} | {lib.fmt(d['d0'])} | {lib.fmt_band(d['d0_ratio_to_base'])} | {lib.fmt(d['z0'])} | {lib.fmt_band(d['z0_ratio_to_base'])} | "
                            f"{d['correct_cluster_attached_innermost']['value']:.4f} ({d['correct_cluster_attached_innermost_base']['value']:.4f}) |")
         if ctl:
-            L += [f"### {scen}: controls (ratio = control ÷ its base arm, same tracks)", "",
-                  "| control | base arm | d0 [µm] | d0 ratio | z0 [µm] | z0 ratio | correct cluster attached, innermost (base) |", "|---|---|---|---|---|---|---|"] + ctl + [""]
+            L += [f"### {scen}: controls (ratio = control ÷ its base quantization scenario, same tracks)", "",
+                  "| control | base quantization scenario | d0 [µm] | d0 ratio | z0 [µm] | z0 ratio | correct cluster attached, innermost (base) |", "|---|---|---|---|---|---|---|"] + ctl + [""]
         g = gaussian_control(sc)
         S["controls"]["gaussian_noise_vs_quantization"] = g
         if g:
@@ -507,7 +507,7 @@ def main():
         ocells += [(f"{core.ORIGIN_NAMES[o]}, all pT", "origin", o, sc.meta["origin_counts"][o]) for o in (1, 2, 3)]
         for q in ("d0", "z0"):
             L += [f"### {scen}: b/c daughters and displaced tracks, {q} 68 % half-width [µm] (ratio to \"implemented now\" ± sd); |η| inclusive; per cell, not simultaneous", "",
-                  "| arm | " + " | ".join(f"{n} (n = {k:,})" for n, _, _, k in ocells) + " |", "|---|" + "---|" * len(ocells)]
+                  "| quantization scenario | " + " | ".join(f"{n} (n = {k:,})" for n, _, _, k in ocells) + " |", "|---|" + "---|" * len(ocells)]
             for a in oarms:
                 cellsout = []
                 for n, part, g, k in ocells:
@@ -524,8 +524,8 @@ def main():
         parms = [a for a in ("implemented_now", "implemented_now_sizeblind", "implemented_now_newtable", "network_float", "network_float_allsent", "bending_float", "bending_float_allsent", "alloc_4444", "alloc_4444_allsent") if sc.has(a)]
         if "network_float_allsent" in parms:
             L += [f"### {scen}: the cap of three clusters per sub-area and the d0 of b/c daughters", "",
-                  "d0 68 % half-width [µm] (ratio to \"implemented now\" with 68 % band). \"Forced\" = the arm's measurements on the clusters \"implemented now\" accepted (no hit choice, no cap).", "",
-                  "| arm | " + " | ".join(c for c, *_ in pcells) + " |", "|---|" + "---|" * len(pcells)]
+                  "d0 68 % half-width [µm] (ratio to \"implemented now\" with 68 % band). \"Forced\" = the quantization scenario's measurements on the clusters \"implemented now\" accepted (no hit choice, no cap).", "",
+                  "| quantization scenario | " + " | ".join(c for c, *_ in pcells) + " |", "|---|" + "---|" * len(pcells)]
             for a in parms:
                 cs = []
                 for c, part, g in pcells:
@@ -548,7 +548,7 @@ def main():
         S["secondary"] = {}
         L += [f"### {scen}: secondary: separation of b/c-daughter tracks from prompt tracks (area under the curve), and prompt tails", "",
               "Differences are to \"implemented now\" with the paired bootstrap sd. The |d0| separation saturates on long-lived daughters, so it is also given for daughters with true |d0| < 200 µm.", "",
-              "| arm | by \\|d0\\| | by \\|d0\\|/σ(d0) | by \\|d0\\|, true \\|d0\\| < 200 µm | by \\|d0\\|/σ(d0), true \\|d0\\| < 200 µm | prompt share with \\|d0 − true\\| > 100 µm |", "|---|---|---|---|---|---|"]
+              "| quantization scenario | by \\|d0\\| | by \\|d0\\|/σ(d0) | by \\|d0\\|, true \\|d0\\| < 200 µm | by \\|d0\\|/σ(d0), true \\|d0\\| < 200 µm | prompt share with \\|d0 − true\\| > 100 µm |", "|---|---|---|---|---|---|"]
         for a in oarms:
             d = {"name": plain(a)}
             cs = []
@@ -581,9 +581,9 @@ def main():
                 if abs(tp[q]["rms_within_5"] - 1) > 0.15 and abs(tp[q]["rms_within_5"] - 1) > abs(base[q]["rms_within_5"] - 1) + 0.03:
                     fl.append(f"{plain(arm)}: {q} pull RMS {tp[q]['rms_within_5']:.2f} outside 1 ± 0.15 and further out than its float anchor ({base[q]['rms_within_5']:.2f})")
         S["flags"] = fl
-        L += [f"### {scen}: flags outside the fixed points", "", "An arm better than its float anchor by more than its band and 2 sd; correct-hit pull RMS outside 1 ± 0.15 (all surfaces); "
+        L += [f"### {scen}: flags outside the fixed points", "", "A quantization scenario better than its float anchor by more than its band and 2 sd; correct-hit pull RMS outside 1 ± 0.15 (all surfaces); "
               "d0 or z0 pull RMS outside 1 ± 0.15 and more than 0.03 further from 1 than its float anchor (whose own pulls are outside, like those of \"implemented now\").", ""] + ([f"- {f}" for f in fl] or ["- none"]) + [""]
-        res["scenarios"][scen] = S
+        res["detector_scenarios"][scen] = S
         open(lib.RESULTS / f"scans_{scen}.md", "w").write("\n".join(L) + "\n")
     json.dump(res, open(lib.RESULTS / "scans.json", "w"), indent=1)
     print("written", lib.RESULTS)
