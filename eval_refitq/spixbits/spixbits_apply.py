@@ -130,23 +130,22 @@ def load_maps(path):
 
 def _raw(m, k, Z):
     """Model k of an allocation's maps on the features Z: base + the sum over its trees (x <= threshold goes left)."""
-    s, e = int(m["start"][k]), int(m["start"][k + 1])
+    s, e = int(m["tree_start"][k]), int(m["tree_start"][k + 1])
     out = np.full(len(Z), float(m["base"][k]))
     if e == s:
         return out
-    feat, thr, left, right, val = (m[key][s:e] for key in ("feature", "threshold", "left", "right", "value"))
-    tt = np.arange(e - s)[:, None]
+    first = m["node_start"][s:e].astype(np.int64)[:, None]             # the first node of each tree
     for lo in range(0, len(Z), 20000):
         z = Z[lo:lo + 20000]
         rows = np.arange(len(z))[None, :]
-        node = np.zeros((e - s, len(z)), np.int64)
-        for _ in range(feat.shape[1]):
-            f = feat[tt, node]
+        node = np.broadcast_to(first, (e - s, len(z))).copy()
+        for _ in range(64):
+            f = m["feature"][node]
             if (f < 0).all():
                 break
-            nxt = np.where(z[rows, np.maximum(f, 0)] <= thr[tt, node], left[tt, node], right[tt, node])
+            nxt = first + np.where(z[rows, np.maximum(f, 0)] <= m["threshold"][node], m["left"][node], m["right"][node])
             node = np.where(f < 0, node, nxt)
-        out[lo:lo + 20000] += val[tt, node].sum(0, dtype=np.float64)
+        out[lo:lo + 20000] += m["value"][node].sum(0, dtype=np.float64)
     return out
 
 
@@ -193,8 +192,8 @@ def apply(cset, M, maps, allocation, heads, a, cov_diag, refit, clean_margin, in
                  "n_cov": np.stack([nor(21 + i) for i in range(N_COV)], 1),
                  "n_score": np.stack([nor(41 + j) for j in range(len(scores))], 1),
                  "u_miss": np.stack([uni(61 + j) for j in range(len(scores))], 1)}
-    m = {key: maps[f"{allocation}/{key}"] for key in ("base", "start", "feature", "threshold", "left", "right", "value", "cov_q", "cov_lo",
-                                                      "cov_hi", "cov_chol", "score_q", "score_lo", "score_hi", "score_chol")}
+    m = {key: maps[f"{allocation}/{key}"] for key in ("base", "tree_start", "node_start", "feature", "threshold", "left", "right", "value",
+                                                      "cov_q", "cov_lo", "cov_hi", "cov_chol", "score_q", "score_lo", "score_hi", "score_chol")}
     pt = kpt / np.maximum(np.abs(a[:, 0]), 1e-12)
     abs_eta = np.abs(np.arcsinh(a[:, 2]))
     window = np.where(refit, (np.abs(a[:, 4]) > D0_SPLIT).astype(np.int64), 2)

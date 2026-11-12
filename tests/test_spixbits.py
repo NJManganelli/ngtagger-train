@@ -242,7 +242,7 @@ def test_tree_maps_fit_draw_and_shipped_arrays():
     Z = rng.normal(size=(n, 3))
     Y = np.column_stack([2 * (Z[:, 0] > 0) + 0.1 * rng.normal(size=n), Z[:, 1] + 0.5 * np.abs(Z[:, 2]) * rng.normal(size=n)])
     Y[rng.random(n) < 0.1, 1] = np.nan                                        # missing values are left out of their column
-    B = PM.fit_block(Z, Y, np.ones(n, bool), rng.integers(0, 2, n))
+    B = PM.fit_block(Z, Y, np.ones(n, bool), rng.integers(0, 2, n), [False, True])
     got = PM.draw_block(B, Z, rng.normal(size=(n, 2)))
     assert abs(np.std(got[:, 0] - 2 * (Z[:, 0] > 0)) - 0.1) < 0.03            # the residual's size is reproduced ...
     wide, narrow = np.abs(Z[:, 2]) > 1, np.abs(Z[:, 2]) < 0.3
@@ -250,12 +250,12 @@ def test_tree_maps_fit_draw_and_shipped_arrays():
     assert np.allclose(B["chol"] @ B["chol"].T, np.eye(2), atol=0.1)          # independent residuals: no correlation
     # the shipped arrays, read by the helper, give the fitted model
     t = B["cols"][0]["mean"][0]
-    base, feat, thr, left, right, val = t.arrays()
-    m = {"base": np.array([base]), "start": np.array([0, len(feat)]), "feature": feat, "threshold": thr, "left": left,
-         "right": right, "value": val}
+    base, n_nodes, feat, thr, left, right, val = t.arrays()
+    m = {"base": np.array([base]), "tree_start": np.array([0, len(n_nodes)]), "node_start": np.cumsum(np.r_[0, n_nodes]),
+         "feature": feat, "threshold": thr, "left": left, "right": right, "value": val}
     assert np.allclose(SA._raw(m, 0, Z), t.raw(Z), atol=1e-5)
     const = PM.Trees(const=1.5)
-    assert const.raw(Z[:3]).tolist() == [1.5] * 3 and const.arrays()[1].shape[0] == 0
+    assert const.raw(Z[:3]).tolist() == [1.5] * 3 and len(const.arrays()[1]) == 0
 
 
 def test_helper_reads_head_models(tmp_path):

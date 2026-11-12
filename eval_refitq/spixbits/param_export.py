@@ -14,7 +14,7 @@ anything else raises):
                     scale, the copula correlations
   donor             hit-choice part: the donor's values, picked by the rank draw
 Beside each file: spixbits_<scenario>_maps.npz, the tree maps of the covariance diagonal and of the heads' inputs (per
-quantization scenario: 67 boosted tree models as padded arrays, the residual quantiles, ranges and copula factors),
+quantization scenario: 67 boosted tree models as arrays, the residual quantiles, ranges and copula factors),
 and the head models (heads/retrained: the best of 20 per detector scenario; heads/deployed) that the helper evaluates
 on the emulated inputs. The uniform / normal draws: 1 = state, 2 = rank (uniform); 11-14 = z0, tanL, 1/R, phi0,
 21-25 = covariance columns, 41-53 = mapped inputs (normal); 61-73 = "input missing" (uniform).
@@ -138,16 +138,14 @@ def build(tables, terc, meta):
 
 def maps_arrays(T):
     """The tree maps of one quantization scenario as arrays: the models in the order covariance columns (mean, mean, ln
-    scale each), mapped inputs (the same), "input missing" classifiers; their trees stacked, `start` = first tree of
-    each model."""
+    scale each), mapped inputs (the same), "input missing" classifiers. tree_start: the first tree of each model;
+    node_start: the first node of each tree; then one entry per node."""
     models = [m for blk in ("cov_map", "score_map") for c in T[blk]["cols"] for m in (*c["mean"], c["scale"])] + T["missing"]
     arr = [m.arrays() for m in models]
-    n = max(a[1].shape[1] for a in arr)
-    pad = lambda x, fill: np.concatenate([x, np.full((len(x), n - x.shape[1]), fill, x.dtype)], 1)
-    out = {"base": np.array([a[0] for a in arr]), "start": np.cumsum([0] + [len(a[1]) for a in arr]),
-           "feature": np.concatenate([pad(a[1], -1) for a in arr]), "threshold": np.concatenate([pad(a[2], 0) for a in arr]),
-           "left": np.concatenate([pad(a[3], 0) for a in arr]), "right": np.concatenate([pad(a[4], 0) for a in arr]),
-           "value": np.concatenate([pad(a[5], 0) for a in arr])}
+    assert max((len(a[2]) and a[2].max()) for a in arr) < 127 and max((len(a[1]) and a[1].max()) for a in arr) <= 255
+    out = {"base": np.array([a[0] for a in arr]), "tree_start": np.cumsum([0] + [len(a[1]) for a in arr]),
+           "node_start": np.cumsum(np.concatenate([[0]] + [a[1] for a in arr])),
+           **{k: np.concatenate([a[i] for a in arr]) for i, k in ((2, "feature"), (3, "threshold"), (4, "left"), (5, "right"), (6, "value"))}}
     for name, blk in (("cov", "cov_map"), ("score", "score_map")):
         out[name + "_q"] = np.array([c["q"] for c in T[blk]["cols"]])
         out[name + "_lo"] = np.array([c["lo"] for c in T[blk]["cols"]])

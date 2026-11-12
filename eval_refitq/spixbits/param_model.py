@@ -87,6 +87,11 @@ SCORES = CHI2 + AGG                                   # the mapped head inputs (
 LINEAR = ("spixLogDetRatio", "h_nangle", "h_mean_wmult")     # natural variable = the value itself; the others log(x + 1e-3)
 N_BITS = 16                                           # layer-mask bits given to the maps as separate features
 MAP_MEAN = dict(max_iter=100, max_depth=4, learning_rate=0.1, min_samples_leaf=40, random_state=0)
+# the columns that are nearly functions of the track (the covariance diagonal; the log-determinant ratio; the mean window
+# multiplicity) get larger models: out-of-fold residual of ln C(d0) 0.108 -> 0.067, of spixLogDetRatio 0.35 -> 0.22; the
+# chi2-like sums and pulls are noise-dominated and gain nothing
+MAP_BIG = dict(max_iter=200, max_depth=6, learning_rate=0.2, min_samples_leaf=10, random_state=0)
+BIG_SCORES = ("spixLogDetRatio", "h_mean_wmult")
 MAP_SCALE = dict(max_iter=40, max_depth=3, learning_rate=0.1, min_samples_leaf=100, random_state=0)
 MISSING = -999.0
 # copula partners: parameter -> (the parameter whose normal draw it follows)
@@ -307,17 +312,18 @@ class Trees:
         return self.sk.decision_function(Z) if hasattr(self.sk, "decision_function") else self.sk.predict(Z)
 
     def arrays(self):
-        """(base, feature, threshold, left, right, value): one line per tree, padded; feature -1 = leaf."""
+        """(base, nodes per tree, feature, threshold, left, right, value): the trees' nodes one after the other; feature
+        -1 = leaf; left / right count within the tree. Thresholds stay float64: they are data values, and a rounded
+        threshold sends the tracks sitting on it the other way."""
         if self.sk is None:
-            z = np.zeros((0, 1))
-            return self.const, z.astype(np.int16), z, z.astype(np.uint8), z.astype(np.uint8), z.astype(np.float32)
+            z = np.zeros(0)
+            return self.const, z.astype(np.int64), z.astype(np.int8), z, z.astype(np.uint8), z.astype(np.uint8), z.astype(np.float32)
         nodes = [p[0].nodes for p in self.sk._predictors]
-        n = max(len(t) for t in nodes)
-        pad = lambda fn, fill, dt: np.array([list(fn(t)) + [fill] * (n - len(t)) for t in nodes], dt)
-        return (float(np.ravel(self.sk._baseline_prediction)[0]),
-                pad(lambda t: np.where(t["is_leaf"], -1, t["feature_idx"].astype(np.int64)), -1, np.int16),
-                pad(lambda t: t["num_threshold"], 0.0, np.float64), pad(lambda t: t["left"], 0, np.uint8),
-                pad(lambda t: t["right"], 0, np.uint8), pad(lambda t: t["value"], 0.0, np.float32))
+        cat = lambda fn, dt: np.concatenate([fn(t) for t in nodes]).astype(dt)
+        return (float(np.ravel(self.sk._baseline_prediction)[0]), np.array([len(t) for t in nodes], np.int64),
+                cat(lambda t: np.where(t["is_leaf"], -1, t["feature_idx"].astype(np.int64)), np.int8),
+                cat(lambda t: t["num_threshold"], np.float64), cat(lambda t: t["left"], np.uint8),
+                cat(lambda t: t["right"], np.uint8), cat(lambda t: t["value"], np.float32))
 
 
 def mask_bits(mask):
@@ -345,7 +351,7 @@ def features_scores(today, counts, a, cov):
                             np.abs(d_ot) / np.sqrt(np.maximum(today["ot_cov_diag"], 1e-30))])
 
 
-def fit_column(Z, y, half):
+def fit_column(Z, y, half, kw):
     """One mapped column: two mean models, each trained on one half of the events (their average is the map), the
     out-of-fold residual, a model of ln |residual| and the quantiles of the standardized residual."""
     from sklearn.ensemble import HistGradientBoostingRegressor as HR
@@ -354,7 +360,7 @@ def fit_column(Z, y, half):
         r = y - med
         mean, scale = [Trees(const=med)] * 2, Trees(const=float(np.log(np.median(np.abs(r)) + 1e-4)) if len(y) else 0.0)
     else:
-        mean = [Trees(HR(**MAP_MEAN).fit(Z[half == k], y[half == k])) for k in (0, 1)]
+        mean = [Trees(HR(**kw).fit(Z[half == k], y[half == k])) for k in (0, 1)]
         r = y.astype(np.float64).copy()
         for k in (0, 1):
             r[half == k] -= mean[1 - k].raw(Z[half == k])
@@ -364,13 +370,13 @@ def fit_column(Z, y, half):
             "hi": float(y.max()) if len(y) else 0.0}, e
 
 
-def fit_block(Z, Y, ok, half):
-    """The maps of the columns of Y (NaN = missing, left out of that column) on the tracks `ok`, and the Cholesky factor
+def fit_block(Z, Y, ok, half, big):
+    """The maps of the columns of Y (NaN = missing, left out of that column; big[j]: the larger model) on the tracks `ok`, and the Cholesky factor
     of the normal-score correlation of their standardized residuals (pairwise complete, made positive definite)."""
     cols, E = [], np.full(Y.shape, np.nan)
     for j in range(Y.shape[1]):
         m = ok & np.isfinite(Y[:, j])
-        c, e = fit_column(Z[m], Y[m, j], half[m])
+        c, e = fit_column(Z[m], Y[m, j], half[m], MAP_BIG if big[j] else MAP_MEAN)
         cols.append(c)
         if m.sum() >= 50:
             E[m, j] = stats.norm.ppf((stats.rankdata(e) - 0.5) / len(e))
@@ -482,10 +488,10 @@ def fit(today, arm, truth, D, terciles, sel):
     okm = sel & (arm["inputs"][:, IN["spixRefitPerformed"]] > 0)
     c_arm = arm["inputs"][:, 5:11].astype(np.float64)
     lc = lambda c: np.log(np.maximum(c, 1e-30))
-    T["cov_map"] = fit_block(features_cov(today, c_arm), lc(arm["cov_diag"]) - lc(today["cov_diag"]), okm, today["half"])
+    T["cov_map"] = fit_block(features_cov(today, c_arm), lc(arm["cov_diag"]) - lc(today["cov_diag"]), okm, today["half"], [True] * 5)
     Zs = features_scores(today, c_arm, arm["a"].astype(np.float64), arm["cov_diag"])
     Ys = np.column_stack([natural(c, arm["inputs"][:, IN[c]]) for c in SCORES])
-    T["score_map"] = fit_block(Zs, Ys, okm, today["half"])
+    T["score_map"] = fit_block(Zs, Ys, okm, today["half"], [c in BIG_SCORES for c in SCORES])
     T["missing"] = []
     for j in range(len(SCORES)):
         miss = ~np.isfinite(Ys[okm, j])
