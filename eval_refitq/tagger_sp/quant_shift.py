@@ -19,9 +19,10 @@ What it does NOT change (weigh this): everything else built from the tracks befo
 produced today: the particle-flow and PUPPI candidates' pt / eta / phi, which candidates exist, the PUPPI weights,
 the jets and their constituents, the primary vertex (so vtxpv_dz moves only through the track's z0), the OT track's
 own chi2 and trkMVA1. Mask IIII (no SmartPixels layers) gets no quantization shift: the OT-only heads on L1TTrack.
-Head sets (common.HEADSET): "detector" = retrained per detector scenario on today's prompt tracks (canon_v5 TTbar +
-H->tautau); "quantization" = retrained on that quantization scenario's prompt tracks (five TTbar files only: compare
-only with a build that uses the five-file reference heads).
+Head sets (common.HEADSET): "quantization" = retrained on that quantization scenario's prompt tracks (five TTbar files,
+338 training events); "reference" = the "implemented now" heads trained on the same five files (the fair reference of a
+"quantization" build, today's tracks only); "detector" = retrained per detector scenario on today's prompt tracks with
+the full sample (canon_v5 TTbar + H->tautau).
 Truth is used as the parametrization uses it (the OT track's particle: a cell variable and the hit-choice residual);
 no truth column becomes a tagger input.
 """
@@ -81,8 +82,9 @@ def refit_heads(mask, headset, quant):
     key = ("refit", mask, headset, quant)
     if key not in _CACHE:
         SA = helper()
-        if headset == "quantization":
-            _CACHE[key] = SA.load_heads_npz(os.path.join(PARAM_DIR, "heads", "per_quantization", f"{quant}_{mask}.npz"))
+        if headset in ("quantization", "reference"):        # reference: the five-file "implemented now" heads
+            name = quant if headset == "quantization" else "implemented_now"
+            _CACHE[key] = SA.load_heads_npz(os.path.join(PARAM_DIR, "heads", "per_quantization", f"{name}_{mask}.npz"))
         else:
             _CACHE[key] = SA.load_heads(os.path.join(PARAM_DIR, "heads", "detector"), mask)
     return _CACHE[key]

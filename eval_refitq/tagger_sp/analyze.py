@@ -67,6 +67,8 @@ MISTAGS = [0.10, 0.01, 0.001]      # loose / medium / tight (background = udsg; 
 WP_NAME = {0.10: "loose", 0.01: "medium", 0.001: "tight"}
 WP_LABEL = {}                      # value -> key label override ("menu", set in main)
 STOCK_B_CUT = 0.15                 # the stock NG menu cut on bTagScore
+MENU_FAKE_RATE_EXTENDED = 0.4980694980694981   # its udsg fake rate on the extended chain's IIII test jets (slim-tier study,
+                                               # tagger_slimtier/summary.json of 2026-10-26): the "menu" target on the prompt chain
 REPORT_MISTAGS = [0.10, 0.01]      # with the menu-matched point (main); 0.1% is not resolvable here
 
 
@@ -80,8 +82,18 @@ def wp_title(x):
 
 def stock_reference():
     """The udsg fake rate of the stock menu cut bTagScore > STOCK_B_CUT on the OT baseline
-    (IIII) test jets in acceptance -- the fake-rate target of the "menu" matched WP."""
+    (IIII) test jets in acceptance -- the fake-rate target of the "menu" matched WP.
+    Prompt collection: its jets (L1puppiJetSC4) carry no stock scores, so the target cannot be measured there; it is the
+    value measured on the extended chain's IIII jets of the slim-tier study (MENU_FAKE_RATE_EXTENDED; TAGGER_SP_MENU_FAKE_RATE
+    overrides it), and the count is that of the prompt IIII udsg test jets."""
     man = json.load(open(C.manifest_path(C.BASELINE_MASK)))
+    if C.COLLECTION == "prompt":
+        n = 0
+        for s, n_, _ in man["files"]:
+            d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, C.BASELINE_MASK, n_) + ".npz"))
+            sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX) & C.event_filter(d["evid"])[d["entry"]]
+            n += int(np.isin(d["label"][sel], [CI["light"], CI["gluon"]]).sum())
+        return float(os.environ.get("TAGGER_SP_MENU_FAKE_RATE", MENU_FAKE_RATE_EXTENDED)), n
     sc, lab = [], []
     for s, n, _ in man["files"]:
         d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, C.BASELINE_MASK, n) + ".npz"))
@@ -415,8 +427,11 @@ def stock_wp(ev, cnt):
     """The stock NG tagger (scores emulated in each nano, per scenario's jets; not retrained) on each mask's
     test jets in acceptance: b eff / udsg mistag of bTagScore > STOCK_B_CUT, and its b eff at the matched
     points (ties split: the scores are 8-bit), on the trained taggers' paired event replicates.
-    Returns {mask: {metric: [nominal, bootstrap std]} + counts; "<metric>_minus_IIII": [diff, std]}."""
+    Returns {mask: {metric: [nominal, bootstrap std]} + counts; "<metric>_minus_IIII": [diff, std]}.
+    Prompt collection: no stock scores on its jets, so nothing is returned (the control is left out)."""
     R, out = {}, {}
+    if C.COLLECTION == "prompt":
+        return out
     for mask in C.MASKS:
         mp = C.manifest_path(mask)
         if not os.path.exists(mp):

@@ -56,8 +56,13 @@ if COLLECTION not in TABLES:
     raise ValueError(f"TAGGER_SP_COLLECTION {COLLECTION!r}")
 # TAGGER_SP_QUANT (prompt collection only): the quantization scenario whose effect is applied to the per-track tagger
 # inputs through the prompt parametrization (quant_shift.py); "" = today's tracks ("implemented now").
-# TAGGER_SP_HEADSET: the track-quality heads evaluated on those inputs: "detector" (retrained per detector scenario on
-# today's prompt tracks) or "quantization" (retrained on that quantization scenario's prompt tracks; five files).
+# TAGGER_SP_HEADSET: the track-quality heads evaluated on those inputs:
+#   "quantization"  retrained on that quantization scenario's prompt tracks (five TTbar files, 338 training events);
+#   "reference"     (today's tracks only) the "implemented now" heads trained on the same five files and events: the
+#                   fair reference of a "quantization" run;
+#   "detector"      retrained per detector scenario on today's prompt tracks with the full sample (canon_v5 TTbar +
+#                   H->tautau): the comparison that shows what the smaller heads sample costs.
+# IIII (OT-only) always uses its full-sample OT heads: no five-file version exists.
 # TAGGER_SP_CANDIDATES (prompt collection only): the PUPPI candidate's own dxy and z0 (tagger inputs of every cell).
 # "today" = as produced, whatever the quantization scenario (a control: the tagger then sees today's d0 through the
 # candidate's coarse dxy code); "reencoded" = re-derived from the (shifted) track with the trigger chain's own
@@ -69,11 +74,12 @@ if COLLECTION != "prompt" and (QUANT or HEADSET != "detector" or CANDIDATES != "
     raise ValueError("TAGGER_SP_QUANT / TAGGER_SP_HEADSET / TAGGER_SP_CANDIDATES need TAGGER_SP_COLLECTION=prompt")
 if CANDIDATES not in ("today", "reencoded"):
     raise ValueError(f"TAGGER_SP_CANDIDATES {CANDIDATES!r}")
-if HEADSET not in ("detector", "quantization") or (HEADSET == "quantization" and not QUANT):
-    raise ValueError(f"TAGGER_SP_HEADSET {HEADSET!r} (quantization needs TAGGER_SP_QUANT)")
+if HEADSET not in ("detector", "quantization", "reference") or (HEADSET == "quantization" and not QUANT) \
+        or (HEADSET == "reference" and QUANT):
+    raise ValueError(f"TAGGER_SP_HEADSET {HEADSET!r} (quantization needs TAGGER_SP_QUANT; reference is for today's tracks)")
 _DEFAULT_OUT = "/Volumes/WDMac/smartpixels_scratch/tagger_slimtier" if TIER == "slim" else "/Volumes/WDMac/smartpixels_scratch/tagger_v5"
 if COLLECTION == "prompt":                 # its own folders, one per quantization scenario and head set
-    _DEFAULT_OUT += "_prompt/" + (QUANT or "implemented_now") + ("_qheads" if HEADSET == "quantization" else "") \
+    _DEFAULT_OUT += "_prompt/" + (QUANT or "implemented_now") + {"quantization": "_qheads", "reference": "_refheads", "detector": ""}[HEADSET] \
         + ("_reencoded" if CANDIDATES == "reencoded" else "")
 OUT = os.environ.get("TAGGER_SP_OUT", _DEFAULT_OUT)
 MASKS = ["IIII", "AAAA", "AAAI", "IAAA"]       # IIII = OT baseline (passthrough)
