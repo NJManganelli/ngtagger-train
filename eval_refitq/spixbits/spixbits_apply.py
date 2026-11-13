@@ -61,6 +61,14 @@ def load_heads(directory, scenario):
     return out
 
 
+def load_heads_npz(path):
+    """{(window, head): trees} from one compact file (heads/per_quantization/<quantization scenario>_<detector
+    scenario>.npz: the heads retrained on that quantization scenario's own tracks)."""
+    Z = np.load(path)
+    return {(w, h): {k: (Z[f"{w}/{h}/{k}"] if k not in ("init", "depth") else Z[f"{w}/{h}/{k}"].item())
+                     for k in ("init", "feature", "threshold", "value", "left", "right", "depth")} for w in WINDOWS for h in HEADS}
+
+
 def _margin(M, X):
     out = np.full(len(X), M["init"])
     rows = np.arange(len(X))

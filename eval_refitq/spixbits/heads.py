@@ -64,6 +64,21 @@ class Heads:
                                        "left": pad("children_left", -1, np.int64), "right": pad("children_right", -1, np.int64),
                                        "depth": int(m["max_depth"])}
 
+    KEYS = ("init", "feature", "threshold", "value", "left", "right", "depth")
+
+    def save_npz(self, path):
+        """The twelve models (two windows x six heads) as one compact file: keys <window>/<head>/<array>."""
+        np.savez_compressed(path, **{f"{w}/{h}/{k}": np.asarray(self.models[(w, h)][k]) for w in WINDOWS for h in HEADS for k in self.KEYS})
+
+    @classmethod
+    def from_npz(cls, path, mask=""):
+        """The reader on a file written by save_npz (the per-quantization-scenario heads)."""
+        self = cls.__new__(cls)
+        self.mask, Z = mask, np.load(path)
+        self.models = {(w, h): {k: (Z[f"{w}/{h}/{k}"] if k not in ("init", "depth") else Z[f"{w}/{h}/{k}"].item()) for k in cls.KEYS}
+                       for w in WINDOWS for h in HEADS}
+        return self
+
     @staticmethod
     def _margin(M, X):
         out = np.full(len(X), M["init"])
