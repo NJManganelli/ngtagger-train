@@ -107,12 +107,14 @@ class TrackOverride:
         t = uproot.open(files[0])["Events"]
         keys = t.keys()
         ot, sp = C.OT_TABLE, C.TRACK_TABLE
-        extra = [f"{ot}_{c}" for c in ("rInv", "phi", "tp_tanL", "tp_phi0", "tp_charge")] + ["run", "luminosityBlock", "event"]
+        extra = [f"{ot}_{c}" for c in ("rInv", "phi")] + ["run", "luminosityBlock", "event"]
+        if self.shift:                                   # the OT track's particle: the parametrization's cell variable
+            extra += [f"{ot}_tp_{c}" for c in ("pt", "tanL", "phi0", "z0", "d0", "charge")]
         if not self.base_only:
             extra += [f"{sp}_{c}" for c in ("rInv", "phi", "spixRefitPerformed", *(f"cov_{p}_{p}" for p in PAR))]
-        br = list(dict.fromkeys(tm.nano_branches(keys, C.FAMILY, "", True, base_only=self.base_only) + extra))
+        br = list(dict.fromkeys(tm.nano_branches(keys, C.FAMILY, "", False, base_only=self.base_only) + extra))
         A = t.arrays(br, entry_stop=max_events)
-        T, ntrk = tm.tracks_from_batch(A, C.FAMILY, "", True, self.base_only)
+        T, ntrk = tm.tracks_from_batch(A, C.FAMILY, "", False, self.base_only)
         if not np.array_equal(ntrk, counts):
             raise RuntimeError(f"{files[0]}: the override's tracks are not the track table's")
         flat = lambda b: ak.to_numpy(ak.flatten(A[b])).astype(np.float64)
@@ -133,10 +135,11 @@ class TrackOverride:
             ev = np.repeat(np.arange(len(ntrk)), ntrk)
             ids = tuple(ak.to_numpy(A[c]).astype(np.int64)[ev] for c in ("run", "luminosityBlock", "event")) \
                 + (np.arange(len(ev)) - np.repeat(np.cumsum(ntrk) - ntrk, ntrk),)
-            matched = np.nan_to_num(T["b_tp_pt"], nan=-1.0) > 0
-            q, tpt = flat(f"{ot}_tp_charge"), np.where(matched, T["b_tp_pt"], np.nan).astype(np.float64)
+            tp_pt = flat(f"{ot}_tp_pt")
+            matched = np.nan_to_num(tp_pt, nan=-1.0) > 0
+            q, tpt = flat(f"{ot}_tp_charge"), np.where(matched, tp_pt, np.nan)
             truth = np.column_stack([meta["rinv_sign_times_charge"] * q * meta["kpt_GeV_cm"] / tpt, flat(f"{ot}_tp_phi0"),
-                                     flat(f"{ot}_tp_tanL"), T["b_tp_z0"], T["b_tp_d0"]]).astype(np.float64)
+                                     flat(f"{ot}_tp_tanL"), flat(f"{ot}_tp_z0"), flat(f"{ot}_tp_d0")])
             truth[~matched] = np.nan
             # the cell variable "today's clean margin": the detector-scenario heads on today's inputs, as in the fit
             clean_today = SA.head_margins(refit_heads(self.mask, "detector", ""), X, a[:, 4])[:, 0]
