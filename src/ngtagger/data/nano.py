@@ -195,6 +195,7 @@ def load_jets(
     vertex_table: str = "L1Vertex",
     trackmva_model: str | None = None,
     trackjoint_model=None,
+    track_override=None,
 ):
     """Full pipeline: nano files -> (jets awkward record, per-jet constituent
     feature records). Feature engineering and labeling live in features.py /
@@ -218,6 +219,11 @@ def load_jets(
 
     link_cand_table: plain-Puppi tier row-aligned with cand_table that supplies
     a filled l1TrackIdx when the (deregionized) cand_table's own is unfilled.
+
+    track_override (default None: nothing changes): an object with `fields` (column names of track_table it
+    supplies) and `columns(files, n_tracks_per_event, max_events)` -> {name: flat array over the tracks, in the
+    table's order}. Its columns replace (or add) those of track_table before any feature is gathered: the hook for
+    head outputs computed off-line and for track parameters shifted by a quantization scenario.
     """
     groups = feature_groups or ["baseline"]
     need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv",
@@ -233,8 +239,13 @@ def load_jets(
     if "trackheads" in groups:
         with uproot.open(files[0]) as f:
             keys0 = set(f["Events"].keys())
-        heads_on_track = all(f"{track_table}_head_{h}" in keys0 for h in HEAD_NAMES)
-        if heads_on_track:
+        if track_override is not None and all(f"head_{h}" in track_override.fields for h in HEAD_NAMES):
+            heads_on_track = True                    # supplied by the override: nothing to read
+        else:
+            heads_on_track = all(f"{track_table}_head_{h}" in keys0 for h in HEAD_NAMES)
+        if heads_on_track and track_override is not None and f"head_{HEAD_NAMES[0]}" in track_override.fields:
+            pass
+        elif heads_on_track:
             extra_trk += [f"head_{h}" for h in HEAD_NAMES]
         elif all(f"{HEADS_OT_TABLE}_head_{h}" in keys0 for h in HEAD_NAMES) and f"{track_table}_l1TrackIdx" in keys0:
             extra_trk += ["l1TrackIdx"]
@@ -262,6 +273,12 @@ def load_jets(
         link_cand_table=link_cand_table if need_trk_gather else None,
         vertex_table=vertex_table if "vertexdxy_pv" in groups else None,
     )
+    if track_override is not None:
+        tr = events[track_table]
+        counts = ak.num(tr[tr.fields[0]], axis=1)
+        for name, col in track_override.columns(files, ak.to_numpy(counts), max_events).items():
+            tr = ak.with_field(tr, ak.unflatten(np.asarray(col), counts), name)
+        events = ak.with_field(events, tr, track_table)
     nested_idx = group_constituents(events, jet_table, link_table, n_const=n_const)
     cands = events[cand_table]
 

@@ -104,7 +104,7 @@ def build_extra(sample, mask, n, fn):
     if os.path.exists(out):
         return out
     t = uproot.open(fn)["Events"]
-    cols = {f"b_{c}": f"L1TExtTrack_{c}" for c in EXTRA_BASE}
+    cols = {f"b_{c}": f"{C.OT_TABLE}_{c}" for c in EXTRA_BASE}
     if coll_of(mask) == "refit":
         cols.update({f"r_{c}": f"{C.TRACK_TABLE}_{c}" for c in EXTRA_REFIT})
     A = {k: ak.to_numpy(ak.flatten(t[b].array())) for k, b in cols.items()}

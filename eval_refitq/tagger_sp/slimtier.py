@@ -51,12 +51,17 @@ def masks():
     return DEV_MASKS or C.MASKS
 
 
+# SLIMTIER_INVENTORY_DIR: another folder for the frozen inventory and the common events (default: this run's cache).
+# The prompt-collection runs of several quantization scenarios share one, so that they all use the same files and events.
+INVENTORY_DIR = os.environ.get("SLIMTIER_INVENTORY_DIR", "")
+
+
 def inventory_path():
-    return os.path.join(C.OUT, "cache", "slim_inventory.json")
+    return os.path.join(INVENTORY_DIR or os.path.join(C.OUT, "cache"), "slim_inventory.json")
 
 
 def common_path():
-    return os.path.join(C.OUT, "cache", "slim_common_events.npy")
+    return os.path.join(INVENTORY_DIR or os.path.join(C.OUT, "cache"), "slim_common_events.npy")
 
 
 def evid_path(mask, job):
@@ -113,20 +118,20 @@ def check_file(mask, p):
         if mask == "IIII":                       # the OT-only control: no refit (no marker, no refit columns)
             if "smartPixelsRefit" in [k.split(";")[0] for k in f.keys()]:
                 return "IIII with a smartPixelsRefit marker", None
-            if any(k.startswith("L1TSmartPixelsExtTrack_spix") for k in keys):
+            if any(k.startswith(f"{C.TRACK_TABLE}_spix") for k in keys):
                 return "IIII with refit columns", None
             A = t.arrays([*EVENT_ID], library="ak")
         else:
             refit = str(f["smartPixelsRefit"]) if "smartPixelsRefit" in [k.split(";")[0] for k in f.keys()] else ""
             if not refit.startswith(REFIT_MARK):
                 return f"refit marker {refit!r}", None
-            A = t.arrays(["L1TSmartPixelsExtTrack_spixLayerHitMask", "L1TSmartPixelsExtTrack_spixRefitVersion",
+            A = t.arrays([f"{C.TRACK_TABLE}_spixLayerHitMask", f"{C.TRACK_TABLE}_spixRefitVersion",
                           *EVENT_ID], library="ak")
-            bits = int(np.bitwise_or.reduce(ak.to_numpy(ak.flatten(A["L1TSmartPixelsExtTrack_spixLayerHitMask"]))
+            bits = int(np.bitwise_or.reduce(ak.to_numpy(ak.flatten(A[f"{C.TRACK_TABLE}_spixLayerHitMask"]))
                                             .astype(np.int64), initial=0))
             if bits & ~allowed_bits(mask):
                 return f"accepted hits on an inactive layer (layer-hit bits {bits:#010b})", None
-            ver = ak.to_numpy(ak.flatten(A["L1TSmartPixelsExtTrack_spixRefitVersion"]))
+            ver = ak.to_numpy(ak.flatten(A[f"{C.TRACK_TABLE}_spixRefitVersion"]))
             if len(ver) and not np.all(ver == 3):
                 return f"spixRefitVersion {sorted(set(ver.tolist()))} (not all 3)", None
         ev = np.column_stack([ak.to_numpy(A[c]).astype(np.int64) for c in EVENT_ID])

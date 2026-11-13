@@ -39,7 +39,11 @@ os.environ.setdefault("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagge
 import common as C          # noqa: E402  (tagger_sp/common.py)
 import joint_heads as J     # noqa: E402
 
-OUT = Path.home() / "smartpixels/scratch_local/spixbits/heads_retrained"
+# TAGGER_SP_COLLECTION=prompt (with TAGGER_SP_OUT=/Volumes/WDMac/smartpixels_scratch/tagger_v5_prompt/heads_input): the same
+# on the PROMPT collection (L1TTrack -> L1TSmartPixelsTrack, the baseline), outputs under heads_retrained_prompt/; there
+# `--prepare` first builds the track caches (no jet-tagger heads, no jets), and IIII is allowed: the OT-only heads (13
+# inputs, one window "all") on canon_v4's L1TTrack.
+OUT = Path.home() / ("smartpixels/scratch_local/spixbits/heads_retrained" + ("_prompt" if C.COLLECTION == "prompt" else ""))
 LEFT_OUT = {("ttbar", 4), ("ttbar", 6)}
 REG = slice(1, 6)                                     # the five regression heads among the six outputs
 
@@ -66,6 +70,18 @@ def load(mask):
     return {k: np.concatenate([p[k] for p in parts]) for k in sorted(keys)}, man
 
 
+def prepare(masks, samples=("ttbar", "htt")):
+    """Track caches and the manifest of each mask for this collection (build.py's step 1 only)."""
+    import build as B
+    C.freeze_fileset(list(samples))
+    for mask in masks:
+        files = [[s, n, p] for s in samples for n, p in C.study_files(s, mask)]
+        for s, n, p in files:
+            B.build_tracks(s, mask, n, p)
+        json.dump({"samples": list(samples), "files": files, "collection": C.COLLECTION}, open(C.manifest_path(mask), "w"), indent=1)
+        print(mask, len(files), "files", flush=True)
+
+
 def conifer_json(booster, k, path):
     import conifer
     cfg = conifer.backends.cpp.auto_config()
@@ -80,17 +96,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--masks", nargs="+", default=["AAAA", "AAAI", "IAAA"])
     ap.add_argument("--trials", type=int, default=20)
+    ap.add_argument("--prepare", action="store_true", help="build the track caches of the masks first")
     a = ap.parse_args()
+    if a.prepare:
+        prepare(a.masks)
     OUT.mkdir(parents=True, exist_ok=True)
     rec_path = OUT / "trials.json"
     rec = json.load(open(rec_path)) if rec_path.exists() else {}
     heads = [h[0] for h in J.head_list()]
     base_xgb = dict(J.XGB)
     for mask in a.masks:
+        coll = J.coll_of(mask)                               # "refit", or "base" for the OT-only mask IIII
         T, man = load(mask)
-        y, R, k_bend = J.targets(T, "refit")
-        X = J.features(T, "refit")
-        for wname, w in tm.windows(T, "refit").items():
+        y, R, k_bend = J.targets(T, coll)
+        X = J.features(T, coll)
+        for wname, w in tm.windows(T, coll).items():
             tr = np.flatnonzero(w & ~T["_test"] & ~T["_val"] & ~T["_left_out"])
             tr_all = np.flatnonzero(w & ~T["_test"] & ~T["_val"])
             va = np.flatnonzero(w & T["_val"] & ~T["_left_out"])
@@ -134,6 +154,10 @@ def main():
             json.dump(rec, open(rec_path, "w"), indent=1)
             print(f"{key}: best trial {best} score {good[best]['score']:.4f} (reference {e['reference_score']:.4f}, "
                   f"spread {e['score_spread']})", flush=True)
+        if coll == "base":                                  # 13 inputs, one window: no SmartPixels reader check
+            rec[f"{mask}/training_files"] = [[s, n] for s, n, _ in man["files"] if (s, n) not in LEFT_OUT]
+            json.dump(rec, open(rec_path, "w"), indent=1)
+            continue
         # the reader's check: the conifer JSON of both windows against the boosters on the validation tracks
         sys.path.insert(0, str(HERE))
         import heads as HD
@@ -141,7 +165,7 @@ def main():
         va_all = np.flatnonzero(T["_val"])[:20000]
         mine = H.margins(X[va_all], T["r_d0"][va_all])
         ref = np.full_like(mine, np.nan)
-        for wname, w in tm.windows(T, "refit").items():
+        for wname, w in tm.windows(T, coll).items():
             b = xgb.Booster()
             b.load_model(str(OUT / "fits" / mask / wname / f"trial_{rec[f'{mask}/{wname}']['best_trial']:02d}.json"))
             m = w[va_all]
