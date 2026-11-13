@@ -58,15 +58,23 @@ if COLLECTION not in TABLES:
 # inputs through the prompt parametrization (quant_shift.py); "" = today's tracks ("implemented now").
 # TAGGER_SP_HEADSET: the track-quality heads evaluated on those inputs: "detector" (retrained per detector scenario on
 # today's prompt tracks) or "quantization" (retrained on that quantization scenario's prompt tracks; five files).
+# TAGGER_SP_CANDIDATES (prompt collection only): the PUPPI candidate's own dxy and z0 (tagger inputs of every cell).
+# "today" = as produced, whatever the quantization scenario (a control: the tagger then sees today's d0 through the
+# candidate's coarse dxy code); "reencoded" = re-derived from the (shifted) track with the trigger chain's own
+# encoding (quant_shift.encode_candidate), so that they follow the quantization scenario.
 QUANT = os.environ.get("TAGGER_SP_QUANT", "")
 HEADSET = os.environ.get("TAGGER_SP_HEADSET", "detector")
-if COLLECTION != "prompt" and (QUANT or HEADSET != "detector"):
-    raise ValueError("TAGGER_SP_QUANT / TAGGER_SP_HEADSET need TAGGER_SP_COLLECTION=prompt")
+CANDIDATES = os.environ.get("TAGGER_SP_CANDIDATES", "today")
+if COLLECTION != "prompt" and (QUANT or HEADSET != "detector" or CANDIDATES != "today"):
+    raise ValueError("TAGGER_SP_QUANT / TAGGER_SP_HEADSET / TAGGER_SP_CANDIDATES need TAGGER_SP_COLLECTION=prompt")
+if CANDIDATES not in ("today", "reencoded"):
+    raise ValueError(f"TAGGER_SP_CANDIDATES {CANDIDATES!r}")
 if HEADSET not in ("detector", "quantization") or (HEADSET == "quantization" and not QUANT):
     raise ValueError(f"TAGGER_SP_HEADSET {HEADSET!r} (quantization needs TAGGER_SP_QUANT)")
 _DEFAULT_OUT = "/Volumes/WDMac/smartpixels_scratch/tagger_slimtier" if TIER == "slim" else "/Volumes/WDMac/smartpixels_scratch/tagger_v5"
 if COLLECTION == "prompt":                 # its own folders, one per quantization scenario and head set
-    _DEFAULT_OUT += "_prompt/" + (QUANT or "implemented_now") + ("_qheads" if HEADSET == "quantization" else "")
+    _DEFAULT_OUT += "_prompt/" + (QUANT or "implemented_now") + ("_qheads" if HEADSET == "quantization" else "") \
+        + ("_reencoded" if CANDIDATES == "reencoded" else "")
 OUT = os.environ.get("TAGGER_SP_OUT", _DEFAULT_OUT)
 MASKS = ["IIII", "AAAA", "AAAI", "IAAA"]       # IIII = OT baseline (passthrough)
 BASELINE_MASK = "IIII"

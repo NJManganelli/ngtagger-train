@@ -229,7 +229,7 @@ def main_slim(a):
     if not fs:
         raise FileNotFoundError(f"no usable slim-tier files for {a.mask}")
     sha = "slimtier:stored-heads:v1" if C.COLLECTION == "extended" else \
-        f"slimtier:prompt:{C.QUANT or 'implemented_now'}:{C.HEADSET}-heads:v1"
+        f"slimtier:prompt:{C.QUANT or 'implemented_now'}:{C.HEADSET}-heads:candidates-{C.CANDIDATES}:v1"
     for n, p in fs:
         t = uproot.open(p)["Events"]
         tm.refuse_truth_inputs(t, C.FAMILY, "", base_only(a.mask))

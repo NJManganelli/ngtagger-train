@@ -9,10 +9,16 @@ the constituent's track table (L1TSmartPixelsTrack):
                          slots of the "trackheads" feature group. No CMSSW-computed heads exist on the prompt tables.
   with a quantization    rInv, tanL, z0, d0; cov_d0_d0, cov_z0_z0 (the tagger's sigma(d0), sigma(z0)); spixNAcceptedHits
   scenario               (accepted IT hits); and the heads evaluated on the emulated head inputs.
-What it does NOT change (weigh this): everything built from the tracks before the tagger reads them stays as
-produced today: the particle-flow and PUPPI candidates and their pt / eta / phi / z0 / dxy, the PUPPI weights, the
-jets and their constituents, the primary vertex (so vtxpv_dz moves only through the track's z0), the OT track's own
-chi2 and trkMVA1. Mask IIII (no SmartPixels layers) gets no quantization shift: the OT-only heads on L1TTrack.
+The candidate's own dxy and z0 (tagger inputs of every cell, the "baseline" group): with common.CANDIDATES ==
+"reencoded" they are re-derived from the (shifted) SmartPixels track as the trigger chain derives them (measured on the
+slim tier, prompt chain): z0 = 0.05 cm x round-half-towards-zero((w + 1/2) / 5) with the track word w = floor(z0 /
+99.9 um) clipped to 12 bits; dxy = hwDxy / 64 cm with hwDxy a measured function of |floor(d0 x 256 / cm)| (13 bits;
+the table puppi_dxy_lut_prompt.json beside the parametrization, built by `python quant_shift.py lut`). With "today"
+they stay as produced (a control: the tagger then sees today's d0 through the coarse dxy code).
+What it does NOT change (weigh this): everything else built from the tracks before the tagger reads them stays as
+produced today: the particle-flow and PUPPI candidates' pt / eta / phi, which candidates exist, the PUPPI weights,
+the jets and their constituents, the primary vertex (so vtxpv_dz moves only through the track's z0), the OT track's
+own chi2 and trkMVA1. Mask IIII (no SmartPixels layers) gets no quantization shift: the OT-only heads on L1TTrack.
 Head sets (common.HEADSET): "detector" = retrained per detector scenario on today's prompt tracks (canon_v5 TTbar +
 H->tautau); "quantization" = retrained on that quantization scenario's prompt tracks (five TTbar files only: compare
 only with a build that uses the five-file reference heads).
@@ -91,7 +97,65 @@ def matrix(T, coll):
     return X.astype(np.float32)
 
 
+Z0_WORD_CM, Z0_CAND_CM, DXY_CAND_CM, D0_WORD_PER_CM = 2 * 20.46912 / 4096, 0.05, 1.0 / 64, 256.0     # the track word's z0 step: 99.9 um
+LUT_PATH = os.path.join(PARAM_DIR, "puppi_dxy_lut_prompt.json")
+
+
+def z0_code(z0_cm):
+    """The candidate's hwZ0 from the track's z0: the 12-bit track word w = floor(z0 / (2 x 20.46912 cm / 4096)), then
+    (w + 1/2) / 5 rounded to the nearest integer, halves towards zero (exact from the word on every candidate checked)."""
+    w = np.clip(np.floor(np.asarray(z0_cm, np.float64) / Z0_WORD_CM), -2048, 2047).astype(np.int64)
+    mag = np.where(w >= 0, w, -w - 1)
+    return np.where(w >= 0, 1, -1) * ((mag + 2) // 5)
+
+
+def dxy_code(d0_cm):
+    """The candidate's hwDxy from the track's d0 through the measured table on |hwD0| (the nearest tabulated value
+    beyond the table's end), hwD0 = floor(d0 x 256 / cm) clipped to 13 bits."""
+    if "lut" not in _CACHE:
+        d = json.load(open(LUT_PATH))
+        _CACHE["lut"] = (np.array(d["abs_hwD0"], np.int64), np.array(d["hwDxy"], np.int64))
+    ks, vs = _CACHE["lut"]
+    k = np.clip(np.floor(np.asarray(d0_cm, np.float64) * D0_WORD_PER_CM), -4096, 4095).astype(np.int64)
+    a = np.abs(k)
+    i = np.clip(np.searchsorted(ks, a), 0, len(ks) - 1)
+    j = np.clip(i - 1, 0, len(ks) - 1)
+    return vs[np.where(np.abs(ks[j] - a) < np.abs(ks[i] - a), j, i)]
+
+
+def build_lut(n_files=12):
+    """hwDxy of the prompt PUPPI candidates as a function of |hwD0| of the linked SmartPixels track, measured on the
+    first n_files usable slim-tier files of every detector scenario; fails if it is not a function."""
+    import slimtier
+
+    seen, n = {}, 0
+    for mask in C.MASKS:
+        for _, p in slimtier.frozen_files(mask)[:n_files]:
+            A = uproot.open(p)["Events"].arrays([f"{C.CAND_TABLE}_hwDxy", f"{C.CAND_TABLE}_l1TrackIdx", f"{C.TRACK_TABLE}_d0"])
+            li = A[f"{C.CAND_TABLE}_l1TrackIdx"]
+            ok = li >= 0
+            d0 = ak.to_numpy(ak.flatten(A[f"{C.TRACK_TABLE}_d0"][ak.where(ok, li, 0)][ok])).astype(np.float64)
+            hw = ak.to_numpy(ak.flatten(A[f"{C.CAND_TABLE}_hwDxy"][ok])).astype(np.int64)
+            k = np.abs(np.clip(np.floor(d0 * D0_WORD_PER_CM), -4096, 4095).astype(np.int64))
+            n += len(k)
+            for a, v in set(zip(k.tolist(), hw.tolist())):
+                if seen.setdefault(a, v) != v:
+                    raise RuntimeError(f"|hwD0| {a} -> hwDxy {seen[a]} and {v}: not a function")
+    ks = sorted(seen)
+    json.dump({"what": "prompt chain: L1PuppiCand hwDxy as a function of |floor(d0 x 256)| of the linked L1TSmartPixelsTrack; "
+                       "dxy = hwDxy / 64 cm", "candidates": n, "files_per_detector_scenario": n_files,
+               "abs_hwD0": ks, "hwDxy": [seen[a] for a in ks]}, open(LUT_PATH, "w"))
+    print(f"{len(ks)} codes from {n} candidates, |hwD0| up to {ks[-1]} -> {LUT_PATH}")
+
+
 class TrackOverride:
+    cand_from_track = C.CANDIDATES == "reencoded"
+
+    @staticmethod
+    def encode_candidate(d0_cm, z0_cm):
+        """(dxy, z0) of a candidate [cm] from its track's d0 and z0."""
+        return dxy_code(d0_cm) * DXY_CAND_CM, z0_code(z0_cm).astype(np.float32) * np.float32(Z0_CAND_CM)   # as stored
+
     def __init__(self, mask, quant=None, headset=None):
         self.mask = mask
         self.base_only = mask == C.BASELINE_MASK
@@ -168,3 +232,10 @@ class TrackOverride:
         if self.quant not in meta["quantization_scenarios"]:
             raise KeyError(f"quantization scenario {self.quant!r} is not in the prompt parametrization of {self.mask}")
         return cset, meta, maps
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["lut"]:
+        build_lut()
+    else:
+        raise SystemExit("usage: TAGGER_SP_COLLECTION=prompt TAGGER_SP_TIER=slim SLIMTIER_INVENTORY_DIR=... python quant_shift.py lut")

@@ -223,7 +223,10 @@ def load_jets(
     track_override (default None: nothing changes): an object with `fields` (column names of track_table it
     supplies) and `columns(files, n_tracks_per_event, max_events)` -> {name: flat array over the tracks, in the
     table's order}. Its columns replace (or add) those of track_table before any feature is gathered: the hook for
-    head outputs computed off-line and for track parameters shifted by a quantization scenario.
+    head outputs computed off-line and for track parameters shifted by a quantization scenario. If it also has
+    `cand_from_track` (true) and `encode_candidate(d0, z0) -> (dxy, z0)` (flat arrays), the candidate's own dxy and
+    z0 of every constituent with a track are re-derived from that (overridden) track, as the trigger chain derives
+    them; constituents without a track keep theirs.
     """
     groups = feature_groups or ["baseline"]
     need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv",
@@ -304,6 +307,16 @@ def load_jets(
             cands = ak.with_field(cands, alt, "l1TrackIdx_recovered")
             link_idx_field = "l1TrackIdx_recovered"
 
+    if track_override is not None and getattr(track_override, "cand_from_track", False):
+        tracks = events[track_table]
+        has = _gather2(cands[link_idx_field], nested_idx) >= 0
+        n1 = ak.num(has, axis=1)
+        n2 = ak.num(ak.flatten(has, axis=1), axis=1)
+        flat = lambda f: ak.to_numpy(ak.flatten(crossref_gather(cands, tracks, nested_idx, link_idx_field, f), axis=None))
+        dxy, z0 = track_override.encode_candidate(flat("d0"), flat("z0"))
+        nest = lambda v: ak.unflatten(ak.unflatten(np.asarray(v, np.float32), n2), n1)
+        const["dxy"] = ak.where(has, nest(dxy), const["dxy"])
+        const["z0"] = ak.where(has, nest(z0), const["z0"])
     if "track" in groups or "trkquality" in groups:
         tracks = events[track_table]
         for name in TRACK_BRANCHES:
