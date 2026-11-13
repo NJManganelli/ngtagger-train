@@ -149,7 +149,7 @@ def main():
         open(lib.RESULTS / f"fixed_points_{scen}.md", "w").write("\n".join(L))
         cross.append((scen, res))
     json.dump({"provenance": prov, "detector_scenarios": allres}, open(lib.RESULTS / "fixed_points.json", "w"), indent=1)
-    L = ["### Fixed points across scenarios, prompt tracks: 68 % half-width in µm (ratio to \"implemented now\" of the same detector scenario ± bootstrap sd)", "",
+    L = ["### Fixed points across detector scenarios, prompt tracks: 68 % half-width in µm (ratio to \"implemented now\" of the same detector scenario ± bootstrap sd)", "",
          "| quantization scenario | x/y/α/β bits | " + " | ".join(f"{s} d0" for s, _ in cross) + " | " + " | ".join(f"{s} z0" for s, _ in cross) + " |",
          "|---|---|" + "---|" * (2 * len(cross))]
     for arm in ARMS:

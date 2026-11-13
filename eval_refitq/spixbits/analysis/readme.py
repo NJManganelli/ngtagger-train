@@ -167,7 +167,9 @@ def conclusions(fp, sn, nf):
             f = lambda a, k="ratio_to_implemented_now": lib.fmt_band(pz[a][c][k])
             C.append(f"- {s}: d0 ÷ \"implemented now\" in that cell: network, float {f('network_float')} ({pz['network_float'][c]['d0_w68_um']['value']:.1f} µm against {pz['implemented_now'][c]['d0_w68_um']['value']:.1f} µm); "
                      f"network, float with all clusters sent {f('network_float_allsent')}; implemented now, size-blind {f('implemented_now_sizeblind')}; network, float on forced clusters {pz['network_float'][c]['forced_ratio_to_implemented_now']['value']:.3f}. "
-                     f"All sent ÷ capped: {lib.fmt_band(pz['all_sent_over_capped']['network_float'][c])}.")
+                     f"All sent ÷ capped: {lib.fmt_band(pz['all_sent_over_capped']['network_float'][c])}."
+                     + (f" Cap at random ÷ this scan's cap: {lib.fmt_band(pz['random_cap_over_capped']['network_float'][c])}; network, float with the cap at random {f('network_float_caprandom')}." if "random_cap_over_capped" in pz else "")
+                     + f" For pT 2-5 GeV: network, float {lib.fmt_band(pz['network_float']['b/c daughters, pT 2-5 GeV']['ratio_to_implemented_now'])}, all clusters sent {lib.fmt_band(pz['network_float_allsent']['b/c daughters, pT 2-5 GeV']['ratio_to_implemented_now'])}.")
     # allocations
     C.append("")
     C.append("**Allocations with 16 bits.**")
@@ -282,8 +284,14 @@ def main():
     sn = json.load(open(lib.RESULTS / "scans.json"))
     nf = json.load(open(lib.RESULTS / "near_full.json"))
     prov = sn["provenance"]
-    L = ["# SmartPixels output bits and the L1 track refit: results (DRAFT)", "",
-         f"Draft made {prov['run_at_local']} (machine-local time) from the scan units that existed then. The scan was "
+    final = core.TAG == "ptcap"
+    L = ["# SmartPixels output bits and the L1 track refit: results" + ("" if final else " (first scan, cap of three chosen at random)"), "",
+         ("**This is the final write-up of the study.** At most three clusters per 2.4 mm sub-area are sent, the three of highest pT, the pT taken from the bending angle assuming d0 = 0. "
+          "The first scan, with the three chosen at random, is kept as a record in `README.md`; the two are compared on the same tracks in section 6a and in `results/compare_ptcap_vs_first_scan.md`."
+          if final else
+          "**Record of the first scan** (the cap of three clusters per sub-area chosen at random). The final write-up of the study, with the cap ranked by pT from the bending angle, is `README_ptcap.md`; "
+          "the two scans are compared on the same tracks in `results/compare_ptcap_vs_first_scan.md`."), "",
+         f"Made {prov['run_at_local']} (machine-local time) from the scan units that existed then. The scan was "
          + ("still running" if any(v["quantization_scenarios_analysed"] < prov["quantization_scenarios_in_registry"] for v in prov["detector_scenarios"].values()) else "complete") + ". Specification: `PLAN.md`. "
          "Re-make at any time: `python eval_refitq/spixbits/analysis/run_all.py` in the worktree `ngtagger-train-spixbits` (branch `spixbits`).", "",
          *partial_note(prov),
@@ -333,6 +341,16 @@ def main():
     for s in sn["detector_scenarios"]:
         secs = sections(lib.RESULTS / f"scans_{s}.md")
         L += pick(secs, "the cap of three clusters per sub-area and the d0 of b/c daughters") + pick(secs, "b/c daughters and displaced tracks, d0") + pick(secs, "b/c daughters and displaced tracks, z0") + pick(secs, "secondary")
+    if final:
+        L += ["## 6a. The cap of three: ranked by pT against chosen at random, and what the ranking still loses", ""]
+        for name in ("cap_look.md",):
+            p = lib.RESULTS / name
+            if p.exists():
+                L += open(p).read().replace("### ", "#### ").split("\n")
+        p = lib.STUDY / "results" / "compare_ptcap_vs_first_scan_summary.md"
+        if p.exists():
+            L += open(p).read().replace("### ", "#### ").split("\n")
+        L += ["Full table, every quantization scenario present in both scans: `results/compare_ptcap_vs_first_scan.md`.", ""]
     L += ["## 7. Near full resolution", ""]
     L += open(lib.RESULTS / "near_full.md").read().replace("## Near-full-resolution reading (PLAN 4a)\n", "").replace("### ", "#### ").split("\n")
     for s in nf["detector_scenarios"]:

@@ -49,6 +49,17 @@ def main(tag, ref=""):
                 res[scen][arm]["name"] = scans.plain(arm)
                 L.append(f"| {scans.plain(arm)} | " + " | ".join(cs) + " |")
             L.append("")
+    # short summary: range over the quantization scenarios that send clusters under the cap, and four named ones
+    S = [f"### {tag} against {refname}: summary (ratio {tag} ÷ {refname}, paired by event, 68 % band)", ""]
+    skip = ("implemented_now", "implemented_now_sizeblind", "implemented_now_newtable")
+    for scen, v in res.items():
+        capped = [a for a in v if a not in skip and not a.endswith(("_allsent", "_caprandom"))]
+        for q in ("d0", "z0"):
+            for c in ("prompt, all", "b/c daughters, pT 2-5 GeV", "b/c daughters, pT >= 5 GeV"):
+                vals = [v[a][q][c]["ratio"]["value"] for a in capped]
+                ex = "; ".join(f"{v[a]['name']} {lib.fmt_band(v[a][q][c]['ratio'])}" for a in ("network_float", "alloc_4444", "alloc_6604", "alloc_8800") if a in v)
+                S.append(f"- {scen}, {q}, {c}: {len(capped)} quantization scenarios under the cap, ratios {min(vals):.3f} to {max(vals):.3f} (median {sorted(vals)[len(vals) // 2]:.3f}); {ex}.")
+    open(lib.STUDY / "results" / f"compare_{tag}_vs_{(ref or 'first_scan')}_summary.md", "w").write("\n".join(S) + "\n\n")
     out = lib.STUDY / "results" / f"compare_{tag}_vs_{(ref or 'first_scan')}"
     json.dump(res, open(str(out) + ".json", "w"), indent=1)
     open(str(out) + ".md", "w").write("\n".join(L) + "\n")

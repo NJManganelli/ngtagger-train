@@ -476,7 +476,7 @@ def main():
         S["controls"] = {}
         ctl = []
         for base in ("alloc_4444", "alloc_6604", "network_float", "alloc_4444_wholesensor", "bending_float"):
-            for tag, txt in (("_v3window", "v3 window unchanged"), ("_flagunusable", "flagged angles unusable"), ("_allsent", "all clusters sent (no cap of three per sub-area)"), ("_globalrange", "one global angle range")):
+            for tag, txt in (("_v3window", "v3 window unchanged"), ("_flagunusable", "flagged angles unusable"), ("_allsent", "all clusters sent (no cap of three per sub-area)"), ("_caprandom", "cap of three chosen at random (the first scan's rule)"), ("_globalrange", "one global angle range")):
                 a = base + tag
                 if sc.has(a) and sc.has(base):
                     d = {"control": txt, "base": lib.PLAIN.get(base, base)}
@@ -542,9 +542,13 @@ def main():
         pz = {}
         names6 = sc.meta["cells"]["six"]["names"]
         pcells = [("b/c daughters, pT >= 5 GeV", "six", names6.index("b/c daughters, pT >= 5 GeV")), ("b/c daughters, pT 2-5 GeV", "six", names6.index("b/c daughters, pT 2-5 GeV")), ("prompt, all", "origin", 0)]
-        parms = [a for a in ("implemented_now", "implemented_now_sizeblind", "implemented_now_newtable", "network_float", "network_float_allsent", "bending_float", "bending_float_allsent", "alloc_4444", "alloc_4444_allsent") if sc.has(a)]
+        parms = [a for a in ("implemented_now", "implemented_now_sizeblind", "implemented_now_newtable", "network_float", "network_float_caprandom", "network_float_allsent", "bending_float", "bending_float_allsent",
+                             "alloc_4444", "alloc_4444_caprandom", "alloc_4444_allsent", "alloc_6604", "alloc_6604_caprandom", "alloc_6604_allsent") if sc.has(a)]
+        caprule = next((a["spec"].get("cap") for a in REG if a["name"] == "network_float"), True)
+        capname = "three of highest pT from the bending angle" if caprule == "pt" else "three at random"
         if "network_float_allsent" in parms:
             L += [f"### {scen}: the cap of three clusters per sub-area and the d0 of b/c daughters", "",
+                  f"Cap in this scan's quantization scenarios unless stated: {capname}. "
                   "d0 68 % half-width [µm] (ratio to \"implemented now\" with 68 % band). \"Forced\" = the quantization scenario's measurements on the clusters \"implemented now\" accepted (no hit choice, no cap).", "",
                   "| quantization scenario | " + " | ".join(c for c, *_ in pcells) + " |", "|---|" + "---|" * len(pcells)]
             for a in parms:
@@ -557,12 +561,13 @@ def main():
                     cs.append(f"{w[0]:.1f} ({lib.fmt_band(r)}; forced {f['value']:.3f})")
                 L.append(f"| {plain(a)} | " + " | ".join(cs) + " |")
             L.append("")
-            for capped in ("network_float", "bending_float", "alloc_4444"):
-                if sc.has(capped + "_allsent"):
-                    for c, part, g in pcells:
-                        r = lib.ratio(sc, capped + "_allsent", capped, "d0", part, g)
-                        pz.setdefault("all_sent_over_capped", {}).setdefault(capped, {})[c] = r
-                        L.append(f"- {plain(capped)}, all clusters sent ÷ capped, {c}: {lib.fmt_band(r)} ({(r['value'] - 1) / max(r['sd'], 1e-9):+.1f} sd)")
+            for capped in ("network_float", "bending_float", "alloc_4444", "alloc_6604"):
+                for tag, key, txt in (("_allsent", "all_sent_over_capped", "all clusters sent ÷ capped"), ("_caprandom", "random_cap_over_capped", "cap at random ÷ this scan's cap")):
+                    if sc.has(capped + tag):
+                        for c, part, g in pcells:
+                            r = lib.ratio(sc, capped + tag, capped, "d0", part, g)
+                            pz.setdefault(key, {}).setdefault(capped, {})[c] = r
+                            L.append(f"- {plain(capped)}, {txt}, {c}: {lib.fmt_band(r)} ({(r['value'] - 1) / max(r['sd'], 1e-9):+.1f} sd)")
             L.append("")
         S["bc_daughters_and_the_cap"] = pz
         # ---- secondary
