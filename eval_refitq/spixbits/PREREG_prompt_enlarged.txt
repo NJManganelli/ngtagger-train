@@ -1,0 +1,20 @@
+SmartPixels output bits -> track refit, PROMPT collection: an enlarged heads sample for the first-pass quantization scenarios
+of the tagger step (physicist, 2026-11-13: why do the quantization scenarios run on so many fewer events?).
+What: (1) the prompt per-track scan (ext_scan.py --version p2x) for "implemented now", network float, 4/4/4/4, 6/6/0/4 and
+6/6/2/2 on the further study-tier files the per-detector-scenario prompt heads were trained on: canon_v5 TTbar files 1, 2, 3
+and H->tautau files 1-5, 7, 8 (50 events each), x AAAA / AAAI / IAAA (30 units); TTbar files 4 (development) and 6 (gate) stay
+out as before. (2) The six heads retrained per quantization scenario on those files plus the five scan files (1,150 events:
+844 training, 91 validation, 215 test by the tagger study's event identity; TTbar files 1 and 2 are training-only there), 20
+trials, single best, and an "implemented now" reference on the same sample; evaluated by the rules of statistics review 3.
+Why files 1, 2, 3 and H->tautau were not scanned originally: the scan plan fixed five TTbar files for cost (500 events), with
+file 4 for development; files 1 and 2 are the cluster CNN's training files and file 3 an earlier gate. For the emulated
+SmartPixels angles this does not bite: a cluster with angle truth gets true angle + a drawn network residual, independent of
+the CNN. It does touch the clusters without angle truth, which keep the CNN stand-in's angles: on files 1 and 2 those angles
+are in-sample for the CNN. The per-detector-scenario heads carry the same feature (they train on files 1 and 2 as well), and
+the tagger study never tests on those two files. Ranges and angle tables were fitted on all ten TTbar files, not on H->tautau.
+The parametrization stays fitted on the five scan files.
+Expected: heads closer to the per-detector-scenario heads in quality; own-minus-reference gains as on five files (a few
+hundredths of a nat), with smaller uncertainty. About 25 minutes for the scan (three workers), 10 minutes for the heads.
+Outputs: /Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2x (about 0.5 GB);
+scratch_local/spixbits/heads_retrained_per_quantization_prompt_enlarged/; shipped to
+parametrization/prompt_v2/heads/per_quantization_enlarged/ (the five-file heads stay in per_quantization/).

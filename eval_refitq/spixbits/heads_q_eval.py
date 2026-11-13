@@ -197,7 +197,7 @@ def one(a):
     import study as ST
     XS.VERSION = RQ.VERSION
     root = XS.out_root()
-    files = list(ST.SCAN_FILES)
+    files = RQ.files()
     S = dict(np.load(RQ.ROOT / "event_split.npz"))
     names = [x for x in (a.allocs or XS.SETS[RQ.VERSION]) if x not in RQ.LEFT_OUT]
     for scen in a.scen:

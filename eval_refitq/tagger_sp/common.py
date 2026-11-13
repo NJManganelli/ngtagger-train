@@ -62,6 +62,9 @@ if COLLECTION not in TABLES:
 #                   fair reference of a "quantization" run;
 #   "detector"      retrained per detector scenario on today's prompt tracks with the full sample (canon_v5 TTbar +
 #                   H->tautau): the comparison that shows what the smaller heads sample costs.
+#   "quantization_enlarged" / "reference_enlarged"  the same two, trained on the enlarged sample (the five files plus
+#                   TTbar files 1, 2, 3 and H->tautau: every file the "detector" heads use; 844 training events). Only for
+#                   the first-pass quantization scenarios (4/4/4/4, 6/6/0/4, 6/6/2/2, network float).
 # IIII (OT-only) always uses its full-sample OT heads: no five-file version exists.
 # TAGGER_SP_CANDIDATES (prompt collection only): the PUPPI candidate's own dxy and z0 (tagger inputs of every cell).
 # "today" = as produced, whatever the quantization scenario (a control: the tagger then sees today's d0 through the
@@ -74,12 +77,14 @@ if COLLECTION != "prompt" and (QUANT or HEADSET != "detector" or CANDIDATES != "
     raise ValueError("TAGGER_SP_QUANT / TAGGER_SP_HEADSET / TAGGER_SP_CANDIDATES need TAGGER_SP_COLLECTION=prompt")
 if CANDIDATES not in ("today", "reencoded"):
     raise ValueError(f"TAGGER_SP_CANDIDATES {CANDIDATES!r}")
-if HEADSET not in ("detector", "quantization", "reference") or (HEADSET == "quantization" and not QUANT) \
-        or (HEADSET == "reference" and QUANT):
+HEADSETS = {"detector": "", "quantization": "_qheads", "reference": "_refheads", "quantization_enlarged": "_qheads_enlarged",
+            "reference_enlarged": "_refheads_enlarged"}               # head set: its suffix in the output folder's name
+if HEADSET not in HEADSETS or (HEADSET.startswith("quantization") and not QUANT) \
+        or (HEADSET.startswith("reference") and QUANT):
     raise ValueError(f"TAGGER_SP_HEADSET {HEADSET!r} (quantization needs TAGGER_SP_QUANT; reference is for today's tracks)")
 _DEFAULT_OUT = "/Volumes/WDMac/smartpixels_scratch/tagger_slimtier" if TIER == "slim" else "/Volumes/WDMac/smartpixels_scratch/tagger_v5"
 if COLLECTION == "prompt":                 # its own folders, one per quantization scenario and head set
-    _DEFAULT_OUT += "_prompt/" + (QUANT or "implemented_now") + {"quantization": "_qheads", "reference": "_refheads", "detector": ""}[HEADSET] \
+    _DEFAULT_OUT += "_prompt/" + (QUANT or "implemented_now") + HEADSETS[HEADSET] \
         + ("_reencoded" if CANDIDATES == "reencoded" else "")
 OUT = os.environ.get("TAGGER_SP_OUT", _DEFAULT_OUT)
 MASKS = ["IIII", "AAAA", "AAAI", "IAAA"]       # IIII = OT baseline (passthrough)

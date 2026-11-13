@@ -48,10 +48,24 @@ SHIPPED_V2 = (SHIPPED + [f"up_x_{b}b" for b in range(5, 10)] + ["up_x_float"] + 
               + [f"down_beta_{b}b" for b in range(2, 8)] + ["down_beta_notsent"])
 # "p2" (physicist, 2026-11-13: the PROMPT collection, the 5-parameter L1TTrack chain, is the baseline; the extended one a
 # beyond-baseline variant): version 2's quantization scenarios without the whole-sensor one, on the prompt collection
-SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"]}
+# "p2x" (physicist, 2026-11-13: why do the per-quantization-scenario heads see so many fewer events?): the first-pass
+# quantization scenarios of the tagger step on the further files the per-detector-scenario prompt heads were trained on:
+# canon_v5 TTbar files 1, 2, 3 and the H->tautau files (numbered 100 + n here); files 4 and 6 stay out as before
+FIRST_PASS = ["implemented_now", "network_float", "alloc_4444", "alloc_6604", "alloc_6622"]
+P2X_FILES = (1, 2, 3, 101, 102, 103, 104, 105, 107, 108)
+SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"], "p2x": FIRST_PASS}
 ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2",    # v1: the internal disk (ST.LOCAL / "ext")
-         "p2": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2"}
-COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt"}
+         "p2": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2",
+         "p2x": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2x"}
+COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt", "p2x": "prompt"}
+
+
+def input_path(scen, f):
+    """The study-tier file: canon_v5 TTbar file f, or H->tautau file f - 100."""
+    import study as ST
+    if f > 100:
+        return ST.CM.CANON / "htt" / f"spstudy_{scen}_htt_f{f - 100:02d}.root"
+    return ST.input_path(scen, f)
 VERSION = os.environ.get("SPIXBITS_EXT_VERSION", "v1")
 IU = np.triu_indices(5)
 # the prompt version's order for the parametrization: the scenarios asked for first (network float, the 16-bit
@@ -107,7 +121,7 @@ def run_unit(S, reg, f, scen, arm_names, nev=None):
     import heads as HD
     ST, EM, AR, CM = S.ST, S.EM, S.AR, S.CM
     assert CM.COLLECTION == COLLECTIONS[VERSION]
-    path = ST.input_path(scen, f)
+    path = input_path(scen, f)
     HD.refuse_truth(path)
     cfg = CM.producer_config(path)
     assert CM.mask_of(cfg) == scen
@@ -237,7 +251,7 @@ def worker(a):
             time.sleep(20)
             continue
         t0 = time.time()
-        path = str(ST.input_path(u["scen"], u["file"]))
+        path = str(input_path(u["scen"], u["file"]))
         try:
             RS.wait_for_input(path)
             truth, arms = run_unit(S, reg, u["file"], u["scen"], u["arms"])
@@ -319,7 +333,7 @@ def main(argv=None):
     import study as ST
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("job", choices=("supervise", "worker", "status", "unit"))
-    ap.add_argument("--files", type=int, nargs="+", default=list(ST.SCAN_FILES))
+    ap.add_argument("--files", type=int, nargs="+", default=None, help="default: the version's files")
     ap.add_argument("--scen", nargs="+", default=list(ST.SCENARIOS))
     ap.add_argument("--workers", type=int, default=3)
     ap.add_argument("--file", type=int, default=ST.DEV_FILE)
@@ -328,9 +342,11 @@ def main(argv=None):
     ap.add_argument("--out", default="")
     ap.add_argument("--version", choices=tuple(SETS), default=VERSION, help="v1: the first extended scan (30 arms, random cap, "
                     "internal disk); v2: pT-ranked cap, 66 arms, outputs on the external disk; p2: as v2 without the "
-                    "whole-sensor scenario, on the PROMPT collection")
+                    "whole-sensor scenario, on the PROMPT collection; p2x: the first-pass scenarios on the further files")
     a = ap.parse_args(argv)
     VERSION = a.version
+    if a.files is None:
+        a.files = list(P2X_FILES if VERSION == "p2x" else ST.SCAN_FILES)
     os.environ["SPIXBITS_EXT_VERSION"] = a.version              # the workers inherit it
     return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd}[a.job](a)
 

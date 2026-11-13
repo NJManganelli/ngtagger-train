@@ -21,8 +21,10 @@ the jets and their constituents, the primary vertex (so vtxpv_dz moves only thro
 own chi2 and trkMVA1. Mask IIII (no SmartPixels layers) gets no quantization shift: the OT-only heads on L1TTrack.
 Head sets (common.HEADSET): "quantization" = retrained on that quantization scenario's prompt tracks (five TTbar files,
 338 training events); "reference" = the "implemented now" heads trained on the same five files (the fair reference of a
-"quantization" build, today's tracks only); "detector" = retrained per detector scenario on today's prompt tracks with
-the full sample (canon_v5 TTbar + H->tautau).
+"quantization" build, today's tracks only); "quantization_enlarged" / "reference_enlarged" = the same two trained on the
+enlarged sample (those five files plus TTbar files 1, 2, 3 and H->tautau; 844 training events; first-pass quantization
+scenarios only); "detector" = retrained per detector scenario on today's prompt tracks with the full sample (canon_v5
+TTbar + H->tautau).
 Truth is used as the parametrization uses it (the OT track's particle: a cell variable and the hit-choice residual);
 no truth column becomes a tagger input.
 """
@@ -82,9 +84,10 @@ def refit_heads(mask, headset, quant):
     key = ("refit", mask, headset, quant)
     if key not in _CACHE:
         SA = helper()
-        if headset in ("quantization", "reference"):        # reference: the five-file "implemented now" heads
-            name = quant if headset == "quantization" else "implemented_now"
-            _CACHE[key] = SA.load_heads_npz(os.path.join(PARAM_DIR, "heads", "per_quantization", f"{name}_{mask}.npz"))
+        if headset != "detector":       # per quantization scenario; "reference...": the "implemented now" heads of the same sample
+            name = quant if headset.startswith("quantization") else "implemented_now"
+            folder = "per_quantization_enlarged" if headset.endswith("_enlarged") else "per_quantization"
+            _CACHE[key] = SA.load_heads_npz(os.path.join(PARAM_DIR, "heads", folder, f"{name}_{mask}.npz"))
         else:
             _CACHE[key] = SA.load_heads(os.path.join(PARAM_DIR, "heads", "detector"), mask)
     return _CACHE[key]

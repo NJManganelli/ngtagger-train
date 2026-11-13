@@ -51,9 +51,15 @@ sys.path.insert(0, str(HERE.parent / "tagger_sp"))
 os.environ.setdefault("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagger_v5")
 # SPIXBITS_Q_VERSION: the per-track scan the heads are trained on: "v2" (the extended collection, a beyond-baseline track
 # scenario) or "p2" (the PROMPT collection, the baseline; outputs under ..._prompt/)
+# "p2x": the ENLARGED sample for the first-pass quantization scenarios of the tagger step (prompt collection): scan p2's
+# five files plus scan p2x's (TTbar files 1, 2, 3 and H->tautau), i.e. every file the per-detector-scenario prompt heads
+# were trained on; the tagger study's event split over all of them (TTbar files 1 and 2 are training-only there);
+# outputs under ..._prompt_enlarged/. Its "implemented now" reference is trained on the same enlarged sample.
 VERSION = os.environ.get("SPIXBITS_Q_VERSION", "v2")
 ROOT = Path(os.environ.get("SPIXBITS_Q_ROOT", "") or Path.home() / (     # SPIXBITS_Q_ROOT: another folder (development tests)
-    "smartpixels/scratch_local/spixbits/heads_retrained_per_quantization" + ("_prompt" if VERSION == "p2" else "")))
+    "smartpixels/scratch_local/spixbits/heads_retrained_per_quantization"
+    + {"v2": "", "p2": "_prompt", "p2x": "_prompt_enlarged"}[VERSION]))
+P2X_FILES = (1, 2, 3, 101, 102, 103, 104, 105, 107, 108)     # ext_scan.P2X_FILES (checked in `one`): H->tautau file n = 100 + n
 REFERENCE = "implemented_now"
 LEFT_OUT = ("alloc_4444_wholesensor",)                # physicist, 2026-11-13: no further work on the whole-sensor scenario
 REG = slice(1, 6)                                     # the five regression heads among the six outputs
@@ -76,20 +82,32 @@ def wait_for(path):
         time.sleep(60)
 
 
+def files():
+    """The files of this version (H->tautau file n as 100 + n)."""
+    return list(SCAN_FILES) + (list(P2X_FILES) if VERSION == "p2x" else [])
+
+
 def split():
-    """(run, lumi, event) -> test / validation flag of the tagger study, for the scan files."""
+    """(run, lumi, event) -> test / validation flag of the tagger study, for this version's files."""
     import build as B                                   # tagger_sp modules only: its `common` and the replay's share a name,
     import common as C                                  # so this command must not import the replay (study, ext_scan)
     man = json.load(open(C.manifest_path("AAAA")))
-    fs = [(n, p) for s, n, p in man["files"] if s == "ttbar"]
-    evids = {n: B.load_tracks(os.path.join(C.cache_dir("tracks"), C.tag("ttbar", "AAAA", n) + ".npz"))[2] for n, _ in fs}
-    test = C.split_table("ttbar", evids)
-    val = C.val_table("ttbar", evids, test)
-    keep = list(SCAN_FILES)
+    ev, te, va, fn = [], [], [], []
+    for s, off in (("ttbar", 0), ("htt", 100)):
+        fs = [n for s2, n, _ in man["files"] if s2 == s]
+        evids = {n: B.load_tracks(os.path.join(C.cache_dir("tracks"), C.tag(s, "AAAA", n) + ".npz"))[2] for n in fs}
+        test = C.split_table(s, evids)
+        val = C.val_table(s, evids, test)
+        for n in fs:
+            if n + off in files():
+                ev.append(evids[n]), te.append(test[n]), va.append(val[n]), fn.append(np.full(len(evids[n]), n + off))
+    ev = np.concatenate(ev)
+    assert len(np.unique(event_key(*ev.T))) == len(ev), "an event identity appears twice (TTbar and H->tautau are joined by it)"
     ROOT.mkdir(parents=True, exist_ok=True)
-    np.savez(ROOT / "event_split.npz", evid=np.concatenate([evids[n] for n in keep]), fileno=np.concatenate([np.full(len(evids[n]), n) for n in keep]),
-             test=np.concatenate([test[n] for n in keep]), val=np.concatenate([val[n] for n in keep]))
-    print({n: (len(evids[n]), int(test[n].sum()), int(val[n].sum())) for n in keep})
+    np.savez(ROOT / "event_split.npz", evid=ev, fileno=np.concatenate(fn), test=np.concatenate(te), val=np.concatenate(va))
+    f_, t_, v_ = np.concatenate(fn), np.concatenate(te), np.concatenate(va)
+    print({int(n): (int((f_ == n).sum()), int(t_[f_ == n].sum()), int(v_[f_ == n].sum())) for n in np.unique(f_)},
+          "events", len(ev), "test", int(t_.sum()), "validation", int(v_.sum()), "training", int((~t_ & ~v_).sum()))
 
 
 def event_key(run, lumi, event):
@@ -97,16 +115,20 @@ def event_key(run, lumi, event):
 
 
 def load_tracks(root, scen, files, name):
-    """One quantization scenario's tracks as joint_heads wants them: X (n, 38), y clean, the residual ingredients."""
+    """One quantization scenario's tracks as joint_heads wants them: X (n, 38), y clean, the residual ingredients.
+    Version p2x: a file of scan p2x is read from that scan's folder, the five scan files from scan p2's."""
     import ext_scan as XS
     T, A = [], []
     for f in files:
-        wait_for(root / "truth" / f"{scen}_f{f:02d}_truth.npz")
-        T.append(dict(np.load(root / "truth" / f"{scen}_f{f:02d}_truth.npz")))
-        for u in XS.units_of([f], [scen]):
-            if name in u["arms"]:
-                Z = np.load(root / "units" / f"{u['name']}.npz")
-                A.append({k: Z[f"{name}__{k}"] for k in ("a", "inputs", "n_wrong_hits")})
+        ver = ("p2x" if f in P2X_FILES else "p2") if VERSION == "p2x" else XS.VERSION
+        r = Path(XS.ROOTS[ver]) if VERSION == "p2x" else root
+        wait_for(r / "truth" / f"{scen}_f{f:02d}_truth.npz")
+        T.append(dict(np.load(r / "truth" / f"{scen}_f{f:02d}_truth.npz")))
+        chunks = [XS.SETS[ver][i:i + XS.ARMS_PER_UNIT] for i in range(0, len(XS.SETS[ver]), XS.ARMS_PER_UNIT)]
+        for k, ch in enumerate(chunks):
+            if name in ch:
+                Z = np.load(r / "units" / f"{scen}_f{f:02d}_{k:02d}.npz")
+                A.append({k2: Z[f"{name}__{k2}"] for k2 in ("a", "inputs", "n_wrong_hits")})
     assert len(A) == len(files), (name, scen, len(A))
     T = {k: np.concatenate([t[k] for t in T]) for k in T[0]}
     A = {k: np.concatenate([a[k] for a in A]) for k in A[0]}
@@ -239,7 +261,7 @@ def train_one(scen, name, S, root, trials, files):
 def one(a):
     import ext_scan as XS                               # the replay first: joint_heads then sees the replay's `common`
     import study as ST                                  # under that name, which the functions used here never touch
-    assert tuple(ST.SCAN_FILES) == SCAN_FILES
+    assert tuple(ST.SCAN_FILES) == SCAN_FILES and XS.P2X_FILES == P2X_FILES
     XS.VERSION = VERSION
     root = XS.out_root()
     S = dict(np.load(ROOT / "event_split.npz"))
@@ -257,7 +279,7 @@ def one(a):
                 wait_for(root / "units")
                 try:
                     t0 = time.time()
-                    rec = train_one(scen, name, S, root, a.trials, list(ST.SCAN_FILES))
+                    rec = train_one(scen, name, S, root, a.trials, files())
                     rec["seconds"] = time.time() - t0
                     json.dump(rec, open(out / f"{name}.json.tmp", "w"), indent=1)
                     os.replace(out / f"{name}.json.tmp", out / f"{name}.json")
