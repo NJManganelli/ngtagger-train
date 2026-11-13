@@ -1,0 +1,20 @@
+SmartPixels output bits -> track refit: track-quality heads retrained per quantization scenario (physicist, 2026-11-13).
+What: for each of the 64 sub-area quantization scenarios of extended scan version 2 (the whole-sensor scenario is left out)
+and each detector scenario (AAAA, AAAI, IAAA), the six heads (clean; log sigma_hat of d0, z0, tanL, 1/R, phi), prompt and
+displaced windows, trained on that scenario's own replayed tracks with the per-detector-scenario recipe (joint_heads at
+lambda 0; 20 trials; the single best by validation information summed over the five regression heads; failed trials
+discarded; all recorded). A reference with the same recipe on today's ("implemented now") tracks of the same events.
+Sample: canon_v5 TTbar files 5, 7, 8, 9, 10: 500 events per detector scenario, by the tagger study's event identity 338
+training, 40 validation, 122 test events (about 90,000 / 10,000 / 32,000 tracks). Limitation: a quarter of the deployed
+heads' sample and no H->tautau; scenarios are read against the five-file reference only.
+Read on the test events, per detector scenario and window: information (nats per track, sum of the five regression heads;
+clean separately) of (a) a scenario's own heads on its inputs, (b) the reference heads on the scenario's inputs, (c) the
+reference on today's inputs. A difference counts as resolved when it exceeds twice the larger of the trial-to-trial sd and
+the paired event-bootstrap sd.
+Seen before the run (3 trials, IAAA, 4/4/4/4): own 1.679 / reference 1.640 (prompt), 3.969 / 3.975 (displaced); own minus
+reference +0.039 with bootstrap sd 0.028, trial sd 0.005.
+Expected: (a) - (b) of a few hundredths of a nat for 16-bit allocations, growing where an output is coarse or not sent (the
+reference heads then read inputs they were not trained on); (a) below (c) by an amount growing as bits fall; most single
+differences within twice the bootstrap sd with 122 test events.
+Outputs: ~/smartpixels/scratch_local/spixbits/heads_retrained_per_quantization/ (trials/, models/, reference_fits/; under
+0.1 GB). About 1 h on three processes; under 1.5 GB each.
