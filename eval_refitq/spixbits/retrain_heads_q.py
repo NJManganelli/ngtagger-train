@@ -52,7 +52,8 @@ os.environ.setdefault("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagge
 # SPIXBITS_Q_VERSION: the per-track scan the heads are trained on: "v2" (the extended collection, a beyond-baseline track
 # scenario) or "p2" (the PROMPT collection, the baseline; outputs under ..._prompt/)
 VERSION = os.environ.get("SPIXBITS_Q_VERSION", "v2")
-ROOT = Path.home() / ("smartpixels/scratch_local/spixbits/heads_retrained_per_quantization" + ("_prompt" if VERSION == "p2" else ""))
+ROOT = Path(os.environ.get("SPIXBITS_Q_ROOT", "") or Path.home() / (     # SPIXBITS_Q_ROOT: another folder (development tests)
+    "smartpixels/scratch_local/spixbits/heads_retrained_per_quantization" + ("_prompt" if VERSION == "p2" else "")))
 REFERENCE = "implemented_now"
 LEFT_OUT = ("alloc_4444_wholesensor",)                # physicist, 2026-11-13: no further work on the whole-sensor scenario
 REG = slice(1, 6)                                     # the five regression heads among the six outputs
