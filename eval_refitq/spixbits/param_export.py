@@ -148,7 +148,7 @@ def main():
     import param_closure as PC
     import study as ST
     ap = argparse.ArgumentParser()
-    ap.add_argument("--version", choices=("v1", "v2"), default="v2")
+    ap.add_argument("--version", choices=("v1", "v2", "p2"), default="v2")
     ap.add_argument("--scen", nargs="+", default=list(ST.SCENARIOS))
     ap.add_argument("--allocs", nargs="+", default=None)
     ap.add_argument("--files", type=int, nargs="+", default=list(ST.SCAN_FILES))
@@ -156,13 +156,14 @@ def main():
     ap.add_argument("--out", default="", help="default: the parametrization folder for scan version 1, its v2/ for version 2")
     a = ap.parse_args()
     import subprocess
-    out = Path(a.out) if a.out else (OUT if a.version == "v1" else OUT / a.version)
+    out = Path(a.out) if a.out else {"v1": OUT, "v2": OUT / "v2", "p2": OUT / "prompt_v2"}[a.version]
     out.mkdir(parents=True, exist_ok=True)
     XS.VERSION = a.version
     root = Path(a.root) if a.root else XS.out_root()
-    allocs = a.allocs or [x for x in XS.SETS[a.version] if x != "implemented_now"]
+    allocs = a.allocs or XS.scenarios()
+    hname = "detector" if XS.is_prompt() else "retrained"        # the folder of the per-detector-scenario heads beside the files
     # the head models shipped beside the files: the retrained best per detector scenario, and the deployed ones
-    for name, src in (("retrained", ST.LOCAL / "heads_retrained" / "models"), ("deployed", ST.CACHE / "heads")):
+    for name, src in ((hname, XS.detector_heads_dir()),) + (() if XS.is_prompt() else (("deployed", ST.CACHE / "heads"),)):
         for scen in a.scen:
             dst = out / "heads" / name / "SmartPixels" / scen
             if dst.exists():
@@ -196,7 +197,8 @@ def main():
         meta = {"what": "SmartPixels output bits -> track refit: per-track parametrization of quantization scenarios relative to "
                         "today's production (PLAN.md section 7b; the heads' inputs are emulated and the real head models evaluated)",
                 "detector_scenario": scen, "quantization_scenarios": allocs, "extended_scan_version": a.version,
-                "fit_sample": f"canon_v5 TTbar files {list(a.files)}, extended collection, every track ({len(T['run'])} tracks, "
+                "track_collection": XS.COLLECTIONS[a.version],
+                "fit_sample": f"canon_v5 TTbar files {list(a.files)}, {XS.COLLECTIONS[a.version]} collection, every track ({len(T['run'])} tracks, "
                               f"{len(np.unique(T['event_key']))} events)", "scan_commit": commit,
                 "payload_refit_calibration_sha256": payload["refit_calibration_v3.json"]["sha256"],
                 "kpt_GeV_cm": m["kpt"], "rinv_sign_times_charge": m["rinv_sign"],
@@ -214,8 +216,8 @@ def main():
         import spixbits_apply as SA
         cset, M = SA.load(path)
         maps = SA.load_maps(mpath)
-        H = HD.Heads(ST.LOCAL / "heads_retrained" / "models", scen)
-        Hs = SA.load_heads(out / "heads" / "retrained", scen)
+        H = HD.Heads(XS.detector_heads_dir(), scen)
+        Hs = SA.load_heads(out / "heads" / hname, scen)
         rng = np.random.default_rng(1)
         pick = np.sort(rng.choice(len(T["run"]), min(20000, len(T["run"])), replace=False))
         sub = lambda d: {k: (v[pick] if isinstance(v, np.ndarray) and len(v) == len(T["run"]) else v) for k, v in d.items()}

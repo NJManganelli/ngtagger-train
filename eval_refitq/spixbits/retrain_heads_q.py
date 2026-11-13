@@ -49,7 +49,10 @@ import numpy as np
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "tagger_sp"))
 os.environ.setdefault("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagger_v5")
-ROOT = Path.home() / "smartpixels/scratch_local/spixbits/heads_retrained_per_quantization"
+# SPIXBITS_Q_VERSION: the per-track scan the heads are trained on: "v2" (the extended collection, a beyond-baseline track
+# scenario) or "p2" (the PROMPT collection, the baseline; outputs under ..._prompt/)
+VERSION = os.environ.get("SPIXBITS_Q_VERSION", "v2")
+ROOT = Path.home() / ("smartpixels/scratch_local/spixbits/heads_retrained_per_quantization" + ("_prompt" if VERSION == "p2" else ""))
 REFERENCE = "implemented_now"
 LEFT_OUT = ("alloc_4444_wholesensor",)                # physicist, 2026-11-13: no further work on the whole-sensor scenario
 REG = slice(1, 6)                                     # the five regression heads among the six outputs
@@ -236,10 +239,10 @@ def one(a):
     import ext_scan as XS                               # the replay first: joint_heads then sees the replay's `common`
     import study as ST                                  # under that name, which the functions used here never touch
     assert tuple(ST.SCAN_FILES) == SCAN_FILES
-    XS.VERSION = "v2"
+    XS.VERSION = VERSION
     root = XS.out_root()
     S = dict(np.load(ROOT / "event_split.npz"))
-    names = [REFERENCE] + [x for x in (a.allocs or XS.SETS["v2"]) if x not in LEFT_OUT and x != REFERENCE]
+    names = [REFERENCE] + [x for x in (a.allocs or XS.SETS[VERSION]) if x not in LEFT_OUT and x != REFERENCE]
     for scen in a.scen:
         out = ROOT / "trials" / scen
         out.mkdir(parents=True, exist_ok=True)
@@ -273,7 +276,7 @@ def one(a):
 def run(a):
     logs = Path.home() / "smartpixels/scratch_local/spixbits/logs"
     jobs = [(s, subprocess.Popen([sys.executable, str(HERE / "retrain_heads_q.py"), "one", "--scen", s, "--trials", str(a.trials)],
-                                 stdout=open(logs / f"heads_q_{s}.log", "a"), stderr=subprocess.STDOUT)) for s in a.scen]
+                                 stdout=open(logs / f"heads_q{'' if VERSION == 'v2' else '_' + VERSION}_{s}.log", "a"), stderr=subprocess.STDOUT)) for s in a.scen]
     rc = 0
     for s, p in jobs:
         code = p.wait()

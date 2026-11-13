@@ -31,7 +31,7 @@ import numpy as np
 import param_model as PM
 
 N_BOOT = 100
-CLASSIFIER_ALLOCS = ("alloc_4444", "alloc_6604", "alloc_4444_wholesensor")
+CLASSIFIER_ALLOCS = ("alloc_4444", "alloc_6604", "alloc_4444_wholesensor", "alloc_8800", "network_float")   # the last two: prompt version only
 FIELDS = ("a", "cov_diag", "refit", "inputs", "margins", "same_clusters", "forced_a", "forced_cov_diag", "forced_refit")
 
 
@@ -57,6 +57,11 @@ def load(root, scen, files, allocs=()):
     T = {k: np.concatenate([t[k] for t in T]) for k in T[0]}
     arms = {n: load_arm(root, scen, files, n) for n in ["implemented_now", *allocs]}
     today = arms.pop("implemented_now")
+    import ext_scan as XS
+    if XS.is_prompt():      # the stored head outputs are a placeholder there (heads trained on the extended collection):
+        import heads as HD  # today's head outputs = the heads retrained on today's PROMPT tracks, on the stored inputs
+        today["margins"] = HD.Heads(XS.detector_heads_dir(), scen).margins(
+            np.hstack([T["ot_inputs"], today["inputs"]]).astype(np.float32), today["a"][:, 4])
     m = T["matched"] & today["refit"] & (T["tp_pt"] > 3)
     kpt = float(np.median(np.abs(today["a"][m, 0]) * T["tp_pt"][m]))
     sgn = float(np.sign(np.median(today["a"][m, 0] * T["tp_charge"][m])))
@@ -222,7 +227,8 @@ def run(a):
     import study as ST
     XS.VERSION = a.version
     root = Path(a.root) if a.root else XS.out_root()
-    allocs = a.allocs or [x for x in XS.SETS[a.version] if x != "implemented_now"]
+    allocs = a.allocs or XS.scenarios()
+    classifier_allocs = CLASSIFIER_ALLOCS if XS.is_prompt() else CLASSIFIER_ALLOCS[:3]
     for scen in a.scen:
         T, today, _, truth, meta = load(root, scen, a.files)
         D = PM.draws(T["run"], T["lumi"], T["event"], T["track"])
@@ -230,7 +236,9 @@ def run(a):
         # the cells' clean-score tercile is today's stored (deployed-heads) clean output, whatever heads are evaluated
         terc = np.quantile(today["margins"][today["refit"], 0], [1 / 3, 2 / 3])
         W = boot_weights(T["event_key"])
-        H = {"retrained": HD.Heads(ST.LOCAL / "heads_retrained" / "models", scen), "deployed": HD.Heads(ST.CACHE / "heads", scen)}
+        H = {"retrained": HD.Heads(XS.detector_heads_dir(), scen)}      # per detector scenario, this version's collection
+        if not XS.is_prompt():                                          # deployed heads exist on the extended collection only
+            H["deployed"] = HD.Heads(ST.CACHE / "heads", scen)
         with_heads = lambda x, h: dict(x, margins=PM.head_margins(H[h], today, x["inputs"], x["a"][:, 4]))
         res = {"scenario": scen, "version": a.version, "files": list(a.files), "tracks": int(len(T["run"])),
                "events": int(len(np.unique(T["event_key"]))), "meta": meta, "clean_tercile_edges": [float(x) for x in terc],
@@ -254,7 +262,7 @@ def run(a):
                 hq = lambda x: [float(v) for v in np.quantile(x[np.isfinite(x)], [0.16, 0.5, 0.84])]
                 c["head_outputs_q16_q50_q84"][h] = {n: {"today": hq(t_["margins"][:, i]), "actual": hq(a_["margins"][:, i]),
                                                         "emulated": hq(e_["margins"][:, i])} for i, n in enumerate(PM.HEADS)}
-                if al in CLASSIFIER_ALLOCS and not a.no_classifier:
+                if al in classifier_allocs and not a.no_classifier:
                     c.setdefault("classifier", {})[h] = {}
                     for which in (("tagger", "parameters", "all") if h == "retrained" else ("tagger",)):
                         Xa, Xe, X0 = (features(T, today, x, which) for x in (a_, e_, t_))
@@ -268,7 +276,7 @@ def run(a):
                         if which == "tagger" and judged and (auc_e - 0.5) > tol:
                             c["material"].append(f"classifier (tagger inputs, {h} heads): AUC actual vs emulated {auc_e:.3f} "
                                                  f"(tolerance 0.5 + {tol:.3f}; actual vs today {auc_0:.3f})")
-            if al in CLASSIFIER_ALLOCS and not a.no_classifier:
+            if al in classifier_allocs and not a.no_classifier:
                 c["kappa_actual"] = kappa(T, PM.choice_changed(today, arm))
                 c["kappa_emulated"] = kappa(T, em["changed"])
             tmp = part / f"{al}.json.tmp"
@@ -292,5 +300,6 @@ if __name__ == "__main__":
     ap.add_argument("--root", default="")
     ap.add_argument("--out", default="")
     ap.add_argument("--no-classifier", action="store_true")
-    ap.add_argument("--version", choices=("v1", "v2"), default="v2", help="which extended scan the tables are fitted on")
+    ap.add_argument("--version", choices=("v1", "v2", "p2"), default="v2", help="which per-track scan the tables are fitted on "
+                    "(v1, v2: the extended collection; p2: the prompt collection, the baseline)")
     run(ap.parse_args())

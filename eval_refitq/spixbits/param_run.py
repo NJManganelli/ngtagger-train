@@ -23,7 +23,7 @@ def main():
     import study as ST
     ap = argparse.ArgumentParser()
     ap.add_argument("--steps", nargs="+", default=["closure", "export"])
-    ap.add_argument("--version", choices=("v1", "v2"), default="v2")
+    ap.add_argument("--version", choices=("v1", "v2", "p2"), default="v2")
     ap.add_argument("--scen", nargs="+", default=list(ST.SCENARIOS))
     ap.add_argument("--one", default="", help="internal: the chain of one detector scenario")
     a = ap.parse_args()

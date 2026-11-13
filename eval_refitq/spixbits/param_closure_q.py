@@ -42,9 +42,9 @@ def main():
         import sys
         env = dict(os.environ, OMP_NUM_THREADS="4")
         jobs = [subprocess.Popen([sys.executable, __file__, "--scen", s, "--allocs", *a.allocs], env=env,
-                                 stdout=open(ST.LOCAL / "logs" / f"param_qheads_{s}.log", "w"), stderr=subprocess.STDOUT) for s in a.scen]
+                                 stdout=open(ST.LOCAL / "logs" / f"param_qheads{'' if RQ.VERSION == 'v2' else '_' + RQ.VERSION}_{s}.log", "w"), stderr=subprocess.STDOUT) for s in a.scen]
         return max(j.wait() for j in jobs)
-    XS.VERSION = "v2"
+    XS.VERSION = RQ.VERSION
     root = XS.out_root()
     S = dict(np.load(RQ.ROOT / "event_split.npz"))
     held = RQ.event_key(*S["evid"][S["test"]].T)
@@ -54,11 +54,11 @@ def main():
         D = PM.draws(T["run"], T["lumi"], T["event"], T["track"])
         fold = (PM._mix(T["event_key"].astype(np.uint64)) % np.uint64(2)).astype(int)
         terc = np.quantile(today["margins"][today["refit"], 0], [1 / 3, 2 / 3])
-        Hd = HD.Heads(ST.LOCAL / "heads_retrained" / "models", scen)
+        Hd = HD.Heads(XS.detector_heads_dir(), scen)
         ev = np.unique(T["event_key"], return_inverse=True)[1]
         subsets = {"all_events": np.ones(len(ev), bool),
                    "test_events_only": np.isin(RQ.event_key(T["run"], T["lumi"], T["event"]), held)}
-        out = ST.LOCAL / "checks" / f"param_closure_v2_qheads_{scen}.json"
+        out = ST.LOCAL / "checks" / f"param_closure_{RQ.VERSION}_qheads_{scen}.json"
         res = json.load(open(out)) if out.exists() else {"scenario": scen, "tracks": int(len(ev)),
                                                          "tracks_per_subset": {k: int(v.sum()) for k, v in subsets.items()},
                                                          "events_per_subset": {k: int(len(np.unique(ev[v]))) for k, v in subsets.items()},

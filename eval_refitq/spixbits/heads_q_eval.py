@@ -195,11 +195,11 @@ def train_spread(scen, S, root, files):
 def one(a):
     import ext_scan as XS
     import study as ST
-    XS.VERSION = "v2"
+    XS.VERSION = RQ.VERSION
     root = XS.out_root()
     files = list(ST.SCAN_FILES)
     S = dict(np.load(RQ.ROOT / "event_split.npz"))
-    names = [x for x in (a.allocs or XS.SETS["v2"]) if x not in RQ.LEFT_OUT]
+    names = [x for x in (a.allocs or XS.SETS[RQ.VERSION]) if x not in RQ.LEFT_OUT]
     for scen in a.scen:
         out = RQ.ROOT / "eval" / scen
         out.mkdir(parents=True, exist_ok=True)
@@ -240,7 +240,7 @@ def main():
         return one(a)
     logs = Path.home() / "smartpixels/scratch_local/spixbits/logs"
     jobs = [(s, subprocess.Popen([sys.executable, str(HERE / "heads_q_eval.py"), "one", "--scen", s],
-                                 stdout=open(logs / f"heads_q_eval_{s}.log", "a"), stderr=subprocess.STDOUT)) for s in a.scen]
+                                 stdout=open(logs / f"heads_q_eval{'' if RQ.VERSION == 'v2' else '_' + RQ.VERSION}_{s}.log", "a"), stderr=subprocess.STDOUT)) for s in a.scen]
     rc = 0
     for s, p in jobs:
         rc = max(rc, p.wait())

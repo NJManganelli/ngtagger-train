@@ -54,6 +54,26 @@ ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2",
 COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt"}
 VERSION = os.environ.get("SPIXBITS_EXT_VERSION", "v1")
 IU = np.triu_indices(5)
+# the prompt version's order for the parametrization: the scenarios asked for first (network float, the 16-bit
+# allocations, the up-scans from 4/4/4/4), then the down-scans
+P2_FIRST = (["network_float", "alloc_4444", "alloc_6604", "alloc_8800", "alloc_5533", "alloc_6622", "alloc_5623", "alloc_4633",
+             "alloc_4723", "alloc_5722", "alloc_6703", "alloc_7702"] + [x for x in SHIPPED_V2 if x.startswith("up_")])
+
+
+def is_prompt():
+    return COLLECTIONS[VERSION] == "prompt"
+
+
+def scenarios():
+    """The quantization scenarios of this version besides "implemented now", in the order they are worked through."""
+    s = [x for x in SETS[VERSION] if x != "implemented_now"]
+    return [x for x in P2_FIRST if x in s] + [x for x in s if x not in P2_FIRST] if is_prompt() else s
+
+
+def detector_heads_dir():
+    """The heads retrained per detector scenario on today's tracks of this version's collection."""
+    import study as ST
+    return ST.LOCAL / ("heads_retrained_prompt" if is_prompt() else "heads_retrained") / "models"
 
 
 def out_root():
