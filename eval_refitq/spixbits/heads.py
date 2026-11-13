@@ -114,11 +114,21 @@ def matrix(T):
     return X.astype(np.float32), list(F)
 
 
-def _extended_only():
-    """The heads exist for the extended collection only; FAMILY names the prompt tables, which are the extended ones
-    only while common.COLLECTION says so."""
+EXPECTED_COLLECTION = "extended"    # the deployed heads are defined on the extended collection; a prompt-collection job
+                                    # says so with expect_collection("prompt") (the prompt baseline, 2026-11-13)
+
+
+def expect_collection(name):
+    global EXPECTED_COLLECTION
+    assert name in ("prompt", "extended")
+    EXPECTED_COLLECTION = name
+
+
+def _collection_check():
+    """FAMILY names the prompt tables, which the replay maps to the extended ones while common.COLLECTION says so: the
+    collection read must be the one this job declared, so that the two are never mixed by accident."""
     import common as CM
-    assert CM.COLLECTION == "extended", "the deployed heads are defined on the extended track collection"
+    assert CM.COLLECTION == EXPECTED_COLLECTION, f"heads converter: collection {CM.COLLECTION!r}, expected {EXPECTED_COLLECTION!r}"
 
 
 def nano_branches(keys):
@@ -127,14 +137,14 @@ def nano_branches(keys):
 
 def stored_columns(A):
     """The per-track columns of the nano's own (CMSSW) refit result: trackmva.tracks_from_batch."""
-    _extended_only()
+    _collection_check()
     return TM.tracks_from_batch(A, FAMILY, "", with_truth=False)[0]
 
 
 def refuse_truth(path):
     import uproot
     import common as CM
-    _extended_only()
+    _collection_check()
     with uproot.open(str(path)) as fh:
         t = fh["Events"]
         titles = {b: t[CM.file_branch(b)].title for b in TM.online_branches(t.keys(), FAMILY, "")}

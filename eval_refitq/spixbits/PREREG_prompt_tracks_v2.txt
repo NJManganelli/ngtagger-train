@@ -1,0 +1,20 @@
+SmartPixels output bits -> track refit: per-track scan on the PROMPT track collection (physicist, 2026-11-13: "make sure we're
+properly looking at the prompt 5-param fit tracks as the baseline, the extended displaced scenario is ... a beyond-baseline
+track scenario").
+What: the runner of extended scan version 2 (ext_scan.py) with the track collection switched to the prompt one (L1TTrack ->
+L1TSmartPixelsTrack, the 5-parameter fit; version name "p2"): every prompt track of canon_v5 TTbar files 5, 7, 8, 9, 10 x AAAA /
+AAAI / IAAA, 65 quantization scenarios ("implemented now", network float, the eleven 16-bit allocations, the position and
+angle down-scans, the up-scans from 4/4/4/4; the whole-sensor scenario is left out by ruling), the pT-ranked cap of three per
+2.4 mm sub-area, the pinned payload, the scan's link tables. Stored per track and scenario as in version 2: parameters,
+covariance diagonal, refit flag, the heads' 25 scenario-dependent inputs, the forced refit on today's clusters, wrong-hit
+count; per track once: the OT track's 13 head inputs, parameters, covariance, particle.
+Why: it is the source of (1) the heads retrained per quantization scenario on prompt tracks and (2) the parametrization on
+the prompt collection, both needed before the jet tagger is retrained with shifted tracks. The prompt-collection resolution
+scan (prompt_v2) stores no head inputs and no every-track population, so it cannot serve.
+Seen before launch (20 events, AAAA file 5): 3,858 prompt tracks, 99.9 % refit; the replay's 25 head inputs against the
+nano's own CMSSW columns: head outputs differ by more than 0.05 for 0.9 % of tracks (extended collection: 0.4 %; the nano's
+16-bit cluster positions); d0 68 % width of tracks with a particle 39 um "implemented now", 82 um at 4/4/4/4.
+The stored "margins" are the deployed heads (trained on the extended collection) evaluated on prompt inputs: a
+placeholder; every head output is recomputed later from the stored inputs with heads trained on prompt tracks.
+Expected: 135 units, about 2.2 h on three workers (189 prompt tracks per event against 267 extended), about 3 GB in
+/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2.

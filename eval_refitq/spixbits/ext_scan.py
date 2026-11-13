@@ -46,8 +46,12 @@ SHIPPED_V2 = (SHIPPED + [f"up_x_{b}b" for b in range(5, 10)] + ["up_x_float"] + 
               + [f"up_alpha_{b}b" for b in (5, 6, 7)] + ["up_alpha_float"] + [f"up_beta_{b}b" for b in (5, 6, 7)] + ["up_beta_float"]
               + [f"down_alpha_{b}b" for b in range(2, 8)] + ["down_alpha_notsent"]
               + [f"down_beta_{b}b" for b in range(2, 8)] + ["down_beta_notsent"])
-SETS = {"v1": SHIPPED, "v2": SHIPPED_V2}
-ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2"}    # v1: the internal disk (ST.LOCAL / "ext")
+# "p2" (physicist, 2026-11-13: the PROMPT collection, the 5-parameter L1TTrack chain, is the baseline; the extended one a
+# beyond-baseline variant): version 2's quantization scenarios without the whole-sensor one, on the prompt collection
+SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"]}
+ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2",    # v1: the internal disk (ST.LOCAL / "ext")
+         "p2": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2"}
+COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt"}
 VERSION = os.environ.get("SPIXBITS_EXT_VERSION", "v1")
 IU = np.triu_indices(5)
 
@@ -82,7 +86,7 @@ def run_unit(S, reg, f, scen, arm_names, nev=None):
     import fom as FM
     import heads as HD
     ST, EM, AR, CM = S.ST, S.EM, S.AR, S.CM
-    assert CM.COLLECTION == "extended"
+    assert CM.COLLECTION == COLLECTIONS[VERSION]
     path = ST.input_path(scen, f)
     HD.refuse_truth(path)
     cfg = CM.producer_config(path)
@@ -180,9 +184,17 @@ def claim(u):
         return False
 
 
+def use_collection():
+    """The track collection of this version, declared to the replay and to the heads converter."""
+    import heads as HD
+    import study as ST
+    ST.CM.set_collection(COLLECTIONS[VERSION])
+    HD.expect_collection(COLLECTIONS[VERSION])
+
+
 def worker(a):
     import study as ST
-    ST.CM.set_collection("extended")
+    use_collection()
     S = RS.Study()
     while not os.path.ismount(RS.MOUNT):
         log(f"waiting for {RS.MOUNT}")
@@ -272,7 +284,7 @@ def status(a):
 
 def unit_cmd(a):
     import study as ST
-    ST.CM.set_collection("extended")
+    use_collection()
     S = RS.Study()
     t0 = time.time()
     truth, arms = run_unit(S, json.load(open(HERE / "arms.json")), a.file, a.scen[0], a.arms, nev=a.nev)   # development: the code's registry
@@ -295,7 +307,8 @@ def main(argv=None):
     ap.add_argument("--nev", type=int, default=None)
     ap.add_argument("--out", default="")
     ap.add_argument("--version", choices=tuple(SETS), default=VERSION, help="v1: the first extended scan (30 arms, random cap, "
-                    "internal disk); v2: pT-ranked cap, 66 arms, outputs on the external disk")
+                    "internal disk); v2: pT-ranked cap, 66 arms, outputs on the external disk; p2: as v2 without the "
+                    "whole-sensor scenario, on the PROMPT collection")
     a = ap.parse_args(argv)
     VERSION = a.version
     os.environ["SPIXBITS_EXT_VERSION"] = a.version              # the workers inherit it
