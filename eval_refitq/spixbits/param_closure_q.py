@@ -34,7 +34,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--scen", nargs="+", default=list(ST.SCENARIOS))
     ap.add_argument("--allocs", nargs="+", default=list(ALLOCS))
+    ap.add_argument("--parallel", action="store_true", help="one process per detector scenario, side by side")
     a = ap.parse_args()
+    if a.parallel:
+        import os
+        import subprocess
+        import sys
+        env = dict(os.environ, OMP_NUM_THREADS="4")
+        jobs = [subprocess.Popen([sys.executable, __file__, "--scen", s, "--allocs", *a.allocs], env=env,
+                                 stdout=open(ST.LOCAL / "logs" / f"param_qheads_{s}.log", "w"), stderr=subprocess.STDOUT) for s in a.scen]
+        return max(j.wait() for j in jobs)
     XS.VERSION = "v2"
     root = XS.out_root()
     S = dict(np.load(RQ.ROOT / "event_split.npz"))
@@ -79,4 +88,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
