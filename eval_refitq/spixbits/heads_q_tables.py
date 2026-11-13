@@ -62,14 +62,18 @@ def entry(J, Z, TS, w, W):
     G = b - a
     reps = np.array([m("own", "b", wt) - m("own", "a", wt) for wt in W])
     sd_boot = reps.std(0)
-    comb = lambda key: np.sqrt(sum((np.array(J["windows"][x]["own"][key]) * J["windows"][x]["n_test"]) ** 2 for x in wins)) / sum(J["windows"][x]["n_test"] for x in wins)
-    sd_trial = np.hypot(comb("a_trial_sd"), comb("b_trial_sd"))
-    sd_train = np.sqrt(sum(np.array(TS[f"{n}/{x}"]["sd_per_head"]) ** 2 for n in (RQ.REFERENCE, "alloc_4444") for x in wins) / len(wins) ** (2 if w == "both" else 1))
-    a_tm = sum(np.array(J["windows"][x]["own"]["a_trial_mean"]) * J["windows"][x]["n_test"] for x in wins) / sum(J["windows"][x]["n_test"] for x in wins)
+    # per head, the windows' shares of the tracks the head's loss is averaged over (both windows: a weighted mean of
+    # the windows' losses; the windows' trial and training-sample terms are independent and add in quadrature)
+    cnt = {x: Z[f"{x}/own/a/count"].sum(0).astype(np.float64) for x in wins}
+    share = {x: cnt[x] / np.maximum(sum(cnt.values()), 1) for x in wins}
+    quad = lambda fn: np.sqrt(sum((share[x] * fn(x)) ** 2 for x in wins))
+    sd_trial = np.hypot(quad(lambda x: np.array(J["windows"][x]["own"]["a_trial_sd"])), quad(lambda x: np.array(J["windows"][x]["own"]["b_trial_sd"])))
+    sd_train = np.sqrt(sum(quad(lambda x, n=n: np.array(TS[f"{n}/{x}"]["sd_per_head"])) ** 2 for n in (RQ.REFERENCE, "alloc_4444")))
+    a_tm = a + sum(share[x] * (np.array(J["windows"][x]["own"]["a_trial_mean"]) - np.array(J["windows"][x]["own"]["a"])) for x in wins)
     A, B, C_, BP = (m("abs", k) for k in ("a", "b", "c", "bp"))
     den = B - C_
     out = {"G": G, "G_recalibration": b - bp, "G_retraining": bp - a, "sd_boot": sd_boot, "sd_trial": sd_trial, "sd_train": sd_train,
-           "sd_total": np.sqrt(sd_boot ** 2 + sd_trial ** 2 + sd_train ** 2), "G_trial_means": bm - a_tm,
+           "sd_total": np.sqrt(sd_boot ** 2 + sd_trial ** 2 + sd_train ** 2), "G_trial_means": bm - a_tm, "trial_sd_reference_heads": quad(lambda x: np.array(J["windows"][x]["own"]["b_trial_sd"])),
            "L_abs_a": A, "L_abs_b": B, "L_abs_bp": BP, "L_abs_c": C_, "W_a": np.exp(A - 0.5), "W_b": np.exp(B - 0.5), "W_c": np.exp(C_ - 0.5),
            "dL_const": m("abs", "const") - m("abs", "const_today"), "X": np.where(np.abs(den) > 1e-9, (B - A) / den, np.nan), "rest": A - C_}
     out = {k: [float(x) for x in v] for k, v in out.items()}
