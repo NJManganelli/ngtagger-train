@@ -614,6 +614,10 @@ SLIM_DATASET = ("/RelValTTbar_14TeV/CMSSW_20_1_0_pre2-PU_150X_mcRun4_realistic_v
 SLIM_HEADS = ("the stored CMSSW track-quality heads (reference heads v2p6pre1), read from the slim files as the "
               "trkhead_* inputs: P(clean) and log sigma_hat of d0, z0, tanL, 1/R and phi; SmartPixels masks from "
               "L1TSmartPixelsExtTrack_head_*, IIII from L1TExtTrack_head_* at the track's l1TrackIdx")
+if C.COLLECTION == "prompt":
+    SLIM_HEADS = (f"track-quality heads computed off-line on the prompt tracks (quant_shift.py; head set {C.HEADSET!r}; IIII: the "
+                  "OT-only heads on L1TTrack), filled into the trkhead_* inputs: P(clean) and log sigma_hat of d0, z0, tanL, "
+                  f"1/R and phi; quantization scenario {C.QUANT or 'implemented now'!r}, candidates' dxy and z0 {C.CANDIDATES!r}")
 
 
 def slim_inputs(n_test_events):

@@ -53,8 +53,17 @@ _CACHE = {}
 
 
 def helper():
+    """spixbits_apply, the parametrization's reference helper: imported from this code tree (eval_refitq/spixbits; a lane
+    job's frozen copy may import nothing from outside it) and required to be the very file shipped with the
+    parametrization."""
     if "SA" not in _CACHE:
-        sys.path.insert(0, PARAM_DIR)
+        import hashlib
+
+        here = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "spixbits")
+        sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
+        if sha(os.path.join(here, "spixbits_apply.py")) != sha(os.path.join(PARAM_DIR, "spixbits_apply.py")):
+            raise RuntimeError(f"spixbits_apply.py in the code tree differs from the one shipped in {PARAM_DIR}")
+        sys.path.insert(0, here)
         import spixbits_apply as SA
 
         _CACHE["SA"] = SA
