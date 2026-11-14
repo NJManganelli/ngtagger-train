@@ -31,6 +31,8 @@ def summarize(res):
                                     for h, d in a["classifier"].items() for w, c in d.items()}
             out["kappa_actual_emulated"][n] = [round(a["kappa_actual"]["kappa"], 2), round(a["kappa_emulated"]["kappa"], 2)]
     for h in ("retrained", "deployed"):                      # head outputs: largest |median emulated - median actual| per head
+        if not all(h in a["head_outputs_q16_q50_q84"] for a in res["allocations"].values()):
+            continue                                         # the prompt collection has no deployed heads
         d = {}
         for a in res["allocations"].values():
             for name, q in a["head_outputs_q16_q50_q84"][h].items():
