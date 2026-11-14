@@ -67,8 +67,10 @@ MISTAGS = [0.10, 0.01, 0.001]      # loose / medium / tight (background = udsg; 
 WP_NAME = {0.10: "loose", 0.01: "medium", 0.001: "tight"}
 WP_LABEL = {}                      # value -> key label override ("menu", set in main)
 STOCK_B_CUT = 0.15                 # the stock NG menu cut on bTagScore
-MENU_FAKE_RATE_EXTENDED = 0.4980694980694981   # its udsg fake rate on the extended chain's IIII test jets (slim-tier study,
-                                               # tagger_slimtier/summary.json of 2026-10-26): the "menu" target on the prompt chain
+# The stock NG tagger's scores exist on the extended chain's jets only (L1puppiJetSC4NG). Prompt collection (physicist,
+# 2026-11-13: "use the 10% fake rate, from the retrained set, not carried over from another"): no "menu" working point and
+# no stock-tagger control; the working points are the 10 % and 1 % fake rates of each retrained tagger itself.
+HAS_STOCK = C.COLLECTION == "extended"
 REPORT_MISTAGS = [0.10, 0.01]      # with the menu-matched point (main); 0.1% is not resolvable here
 
 
@@ -82,18 +84,8 @@ def wp_title(x):
 
 def stock_reference():
     """The udsg fake rate of the stock menu cut bTagScore > STOCK_B_CUT on the OT baseline
-    (IIII) test jets in acceptance -- the fake-rate target of the "menu" matched WP.
-    Prompt collection: its jets (L1puppiJetSC4) carry no stock scores, so the target cannot be measured there; it is the
-    value measured on the extended chain's IIII jets of the slim-tier study (MENU_FAKE_RATE_EXTENDED; TAGGER_SP_MENU_FAKE_RATE
-    overrides it), and the count is that of the prompt IIII udsg test jets."""
+    (IIII) test jets in acceptance -- the fake-rate target of the "menu" matched WP."""
     man = json.load(open(C.manifest_path(C.BASELINE_MASK)))
-    if C.COLLECTION == "prompt":
-        n = 0
-        for s, n_, _ in man["files"]:
-            d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, C.BASELINE_MASK, n_) + ".npz"))
-            sel = d["is_test"] & (d["pt"] > C.PT_MIN) & (np.abs(d["eta"]) < C.ETA_MAX) & C.event_filter(d["evid"])[d["entry"]]
-            n += int(np.isin(d["label"][sel], [CI["light"], CI["gluon"]]).sum())
-        return float(os.environ.get("TAGGER_SP_MENU_FAKE_RATE", MENU_FAKE_RATE_EXTENDED)), n
     sc, lab = [], []
     for s, n, _ in man["files"]:
         d = np.load(os.path.join(C.cache_dir("jets"), C.tag(s, C.BASELINE_MASK, n) + ".npz"))
@@ -132,10 +124,15 @@ JOINT_STEPS = [
 ]
 # the with-vs-without-SmartPixels step of each input set (the headline pages)
 HEAD_LABEL = {a[0]: lab for lab, a, b in STEPS + JOINT_STEPS if a[0] == b[0] and a[1] == "M" and b[1] == "IIII"}
-KEY_METRICS = ["macro_auc", "b_vs_udsg_auc", "b_vs_udsg_eff@menu", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%",
-               "c_vs_udsg_auc", "c_vs_udsg_eff@menu", "c_vs_udsg_eff@10%", "c_vs_udsg_eff@1%",
-               "tau_vs_jet_auc", "tau_vs_jet_eff@menu", "tau_vs_jet_eff@10%", "tau_vs_jet_eff@1%",
-               "b_vs_light_eff@10%", "c_vs_light_eff@10%"]
+def with_menu(keys):
+    """The metric keys that exist: those at the "menu" working point only where the stock scores do."""
+    return [k for k in keys if HAS_STOCK or "@menu" not in k]
+
+
+KEY_METRICS = with_menu(["macro_auc", "b_vs_udsg_auc", "b_vs_udsg_eff@menu", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%",
+                         "c_vs_udsg_auc", "c_vs_udsg_eff@menu", "c_vs_udsg_eff@10%", "c_vs_udsg_eff@1%",
+                         "tau_vs_jet_auc", "tau_vs_jet_eff@menu", "tau_vs_jet_eff@10%", "tau_vs_jet_eff@1%",
+                         "b_vs_light_eff@10%", "c_vs_light_eff@10%"])
 ALL_AUCS = [f"auc_{c}" for c in CLASSES] + ["auc_tau"]
 STEP_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#6b6b6b", "#a0a0a0"]
 STEP_MARKERS = ["o", "s", "^", "v", "D"]
@@ -427,11 +424,8 @@ def stock_wp(ev, cnt):
     """The stock NG tagger (scores emulated in each nano, per scenario's jets; not retrained) on each mask's
     test jets in acceptance: b eff / udsg mistag of bTagScore > STOCK_B_CUT, and its b eff at the matched
     points (ties split: the scores are 8-bit), on the trained taggers' paired event replicates.
-    Returns {mask: {metric: [nominal, bootstrap std]} + counts; "<metric>_minus_IIII": [diff, std]}.
-    Prompt collection: no stock scores on its jets, so nothing is returned (the control is left out)."""
+    Returns {mask: {metric: [nominal, bootstrap std]} + counts; "<metric>_minus_IIII": [diff, std]}."""
     R, out = {}, {}
-    if C.COLLECTION == "prompt":
-        return out
     for mask in C.MASKS:
         mp = C.manifest_path(mask)
         if not os.path.exists(mp):
@@ -652,14 +646,19 @@ def main():
     ap.add_argument("--out", default=C.OUT)
     a = ap.parse_args()
     t0 = time.time()
-    # matched "menu" WP: the udsg fake rate of the stock menu cut on IIII, applied to every cell
+    # matched "menu" WP (where the stock scores exist): the udsg fake rate of the stock menu cut on IIII, applied to
+    # every tagger; otherwise the 10 % and 1 % fake rates only
     global MISTAGS
-    fr_menu, n_udsg_ref = stock_reference()
-    WP_LABEL[fr_menu] = "menu"
-    WP_NAME[fr_menu] = "menu-matched"
-    MISTAGS = [fr_menu] + REPORT_MISTAGS
-    print(f"menu WP: udsg fake rate of bTagScore > {STOCK_B_CUT} on IIII = {fr_menu:.4f} "
-          f"({n_udsg_ref} udsg test jets)", flush=True)
+    MISTAGS, menu_ref = list(REPORT_MISTAGS), None
+    if HAS_STOCK:
+        fr_menu, n_udsg_ref = stock_reference()
+        WP_LABEL[fr_menu] = "menu"
+        WP_NAME[fr_menu] = "menu-matched"
+        MISTAGS = [fr_menu] + REPORT_MISTAGS
+        menu_ref = {"stock_cut": f"bTagScore > {STOCK_B_CUT}", "mask": C.BASELINE_MASK,
+                    "udsg_fake_rate_menu": fr_menu, "n_udsg_test_jets": n_udsg_ref}
+        print(f"menu WP: udsg fake rate of bTagScore > {STOCK_B_CUT} on IIII = {fr_menu:.4f} "
+              f"({n_udsg_ref} udsg test jets)", flush=True)
     P = load_preds()
     if not P:
         raise SystemExit("no deployed tagger")
@@ -672,7 +671,7 @@ def main():
     LB = ladder(M, ["incl"], "best")
     N = counts(P)
     RCH = reachability(P)
-    STK = stock_wp(ev, cnt)
+    STK = stock_wp(ev, cnt) if HAS_STOCK else {}
     mva = {m: json.load(open(p)) for m in C.MASKS
            if os.path.exists(p := os.path.join(C.OUT, "mva", m, "heldout_check.json"))}
     samples = next(iter(P.values()))["ens"]["samples"]
@@ -720,10 +719,9 @@ def main():
             "definition": "matched fake rates, ties split (ngtagger.definitions.matched_wp): every cell's deployed "
                           "tagger gets the threshold on D at which the background (udsg; tau: light+gluon jets) "
                           "fraction of its own test jets in acceptance equals the target exactly, recomputed in "
-                          "every replicate. 'menu' = the udsg fake rate of the stock menu cut bTagScore > 0.15 on "
-                          "the IIII test jets; '10%'; '1%' (statistically weak).",
-            "reference": {"stock_cut": f"bTagScore > {STOCK_B_CUT}", "mask": C.BASELINE_MASK,
-                          "udsg_fake_rate_menu": fr_menu, "n_udsg_test_jets": n_udsg_ref},
+                          "every replicate. " + ("'menu' = the udsg fake rate of the stock menu cut bTagScore > 0.15 on "
+                                                 "the IIII test jets; " if HAS_STOCK else "") + "'10%'; '1%' (statistically weak).",
+            "reference": menu_ref,
             "fake_rate_targets": {pct(x): x for x in MISTAGS},
             "expected_bkg_jets_above_threshold": RCH,
             "stock_ng_tagger": {"cut": f"bTagScore > {STOCK_B_CUT}", "per_mask": STK}},
@@ -871,7 +869,7 @@ def main():
                        "with vs without SmartPixels per input set: per class (one-vs-rest AUC) and pairwise AUCs",
                        "Δ AUC")
             bins = [r for r in regs if r.startswith(("abs_eta:", "pt:"))]
-            for k, lab in (("b_vs_udsg_eff@menu", "Δ b eff (menu-matched udsg fake rate)"),
+            for k, lab in ((("b_vs_udsg_eff@menu", "Δ b eff (menu-matched udsg fake rate)"),) if HAS_STOCK else ()) + (
                            ("b_vs_udsg_eff@10%", "Δ b eff (10% udsg mistag)"),
                            ("b_vs_udsg_eff@1%", "Δ b eff (1% udsg mistag)"),
                            ("c_vs_udsg_eff@10%", "Δ c eff (10% udsg mistag)"),
@@ -882,8 +880,8 @@ def main():
                            f"with vs without SmartPixels in |η| and pT bins: {k}", lab)
             rows = []
             for reg in bins + [r for r in regs if r.startswith("sample:")]:
-                for k in ("b_vs_udsg_eff@menu", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "c_vs_udsg_eff@10%",
-                          "tau_vs_jet_eff@menu", "tau_vs_jet_eff@10%", "macro_auc"):
+                for k in with_menu(["b_vs_udsg_eff@menu", "b_vs_udsg_eff@10%", "b_vs_udsg_eff@1%", "c_vs_udsg_eff@10%",
+                                    "tau_vs_jet_eff@menu", "tau_vs_jet_eff@10%", "macro_auc"]):
                     o = cells.get(f"baseline@{C.BASELINE_MASK}", {}).get("deployed", {}).get(reg, {}).get(k)
                     rows.append([reg, k, fmt(*o) if o else "-"] + [fmt_step(L[mask].get(lab, {}).get(reg, {}).get(k))
                                                                   for lab, _, _ in STEPS])

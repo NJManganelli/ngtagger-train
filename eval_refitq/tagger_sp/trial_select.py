@@ -132,8 +132,9 @@ def select_cell(trials, targets):
 
 
 def main():
-    fr_menu, _ = AZ.stock_reference()
-    targets = {"menu": fr_menu, "10%": 0.10, "1%": 0.01}
+    targets = {"10%": 0.10, "1%": 0.01}             # fake rates at which a trial's threshold must not sit on a tie block
+    if AZ.HAS_STOCK:                                # and the stock menu cut's fake rate, where the stock scores exist
+        targets = {"menu": AZ.stock_reference()[0], **targets}
     P = load_val(os.path.join(C.OUT, "preds"))
     if not P:
         raise SystemExit("no predictions")
