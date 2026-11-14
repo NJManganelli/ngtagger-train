@@ -35,18 +35,24 @@ def main():
     ap.add_argument("--scen", nargs="+", default=list(ST.SCENARIOS))
     ap.add_argument("--allocs", nargs="+", default=list(ALLOCS))
     ap.add_argument("--parallel", action="store_true", help="one process per detector scenario, side by side")
+    ap.add_argument("--heads", default="", help="another per-quantization-scenario head set: 'enlarged' = the heads of the "
+                    "enlarged sample (heads_retrained_per_quantization_prompt_enlarged; prompt version only); output file ..._qheads_enlarged_...")
     a = ap.parse_args()
     if a.parallel:
         import os
         import subprocess
         import sys
         env = dict(os.environ, OMP_NUM_THREADS="4")
-        jobs = [subprocess.Popen([sys.executable, __file__, "--scen", s, "--allocs", *a.allocs], env=env,
-                                 stdout=open(ST.LOCAL / "logs" / f"param_qheads{'' if RQ.VERSION == 'v2' else '_' + RQ.VERSION}_{s}.log", "w"), stderr=subprocess.STDOUT) for s in a.scen]
+        tag = ("" if RQ.VERSION == "v2" else "_" + RQ.VERSION) + ("_" + a.heads if a.heads else "")
+        jobs = [subprocess.Popen([sys.executable, __file__, "--scen", s, "--allocs", *a.allocs] + (["--heads", a.heads] if a.heads else []),
+                                 env=env, stdout=open(ST.LOCAL / "logs" / f"param_qheads{tag}_{s}.log", "w"), stderr=subprocess.STDOUT)
+                for s in a.scen]
         return max(j.wait() for j in jobs)
     XS.VERSION = RQ.VERSION
     root = XS.out_root()
-    S = dict(np.load(RQ.ROOT / "event_split.npz"))
+    assert a.heads in ("", "enlarged") and (not a.heads or RQ.VERSION == "p2")
+    hroot = Path(str(RQ.ROOT) + "_enlarged") if a.heads else RQ.ROOT    # the heads' own split: its test events among the scan's
+    S = dict(np.load(hroot / "event_split.npz"))
     held = RQ.event_key(*S["evid"][S["test"]].T)
     for scen in a.scen:
         RQ.wait_for(root / "units")
@@ -58,7 +64,7 @@ def main():
         ev = np.unique(T["event_key"], return_inverse=True)[1]
         subsets = {"all_events": np.ones(len(ev), bool),
                    "test_events_only": np.isin(RQ.event_key(T["run"], T["lumi"], T["event"]), held)}
-        out = ST.LOCAL / "checks" / f"param_closure_{RQ.VERSION}_qheads_{scen}.json"
+        out = ST.LOCAL / "checks" / f"param_closure_{RQ.VERSION}_qheads{'_' + a.heads if a.heads else ''}_{scen}.json"
         res = json.load(open(out)) if out.exists() else {"scenario": scen, "tracks": int(len(ev)),
                                                          "tracks_per_subset": {k: int(v.sum()) for k, v in subsets.items()},
                                                          "events_per_subset": {k: int(len(np.unique(ev[v]))) for k, v in subsets.items()},
@@ -68,7 +74,7 @@ def main():
                 continue
             arm = PC.load_arm(root, scen, list(ST.SCAN_FILES), al)
             em = PC.crossfit(today, arm, truth, D, terc, fold, Hd)
-            sets = {"quantization_scenario_heads": HD.Heads.from_npz(RQ.ROOT / "models" / f"{al}_{scen}.npz", scen),
+            sets = {"quantization_scenario_heads": HD.Heads.from_npz(hroot / "models" / f"{al}_{scen}.npz", scen),
                     "detector_scenario_heads": Hd}
             c = {}
             for hname, H in sets.items():
