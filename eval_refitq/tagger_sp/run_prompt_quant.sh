@@ -60,4 +60,4 @@ else
   link "$REF"/preds/IIII_*.npz
   [ "$CANDIDATES" = today ] && link "$REF"/preds/*_baseline_s*.npz
 fi
-exec "$(dirname "$0")/run_all.sh" "$PHASE" ttbar
+exec bash "$(dirname "$0")/run_all.sh" "$PHASE" ttbar      # (a frozen copy keeps no execute permission)
