@@ -243,7 +243,7 @@ def report(a):
     for mask in a.masks:
         coll = J.coll_of(mask)
         T = load(mask)
-        te = T["_test"] & np.isfinite(T["x_r_prod"])
+        te = T["_test"] & ~T["_left_out"] & np.isfinite(T["x_r_prod"])     # files 4 and 6 are read by nothing here
         r = T["x_r_prod"]
         p = "r_" if coll == "refit" else "b_"
         d0 = np.abs(T[p + "d0"])
