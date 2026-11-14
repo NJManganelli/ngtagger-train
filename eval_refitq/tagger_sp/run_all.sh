@@ -8,6 +8,8 @@
 #                                                       trial screen and choice (trial_select.py); 10 more
 #                                                       trials for cells with fewer than 3 kept; analysis
 #   eval_refitq/tagger_sp/run_all.sh all SAMPLES...     build, then train
+# TAGGER_VARIANTS: the sets of tagger inputs trained (default "baseline track trackmva"; the prompt collection also has
+# "trackdisp" for today's tracks).
 # SAMPLES: ttbar [htt]. TAGGER_SP_TIER=slim: the slim tagger tier (slimtier.py; ttbar only). TRIAL_SEEDS / TOPUP_SEEDS:
 # the trials per cell (default 10 + a top-up of 10). Outputs under common.OUT; logs in OUT/logs (run.log: one line per step, ends with
 # "end rc=N"); the selection, summary and PDF are copied to OUT/results_<samples>/ at the end.
@@ -53,7 +55,7 @@ select_trials() {
 }
 
 train() {
-  for m in IIII AAAA AAAI IAAA; do for v in baseline track trackmva; do echo "$m $v"; done; done \
+  for m in IIII AAAA AAAI IAAA; do for v in ${TAGGER_VARIANTS:-baseline track trackmva}; do echo "$m $v"; done; done \
     | train_cells "$TRIAL_SEEDS" || fail "training (first trials)"
   say "first trials per cell done (seeds $TRIAL_SEEDS)"
   select_trials

@@ -55,6 +55,9 @@ FEATURE_GROUPS = {
     # the CMSSW-computed reference track-quality heads stored in the slim tagger tier (<track table>_head_*): P(clean)
     # and log sigma_hat of d0, z0, tanL, 1/R, phi (heads_cmssw/SPEC.md); -1 for no track
     "trackheads": ["trkhead_clean", "trkhead_d0", "trkhead_z0", "trkhead_tanl", "trkhead_rinv", "trkhead_phi"],
+    # per-track displacement heads (eval_refitq/spixbits/displacement_heads.py), supplied per track through
+    # load_jets(track_override=...): P(production radius >= 2.85, 5.95, 10.3, 14.5 cm) and ln(radius / cm)
+    "trackdisp": ["trkdisp_p1", "trkdisp_p2", "trkdisp_p3", "trkdisp_p4", "trkdisp_lnr"],
 }
 
 
@@ -108,7 +111,7 @@ def build_features(jets: ak.Array, constituents: ak.Array, n_const: int = 16,
         "quality": c.hwTkQuality,
     }
     for n in names:
-        if n.startswith(("trk_", "cl_", "vtx_", "vtxpv_", "refit_", "trkmva_", "trkjoint_", "trkhead_")):
+        if n.startswith(("trk_", "cl_", "vtx_", "vtxpv_", "refit_", "trkmva_", "trkjoint_", "trkhead_", "trkdisp_")):
             if n == "cl_absZBarycenter":
                 feats[n] = abs(c["cl_zBarycenter"])
             else:

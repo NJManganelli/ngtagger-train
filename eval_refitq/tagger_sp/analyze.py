@@ -110,7 +110,13 @@ STEPS = [  # (label, a, b): a - b ; mask "M" = the SP mask of the column. The fi
 if C.TIER == "slim":      # the third input set reads the stored CMSSW heads (trkhead_*), not Python-fitted MVA scores
     STEPS = [(lab.replace("+ track-MVA inputs", "+ stored track heads").replace("+ track-MVA scores", "+ stored track heads")
               .replace("+ MVA scores, OT tracks", "+ stored OT track heads"), a, b) for lab, a, b in STEPS]
-MAIN_STEPS = STEPS[:3]
+if C.COLLECTION == "prompt":   # no stored heads there: the heads are computed off-line (quant_shift.py); and a fourth input set
+    STEPS = [(lab.replace("stored track heads", "track-quality heads").replace("stored OT track heads", "OT track-quality heads"),
+              a, b) for lab, a, b in STEPS]
+    STEPS.insert(3, ("L4-L4'  + displacement heads: SmartPixels - OT", ("trackdisp", "M"), ("trackdisp", "IIII")))
+    STEPS += [("L4-L3  + displacement heads", ("trackdisp", "M"), ("trackmva", "M")),
+              ("L4'-L3'  + displacement heads, OT tracks", ("trackdisp", "IIII"), ("trackmva", "IIII"))]
+MAIN_STEPS = [x for x in STEPS if x[1][0] == x[2][0] and x[1][1] == "M" and x[2][1] == "IIII"]   # the with-vs-without-SmartPixels steps
 # jointly trained track-quality heads (joint_heads.py): reference (uncoupled), A (outputs apart), B (errors apart)
 JOINT_STEPS = [
     ("Jref  joint heads, reference: SmartPixels - OT", ("joint_ref", "M"), ("joint_ref", "IIII")),
@@ -369,6 +375,43 @@ def step_value(M, a, b, reg, k, which="ens"):
         sd = seed_stats(M, c, reg, k)[1]
         se += sd ** 2 / (M[c]["n_deployed"] if which == "ens" else 1)
     return {"diff": float(diff[0]), "boot_err": boot, "seed_err": float(np.sqrt(se))}
+
+
+def load_preds_of(out):
+    """load_preds of another run's folder (same study settings)."""
+    keep, C.OUT = C.OUT, out
+    try:
+        return load_preds()
+    finally:
+        C.OUT = keep
+
+
+def paired(ref_out, n_boot, out):
+    """This run's taggers against another run's, tagger training by tagger training (SmartPixels detector scenarios),
+    on the SAME test events with the SAME bootstrap replicates: {training: {metric: {this, reference, diff, boot_err
+    (std of the per-replicate difference), seed_err (trial spread of both)}}}, written to paired_vs_<run>.json."""
+    P, Pr = load_preds(), load_preds_of(ref_out)
+    ev = test_events(P)
+    if not np.array_equal(ev, test_events(Pr)):
+        raise RuntimeError("the two runs' test events differ: no paired comparison")
+    cnt = replicates(ev, n_boot)
+    cells = [c for c in P if c in Pr and c[1] != C.BASELINE_MASK]
+    M, Mr = compute({c: P[c] for c in cells}, ev, cnt), compute({c: Pr[c] for c in cells}, ev, cnt)
+    res = {}
+    for c in cells:
+        for k in [k for k in M[c]["ens"]["incl"] if "_thr@" not in k]:
+            d = M[c]["ens"]["incl"][k] - Mr[c]["ens"]["incl"][k]
+            se = sum(seed_stats(m, c, "incl", k)[1] ** 2 / m[c]["n_deployed"] for m in (M, Mr))
+            res.setdefault(f"{c[0]}@{c[1]}", {})[k] = {
+                "this": float(M[c]["ens"]["incl"][k][0]), "reference": float(Mr[c]["ens"]["incl"][k][0]), "diff": float(d[0]),
+                "boot_err": float(np.nanstd(d[1:], ddof=1)) if np.isfinite(d[1:]).sum() > 2 else None,
+                "seed_err": float(np.sqrt(se))}
+    path = os.path.join(out, f"paired_vs_{os.path.basename(os.path.normpath(ref_out))}.json")
+    with open(path, "w") as f:
+        json.dump({"what": "this run minus the reference run, same test events and bootstrap replicates (deployed taggers, "
+                           "inclusive test set)", "this": C.OUT, "reference": ref_out, "n_test_events": int(len(ev)),
+                   "n_bootstrap": n_boot, "trainings": res}, f, indent=1)
+    print(f"wrote {path}", flush=True)
 
 
 def resolve(cell, mask):
@@ -648,8 +691,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--boot", type=int, default=300)
     ap.add_argument("--out", default=C.OUT)
+    ap.add_argument("--paired-with", default="", help="another run's folder: only the paired comparison with it (same test "
+                    "events, same bootstrap replicates) is computed and written to paired_vs_<run>.json")
     a = ap.parse_args()
     t0 = time.time()
+    if a.paired_with:
+        return paired(a.paired_with, a.boot, a.out)
     # matched "menu" WP (where the stock scores exist): the udsg fake rate of the stock menu cut on IIII, applied to
     # every tagger; otherwise the 10 % and 1 % fake rates only
     global MISTAGS

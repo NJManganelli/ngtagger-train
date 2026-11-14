@@ -7,6 +7,7 @@ Used by build.py as ngtagger.data.nano.load_jets(track_override=TrackOverride(ma
 the constituent's track table (L1TSmartPixelsTrack):
   always                 head_clean (P(clean)) and head_d0, head_z0, head_tanl, head_rinv, head_phi (log sigma_hat): the
                          slots of the "trackheads" feature group. No CMSSW-computed heads exist on the prompt tables.
+  today's tracks         disp_p1 ... disp_p4, disp_lnr: the displacement heads (the "trackdisp" feature group)
   with a quantization    rInv, tanL, z0, d0; cov_d0_d0, cov_z0_z0 (the tagger's sigma(d0), sigma(z0)); spixNAcceptedHits
   scenario               (accepted IT hits); and the heads evaluated on the emulated head inputs.
 The candidate's own dxy and z0 (tagger inputs of every cell, the "baseline" group): with common.CANDIDATES ==
@@ -46,6 +47,10 @@ from ngtagger.train import trackmva as tm  # noqa: E402
 PARAM_DIR = os.environ.get("TAGGER_SP_PARAM_DIR", os.path.expanduser(
     "~/smartpixels/doc-archive/spix-bits-refit-study/parametrization/prompt_v2"))
 HEAD_FIELDS = ["head_clean", "head_d0", "head_z0", "head_tanl", "head_rinv", "head_phi"]
+# the displacement heads (eval_refitq/spixbits/displacement_heads.py; today's tracks only): P(production radius >= 2.85,
+# 5.95, 10.3, 14.5 cm) and ln(radius / cm), from the models in heads/displacement/<detector scenario>/<variant>/<window>/
+DISP_FIELDS = ["disp_p1", "disp_p2", "disp_p3", "disp_p4", "disp_lnr"]
+DISP_VARIANT = os.environ.get("TAGGER_SP_DISP_VARIANT", "d0")     # "d0": the heads' inputs + |d0| and |d0| / sigma(d0); "heads": without
 SHIFT_FIELDS = ["rInv", "tanL", "z0", "d0", "cov_d0_d0", "cov_z0_z0", "spixNAcceptedHits"]
 PAR = ("rInv", "phi", "tanL", "z0", "d0")
 MISSING = -999.0
@@ -99,6 +104,24 @@ def refit_heads(mask, headset, quant):
             _CACHE[key] = SA.load_heads_npz(os.path.join(PARAM_DIR, "heads", folder, f"{name}_{mask}.npz"))
         else:
             _CACHE[key] = SA.load_heads(os.path.join(PARAM_DIR, "heads", "detector"), mask)
+    return _CACHE[key]
+
+
+def _xgb():
+    import xgboost
+
+    return xgboost
+
+
+def disp_models(mask, window):
+    key = ("disp", mask, window)
+    if key not in _CACHE:
+        out = []
+        for kind in ("band", "radius"):
+            b = _xgb().Booster()
+            b.load_model(os.path.join(PARAM_DIR, "heads", "displacement", mask, DISP_VARIANT, window, f"{kind}.json"))
+            out.append(b)
+        _CACHE[key] = tuple(out)
     return _CACHE[key]
 
 
@@ -176,7 +199,8 @@ class TrackOverride:
         self.quant = C.QUANT if quant is None else quant
         self.headset = C.HEADSET if headset is None else headset
         self.shift = bool(self.quant) and not self.base_only
-        self.fields = HEAD_FIELDS + (SHIFT_FIELDS if self.shift else [])
+        self.disp = "trackdisp" in C.GROUPS_ALL            # today's tracks on the prompt collection
+        self.fields = HEAD_FIELDS + (SHIFT_FIELDS if self.shift else []) + (DISP_FIELDS if self.disp else [])
 
     def columns(self, files, counts, max_events=None):
         if len(files) != 1:
@@ -186,6 +210,9 @@ class TrackOverride:
         keys = t.keys()
         ot, sp = C.OT_TABLE, C.TRACK_TABLE
         extra = [f"{ot}_{c}" for c in ("rInv", "phi")] + ["run", "luminosityBlock", "event"]
+        cov_d0 = f"{sp}_cov_d0_d0" if f"{sp}_cov_d0_d0" in keys else f"{ot}_cov_d0_d0"      # as displacement_heads.extra
+        if self.disp:
+            extra.append(cov_d0)
         if self.shift:                                   # the OT track's particle: the parametrization's cell variable
             extra += [f"{ot}_tp_{c}" for c in ("pt", "tanL", "phi0", "z0", "d0", "charge")]
         if not self.base_only:
@@ -231,6 +258,20 @@ class TrackOverride:
             out.update(rInv=res["a"][:, 0], tanL=res["a"][:, 2], z0=res["a"][:, 3], d0=res["a"][:, 4],
                        cov_d0_d0=res["cov_diag"][:, 4], cov_z0_z0=res["cov_diag"][:, 3],
                        spixNAcceptedHits=res["inputs"][:, names.index("spixNAcceptedHits")])
+        if self.disp:
+            d0 = np.abs(T["b_d0"] if self.base_only else a[:, 4])
+            Xd = X if DISP_VARIANT == "heads" else np.column_stack(
+                [X, d0, d0 / np.maximum(np.sqrt(np.abs(flat(cov_d0))), 1e-6)]).astype(np.float32)
+            windows = {"all": np.ones(len(X), bool)} if self.base_only else {"prompt": d0 <= 0.02, "displaced": d0 > 0.02}
+            P, lnr = np.zeros((len(X), 5)), np.zeros(len(X))
+            for wname, w in windows.items():
+                if w.any():
+                    band, radius = disp_models(self.mask, wname)
+                    dm = _xgb().DMatrix(Xd[w])
+                    P[w], lnr[w] = band.predict(dm), radius.predict(dm)
+            for k in range(4):
+                out[f"disp_p{k + 1}"] = P[:, k + 1:].sum(1)
+            out["disp_lnr"] = lnr
         out["head_clean"] = sig(M[:, 0])
         for i, h in enumerate(HEAD_FIELDS[1:], start=1):
             out[h] = M[:, i]

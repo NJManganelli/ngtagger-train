@@ -138,6 +138,14 @@ VARIANTS = {
 JOINT_VERSIONS = ("ref", "A", "B")
 VARIANTS.update({f"joint_{v}": VARIANTS["track"] + ["trackjoint"] for v in JOINT_VERSIONS})
 LEVEL = {"baseline": 1, "track": 2, "trackmva": 3, **{f"joint_{v}": 3 for v in JOINT_VERSIONS}}
+# Prompt collection: a fourth set of tagger inputs, "+ track quantities, heads and displacement heads" (the per-track
+# displacement heads of eval_refitq/spixbits/displacement_heads.py, quant_shift.py). Their inputs exist in the jet caches
+# of today's tracks only (no quantization scenario yet).
+if COLLECTION == "prompt":
+    VARIANTS["trackdisp"] = VARIANTS["trackmva"] + ["trackdisp"]
+    LEVEL["trackdisp"] = 4
+    if not QUANT:
+        GROUPS_ALL = GROUPS_ALL + ["trackdisp"]
 
 def sample_dir(sample: str, mask: str) -> str:
     return os.path.join(CANON[BASELINE_MASK if mask == BASELINE_MASK else "sp"], SAMPLES[sample][0])
