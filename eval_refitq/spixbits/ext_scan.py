@@ -53,11 +53,14 @@ SHIPPED_V2 = (SHIPPED + [f"up_x_{b}b" for b in range(5, 10)] + ["up_x_float"] + 
 # canon_v5 TTbar files 1, 2, 3 and the H->tautau files (numbered 100 + n here); files 4 and 6 stay out as before
 FIRST_PASS = ["implemented_now", "network_float", "alloc_4444", "alloc_6604", "alloc_6622"]
 P2X_FILES = (1, 2, 3, 101, 102, 103, 104, 105, 107, 108)
-SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"], "p2x": FIRST_PASS}
+# "p2y": 5/5/3/3 on the same further files (added to the first pass by the physicist after p2x had run)
+SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"], "p2x": FIRST_PASS,
+        "p2y": ["alloc_5533"]}
 ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2",    # v1: the internal disk (ST.LOCAL / "ext")
          "p2": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2",
-         "p2x": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2x"}
-COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt", "p2x": "prompt"}
+         "p2x": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2x",
+         "p2y": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2y"}
+COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt", "p2x": "prompt", "p2y": "prompt"}
 
 
 def input_path(scen, f):
@@ -346,7 +349,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     VERSION = a.version
     if a.files is None:
-        a.files = list(P2X_FILES if VERSION == "p2x" else ST.SCAN_FILES)
+        a.files = list(P2X_FILES if VERSION in ("p2x", "p2y") else ST.SCAN_FILES)
     os.environ["SPIXBITS_EXT_VERSION"] = a.version              # the workers inherit it
     return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd}[a.job](a)
 

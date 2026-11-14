@@ -199,7 +199,7 @@ def one(a):
     root = XS.out_root()
     files = RQ.files()
     S = dict(np.load(RQ.ROOT / "event_split.npz"))
-    names = [x for x in (a.allocs or XS.SETS[RQ.VERSION]) if x not in RQ.LEFT_OUT]
+    names = [x for x in (a.allocs or XS.SETS[RQ.VERSION] + (XS.SETS["p2y"] if RQ.VERSION == "p2x" else [])) if x not in RQ.LEFT_OUT]
     for scen in a.scen:
         out = RQ.ROOT / "eval" / scen
         out.mkdir(parents=True, exist_ok=True)
