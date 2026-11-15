@@ -138,14 +138,24 @@ VARIANTS = {
 JOINT_VERSIONS = ("ref", "A", "B")
 VARIANTS.update({f"joint_{v}": VARIANTS["track"] + ["trackjoint"] for v in JOINT_VERSIONS})
 LEVEL = {"baseline": 1, "track": 2, "trackmva": 3, **{f"joint_{v}": 3 for v in JOINT_VERSIONS}}
-# Prompt collection: a fourth set of tagger inputs, "+ track quantities, heads and displacement heads" (the per-track
-# displacement heads of eval_refitq/spixbits/displacement_heads.py, quant_shift.py). Their inputs exist in the jet caches
-# of today's tracks only (no quantization scenario yet).
+# Prompt collection: further sets of tagger inputs with the per-track displacement heads (second version,
+# eval_refitq/spixbits/displacement.py, supplied by quant_shift.py): "trackrange" = + the production-radius range (low,
+# median, high); "trackrangep" = + the range and the class probabilities. SmartPixels detector scenarios only (IIII has
+# no surface to divide on: no displacement head); today's tracks only (no quantization scenario yet).
+DISP_GROUPS = ["trackdisp", "trackdispp"]
+DISP_VARIANTS = ["trackrange", "trackrangep"]
 if COLLECTION == "prompt":
-    VARIANTS["trackdisp"] = VARIANTS["trackmva"] + ["trackdisp"]
-    LEVEL["trackdisp"] = 4
+    VARIANTS["trackrange"] = VARIANTS["trackmva"] + ["trackdisp"]
+    VARIANTS["trackrangep"] = VARIANTS["trackmva"] + DISP_GROUPS
+    LEVEL.update(trackrange=4, trackrangep=4)
     if not QUANT:
-        GROUPS_ALL = GROUPS_ALL + ["trackdisp"]
+        GROUPS_ALL = GROUPS_ALL + DISP_GROUPS
+
+
+def groups_for(mask: str) -> list[str]:
+    """The feature groups of a mask's jet caches: no displacement heads for the OT-only control."""
+    return [g for g in GROUPS_ALL if not (mask == BASELINE_MASK and g in DISP_GROUPS)]
+
 
 def sample_dir(sample: str, mask: str) -> str:
     return os.path.join(CANON[BASELINE_MASK if mask == BASELINE_MASK else "sp"], SAMPLES[sample][0])

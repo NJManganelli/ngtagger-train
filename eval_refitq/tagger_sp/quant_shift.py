@@ -7,7 +7,9 @@ Used by build.py as ngtagger.data.nano.load_jets(track_override=TrackOverride(ma
 the constituent's track table (L1TSmartPixelsTrack):
   always                 head_clean (P(clean)) and head_d0, head_z0, head_tanl, head_rinv, head_phi (log sigma_hat): the
                          slots of the "trackheads" feature group. No CMSSW-computed heads exist on the prompt tables.
-  today's tracks         disp_p1 ... disp_p4, disp_lnr: the displacement heads (the "trackdisp" feature group)
+  today's tracks,        disp_lo, disp_med, disp_hi (ln of the production-radius range's low, median and high points,
+  SmartPixels detector   floor 0.01 cm) and disp_p1 ... disp_p4 (P(class >= k)): the displacement heads, second version
+  scenarios              (eval_refitq/spixbits/displacement.py; the "trackdisp" and "trackdispp" feature groups)
   with a quantization    rInv, tanL, z0, d0; cov_d0_d0, cov_z0_z0 (the tagger's sigma(d0), sigma(z0)); spixNAcceptedHits
   scenario               (accepted IT hits); and the heads evaluated on the emulated head inputs.
 The candidate's own dxy and z0 (tagger inputs of every cell, the "baseline" group): with common.CANDIDATES ==
@@ -47,32 +49,40 @@ from ngtagger.train import trackmva as tm  # noqa: E402
 PARAM_DIR = os.environ.get("TAGGER_SP_PARAM_DIR", os.path.expanduser(
     "~/smartpixels/doc-archive/spix-bits-refit-study/parametrization/prompt_v2"))
 HEAD_FIELDS = ["head_clean", "head_d0", "head_z0", "head_tanl", "head_rinv", "head_phi"]
-# the displacement heads (eval_refitq/spixbits/displacement_heads.py; today's tracks only): P(production radius >= 2.85,
-# 5.95, 10.3, 14.5 cm) and ln(radius / cm), from the models in heads/displacement/<detector scenario>/<variant>/<window>/
-DISP_FIELDS = ["disp_p1", "disp_p2", "disp_p3", "disp_p4", "disp_lnr"]
-DISP_VARIANT = os.environ.get("TAGGER_SP_DISP_VARIANT", "d0")     # "d0": the heads' inputs + |d0| and |d0| / sigma(d0); "heads": without
+# the displacement heads, second version (eval_refitq/spixbits/displacement.py and displacement_heads.py; today's tracks
+# of a SmartPixels detector scenario): from the models in heads/displacement_v2/<detector scenario>/<window>/
+DISP_FIELDS = ["disp_lo", "disp_med", "disp_hi", "disp_p1", "disp_p2", "disp_p3", "disp_p4"]
+DISP_FLOOR_CM = 0.01                                    # the radii reach the tagger as ln(max(r, floor))
 SHIFT_FIELDS = ["rInv", "tanL", "z0", "d0", "cov_d0_d0", "cov_z0_z0", "spixNAcceptedHits"]
 PAR = ("rInv", "phi", "tanL", "z0", "d0")
 MISSING = -999.0
 _CACHE = {}
 
 
-def helper():
-    """spixbits_apply, the parametrization's reference helper: imported from this code tree (eval_refitq/spixbits; a lane
-    job's frozen copy may import nothing from outside it) and required to be the very file shipped with the
-    parametrization."""
-    if "SA" not in _CACHE:
-        import hashlib
+def _sha(p):
+    import hashlib
+
+    return hashlib.sha256(open(p, "rb").read()).hexdigest()
+
+
+def shipped(module):
+    """A module of eval_refitq/spixbits that is shipped with the parametrization (spixbits_apply: its reference helper;
+    displacement: the displacement heads' definitions): imported from this code tree (a lane job's frozen copy may
+    import nothing from outside it) and required to be the very file shipped."""
+    if module not in _CACHE:
+        import importlib
 
         here = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "spixbits")
-        sha = lambda p: hashlib.sha256(open(p, "rb").read()).hexdigest()
-        if sha(os.path.join(here, "spixbits_apply.py")) != sha(os.path.join(PARAM_DIR, "spixbits_apply.py")):
-            raise RuntimeError(f"spixbits_apply.py in the code tree differs from the one shipped in {PARAM_DIR}")
-        sys.path.insert(0, here)
-        import spixbits_apply as SA
+        if _sha(os.path.join(here, f"{module}.py")) != _sha(os.path.join(PARAM_DIR, f"{module}.py")):
+            raise RuntimeError(f"{module}.py in the code tree differs from the one shipped in {PARAM_DIR}")
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        _CACHE[module] = importlib.import_module(module)
+    return _CACHE[module]
 
-        _CACHE["SA"] = SA
-    return _CACHE["SA"]
+
+def helper():
+    return shipped("spixbits_apply")
 
 
 def base_heads(mask):
@@ -113,16 +123,25 @@ def _xgb():
     return xgboost
 
 
-def disp_models(mask, window):
+def disp_dir(mask, window):
+    return os.path.join(PARAM_DIR, "heads", "displacement_v2", mask, window)
+
+
+def disp_model(mask, window):
+    """(the class model, the convention inside a class) of one window."""
     key = ("disp", mask, window)
     if key not in _CACHE:
-        out = []
-        for kind in ("band", "radius"):
-            b = _xgb().Booster()
-            b.load_model(os.path.join(PARAM_DIR, "heads", "displacement", mask, DISP_VARIANT, window, f"{kind}.json"))
-            out.append(b)
-        _CACHE[key] = tuple(out)
+        b = _xgb().Booster()
+        b.load_model(os.path.join(disp_dir(mask, window), "classes.json"))
+        shape = np.array(json.load(open(os.path.join(disp_dir(mask, window), "shape.json")))["position_quantiles_by_class"])
+        _CACHE[key] = (b, shape)
     return _CACHE[key]
+
+
+def disp_fingerprint(mask):
+    """Identifies the displacement models and definitions a jet cache was built with."""
+    files = [os.path.join(disp_dir(mask, w), f) for w in ("prompt", "displaced") for f in ("classes.json", "shape.json")]
+    return _sha(os.path.join(PARAM_DIR, "displacement.py"))[:8] + "".join(_sha(f)[:4] for f in files)
 
 
 def matrix(T, coll):
@@ -199,7 +218,7 @@ class TrackOverride:
         self.quant = C.QUANT if quant is None else quant
         self.headset = C.HEADSET if headset is None else headset
         self.shift = bool(self.quant) and not self.base_only
-        self.disp = "trackdisp" in C.GROUPS_ALL            # today's tracks on the prompt collection
+        self.disp = any(g in C.groups_for(mask) for g in C.DISP_GROUPS)       # today's tracks, SmartPixels detector scenarios
         self.fields = HEAD_FIELDS + (SHIFT_FIELDS if self.shift else []) + (DISP_FIELDS if self.disp else [])
 
     def columns(self, files, counts, max_events=None):
@@ -210,15 +229,17 @@ class TrackOverride:
         keys = t.keys()
         ot, sp = C.OT_TABLE, C.TRACK_TABLE
         extra = [f"{ot}_{c}" for c in ("rInv", "phi")] + ["run", "luminosityBlock", "event"]
-        cov_d0 = f"{sp}_cov_d0_d0" if f"{sp}_cov_d0_d0" in keys else f"{ot}_cov_d0_d0"      # as displacement_heads.extra
         if self.disp:
-            extra.append(cov_d0)
+            D = shipped("displacement")
+            hit = D.hit_table(sp)
+            D.refuse_truth_columns(t, hit)
+            hit_cols = [f"{hit}_{c}" for c in D.HIT_COLUMNS + ["layer", "trackIdx"]]
         if self.shift:                                   # the OT track's particle: the parametrization's cell variable
             extra += [f"{ot}_tp_{c}" for c in ("pt", "tanL", "phi0", "z0", "d0", "charge")]
         if not self.base_only:
             extra += [f"{sp}_{c}" for c in ("rInv", "phi", "spixRefitPerformed", *(f"cov_{p}_{p}" for p in PAR))]
         br = list(dict.fromkeys(tm.nano_branches(keys, C.FAMILY, "", False, base_only=self.base_only) + extra))
-        A = t.arrays(br, entry_stop=max_events)
+        A = t.arrays(br + (hit_cols if self.disp else []), entry_stop=max_events)
         T, ntrk = tm.tracks_from_batch(A, C.FAMILY, "", False, self.base_only)
         if not np.array_equal(ntrk, counts):
             raise RuntimeError(f"{files[0]}: the override's tracks are not the track table's")
@@ -259,19 +280,22 @@ class TrackOverride:
                        cov_d0_d0=res["cov_diag"][:, 4], cov_z0_z0=res["cov_diag"][:, 3],
                        spixNAcceptedHits=res["inputs"][:, names.index("spixNAcceptedHits")])
         if self.disp:
-            d0 = np.abs(T["b_d0"] if self.base_only else a[:, 4])
-            Xd = X if DISP_VARIANT == "heads" else np.column_stack(
-                [X, d0, d0 / np.maximum(np.sqrt(np.abs(flat(cov_d0))), 1e-6)]).astype(np.float32)
-            windows = {"all": np.ones(len(X), bool)} if self.base_only else {"prompt": d0 <= 0.02, "displaced": d0 > 0.02}
-            P, lnr = np.zeros((len(X), 5)), np.zeros(len(X))
-            for wname, w in windows.items():
+            d0 = np.abs(a[:, 4])
+            first = np.repeat(np.cumsum(ntrk) - ntrk, ak.to_numpy(ak.num(A[f"{hit}_layer"])))
+            slots, radii = D.slot_inputs(self.mask, T["r_tanL"], T["r_z0"], first + flat(f"{hit}_trackIdx").astype(np.int64),
+                                         flat(f"{hit}_layer").astype(np.int64), {c: flat(f"{hit}_{c}") for c in D.HIT_COLUMNS})
+            Xd = D.assemble(X, d0, np.sqrt(np.abs(flat(f"{sp}_cov_d0_d0"))), slots)
+            P, Q = np.zeros((len(X), 5)), np.zeros((len(X), len(D.QUANTILES)))       # P(class 4) stays 0 with three active letters
+            for wname, w in (("prompt", d0 <= tm.D0_SPLIT), ("displaced", d0 > tm.D0_SPLIT)):
                 if w.any():
-                    band, radius = disp_models(self.mask, wname)
-                    dm = _xgb().DMatrix(Xd[w])
-                    P[w], lnr[w] = band.predict(dm), radius.predict(dm)
+                    model, shape = disp_model(self.mask, wname)
+                    p = model.predict(_xgb().DMatrix(Xd[w]))
+                    P[w, :p.shape[1]] = p
+                    Q[w] = D.radius_range(p, radii[w], self.mask, shape)
+            for i, name in enumerate(("lo", "med", "hi")):
+                out[f"disp_{name}"] = np.log(np.maximum(Q[:, i], DISP_FLOOR_CM))
             for k in range(4):
                 out[f"disp_p{k + 1}"] = P[:, k + 1:].sum(1)
-            out["disp_lnr"] = lnr
         out["head_clean"] = sig(M[:, 0])
         for i, h in enumerate(HEAD_FIELDS[1:], start=1):
             out[h] = M[:, i]

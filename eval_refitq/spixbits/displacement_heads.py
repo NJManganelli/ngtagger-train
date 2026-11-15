@@ -19,6 +19,8 @@ trajectory (its true tanL and z0): truth is the label only. A track without a pa
 of the training and of the figures (fakes stay with the "clean" head); at application it gets outputs like any track.
 Inputs (displacement.assemble): the 38 inputs of the track-quality heads, the fitted |d0| and |d0| / sigma(d0), and
 the per-surface inputs of displacement.slot_inputs from the refit-hit table (no truth column: refuse_truth_columns).
+Control ("without the per-surface inputs"): the same classes from the 38 inputs + |d0| and |d0| / sigma only, to tell
+what the per-surface inputs add from what the new classes change (classes_without_surfaces.json; not used downstream).
 Comparison: the first version (five classes by fixed radius 2.85 / 5.95 / 10.3 / 14.5 cm, the 38 inputs + |d0| and
 |d0| / sigma; its stored models under models/<detector scenario>/d0/, trained by this file at commit 46af795) and a
 cut on |d0| or |d0| / sigma, on the same test tracks.
@@ -52,6 +54,7 @@ V1_EDGES = np.array([2.85, 5.95, 10.3, 14.5])             # cm: the first versio
 R_PROMPT = 1.0                                            # cm: "produced inside 1 cm"
 XGB = {"tree_method": "hist", "max_depth": 3, "eta": 0.1, "nthread": 4}
 ROUNDS = 100
+MODELS = {"classes": 2, "classes_without_surfaces": 1}     # model name: the input version (1 = without the per-surface inputs)
 M_PI, M_K0S = 0.13957, 0.497611
 
 
@@ -183,13 +186,14 @@ def train(a):
     for mask in a.masks:
         T = load(mask)
         ok, y, n_class = T["x_class"] >= 0, T["x_class"], D.n_edges(mask) + 1
-        X = inputs(T, 2)
         for wname, w in tm.windows(T, "refit").items():
-            key = f"{mask}/{wname}"
+          for name, version in MODELS.items():
+            key = f"{mask}/{wname}" + ("" if version == 2 else "/without_surfaces")
             d = model_dir(mask, wname)
             d.mkdir(parents=True, exist_ok=True)
-            if key in rec and (d / "classes.json").exists() and (d / "shape.json").exists():
+            if key in rec and (d / f"{name}.json").exists() and (d / "shape.json").exists():
                 continue
+            X = inputs(T, version)
             tr = np.flatnonzero(w & ok & ~T["_test"] & ~T["_val"] & ~T["_left_out"])
             va = np.flatnonzero(w & ok & T["_val"] & ~T["_left_out"])
             t0, best, losses = time.time(), None, {}
@@ -198,7 +202,7 @@ def train(a):
                 losses[t] = loss if np.isfinite(loss) else None
                 if np.isfinite(loss) and (best is None or loss < best[1]):
                     best = (t, loss, b)
-            best[2].save_model(str(d / "classes.json"))
+            best[2].save_model(str(d / f"{name}.json"))
             shape = D.fit_shape(T["x_r_prod"][tr], y[tr], T["x_radii"][tr], mask)      # the convention inside a class: training tracks
             json.dump({"what": "displacement.fit_shape on the training tracks of this window", "r_max_cm": D.R_MAX,
                        "grid": D.SHAPE_GRID.tolist(), "position_quantiles_by_class": shape.tolist()}, open(d / "shape.json", "w"))
@@ -210,15 +214,15 @@ def train(a):
             print(f"{C.COLLECTION} {key}: best trial {best[0]} loss {best[1]:.4f} (sd {np.std(good):.4f}) {time.time() - t0:.0f} s", flush=True)
 
 
-def predict(mask, T):
+def predict(mask, T, name="classes"):
     """Second version: (P (n, N + 1) class probabilities, Q (n, 3) low / median / high radius [cm]), routed by window."""
     import xgboost as xgb
     from ngtagger.train import trackmva as tm
-    X = inputs(T, 2)
+    X = inputs(T, MODELS[name])
     P, Q = np.full((len(X), D.n_edges(mask) + 1), np.nan), np.full((len(X), len(D.QUANTILES)), np.nan)
     for wname, w in tm.windows(T, "refit").items():
         b = xgb.Booster()
-        b.load_model(str(model_dir(mask, wname) / "classes.json"))
+        b.load_model(str(model_dir(mask, wname) / f"{name}.json"))
         P[w] = b.predict(xgb.DMatrix(X[w]))
         shape = np.array(json.load(open(model_dir(mask, wname) / "shape.json"))["position_quantiles_by_class"])
         Q[w] = D.radius_range(P[w], T["x_radii"][w], mask, shape)
@@ -312,6 +316,19 @@ def calibration(T, P, Q, te):
     return out
 
 
+def assignment(P, cls, m, n=200, seed=2):
+    """How well the class is assigned on the tracks m: the log loss (bootstrap sd over tracks), and, given that the track is
+    displaced (the probabilities of classes >= 1 renormalised), how often the most probable class is the true one."""
+    i = np.flatnonzero(m)
+    ll = -np.log(np.clip(P[i, cls[i]], 1e-12, 1))
+    rng = np.random.default_rng(seed)
+    out = {"n": int(len(i)), "log_loss": float(ll.mean()), "log_loss_sd": float(np.std([ll[rng.integers(0, len(i), len(i))].mean() for _ in range(n)]))}
+    d = i[cls[i] >= 1]
+    if len(d):
+        out["right_class_given_displaced"] = float(np.mean(P[d, 1:].argmax(1) + 1 == cls[d]))
+    return out
+
+
 def report(a):
     res = {}
     for mask in a.masks:
@@ -322,21 +339,26 @@ def report(a):
         d0 = np.abs(T["r_d0"])
         P, Q = predict(mask, T)
         P1 = predict_v1(mask, T)
+        P0, _ = predict(mask, T, "classes_without_surfaces")
         layers = [k for k in range(4) if mask[k] == "A"]                # the k-th active barrel layer
         bkg = te & (r < R_PROMPT)
         conf = np.zeros((N + 1, N + 1), int)
         np.add.at(conf, (cls[te], P[te].argmax(1)), 1)
         e = {"n_test_with_particle": int(te.sum()), "n_test_inside_1cm": int(bkg.sum()), "confusion_true_class_by_predicted_class": conf.tolist(),
-             "calibration": calibration(T, P, Q, te), "separation_from_inside_1cm": {}}
+             "calibration": calibration(T, P, Q, te), "separation_from_inside_1cm": {},
+             "class_assignment": {who: {name: assignment(p, cls, m) for name, p in (("second version", P), ("without the per-surface inputs", P0))}
+                                  for who, m in (("all", te), ("true class >= 1", te & (cls >= 1)), ("K0S pions, true class >= 1", te & (cls >= 1) & T["x_k0s"]))}}
         for k in range(1, N + 1):
             scores = {"|d0|": d0, "|d0|/sigma": d0 / np.maximum(T["x_sig_d0"], 1e-6),
-                      "first version": P1[:, layers[k - 1] + 1:].sum(1), "second version": P[:, k:].sum(1)}
+                      "first version": P1[:, layers[k - 1] + 1:].sum(1), "second version": P[:, k:].sum(1),
+                      "without the per-surface inputs": P0[:, k:].sum(1)}
             for label, signal in ((f"beyond the {k}-th crossed active surface (class >= {k})", cls >= k),
                                   (f"beyond barrel layer {layers[k - 1] + 1} (r >= {V1_EDGES[layers[k - 1]]} cm)", r >= V1_EDGES[layers[k - 1]])):
                 for who, sel in (("all particles", np.ones(len(r), bool)), ("K0S pions", T["x_k0s"])):
                     sig = te & signal & sel
                     x = {s: roc_points(sc, sig, bkg) for s, sc in scores.items()}
                     x["second - first, eff@0.01"] = boot_diff(scores["second version"], scores["first version"], sig, bkg)
+                    x["second - without the per-surface inputs, eff@0.01"] = boot_diff(scores["second version"], scores["without the per-surface inputs"], sig, bkg)
                     e["separation_from_inside_1cm"][f"{label}, {who}"] = x
         res[mask] = e
         print(C.COLLECTION, mask, "done", flush=True)

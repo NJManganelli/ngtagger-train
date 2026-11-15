@@ -169,9 +169,9 @@ def train_mva(mask, fileset, splits):
 
 # ---------------------------------------------------------------- 3. jets
 def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask, groups=None, jets_dir=None, models=None):
-    """`groups` (default common.GROUPS_ALL), `jets_dir` (default the main caches) and `models` (extra
+    """`groups` (default common.groups_for(mask)), `jets_dir` (default the main caches) and `models` (extra
     load_jets model arguments, e.g. trackjoint_model) serve the joint-head caches (joint_heads.py jets)."""
-    groups = groups or C.GROUPS_ALL
+    groups = groups or C.groups_for(mask)
     out = os.path.join(jets_dir or C.cache_dir("jets"), C.tag(sample, mask, n) + ".npz")
     if os.path.exists(out):
         d = np.load(out)
@@ -230,6 +230,10 @@ def main_slim(a):
         raise FileNotFoundError(f"no usable slim-tier files for {a.mask}")
     sha = "slimtier:stored-heads:v1" if C.COLLECTION == "extended" else \
         f"slimtier:prompt:{C.QUANT or 'implemented_now'}:{C.HEADSET}-heads:candidates-{C.CANDIDATES}:v1"
+    if any(g in C.groups_for(a.mask) for g in C.DISP_GROUPS):         # a cache with displacement heads names their models
+        import quant_shift
+
+        sha += ":displacement-" + quant_shift.disp_fingerprint(a.mask)
     for n, p in fs:
         t = uproot.open(p)["Events"]
         tm.refuse_truth_inputs(t, C.FAMILY, "", base_only(a.mask))

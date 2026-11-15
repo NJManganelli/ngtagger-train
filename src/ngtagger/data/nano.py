@@ -50,9 +50,11 @@ HEAD_NAMES = ["clean", "d0", "z0", "tanl", "rinv", "phi"]
 HEADS_OT_TABLE = "L1TExtTrack"
 HEADS_SENTINEL = -1.0
 TRACKRES_OPTIONAL = {"spixNAcceptedHits": "trk_nITHits"}
-# "trackdisp" group: the displacement heads' outputs per track (band probabilities in [0, 1]; ln(radius / cm) >= ln 0.1)
-DISP_NAMES = ["p1", "p2", "p3", "p4", "lnr"]
-DISP_SENTINEL = {"p1": -1.0, "p2": -1.0, "p3": -1.0, "p4": -1.0, "lnr": -5.0}
+# "trackdisp" / "trackdispp" groups: the displacement heads' outputs per track (ln(radius / cm) >= ln 0.01 of the range's
+# low, median and high points; probabilities in [0, 1]); a constituent without a track gets the sentinel
+DISP_NAMES = ["lo", "med", "hi", "p1", "p2", "p3", "p4"]
+DISP_SENTINEL = {"lo": -6.0, "med": -6.0, "hi": -6.0, "p1": -1.0, "p2": -1.0, "p3": -1.0, "p4": -1.0}
+DISP_GROUPS = ("trackdisp", "trackdispp")
 CLUSTER_BRANCHES = ["hOverE", "sigmaRRTot", "zBarycenter", "eMax", "sigmaZZ"]
 JET_BRANCHES = ["pt", "eta", "phi", "et"]
 GEN_BRANCHES = {
@@ -233,10 +235,10 @@ def load_jets(
     """
     groups = feature_groups or ["baseline"]
     need_trk_gather = any(g in groups for g in ("track", "trkquality", "refitbdt", "vertexdxy_pv",
-                                                "trackmva", "trackres", "trackjoint", "trackheads", "trackdisp"))
-    if "trackdisp" in groups and not (track_override is not None
+                                                "trackmva", "trackres", "trackjoint", "trackheads", *DISP_GROUPS))
+    if any(g in groups for g in DISP_GROUPS) and not (track_override is not None
                                       and all(f"disp_{c}" in track_override.fields for c in DISP_NAMES)):
-        raise ValueError("trackdisp group: the displacement heads are supplied per track by track_override")
+        raise ValueError("trackdisp groups: the displacement heads are supplied per track by track_override")
     extra_trk = list(VTX_TRACK_BRANCHES) if "vertexdxy" in groups else []
     trackres_present = []
     if "trackres" in groups:
@@ -350,7 +352,7 @@ def load_jets(
                    for h in HEAD_NAMES}
         for h, v in raw.items():                     # stored as the outputs: P(clean) and log sigma_hat
             const[f"trkhead_{h}"] = ak.values_astype(ak.fill_none(ak.nan_to_none(v), HEADS_SENTINEL), np.float32)
-    if "trackdisp" in groups:                        # constituents without a track get the sentinels
+    if any(g in groups for g in DISP_GROUPS):        # constituents without a track get the sentinels
         tracks = events[track_table]
         for c in DISP_NAMES:
             const[f"trkdisp_{c}"] = ak.values_astype(crossref_gather(cands, tracks, nested_idx, link_idx_field, f"disp_{c}",

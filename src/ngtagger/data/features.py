@@ -55,9 +55,12 @@ FEATURE_GROUPS = {
     # the CMSSW-computed reference track-quality heads stored in the slim tagger tier (<track table>_head_*): P(clean)
     # and log sigma_hat of d0, z0, tanL, 1/R, phi (heads_cmssw/SPEC.md); -1 for no track
     "trackheads": ["trkhead_clean", "trkhead_d0", "trkhead_z0", "trkhead_tanl", "trkhead_rinv", "trkhead_phi"],
-    # per-track displacement heads (eval_refitq/spixbits/displacement_heads.py), supplied per track through
-    # load_jets(track_override=...): P(production radius >= 2.85, 5.95, 10.3, 14.5 cm) and ln(radius / cm)
-    "trackdisp": ["trkdisp_p1", "trkdisp_p2", "trkdisp_p3", "trkdisp_p4", "trkdisp_lnr"],
+    # per-track displacement heads, second version (eval_refitq/spixbits/displacement.py), supplied per track through
+    # load_jets(track_override=...). "trackdisp": the production-radius range, ln(max(r, 0.01 cm)) of its low (16 %),
+    # median and high (84 %) points; "trackdispp": P(class >= k), k = 1..4 (class = crossed active surfaces inside the
+    # production radius; P(class >= 4) is 0 in a detector scenario with three active letters)
+    "trackdisp": ["trkdisp_lo", "trkdisp_med", "trkdisp_hi"],
+    "trackdispp": ["trkdisp_p1", "trkdisp_p2", "trkdisp_p3", "trkdisp_p4"],
 }
 
 

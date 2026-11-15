@@ -113,9 +113,9 @@ if C.TIER == "slim":      # the third input set reads the stored CMSSW heads (tr
 if C.COLLECTION == "prompt":   # no stored heads there: the heads are computed off-line (quant_shift.py); and a fourth input set
     STEPS = [(lab.replace("stored track heads", "track-quality heads").replace("stored OT track heads", "OT track-quality heads"),
               a, b) for lab, a, b in STEPS]
-    STEPS.insert(3, ("L4-L4'  + displacement heads: SmartPixels - OT", ("trackdisp", "M"), ("trackdisp", "IIII")))
-    STEPS += [("L4-L3  + displacement heads", ("trackdisp", "M"), ("trackmva", "M")),
-              ("L4'-L3'  + displacement heads, OT tracks", ("trackdisp", "IIII"), ("trackmva", "IIII"))]
+    STEPS += [("L4-L3  + displacement heads: radius range", ("trackrange", "M"), ("trackmva", "M")),      # no IIII counterpart
+              ("L4p-L3  + displacement heads: radius range and class probabilities", ("trackrangep", "M"), ("trackmva", "M")),
+              ("L4p-L4  + class probabilities beside the radius range", ("trackrangep", "M"), ("trackrange", "M"))]
 MAIN_STEPS = [x for x in STEPS if x[1][0] == x[2][0] and x[1][1] == "M" and x[2][1] == "IIII"]   # the with-vs-without-SmartPixels steps
 # jointly trained track-quality heads (joint_heads.py): reference (uncoupled), A (outputs apart), B (errors apart)
 JOINT_STEPS = [
