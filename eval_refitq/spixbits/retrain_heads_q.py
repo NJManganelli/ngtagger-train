@@ -122,7 +122,7 @@ def load_tracks(root, scen, files, name):
     for f in files:
         ver = XS.VERSION
         if VERSION == "p2x":                 # a further file: the scan (p2x or p2y) that ran this quantization scenario on it
-            ver = "p2" if f not in P2X_FILES else next(v for v in ("p2x", "p2y") if name in XS.SETS[v])
+            ver = "p2" if f not in P2X_FILES else next(v for v in ("p2x", *XS.ENLARGED_LATER) if name in XS.SETS[v])
         r = Path(XS.ROOTS[ver]) if VERSION == "p2x" else root
         wait_for(r / "truth" / f"{scen}_f{f:02d}_truth.npz")
         T.append(dict(np.load(r / "truth" / f"{scen}_f{f:02d}_truth.npz")))
@@ -267,7 +267,7 @@ def one(a):
     XS.VERSION = VERSION
     root = XS.out_root()
     S = dict(np.load(ROOT / "event_split.npz"))
-    default = XS.SETS[VERSION] + (XS.SETS["p2y"] if VERSION == "p2x" else [])
+    default = XS.SETS[VERSION] + ([x for v in XS.ENLARGED_LATER for x in XS.SETS[v]] if VERSION == "p2x" else [])
     names = [REFERENCE] + [x for x in (a.allocs or default) if x not in LEFT_OUT and x != REFERENCE]
     for scen in a.scen:
         out = ROOT / "trials" / scen

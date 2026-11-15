@@ -59,14 +59,17 @@ P2X_FILES = (1, 2, 3, 101, 102, 103, 104, 105, 107, 108)
 # collection, with the PER-SURFACE record of every scenario (what each crossed surface did: the displacement heads'
 # per-surface inputs) and the particle's production radius and K0S flag
 SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"], "p2x": FIRST_PASS,
-        "p2y": ["alloc_5533"], "p3": FIRST_PASS + ["alloc_5533"], "x3": FIRST_PASS + ["alloc_5533"]}
+        "p2y": ["alloc_5533"], "p2z": ["up_y_7b"], "p3": FIRST_PASS + ["alloc_5533"], "x3": FIRST_PASS + ["alloc_5533"]}
+ENLARGED_LATER = ("p2y", "p2z")       # scenarios added to the enlarged sample after p2x: 5/5/3/3; 4/7/4/4 (physicist, 2026-11-15)
 ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2",    # v1: the internal disk (ST.LOCAL / "ext")
          "p2": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2",
          "p2x": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2x",
          "p2y": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2y",
+         "p2z": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2z",
          "p3": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v3",
          "x3": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v3"}
-COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt", "p2x": "prompt", "p2y": "prompt", "p3": "prompt", "x3": "extended"}
+COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt", "p2x": "prompt", "p2y": "prompt", "p2z": "prompt", "p3": "prompt",
+               "x3": "extended"}
 SURFACE_VERSIONS = ("p3", "x3")
 TP_EXTRA = ("pdgId", "vz", "phi")          # beside the replay's tracking-particle columns, for the K0S flag
 
@@ -373,7 +376,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     VERSION = a.version
     if a.files is None:
-        a.files = list(P2X_FILES if VERSION in ("p2x", "p2y") else ST.SCAN_FILES) + (list(P2X_FILES) if VERSION in SURFACE_VERSIONS else [])
+        a.files = list(P2X_FILES if VERSION in ("p2x", *ENLARGED_LATER) else ST.SCAN_FILES) + (list(P2X_FILES) if VERSION in SURFACE_VERSIONS else [])
     os.environ["SPIXBITS_EXT_VERSION"] = a.version              # the workers inherit it
     return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd}[a.job](a)
 

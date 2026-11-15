@@ -16,12 +16,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 STEPS = ("scan", "heads", "eval", "ship")
 STEPS_5533 = ("scan5533", "heads5533", "eval5533", "closure5533", "ship5533")
+STEPS_4744 = ("scan4744", "heads4744", "eval4744", "closure4744", "ship4744")      # 4/7/4/4 (up_y_7b), the same way
 
 
 def main():
     import study as ST
     ap = argparse.ArgumentParser()
-    ap.add_argument("--steps", nargs="+", default=list(STEPS), choices=STEPS + STEPS_5533)
+    ap.add_argument("--steps", nargs="+", default=list(STEPS), choices=STEPS + STEPS_5533 + STEPS_4744)
+    ap.add_argument("--workers", type=int, default=3)
     a = ap.parse_args()
     env = dict(os.environ, SPIXBITS_Q_VERSION="p2x")
     mark = ST.LOCAL / "checks" / "prompt_enlarged"
@@ -34,7 +36,10 @@ def main():
             # (checkpointed) heads and evaluation, which pick the new quantization scenario up; then its classifier closure
             "scan5533": ["ext_scan.py", "supervise", "--version", "p2y", "--workers", "3"], "heads5533": ["retrain_heads_q.py", "run"],
             "eval5533": ["heads_q_eval.py", "run"],
-            "closure5533": ["param_closure_q.py", "--parallel", "--heads", "enlarged", "--allocs", "alloc_5533"]}
+            "closure5533": ["param_closure_q.py", "--parallel", "--heads", "enlarged", "--allocs", "alloc_5533"],
+            "scan4744": ["ext_scan.py", "supervise", "--version", "p2z", "--workers", str(a.workers)], "heads4744": ["retrain_heads_q.py", "run"],
+            "eval4744": ["heads_q_eval.py", "run"],
+            "closure4744": ["param_closure_q.py", "--parallel", "--heads", "enlarged", "--allocs", "up_y_7b"]}
     for step in a.steps:
         if (mark / f"{step}.done").exists():
             print(time.strftime("[%H:%M:%S]"), "skip", step, flush=True)
@@ -50,7 +55,7 @@ def main():
                 print("event_split.npz is missing: run `SPIXBITS_Q_VERSION=p2x python retrain_heads_q.py split` first", flush=True)
                 return 2
             code = subprocess.run([sys.executable, str(HERE / cmds[step][0]), *cmds[step][1:]],
-                                  env=dict(env, SPIXBITS_Q_VERSION="p2") if step == "closure5533" else env).returncode
+                                  env=dict(env, SPIXBITS_Q_VERSION="p2") if step.startswith("closure") else env).returncode
         print(time.strftime("[%H:%M:%S]"), "end", step, "exit", code, flush=True)
         if code != 0:
             return code
