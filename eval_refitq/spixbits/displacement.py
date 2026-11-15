@@ -22,6 +22,9 @@ crossing up to R_MAX). The class probabilities are turned into the 16 %, 50 % an
 "median", "high") with a stated convention for where inside a class the radius sits: the distribution of the
 fractional position (r - r_k) / (r_(k+1) - r_k) of the training tracks' true radii, per class (a table of 101
 quantiles shipped with the models; a class with fewer than 50 training tracks is taken flat).
+PER-SURFACE INPUTS, two lists (SLOT_SETS): "full" = what the CMSSW refit-hit table gives (signed residuals in cm, signed
+pulls in x and y and of both angles); "magnitudes" = what the Python replay of a quantization scenario also gives (the
+absolute pulls only), used where heads are compared across quantization scenarios.
 """
 from __future__ import annotations
 
@@ -40,9 +43,54 @@ SHAPE_MIN_TRACKS = 50
 
 # per crossed surface, from the refit-hit table (none is a truth column: refuse_truth_columns)
 HIT_COLUMNS = ["hitAccepted", "projResX", "projResY", "pullX", "pullY", "pullAlpha", "pullBeta", "windowMult"]
-SLOT_NAMES = ["radius", "is_disc", "accepted", "res_x", "res_y", "pull_x", "pull_y", "pull_alpha", "pull_beta", "window_mult"]
+SLOT_SETS = {"full": ["res_x", "res_y", "pull_x", "pull_y", "pull_alpha", "pull_beta"],
+             "magnitudes": ["abs_pull_x", "abs_pull_y", "abs_pull_alpha", "abs_pull_beta"]}
 SUMMARY_NAMES = ["n_crossed", "first_without_hit", "crossed_before_first_hit", "radius_first_hit"]
-INPUT_NAMES = [f"s{j + 1}_{n}" for j in range(N_SLOTS) for n in SLOT_NAMES] + SUMMARY_NAMES
+M_PI, M_K0S = 0.13957, 0.497611
+
+
+def slot_names(kind: str = "full") -> list[str]:
+    return ["radius", "is_disc", "accepted"] + SLOT_SETS[kind] + ["window_mult"]
+
+
+def input_names(kind: str = "full") -> list[str]:
+    return [f"s{j + 1}_{n}" for j in range(N_SLOTS) for n in slot_names(kind)] + SUMMARY_NAMES
+
+
+def hits_from_table(cols: dict, kind: str = "full") -> dict:
+    """The per-hit quantities of slot_inputs from the refit-hit table's columns {column of HIT_COLUMNS: flat array}
+    (-999 = none)."""
+    v = lambda c: np.where(np.asarray(cols[c], np.float64) <= -998, np.nan, np.asarray(cols[c], np.float64))
+    out = {"accepted": np.asarray(cols["hitAccepted"], np.float64), "window_mult": v("windowMult")}
+    if kind == "full":
+        out.update(res_x=v("projResX"), res_y=v("projResY"), pull_x=v("pullX"), pull_y=v("pullY"), pull_alpha=v("pullAlpha"), pull_beta=v("pullBeta"))
+    else:
+        out.update({f"abs_pull_{n}": np.abs(v(f"pull{n.capitalize()}")) for n in ("x", "y", "alpha", "beta")})
+    return out
+
+
+def k0s_pions(pdg, evt, bx, vx, vy, vz, pt, eta, phi):
+    """Per tracking particle of ONE event: it is a pion of a K0S -> pi+ pi- (a pi+ and a pi- with a bit-identical
+    production vertex and nothing else charged-pion at it, invariant mass within 1 MeV of the K0S mass)."""
+    pdg = np.asarray(pdg)
+    is_k = np.zeros(len(pdg), bool)
+    pi = np.flatnonzero(np.abs(pdg) == 211)
+    if len(pi) < 2:
+        return is_k
+    key = np.stack([np.asarray(x, np.float64)[pi] for x in (evt, bx, vx, vy, vz)], 1)
+    _, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    inv = inv.ravel()
+    two = np.flatnonzero(cnt[inv] == 2)
+    if len(two):
+        o = two[np.argsort(inv[two], kind="stable")]
+        a, b = pi[o[0::2]], pi[o[1::2]]
+        pt, eta, phi = (np.asarray(x, np.float64) for x in (pt, eta, phi))
+        p4 = lambda i: (pt[i] * np.cos(phi[i]), pt[i] * np.sin(phi[i]), pt[i] * np.sinh(eta[i]), np.sqrt((pt[i] * np.cosh(eta[i])) ** 2 + M_PI ** 2))
+        xa, xb = p4(a), p4(b)
+        m = np.sqrt(np.maximum((xa[3] + xb[3]) ** 2 - sum((xa[k] + xb[k]) ** 2 for k in range(3)), 0.0))
+        ok = (pdg[a] * pdg[b] < 0) & (np.abs(m - M_K0S) < 1e-3)
+        is_k[a[ok]] = is_k[b[ok]] = True
+    return is_k
 
 
 def n_edges(mask: str) -> int:
@@ -86,10 +134,11 @@ def true_class(r_prod, tanl, z0, mask: str):
     return np.minimum((radii < np.asarray(r_prod, np.float64)[:, None]).sum(1), n_edges(mask))
 
 
-def slot_inputs(mask: str, tanl, z0, hit_track, hit_layer, hits: dict):
-    """The per-surface inputs (n, len(INPUT_NAMES)) float32, NaN = absent, and the track's crossing radii (n, N_SLOTS).
-    tanl, z0: the track's (refit) parameters; hit_track: the flat index of each refit-hit entry's track; hit_layer: its
-    surface code; hits: {column of HIT_COLUMNS: flat array}. Slot j is the j-th crossed active surface (inside out)."""
+def slot_inputs(mask: str, tanl, z0, hit_track, hit_layer, hits: dict, kind: str = "full"):
+    """The per-surface inputs (n, len(input_names(kind))) float32, NaN = absent, and the track's crossing radii
+    (n, N_SLOTS). tanl, z0: the track's (refit) parameters; hit_track: the flat index of each per-surface entry's track;
+    hit_layer: its surface code; hits: {"accepted", "window_mult", the names of SLOT_SETS[kind]: flat array, NaN = none}
+    (hits_from_table). Slot j is the j-th crossed active surface (inside out)."""
     n = len(tanl)
     radii, codes, n_crossed = crossings(tanl, z0, mask)
     col = np.where(np.asarray(hit_layer) < 10, np.asarray(hit_layer, np.int64) - 1, np.asarray(hit_layer, np.int64) - 7)
@@ -99,14 +148,11 @@ def slot_inputs(mask: str, tanl, z0, hit_track, hit_layer, hits: dict):
     e = np.where(codes > 0, np.take_along_axis(entry, np.maximum(slot_col, 0), 1), -1)      # the slot's refit-hit entry
     exists, has = codes > 0, e >= 0
 
-    def take(c):
-        v = np.where(has, np.asarray(hits[c], np.float64)[np.maximum(e, 0)], np.nan)
-        return np.where(v <= -998, np.nan, v)
-
-    acc = np.where(exists, np.nan_to_num(take("hitAccepted")), np.nan)                        # crossed, no entry: no hit
+    take = lambda c: np.where(has, np.asarray(hits[c], np.float64)[np.maximum(e, 0)], np.nan)
+    acc = np.where(exists, np.nan_to_num(take("accepted")), np.nan)                           # crossed, no entry: no hit
     hit = acc > 0
     per = [radii, np.where(exists, (codes > 10).astype(np.float64), np.nan), acc] + [
-        np.where(hit, take(c), np.nan) for c in ("projResX", "projResY", "pullX", "pullY", "pullAlpha", "pullBeta")] + [take("windowMult")]
+        np.where(hit, take(c), np.nan) for c in SLOT_SETS[kind]] + [take("window_mult")]
     nc = np.minimum(n_crossed, N_SLOTS).astype(np.float64)
     j = np.arange(N_SLOTS)[None, :]
     first_miss = np.where(exists & ~hit, j, N_SLOTS).min(1)

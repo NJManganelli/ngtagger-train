@@ -283,7 +283,7 @@ class TrackOverride:
             d0 = np.abs(a[:, 4])
             first = np.repeat(np.cumsum(ntrk) - ntrk, ak.to_numpy(ak.num(A[f"{hit}_layer"])))
             slots, radii = D.slot_inputs(self.mask, T["r_tanL"], T["r_z0"], first + flat(f"{hit}_trackIdx").astype(np.int64),
-                                         flat(f"{hit}_layer").astype(np.int64), {c: flat(f"{hit}_{c}") for c in D.HIT_COLUMNS})
+                                         flat(f"{hit}_layer").astype(np.int64), D.hits_from_table({c: flat(f"{hit}_{c}") for c in D.HIT_COLUMNS}))
             Xd = D.assemble(X, d0, np.sqrt(np.abs(flat(f"{sp}_cov_d0_d0"))), slots)
             P, Q = np.zeros((len(X), 5)), np.zeros((len(X), len(D.QUANTILES)))       # P(class 4) stays 0 with three active letters
             for wname, w in (("prompt", d0 <= tm.D0_SPLIT), ("displaced", d0 > tm.D0_SPLIT)):

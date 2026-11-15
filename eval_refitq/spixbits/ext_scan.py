@@ -54,13 +54,21 @@ SHIPPED_V2 = (SHIPPED + [f"up_x_{b}b" for b in range(5, 10)] + ["up_x_float"] + 
 FIRST_PASS = ["implemented_now", "network_float", "alloc_4444", "alloc_6604", "alloc_6622"]
 P2X_FILES = (1, 2, 3, 101, 102, 103, 104, 105, 107, 108)
 # "p2y": 5/5/3/3 on the same further files (added to the first pass by the physicist after p2x had run)
+# "p3" / "x3" (physicist, 2026-11-14: displacement heads per quantization scenario): the first-pass quantization
+# scenarios with 5/5/3/3 on the enlarged sample (the five scan files and the further files), prompt / extended
+# collection, with the PER-SURFACE record of every scenario (what each crossed surface did: the displacement heads'
+# per-surface inputs) and the particle's production radius and K0S flag
 SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"], "p2x": FIRST_PASS,
-        "p2y": ["alloc_5533"]}
+        "p2y": ["alloc_5533"], "p3": FIRST_PASS + ["alloc_5533"], "x3": FIRST_PASS + ["alloc_5533"]}
 ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2",    # v1: the internal disk (ST.LOCAL / "ext")
          "p2": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2",
          "p2x": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2x",
-         "p2y": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2y"}
-COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt", "p2x": "prompt", "p2y": "prompt"}
+         "p2y": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2y",
+         "p3": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v3",
+         "x3": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v3"}
+COLLECTIONS = {"v1": "extended", "v2": "extended", "p2": "prompt", "p2x": "prompt", "p2y": "prompt", "p3": "prompt", "x3": "extended"}
+SURFACE_VERSIONS = ("p3", "x3")
+TP_EXTRA = ("pdgId", "vz", "phi")          # beside the replay's tracking-particle columns, for the K0S flag
 
 
 def input_path(scen, f):
@@ -134,9 +142,11 @@ def run_unit(S, reg, f, scen, arm_names, nev=None):
     specs = {a["name"]: a["spec"] for a in reg["arms"]}
     arms = {n: RS.build_arm(AR, cfg, n, specs[n]) for n in dict.fromkeys([BASE] + list(arm_names))}
     keys = AR.OP._keys(str(path))
+    per_surface = VERSION in SURFACE_VERSIONS
     br = list(dict.fromkeys(AR.branches(path) + HD.nano_branches(keys) + ["run", "luminosityBlock", "event",
                                                                          "L1TTrack_genuine", "L1TTrack_phi"]
-                            + AR.SPN.cluster_branches(keys, list(EM.EXTRA_CLUSTER_COLS), disc_scope="all")))
+                            + AR.SPN.cluster_branches(keys, list(EM.EXTRA_CLUSTER_COLS), disc_scope="all")
+                            + (AR.SPN.branch_names(keys, AR.SPN.TP_TABLE, list(TP_EXTRA)) if per_surface else [])))
     f32 = np.float32
     truth, rows = [], {n: [] for n in arm_names}
     for start, A in CM.iterate(path, br, chunk=10, nev=nev):
@@ -171,6 +181,14 @@ def run_unit(S, reg, f, scen, arm_names, nev=None):
             "tp_d0": gt("d0").astype(f32), "tp_z0": gt("z0").astype(f32), "tp_charge": np.nan_to_num(gt("charge")).astype(np.int8),
             "origin": tr["origin"].astype(np.int8), "disc_going": AR.disc_going(path_),
             "stored_cmssw_inputs": xs[:, 13:], "stored_cmssw_d0": Ts["r_d0"].astype(f32)})
+        if per_surface:
+            import displacement as DP
+            tpc = lambda c: ak.to_numpy(ak.flatten(A[f"{AR.SPN.TP_TABLE}_{c}"]))
+            ntp = ak.to_numpy(ak.num(A[f"{AR.SPN.TP_TABLE}_pt"]))
+            k0s = np.concatenate([DP.k0s_pions(*(x[lo:lo + k] for x in (tpc("pdgId"), TP["evt"], TP["bx"], TP["vx"], TP["vy"], tpc("vz"),
+                                                                         TP["pt"], TP["eta"], tpc("phi"))))
+                                  for lo, k in zip(np.cumsum(ntp) - ntp, ntp)]) if len(TP["pt"]) else np.zeros(0, bool)
+            truth[-1].update(tp_r_prod=np.hypot(gt("vx"), gt("vy")).astype(f32), tp_k0s=np.where(tp >= 0, k0s[np.maximum(tp, 0)], False))
         for nme in arm_names:
             spec = specs[nme]
             t_a = S.tools_for(tools, spec)
@@ -196,6 +214,11 @@ def run_unit(S, reg, f, scen, arm_names, nev=None):
                  "forced_a": Fa.astype(f32), "forced_cov_diag": FC.astype(f32), "forced_refit": frefit}
             if nme == BASE:
                 d["cov"] = out["C"][:, IU[0], IU[1]].astype(f32)
+            if per_surface:        # per visited surface: its code, hit accepted, |pull| in x, y and of the two angles (NaN: not applied), candidates in the window
+                c2 = out["rec"]["chi2"]
+                d.update(ps_surface=np.where(out["rec"]["visited"], out["rec"]["surface"], 0).astype(np.int8), ps_acc=acc,
+                         ps_pull=np.where(acc[:, :, None] & (c2 > 0), np.sqrt(np.maximum(c2, 0)), np.nan).astype(f32),
+                         ps_ncand=out["rec"]["ncand"].astype(np.int16))
             rows[nme].append(d)
     return CM.concat(truth), {k: CM.concat(v) for k, v in rows.items()}
 
@@ -345,11 +368,12 @@ def main(argv=None):
     ap.add_argument("--out", default="")
     ap.add_argument("--version", choices=tuple(SETS), default=VERSION, help="v1: the first extended scan (30 arms, random cap, "
                     "internal disk); v2: pT-ranked cap, 66 arms, outputs on the external disk; p2: as v2 without the "
-                    "whole-sensor scenario, on the PROMPT collection; p2x: the first-pass scenarios on the further files")
+                    "whole-sensor scenario, on the PROMPT collection; p2x: the first-pass scenarios on the further files; "
+                    "p3 / x3: the first-pass scenarios with the per-surface record, enlarged sample, prompt / extended")
     a = ap.parse_args(argv)
     VERSION = a.version
     if a.files is None:
-        a.files = list(P2X_FILES if VERSION in ("p2x", "p2y") else ST.SCAN_FILES)
+        a.files = list(P2X_FILES if VERSION in ("p2x", "p2y") else ST.SCAN_FILES) + (list(P2X_FILES) if VERSION in SURFACE_VERSIONS else [])
     os.environ["SPIXBITS_EXT_VERSION"] = a.version              # the workers inherit it
     return {"supervise": supervise, "worker": worker, "status": status, "unit": unit_cmd}[a.job](a)
 

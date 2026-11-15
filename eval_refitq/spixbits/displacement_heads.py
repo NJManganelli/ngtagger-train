@@ -55,7 +55,6 @@ R_PROMPT = 1.0                                            # cm: "produced inside
 XGB = {"tree_method": "hist", "max_depth": 3, "eta": 0.1, "nthread": 4}
 ROUNDS = 100
 MODELS = {"classes": 2, "classes_without_surfaces": 1}     # model name: the input version (1 = without the per-surface inputs)
-M_PI, M_K0S = 0.13957, 0.497611
 
 
 def k0s_flags(A, tab):
@@ -64,22 +63,7 @@ def k0s_flags(A, tab):
     out = []
     for ev in range(len(A["L1TTP_pt"])):
         g = lambda c: ak.to_numpy(A[f"L1TTP_{c}"][ev])
-        pdg = g("pdgId")
-        pi = np.flatnonzero(np.abs(pdg) == 211)
-        key = np.stack([g("evt")[pi].astype(np.float64), g("bx")[pi].astype(np.float64), g("vx")[pi], g("vy")[pi], g("vz")[pi]], 1)
-        _, inv, cnt = np.unique(key, axis=0, return_inverse=True, return_counts=True)
-        is_k = np.zeros(len(pdg), bool)
-        two = np.flatnonzero(cnt[inv] == 2)
-        if len(two):
-            o = two[np.argsort(inv[two], kind="stable")]
-            a, b = pi[o[0::2]], pi[o[1::2]]
-            pt, eta, phi = g("pt").astype(np.float64), g("eta").astype(np.float64), g("phi").astype(np.float64)
-            p4 = lambda i: (pt[i] * np.cos(phi[i]), pt[i] * np.sin(phi[i]), pt[i] * np.sinh(eta[i]),
-                            np.sqrt((pt[i] * np.cosh(eta[i])) ** 2 + M_PI ** 2))
-            xa, xb = p4(a), p4(b)
-            m = np.sqrt(np.maximum((xa[3] + xb[3]) ** 2 - sum((xa[k] + xb[k]) ** 2 for k in range(3)), 0.0))
-            ok = (pdg[a] * pdg[b] < 0) & (np.abs(m - M_K0S) < 1e-3)
-            is_k[a[ok]] = is_k[b[ok]] = True
+        is_k = D.k0s_pions(*(g(c) for c in ("pdgId", "evt", "bx", "vx", "vy", "vz", "pt", "eta", "phi")))
         ti = ak.to_numpy(A[f"{tab}_tpIdx"][ev])
         out.append(np.where(ti >= 0, is_k[np.maximum(ti, 0)], False))
     return np.concatenate(out)
@@ -135,7 +119,7 @@ def hit_inputs(sample, mask, n, fn):
     f = lambda c: ak.to_numpy(ak.flatten(A[c]))
     first = np.repeat(np.cumsum(ntrk) - ntrk, ak.to_numpy(ak.num(A[f"{hit}_layer"])))
     X, radii = D.slot_inputs(mask, f(f"{sp}_tanL"), f(f"{sp}_z0"), first + f(f"{hit}_trackIdx"), f(f"{hit}_layer"),
-                             {c: f(f"{hit}_{c}") for c in D.HIT_COLUMNS})
+                             D.hits_from_table({c: f(f"{hit}_{c}") for c in D.HIT_COLUMNS}))
     tc = np.load(os.path.join(C.cache_dir("tracks"), C.tag(sample, mask, n) + ".npz"))
     if not np.array_equal(f(f"{ot}_pt"), tc["T_b_pt"].astype(np.float32)):
         raise RuntimeError(f"{fn}: not aligned with the track cache")
@@ -163,7 +147,7 @@ def inputs(T, version):
     """version 2: displacement.assemble; version 1: the 38 inputs + |d0| and |d0| / sigma(d0)."""
     d0 = np.abs(T["r_d0"])
     X = D.assemble(J.features(T, "refit"), d0, T["x_sig_d0"], T["x_slots"])
-    return X if version == 2 else X[:, :-len(D.INPUT_NAMES)]
+    return X if version == 2 else X[:, :-len(D.input_names())]
 
 
 def model_dir(mask, window):
@@ -252,7 +236,7 @@ def counts(a):
         radii, _, n_true = D.crossings(T["b_tp_tanL"], T["b_tp_z0"], mask)
         raw = (radii < np.nan_to_num(T["x_r_prod"])[:, None]).sum(1)
         _, _, n_trk = D.crossings(T["r_tanL"], T["r_z0"], mask)
-        acc = T["x_slots"][:, 2::len(D.SLOT_NAMES)][:, :D.N_SLOTS]
+        acc = T["x_slots"][:, 2::len(D.slot_names())][:, :D.N_SLOTS]
         e = {"tracks": int((~T["_left_out"]).sum()), "with_a_particle": int(ok.sum()),
              "crossed_surfaces_per_track": np.bincount(n_trk[~T["_left_out"]], minlength=D.N_SLOTS + 1).tolist(),
              "fraction_with_fewer_than_N_crossed": float(np.mean(n_trk[~T["_left_out"]] < N)),
