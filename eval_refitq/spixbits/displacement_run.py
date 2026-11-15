@@ -1,4 +1,4 @@
-"""The displacement heads on both track collections, side by side, as one job for the lane (displacement_heads.py:
+"""The displacement heads (second version) on both track collections, side by side, as one job for the lane (displacement_heads.py:
 train, then report). Checkpointed per model; a restart skips finished models.
 
   python displacement_run.py [--steps train report]
@@ -22,7 +22,7 @@ def main():
     rc = 0
     for step in a.steps:
         jobs = [subprocess.Popen([sys.executable, str(HERE / "displacement_heads.py"), step], env=dict(os.environ, **e),
-                                 stdout=open(logs / f"displacement_{step}_{c}.log", "a"), stderr=subprocess.STDOUT) for c, e in ENV.items()]
+                                 stdout=open(logs / f"displacement_v2_{step}_{c}.log", "a"), stderr=subprocess.STDOUT) for c, e in ENV.items()]
         rc = max([rc] + [j.wait() for j in jobs])
         if rc:
             break
