@@ -872,7 +872,7 @@ def main():
                 row = [k, fmt(*o) if o else "-"]
                 for mask in SP_MASKS:
                     x = cells.get(f"{v}@{mask}", {}).get("deployed", {}).get("incl", {}).get(k)
-                    lab = HEAD_LABEL[v]
+                    lab = HEAD_LABEL.get(v)          # None: an input set without an IIII counterpart (the displacement heads)
                     row += [fmt(*x) if x else "-", fmt_step(L.get(mask, {}).get(lab, {}).get("incl", {}).get(k))]
                 rows.append(row)
             table_page(pdf, f"HEADLINE, input set '{v}': with vs without SmartPixels (deployed taggers, inclusive)",
