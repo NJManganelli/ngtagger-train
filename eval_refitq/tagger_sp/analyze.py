@@ -115,7 +115,8 @@ if C.COLLECTION == "prompt":   # no stored heads there: the heads are computed o
               a, b) for lab, a, b in STEPS]
     STEPS += [("L4-L3  + displacement heads: radius range", ("trackrange", "M"), ("trackmva", "M")),      # no IIII counterpart
               ("L4p-L3  + displacement heads: radius range and class probabilities", ("trackrangep", "M"), ("trackmva", "M")),
-              ("L4p-L4  + class probabilities beside the radius range", ("trackrangep", "M"), ("trackrange", "M"))]
+              ("L4p-L4  + class probabilities beside the radius range", ("trackrangep", "M"), ("trackrange", "M")),
+              ("L4b-L3  + first-version class probabilities (fixed radii), without ln r", ("trackband", "M"), ("trackmva", "M"))]
 MAIN_STEPS = [x for x in STEPS if x[1][0] == x[2][0] and x[1][1] == "M" and x[2][1] == "IIII"]   # the with-vs-without-SmartPixels steps
 # jointly trained track-quality heads (joint_heads.py): reference (uncoupled), A (outputs apart), B (errors apart)
 JOINT_STEPS = [

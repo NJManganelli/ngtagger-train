@@ -61,6 +61,9 @@ FEATURE_GROUPS = {
     # production radius; P(class >= 4) is 0 in a detector scenario with three active letters)
     "trackdisp": ["trkdisp_lo", "trkdisp_med", "trkdisp_hi"],
     "trackdispp": ["trkdisp_p1", "trkdisp_p2", "trkdisp_p3", "trkdisp_p4"],
+    # the FIRST version's class probabilities alone, P(production radius >= 2.85, 5.95, 10.3, 14.5 cm), without its
+    # regressed ln r: a test of where the first version's tagger gain came from
+    "trackdisp1": ["trkdisp_v1p1", "trkdisp_v1p2", "trkdisp_v1p3", "trkdisp_v1p4"],
 }
 
 

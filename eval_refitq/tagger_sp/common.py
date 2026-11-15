@@ -142,12 +142,15 @@ LEVEL = {"baseline": 1, "track": 2, "trackmva": 3, **{f"joint_{v}": 3 for v in J
 # eval_refitq/spixbits/displacement.py, supplied by quant_shift.py): "trackrange" = + the production-radius range (low,
 # median, high); "trackrangep" = + the range and the class probabilities. SmartPixels detector scenarios only (IIII has
 # no surface to divide on: no displacement head); today's tracks only (no quantization scenario yet).
-DISP_GROUPS = ["trackdisp", "trackdispp"]
-DISP_VARIANTS = ["trackrange", "trackrangep"]
+# "trackband" = + the FIRST version's class probabilities alone (fixed radii 2.85 / 5.95 / 10.3 / 14.5 cm, without its ln r):
+# the test of where the first version's tagger gain came from.
+DISP_GROUPS = ["trackdisp", "trackdispp", "trackdisp1"]
+DISP_VARIANTS = ["trackrange", "trackrangep", "trackband"]
 if COLLECTION == "prompt":
     VARIANTS["trackrange"] = VARIANTS["trackmva"] + ["trackdisp"]
-    VARIANTS["trackrangep"] = VARIANTS["trackmva"] + DISP_GROUPS
-    LEVEL.update(trackrange=4, trackrangep=4)
+    VARIANTS["trackrangep"] = VARIANTS["trackmva"] + ["trackdisp", "trackdispp"]
+    VARIANTS["trackband"] = VARIANTS["trackmva"] + ["trackdisp1"]
+    LEVEL.update(trackrange=4, trackrangep=4, trackband=4)
     if not QUANT:
         GROUPS_ALL = GROUPS_ALL + DISP_GROUPS
 
