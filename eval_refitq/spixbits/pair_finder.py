@@ -186,9 +186,12 @@ def pairs(a):
     geometry is done once, from the first mask's track list, and checked against the others')."""
     T = tracks(a.masks[0])
     use = ~T["_left_out"]
-    sign = np.sign(np.nansum(np.sign(T["b_rInv"][use]) * T["b_tp_charge"][use]))          # the sign of 1/R against the charge
+    known = use & (T["b_tpIdx"] >= 0) & (np.abs(T["b_tp_charge"]) == 1)                   # matched tracks: the particle's charge
+    sign = np.sign(np.sum(np.sign(T["b_rInv"][known]) * T["b_tp_charge"][known]))         # the sign of 1/R against the charge
     q = sign * np.sign(T["b_rInv"])
-    agree = np.mean((q == T["b_tp_charge"])[use & (T["b_tpIdx"] >= 0) & (T["b_tp_charge"] != 0)])
+    agree = np.mean((q == T["b_tp_charge"])[known])
+    if agree < 0.99:
+        raise RuntimeError(f"the track charge agrees with the particle's for only {agree:.3f} of the matched tracks")
     v = T["p_vtx"].astype(np.float64)
     has = T["b_tpIdx"] >= 0
     disp = has & (np.hypot(v[:, 0], v[:, 1]) > OTHER_MIN_R)
@@ -284,11 +287,24 @@ def analyze(a):
     sig = lambda k: np.abs(T0["b_d0"][k]) / np.maximum(np.sqrt(np.abs(T0["b_cov_d0_d0"][k])), 1e-6)
     base = {"min |d0|/sigma of the two tracks": np.minimum(sig(i), sig(j)), "vertex radius R": Pr["R"].astype(np.float64)}
     res["without_head_quantities"] = {w: {n: curve(s, pre, w) for n, s in base.items()} for w in ("all", "test")}
+    def number_in_event(T):
+        first = np.flatnonzero(np.r_[True, np.diff(T["p_event"]) != 0])
+        return np.arange(len(T["p_event"])) - np.repeat(first, np.diff(np.r_[first, len(T["p_event"])]))
+
+    used = ~T0["_left_out"]
+    id0 = np.column_stack([T0["p_key"], number_in_event(T0)])
     for mask in a.masks:
+        # the files of another detector scenario hold the same events in another order: its tracks are brought into the
+        # first scenario's order by (event identity, number of the track in its event), and checked to be the same tracks
         T = T0 if mask == a.masks[0] else tracks(mask)
-        assert np.array_equal(T["b_pt"], T0["b_pt"]), "the outer-tracker tracks differ between detector scenarios"
+        idm = np.column_stack([T["p_key"], number_in_event(T)])
+        o0, om = np.lexsort(id0.T[::-1]), np.lexsort(idm.T[::-1])
+        to = np.empty(len(o0), np.int64)
+        to[o0] = om                                        # the track of this scenario that is track k of the first
+        if not (np.array_equal(idm[to][used], id0[used]) and np.array_equal(T["b_pt"][to][used], T0["b_pt"][used])):
+            raise RuntimeError("the outer-tracker tracks differ between detector scenarios")
         H = np.load(OUT / f"heads_{mask}.npz")
-        Ph, Q, radii = H["P"].astype(np.float64), H["Q"].astype(np.float64), T["x_radii"].astype(np.float64)
+        Ph, Q, radii = H["P"].astype(np.float64)[to], H["Q"].astype(np.float64)[to], T["x_radii"].astype(np.float64)[to]
         N = D.n_edges(mask)
         both_disp = np.minimum(Ph[i, 1:].sum(1), Ph[j, 1:].sum(1))
         cls_of_R = lambda k: np.minimum((radii[k] < Pr["R"][:, None]).sum(1), N)
