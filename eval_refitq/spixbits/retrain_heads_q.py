@@ -126,7 +126,7 @@ def load_tracks(root, scen, files, name):
         r = Path(XS.ROOTS[ver]) if VERSION == "p2x" else root
         wait_for(r / "truth" / f"{scen}_f{f:02d}_truth.npz")
         T.append(dict(np.load(r / "truth" / f"{scen}_f{f:02d}_truth.npz")))
-        chunks = [XS.SETS[ver][i:i + XS.ARMS_PER_UNIT] for i in range(0, len(XS.SETS[ver]), XS.ARMS_PER_UNIT)]
+        chunks = [XS.SETS[ver][i:i + XS.arms_per_unit(ver)] for i in range(0, len(XS.SETS[ver]), XS.arms_per_unit(ver))]
         for k, ch in enumerate(chunks):
             if name in ch:
                 Z = np.load(r / "units" / f"{scen}_f{f:02d}_{k:02d}.npz")
@@ -301,7 +301,8 @@ def one(a):
 
 def run(a):
     logs = Path.home() / "smartpixels/scratch_local/spixbits/logs"
-    jobs = [(s, subprocess.Popen([sys.executable, str(HERE / "retrain_heads_q.py"), "one", "--scen", s, "--trials", str(a.trials)],
+    jobs = [(s, subprocess.Popen([sys.executable, str(HERE / "retrain_heads_q.py"), "one", "--scen", s, "--trials", str(a.trials),
+                                  *(["--allocs", *a.allocs] if a.allocs else [])],
                                  stdout=open(logs / f"heads_q{'' if VERSION == 'v2' else '_' + VERSION}_{s}.log", "a"), stderr=subprocess.STDOUT)) for s in a.scen]
     rc = 0
     for s, p in jobs:

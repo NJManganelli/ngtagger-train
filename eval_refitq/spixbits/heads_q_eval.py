@@ -239,7 +239,7 @@ def main():
     if a.cmd == "one":
         return one(a)
     logs = Path.home() / "smartpixels/scratch_local/spixbits/logs"
-    jobs = [(s, subprocess.Popen([sys.executable, str(HERE / "heads_q_eval.py"), "one", "--scen", s],
+    jobs = [(s, subprocess.Popen([sys.executable, str(HERE / "heads_q_eval.py"), "one", "--scen", s, *(["--allocs", *a.allocs] if a.allocs else [])],
                                  stdout=open(logs / f"heads_q_eval{'' if RQ.VERSION == 'v2' else '_' + RQ.VERSION}_{s}.log", "a"), stderr=subprocess.STDOUT)) for s in a.scen]
     rc = 0
     for s, p in jobs:

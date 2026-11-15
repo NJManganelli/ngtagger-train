@@ -59,8 +59,19 @@ P2X_FILES = (1, 2, 3, 101, 102, 103, 104, 105, 107, 108)
 # collection, with the PER-SURFACE record of every scenario (what each crossed surface did: the displacement heads'
 # per-surface inputs) and the particle's production radius and K0S flag
 SETS = {"v1": SHIPPED, "v2": SHIPPED_V2, "p2": [x for x in SHIPPED_V2 if x != "alloc_4444_wholesensor"], "p2x": FIRST_PASS,
-        "p2y": ["alloc_5533"], "p2z": ["up_y_7b"], "p3": FIRST_PASS + ["alloc_5533"], "x3": FIRST_PASS + ["alloc_5533"]}
-ENLARGED_LATER = ("p2y", "p2z")       # scenarios added to the enlarged sample after p2x: 5/5/3/3; 4/7/4/4 (physicist, 2026-11-15)
+        "p2y": ["alloc_5533"], "p3": FIRST_PASS + ["alloc_5533"], "x3": FIRST_PASS + ["alloc_5533"]}
+# "p2z" (physicist, 2026-11-15): the upward one-parameter scan from 4/4/4/4 (one of x, y, alpha, beta raised, the other
+# three left at 4 bits) on the further files, in the order the tagger runs take them; ONE quantization scenario per unit,
+# so that a point can be scanned alone (SPIXBITS_EXT_ONLY = its name)
+UP_SCAN = ["up_y_7b", "up_y_5b", "up_y_6b", "up_x_float", "up_beta_float", "up_alpha_float", "up_y_float", "up_y_8b", "up_y_9b", "up_y_10b", "up_y_11b",
+           "up_x_5b", "up_x_6b", "up_x_7b", "up_x_8b", "up_x_9b", "up_beta_5b", "up_beta_6b", "up_beta_7b", "up_alpha_5b", "up_alpha_6b", "up_alpha_7b"]
+SETS["p2z"] = UP_SCAN
+ENLARGED_LATER = ("p2y", "p2z")       # scenarios added to the enlarged sample after p2x
+ONLY = os.environ.get("SPIXBITS_EXT_ONLY", "").split()
+
+
+def arms_per_unit(version):
+    return 1 if version == "p2z" else ARMS_PER_UNIT
 ROOTS = {"v1": None, "v2": "/Volumes/WDMac/smartpixels_scratch/spixbits/ext_v2",    # v1: the internal disk (ST.LOCAL / "ext")
          "p2": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2",
          "p2x": "/Volumes/WDMac/smartpixels_scratch/spixbits/prompt_tracks_v2x",
@@ -124,9 +135,10 @@ def registry():
 
 def units_of(files, scens):
     shipped = SETS[VERSION]
-    chunks = [shipped[i:i + ARMS_PER_UNIT] for i in range(0, len(shipped), ARMS_PER_UNIT)]
+    k_ = arms_per_unit(VERSION)
+    chunks = [shipped[i:i + k_] for i in range(0, len(shipped), k_)]
     return [{"file": f, "scen": s, "arms": ch, "name": f"{s}_f{f:02d}_{k:02d}"}
-            for k, ch in enumerate(chunks) for f in files for s in scens]
+            for k, ch in enumerate(chunks) for f in files for s in scens if not ONLY or set(ch) & set(ONLY)]
 
 
 def run_unit(S, reg, f, scen, arm_names, nev=None):
