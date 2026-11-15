@@ -52,9 +52,9 @@ HEADS_SENTINEL = -1.0
 TRACKRES_OPTIONAL = {"spixNAcceptedHits": "trk_nITHits"}
 # "trackdisp" / "trackdispp" groups: the displacement heads' outputs per track (ln(radius / cm) >= ln 0.01 of the range's
 # low, median and high points; probabilities in [0, 1]); a constituent without a track gets the sentinel
-DISP_NAMES = ["lo", "med", "hi", "p1", "p2", "p3", "p4", "v1p1", "v1p2", "v1p3", "v1p4"]
-DISP_SENTINEL = {"lo": -6.0, "med": -6.0, "hi": -6.0, **{c: -1.0 for c in DISP_NAMES[3:]}}
-DISP_GROUPS = ("trackdisp", "trackdispp", "trackdisp1")
+DISP_NAMES = ["lo", "med", "hi", "p1", "p2", "p3", "p4", "v1p1", "v1p2", "v1p3", "v1p4", "v1lnr"]
+DISP_SENTINEL = {"lo": -6.0, "med": -6.0, "hi": -6.0, **{c: -1.0 for c in DISP_NAMES[3:11]}, "v1lnr": -5.0}    # -5: the first version's value
+DISP_GROUPS = ("trackdisp", "trackdispp", "trackdisp1", "trackdisp1r")
 CLUSTER_BRANCHES = ["hOverE", "sigmaRRTot", "zBarycenter", "eMax", "sigmaZZ"]
 JET_BRANCHES = ["pt", "eta", "phi", "et"]
 GEN_BRANCHES = {

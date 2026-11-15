@@ -64,6 +64,8 @@ FEATURE_GROUPS = {
     # the FIRST version's class probabilities alone, P(production radius >= 2.85, 5.95, 10.3, 14.5 cm), without its
     # regressed ln r: a test of where the first version's tagger gain came from
     "trackdisp1": ["trkdisp_v1p1", "trkdisp_v1p2", "trkdisp_v1p3", "trkdisp_v1p4"],
+    # and the first version's regressed ln(production radius / cm) alone (the other half of the same test)
+    "trackdisp1r": ["trkdisp_v1lnr"],
 }
 
 

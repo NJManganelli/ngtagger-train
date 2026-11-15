@@ -56,7 +56,7 @@ select_trials() {
 
 train() {
   for m in IIII AAAA AAAI IAAA; do for v in ${TAGGER_VARIANTS:-baseline track trackmva}; do
-    case "$m $v" in "IIII trackrange"*|"IIII trackband") continue;; esac   # displacement-head input sets: SmartPixels detector scenarios only
+    case "$m $v" in "IIII trackrange"*|"IIII trackband"|"IIII tracklnr") continue;; esac   # displacement-head input sets: SmartPixels detector scenarios only
     echo "$m $v"; done; done \
     | train_cells "$TRIAL_SEEDS" || fail "training (first trials)"
   say "first trials per cell done (seeds $TRIAL_SEEDS)"

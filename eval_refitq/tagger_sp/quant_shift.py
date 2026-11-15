@@ -51,7 +51,7 @@ PARAM_DIR = os.environ.get("TAGGER_SP_PARAM_DIR", os.path.expanduser(
 HEAD_FIELDS = ["head_clean", "head_d0", "head_z0", "head_tanl", "head_rinv", "head_phi"]
 # the displacement heads, second version (eval_refitq/spixbits/displacement.py and displacement_heads.py; today's tracks
 # of a SmartPixels detector scenario): from the models in heads/displacement_v2/<detector scenario>/<window>/
-DISP_FIELDS = ["disp_lo", "disp_med", "disp_hi", "disp_p1", "disp_p2", "disp_p3", "disp_p4"] + [f"disp_v1p{k}" for k in range(1, 5)]
+DISP_FIELDS = ["disp_lo", "disp_med", "disp_hi", "disp_p1", "disp_p2", "disp_p3", "disp_p4"] + [f"disp_v1p{k}" for k in range(1, 5)] + ["disp_v1lnr"]
 DISP_FLOOR_CM = 0.01                                    # the radii reach the tagger as ln(max(r, floor))
 SHIFT_FIELDS = ["rInv", "tanL", "z0", "d0", "cov_d0_d0", "cov_z0_z0", "spixNAcceptedHits"]
 PAR = ("rInv", "phi", "tanL", "z0", "d0")
@@ -138,13 +138,17 @@ def disp_model(mask, window):
     return _CACHE[key]
 
 
-def disp_model_v1(mask, window):
-    """The first version's class model (five classes by fixed radius; inputs: the heads' 38 + |d0| and |d0| / sigma(d0))."""
+def disp_models_v1(mask, window):
+    """The first version's two models, for the test of its tagger gain only: the five classes by fixed radius and the
+    regression of ln(radius / cm) (inputs: the heads' 38 + |d0| and |d0| / sigma(d0))."""
     key = ("disp1", mask, window)
     if key not in _CACHE:
-        b = _xgb().Booster()
-        b.load_model(os.path.join(PARAM_DIR, "heads", "displacement", mask, "d0", window, "band.json"))
-        _CACHE[key] = b
+        out = []
+        for kind in ("band", "radius"):
+            b = _xgb().Booster()
+            b.load_model(os.path.join(PARAM_DIR, "heads", "displacement", mask, "d0", window, f"{kind}.json"))
+            out.append(b)
+        _CACHE[key] = tuple(out)
     return _CACHE[key]
 
 
@@ -296,19 +300,22 @@ class TrackOverride:
                                          flat(f"{hit}_layer").astype(np.int64), D.hits_from_table({c: flat(f"{hit}_{c}") for c in D.HIT_COLUMNS}))
             Xd = D.assemble(X, d0, np.sqrt(np.abs(flat(f"{sp}_cov_d0_d0"))), slots)
             P, Q = np.zeros((len(X), 5)), np.zeros((len(X), len(D.QUANTILES)))       # P(class 4) stays 0 with three active letters
-            P1 = np.zeros((len(X), 5))                                                # the first version's five fixed-radius classes
+            P1, lnr1 = np.zeros((len(X), 5)), np.zeros(len(X))                        # the first version's classes and ln r
             for wname, w in (("prompt", d0 <= tm.D0_SPLIT), ("displaced", d0 > tm.D0_SPLIT)):
                 if w.any():
                     model, shape = disp_model(self.mask, wname)
                     p = model.predict(_xgb().DMatrix(Xd[w]))
                     P[w, :p.shape[1]] = p
                     Q[w] = D.radius_range(p, radii[w], self.mask, shape)
-                    P1[w] = disp_model_v1(self.mask, wname).predict(_xgb().DMatrix(Xd[w][:, :X.shape[1] + 2]))
+                    band1, radius1 = disp_models_v1(self.mask, wname)
+                    dm1 = _xgb().DMatrix(Xd[w][:, :X.shape[1] + 2])
+                    P1[w], lnr1[w] = band1.predict(dm1), radius1.predict(dm1)
             for i, name in enumerate(("lo", "med", "hi")):
                 out[f"disp_{name}"] = np.log(np.maximum(Q[:, i], DISP_FLOOR_CM))
             for k in range(4):
                 out[f"disp_p{k + 1}"] = P[:, k + 1:].sum(1)
                 out[f"disp_v1p{k + 1}"] = P1[:, k + 1:].sum(1)
+            out["disp_v1lnr"] = lnr1
         out["head_clean"] = sig(M[:, 0])
         for i, h in enumerate(HEAD_FIELDS[1:], start=1):
             out[h] = M[:, i]
