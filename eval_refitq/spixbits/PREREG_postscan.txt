@@ -1,0 +1,17 @@
+SmartPixels output bits -> track refit: post-scan items (coordinator's request after the scan finished, 2026-11-11).
+Definitions and versions: branch spixbits (size-blind position error from the MAD of the size-pooled residual; one-sided flag
+cost with the table width alone), canon_v5, pinned v3 payload set v1, the scan's link tables and registry.
+1. Planted defects on file 4 AAAA (100 events; cluster-level ones on 50): expectations as written in defects.py's docstring
+   (bending-arm reading from chi2_sum, facing band 0.5-1.3 %, both re-declared before this run). d0 sign on file 4 AAAA: the
+   pre-declared Pearson >= 0.9 is expected to fail as before (refit tails; stored CMSSW v3 gave the same); the proposed form
+   (same-sign share >= 0.9, Spearman >= 0.8, median refit / true in 0.9-1.1) is reported beside it.
+2. Bit-equal rerun of the scan unit priority/AAAA_f05: expected identical in every array.
+3a. Skip price re-derived for the 4/4/4/4 sub-area arm: the gate|xyab table refitted with the existing cut fit (99 % point of
+   the correct-hit chi2, own primaries with a clean history, sent clusters, K = 1) on files 1-2 x 3 scenarios, then the arm rerun
+   on the scan files. Expected: the pooled P moves by less than a factor 2 and the prompt d0 / z0 68 % widths by less than 3 %
+   (a bound on what not recalibrating costs, not a tuning).
+3b. Direct network-position point: barrel-only population tracks with particle pT >= 50 GeV, crossing clusters at the helix +
+   the drawn network position residual. Expected: d0 width below the stand-in's (today's positions) and near the covariance
+   forecast; about 100 tracks per scenario on the scan files, about 200 on all ten (shown only with >= 200).
+Bias: in-sample (ranges, tables, calibrations); placeholder angles; the direct point uses the production helix (no scattering),
+which is why it is restricted to pT >= 50 GeV. The rulings on the first check and on the d0-sign form are with the physicist.

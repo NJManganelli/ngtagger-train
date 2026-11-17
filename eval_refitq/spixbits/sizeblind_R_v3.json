@@ -1,0 +1,57 @@
+{
+ "what": "size-blind position errors: 1.4826 x MAD of the truth residual per |predicted cot| interval, cluster sizes pooled, on the fit population of v3's R tables (IL1, pT >= 5.0 GeV, |tp_d0| < 50 um, perfect tracks)",
+ "sample": "/Users/nmangane/smartpixels/ngtagger-train/eval_refitq/combinatorics/results/refit_calibration/calib_perfect_ttbar_pu200_tp.npz",
+ "sample_sha256": "bc16460f4de67f9ca0dfa609c298038bca5a2a634e93fb19e32c8bc1ca013b09",
+ "reproduces_v3_cells": true,
+ "u": {
+  "cot_edges": [
+   0.0,
+   0.05,
+   0.1,
+   0.2,
+   0.4,
+   99.0
+  ],
+  "width_cm": [
+   0.000694898139505015,
+   0.0003312353152286633,
+   0.000228879688753508,
+   0.00033057643051492125,
+   0.0004160549986312646
+  ],
+  "n": [
+   1855,
+   2000,
+   3944,
+   3335,
+   390
+  ]
+ },
+ "v": {
+  "cot_edges": [
+   0.0,
+   0.3,
+   0.6,
+   1.07,
+   1.5,
+   2.5,
+   99.0
+  ],
+  "width_cm": [
+   0.0027444512306736574,
+   0.001478319544200723,
+   0.0012221553623786088,
+   0.0011625942090814686,
+   0.0013220654378561217,
+   0.0015322286309066503
+  ],
+  "n": [
+   1777,
+   1573,
+   2019,
+   1325,
+   2048,
+   2782
+  ]
+ }
+}

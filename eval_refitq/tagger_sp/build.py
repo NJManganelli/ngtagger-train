@@ -169,17 +169,24 @@ def train_mva(mask, fileset, splits):
 
 # ---------------------------------------------------------------- 3. jets
 def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask, groups=None, jets_dir=None, models=None):
-    """`groups` (default common.GROUPS_ALL), `jets_dir` (default the main caches) and `models` (extra
+    """`groups` (default common.groups_for(mask)), `jets_dir` (default the main caches) and `models` (extra
     load_jets model arguments, e.g. trackjoint_model) serve the joint-head caches (joint_heads.py jets)."""
-    groups = groups or C.GROUPS_ALL
+    groups = groups or C.groups_for(mask)
     out = os.path.join(jets_dir or C.cache_dir("jets"), C.tag(sample, mask, n) + ".npz")
     if os.path.exists(out):
         d = np.load(out)
         if str(d["bundle_sha"]) == sha and [str(x) for x in d["feature_names"]] == \
                 resolve_feature_groups(groups) and "stock_bTagScore" in d.files:
             return out
-    jets, const, gen = load_jets([fn], n_const=C.N_CONST, feature_groups=groups,
-                                 track_table=C.TRACK_TABLE, trackmva_model=bundle_dir, **(models or {}))
+    override = None
+    if C.COLLECTION == "prompt":            # head outputs (and, with TAGGER_SP_QUANT, the shifted track inputs) per track
+        import quant_shift
+
+        override = quant_shift.TrackOverride(mask)
+    jets, const, gen = load_jets([fn], n_const=C.N_CONST, feature_groups=groups, jet_table=C.JET_TABLE,
+                                 link_table=C.LINK_TABLE, cand_table=C.CAND_TABLE, link_cand_table=C.LINK_CAND_TABLE,
+                                 track_table=C.TRACK_TABLE, trackmva_model=bundle_dir, track_override=override,
+                                 **(models or {}))
     label, target_pt, target_pt_phys, keep = label_jets(jets, gen, max_dr=0.4)
     X, names = build_features(jets, const, n_const=C.N_CONST, feature_groups=groups)
     nj = ak.to_numpy(ak.num(jets.pt, axis=1))
@@ -193,7 +200,9 @@ def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask, groups=None, jet
         nconst=ak.to_numpy(ak.flatten(ak.num(const.pt, axis=2)))[k],
         entry=entry[k], is_test=test_mask[entry[k]], evid=evid, test_entries=test_mask,
         n_jets_all=int(len(k)),
-        **{f"stock_{c}": ak.to_numpy(ak.flatten(jets[c]))[k] for c in STOCK_SCORES},
+        # the stock NG tagger's scores exist on the NG jets only (extended chain): NaN on the prompt chain's jets
+        **{f"stock_{c}": (ak.to_numpy(ak.flatten(jets[c]))[k] if c in jets.fields else np.full(int(k.sum()), np.nan))
+           for c in STOCK_SCORES},
         bundle_sha=np.array(sha))
     log(f"jets {C.tag(sample, mask, n)}: {int(k.sum())} labelled of {len(k)}")
     return out
@@ -202,7 +211,7 @@ def build_jets(sample, mask, n, fn, bundle_dir, sha, test_mask, groups=None, jet
 def refuse_truth_heads(t, mask):
     """The slim tier's stored heads: refuse a head column marked as simulation truth, as the inputs of the heads
     themselves are refused (trackmva.refuse_truth_inputs)."""
-    tabs = [C.TRACK_TABLE, "L1TExtTrack"]
+    tabs = [C.TRACK_TABLE, C.OT_TABLE]
     bad = [b for b in t.keys() if b.split("_", 1)[0] in tabs and "_head_" in b and tm.TRUTH_MARK in (t[b].title or "")]
     if bad:
         raise ValueError(f"stored head columns marked {tm.TRUTH_MARK!r}: {bad}")
@@ -215,9 +224,16 @@ def main_slim(a):
     if a.samples != ["ttbar"]:
         raise ValueError("the slim tier holds TTbar only")
     fs = C.study_files("ttbar", a.mask)
+    if a.files:                                  # a dry run on a few files (job numbers); the study uses every one
+        fs = [(n, p) for n, p in fs if n in a.files]
     if not fs:
         raise FileNotFoundError(f"no usable slim-tier files for {a.mask}")
-    sha = "slimtier:stored-heads:v1"
+    sha = "slimtier:stored-heads:v1" if C.COLLECTION == "extended" else \
+        f"slimtier:prompt:{C.QUANT or 'implemented_now'}:{C.HEADSET}-heads:candidates-{C.CANDIDATES}:v1"
+    if any(g in C.groups_for(a.mask) for g in C.DISP_GROUPS):         # a cache with displacement heads names their models
+        import quant_shift
+
+        sha += ":displacement-" + quant_shift.disp_fingerprint(a.mask)
     for n, p in fs:
         t = uproot.open(p)["Events"]
         tm.refuse_truth_inputs(t, C.FAMILY, "", base_only(a.mask))
@@ -234,6 +250,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--mask", required=True, choices=C.MASKS)
     ap.add_argument("--samples", nargs="+", default=["ttbar", "htt"], choices=sorted(C.SAMPLES))
+    ap.add_argument("--files", type=int, nargs="+", default=None, help="slim tier only: these job numbers only (dry run)")
     a = ap.parse_args()
     if C.TIER == "slim":
         return main_slim(a)

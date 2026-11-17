@@ -1,0 +1,15 @@
+SmartPixels output bits -> track refit: the shipped allocations on the extended track collection (PLAN.md sections 7, 7b).
+Definitions and versions: branch spixbits; replay refit v3 on canon_v5 TTbar files 5, 7, 8, 9, 10 x AAAA / AAAI / IAAA, the
+EXTENDED collection (L1TExtTrack and its refit tables read under the prompt tables' names), the pinned v3 payload set v1, the
+scan's link tables and registry (arms.json), the deployed heads of heads_cmssw (reference models, sha256 in their MANIFEST).
+Arms (30): implemented now, network float, the eleven 16-bit allocations (per-link ranges), 4/4/4/4 whole sensor, the y scan
+(2-10 sub-area bits) and the x scan (2-8 bits) at the network-float angles; each also refit on the clusters "implemented
+now" accepted. Population: every extended track, matched or not.
+Checks done before: extended-collection first check on file 4 in the accepted form (cluster choice with cluster-table
+inputs: 99.989-99.993 % of crossings agree, 14 / 6 / 9 first disagreements, one of them the known window-edge case; arithmetic
+with CMSSW's float positions: state <= 1.3e-3 sigma raw, covariance <= 8e-5); heads converter on "implemented now": the
+reader reproduces the heads' parity reference (inputs exact, margins to 8e-6); converter inputs agree with the stored CMSSW
+inputs to a median relative difference <= 9e-4 (input rounding), head outputs differ by more than 0.05 on <= 0.4 % of tracks.
+Expected outcome: the deployed heads' predicted widths rise with coarser positions; the share of tracks changing clusters
+against today grows with coarser positions and fewer angle bits.
+Bias: in-sample calibrations, ranges and tables; placeholder angles; TTbar only; the heads are today's, not retrained.

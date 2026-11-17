@@ -1,0 +1,21 @@
+SmartPixels output bits -> track refit, PROMPT track collection (the baseline; physicist, 2026-11-13): heads retrained per
+quantization scenario and the parametrization, from the prompt per-track scan (ext_scan.py --version p2; canon_v5 TTbar files
+5, 7, 8, 9, 10 x AAAA / AAAI / IAAA; 64 sub-area quantization scenarios besides "implemented now").
+Steps, one job: (1) the six track-quality heads per quantization scenario and detector scenario, both windows, the recipe and
+split of the extended-collection run (20 trials, best by validation; 338 / 40 / 122 training / validation / test events) and a
+five-file "implemented now" reference; (2) their evaluation by the rules of statistics review 3 (own heads against reference
+and recalibrated reference on the scenario's own targets; absolute losses and effective widths against today; per-event sums;
+slopes over bootstrap replicas beyond 3 sd); (3) the parametrization in the version-2 form (shares and precision noise in
+correctionlib; covariance and head inputs from tree maps; matched donors; real head models), cross-fitted closure with the
+unchanged checks and tolerances, classifier on 4/4/4/4, 6/6/0/4, 8/8/0/0 and network float; export; (4) the joint closure with
+the per-quantization-scenario heads on the test events.
+Heads used as "today's": retrained per detector scenario on today's prompt tracks (canon_v5 TTbar + H->tautau, 20 trials, best);
+the extended collection's deployed heads play no role.
+Windows: the prompt collection keeps a displaced window (|d0| > 0.02 cm: 15 % of today's prompt tracks in AAAA / AAAI, 19 % in
+IAAA), so both windows are kept as on the extended collection.
+Expected, from the extended collection: d0-head effective width following the y bits, recalibration recovering most of what
+today's heads lose on coarse scenarios, retraining proper a few hundredths of a nat; the joint classifier test on the tagger's
+inputs within tolerance for 4/4/4/4 and 6/6/0/4, near tolerance for 8/8/0/0 and network float; widths 1.5-2 % too wide in the
+median. Fewer tracks per event (189 against 267) and fewer displaced tracks than on the extended collection.
+Outputs: scratch_local/spixbits/heads_retrained_per_quantization_prompt/, checks/param_closure_p2_*.json,
+doc-archive/spix-bits-refit-study/parametrization/prompt_v2/ (about 0.35 GB). About 4 h on three processes.

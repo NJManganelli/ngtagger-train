@@ -1,0 +1,16 @@
+SmartPixels output bits -> track refit: prompt-collection scan, version 2 (physicist's rulings of 2026-11-11).
+Changes against version 1: (1) the cap of three clusters per 2.4 mm sub-area keeps the three of highest pT from the network's
+unquantized bending angle under d0 = 0 (PLAN.md 4c; emulate.pt_from_bending_angle) in every quantization scenario; three at
+random (the first scan's rule: network_float / alloc_4444 / alloc_6604 with the suffix _caprandom) and all clusters sent
+(_allsent) are controls; (2) 123 quantization scenarios: the 114 of version 1, the up-scan additions from the 4/4/4/4 floor
+(x 9 bits, y 11 bits, and each of x, y, alpha, beta unquantized with the other three at 4 bits), and the three random-cap
+controls; (3) the order the scan works through: the eight anchor scenarios on every file and detector scenario, then the
+fixed points, the up-scans, the 16-bit allocations, the down-scans, the controls, the bending-angle-only family.
+Everything else as version 1: canon_v5 TTbar files 5, 7, 8, 9, 10 x AAAA / AAAI / IAAA, the prompt collection, the pinned
+payload, the scan's link tables and size-blind position errors, the same per-track outputs (SCHEMA.md), plus per crossing
+cluster the pT from the bending angle and whether the cluster is sent under either cap rule.
+Expected: results close to version 1's for the 114 common scenarios (the cap changes which clusters are sent on about 2 % of
+barrel-layer-1 clusters: lost to the cap 2.47 % at random, 1.82 % pT-ranked, AAAA); the up-scans approach the network-float
+values monotonically; the random-cap controls reproduce version 1 within the statistical error.
+Outputs: /Volumes/WDMac/smartpixels_scratch/spixbits/prompt_v2 (285 units, about 7.5 GB; 95 GB free there; the internal disk
+has 14 GB free against a 12 GB stop rule and receives nothing). Version 1's outputs are untouched.

@@ -41,8 +41,52 @@ TIER = os.environ.get("TAGGER_SP_TIER", "canonical")
 if TIER not in ("canonical", "slim"):
     raise ValueError(f"TAGGER_SP_TIER {TIER!r}")
 # TAGGER_SP_OUT: another output folder (dev tests on a few files)
-OUT = os.environ.get("TAGGER_SP_OUT", "/Volumes/WDMac/smartpixels_scratch/tagger_slimtier" if TIER == "slim"
-                     else "/Volumes/WDMac/smartpixels_scratch/tagger_v5")
+# TAGGER_SP_COLLECTION: the track collection and the jets built from it. "extended" (the default: every result made
+# before 2026-11-13) = L1puppiJetSC4NG + L1SC4NGJetCands -> L1ExtPuppiCand -> L1TSmartPixelsExtTrack / L1TExtTrack, a
+# beyond-baseline (displaced-capable) track scenario. "prompt" = L1puppiJetSC4 + L1SC4JetCands -> L1PuppiCand ->
+# L1TSmartPixelsTrack / L1TTrack, the 5-parameter prompt fit: the BASELINE (physicist, 2026-11-13).
+COLLECTION = os.environ.get("TAGGER_SP_COLLECTION", "extended")
+TABLES = {
+    "extended": {"family": "canonical_ext", "track": "L1TSmartPixelsExtTrack", "ot": "L1TExtTrack", "jet": "L1puppiJetSC4NG",
+                 "link": "L1SC4NGJetCands", "cand": "L1ExtPuppiCand", "link_cand": "L1PuppiCand"},
+    "prompt": {"family": "canonical", "track": "L1TSmartPixelsTrack", "ot": "L1TTrack", "jet": "L1puppiJetSC4",
+               "link": "L1SC4JetCands", "cand": "L1PuppiCand", "link_cand": None},
+}
+if COLLECTION not in TABLES:
+    raise ValueError(f"TAGGER_SP_COLLECTION {COLLECTION!r}")
+# TAGGER_SP_QUANT (prompt collection only): the quantization scenario whose effect is applied to the per-track tagger
+# inputs through the prompt parametrization (quant_shift.py); "" = today's tracks ("implemented now").
+# TAGGER_SP_HEADSET: the track-quality heads evaluated on those inputs:
+#   "quantization"  retrained on that quantization scenario's prompt tracks (five TTbar files, 338 training events);
+#   "reference"     (today's tracks only) the "implemented now" heads trained on the same five files and events: the
+#                   fair reference of a "quantization" run;
+#   "detector"      retrained per detector scenario on today's prompt tracks with the full sample (canon_v5 TTbar +
+#                   H->tautau): the comparison that shows what the smaller heads sample costs.
+#   "quantization_enlarged" / "reference_enlarged"  the same two, trained on the enlarged sample (the five files plus
+#                   TTbar files 1, 2, 3 and H->tautau: every file the "detector" heads use; 844 training events). Only for
+#                   the first-pass quantization scenarios (4/4/4/4, 6/6/0/4, 6/6/2/2, network float).
+# IIII (OT-only) always uses its full-sample OT heads: no five-file version exists.
+# TAGGER_SP_CANDIDATES (prompt collection only): the PUPPI candidate's own dxy and z0 (tagger inputs of every cell).
+# "today" = as produced, whatever the quantization scenario (a control: the tagger then sees today's d0 through the
+# candidate's coarse dxy code); "reencoded" = re-derived from the (shifted) track with the trigger chain's own
+# encoding (quant_shift.encode_candidate), so that they follow the quantization scenario.
+QUANT = os.environ.get("TAGGER_SP_QUANT", "")
+HEADSET = os.environ.get("TAGGER_SP_HEADSET", "detector")
+CANDIDATES = os.environ.get("TAGGER_SP_CANDIDATES", "today")
+if COLLECTION != "prompt" and (QUANT or HEADSET != "detector" or CANDIDATES != "today"):
+    raise ValueError("TAGGER_SP_QUANT / TAGGER_SP_HEADSET / TAGGER_SP_CANDIDATES need TAGGER_SP_COLLECTION=prompt")
+if CANDIDATES not in ("today", "reencoded"):
+    raise ValueError(f"TAGGER_SP_CANDIDATES {CANDIDATES!r}")
+HEADSETS = {"detector": "", "quantization": "_qheads", "reference": "_refheads", "quantization_enlarged": "_qheads_enlarged",
+            "reference_enlarged": "_refheads_enlarged"}               # head set: its suffix in the output folder's name
+if HEADSET not in HEADSETS or (HEADSET.startswith("quantization") and not QUANT) \
+        or (HEADSET.startswith("reference") and QUANT):
+    raise ValueError(f"TAGGER_SP_HEADSET {HEADSET!r} (quantization needs TAGGER_SP_QUANT; reference is for today's tracks)")
+_DEFAULT_OUT = "/Volumes/WDMac/smartpixels_scratch/tagger_slimtier" if TIER == "slim" else "/Volumes/WDMac/smartpixels_scratch/tagger_v5"
+if COLLECTION == "prompt":                 # its own folders, one per quantization scenario and head set
+    _DEFAULT_OUT += "_prompt/" + (QUANT or "implemented_now") + HEADSETS[HEADSET] \
+        + ("_reencoded" if CANDIDATES == "reencoded" else "")
+OUT = os.environ.get("TAGGER_SP_OUT", _DEFAULT_OUT)
 MASKS = ["IIII", "AAAA", "AAAI", "IAAA"]       # IIII = OT baseline (passthrough)
 BASELINE_MASK = "IIII"
 # the SP masks read canon_v5 (refit v3); IIII reads canon_v4 (canon_v5 has none: see the docstring)
@@ -57,8 +101,10 @@ TEST_FRACTION = 0.2
 VAL_FRACTION = 0.1              # of each sample's training events (val_table)
 SPLIT_SEED = 20260930
 
-FAMILY = "canonical_ext"        # L1TExtTrack + L1TSmartPixelsExtTrack (+ ext refit hits)
-TRACK_TABLE = "L1TSmartPixelsExtTrack"   # what L1ExtPuppiCand.l1TrackIdx points into (coopt)
+FAMILY = TABLES[COLLECTION]["family"]        # extended: L1TExtTrack + L1TSmartPixelsExtTrack (+ ext refit hits)
+TRACK_TABLE = TABLES[COLLECTION]["track"]    # what the candidates' l1TrackIdx points into (coopt)
+OT_TABLE, JET_TABLE, LINK_TABLE = (TABLES[COLLECTION][k] for k in ("ot", "jet", "link"))
+CAND_TABLE, LINK_CAND_TABLE = TABLES[COLLECTION]["cand"], TABLES[COLLECTION]["link_cand"]
 REFIT_TRUTH = "otlink"          # SP heads: the OT track's TP for residuals and clean (user)
 N_CONST = 16
 
@@ -72,8 +118,9 @@ PT_BINS = [15, 25, 40, 70, 1e9]
 GROUPS_ALL = ["baseline", "track", "trkquality", "vertexdxy_pv", "trackres", "trackmva"]
 # the slim tier carries the CMSSW-computed reference heads (*_head_*): the "plus track-quality heads" cell reads them
 # ("trackheads", the deployed path) instead of fitting the Python heads
-HEAD_GROUP = "trackheads" if TIER == "slim" else "trackmva"
-if TIER == "slim":
+# (prompt collection: no stored heads exist; the same "trackheads" slots are filled from the Python heads, quant_shift.py)
+HEAD_GROUP = "trackheads" if (TIER == "slim" or COLLECTION == "prompt") else "trackmva"
+if HEAD_GROUP == "trackheads":
     GROUPS_ALL = [g if g != "trackmva" else HEAD_GROUP for g in GROUPS_ALL]
 # Feature variants (cumulative), all with the same tagger / training protocol. The FACTORISATION
 # LADDER (user): L0 = "baseline" on IIII (the OT reference, NGT-like tagger); L1 = "baseline" on an
@@ -91,6 +138,28 @@ VARIANTS = {
 JOINT_VERSIONS = ("ref", "A", "B")
 VARIANTS.update({f"joint_{v}": VARIANTS["track"] + ["trackjoint"] for v in JOINT_VERSIONS})
 LEVEL = {"baseline": 1, "track": 2, "trackmva": 3, **{f"joint_{v}": 3 for v in JOINT_VERSIONS}}
+# Prompt collection: further sets of tagger inputs with the per-track displacement heads (second version,
+# eval_refitq/spixbits/displacement.py, supplied by quant_shift.py): "trackrange" = + the production-radius range (low,
+# median, high); "trackrangep" = + the range and the class probabilities. SmartPixels detector scenarios only (IIII has
+# no surface to divide on: no displacement head); today's tracks only (no quantization scenario yet).
+# "trackband" = + the FIRST version's class probabilities alone (fixed radii 2.85 / 5.95 / 10.3 / 14.5 cm, without its ln r);
+# "tracklnr" = + the first version's regressed ln r alone: the test of where the first version's tagger gain came from.
+DISP_GROUPS = ["trackdisp", "trackdispp", "trackdisp1", "trackdisp1r"]
+DISP_VARIANTS = ["trackrange", "trackrangep", "trackband", "tracklnr"]
+if COLLECTION == "prompt":
+    VARIANTS["trackrange"] = VARIANTS["trackmva"] + ["trackdisp"]
+    VARIANTS["trackrangep"] = VARIANTS["trackmva"] + ["trackdisp", "trackdispp"]
+    VARIANTS["trackband"] = VARIANTS["trackmva"] + ["trackdisp1"]
+    VARIANTS["tracklnr"] = VARIANTS["trackmva"] + ["trackdisp1r"]
+    LEVEL.update(trackrange=4, trackrangep=4, trackband=4, tracklnr=4)
+    if not QUANT:
+        GROUPS_ALL = GROUPS_ALL + DISP_GROUPS
+
+
+def groups_for(mask: str) -> list[str]:
+    """The feature groups of a mask's jet caches: no displacement heads for the OT-only control."""
+    return [g for g in GROUPS_ALL if not (mask == BASELINE_MASK and g in DISP_GROUPS)]
+
 
 def sample_dir(sample: str, mask: str) -> str:
     return os.path.join(CANON[BASELINE_MASK if mask == BASELINE_MASK else "sp"], SAMPLES[sample][0])

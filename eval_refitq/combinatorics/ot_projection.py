@@ -630,7 +630,7 @@ def prepare_chunk(A, geo):
             "ko": np.argsort(kkey, kind="stable")}
 
 
-def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True, fallback="chunk"):
+def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True, fallback="chunk", add_var=None):
     """One surface S (1-4 IL, 11-14 ID), for the track STATE (a, C): candidate
     modules, the ellipse on each, and every cluster there labelled A-in / A-out /
     B1 / B2 / B3.
@@ -647,6 +647,9 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True, fallback=
     "chunk" the largest ellipse of the tracks in this call (study 19's rule: it
     depends on the batch) or "all" every module of the surface (on the helix's
     side for a disc). "fallback_t": those tracks (indices into a).
+    add_var: None (the window is the prediction's covariance alone) or (var_u, var_v) [cm^2] added to the diagonal of
+    the position covariance of the window and of the module search (a cluster-measurement variance, e.g. a
+    quantization step^2 / 12); the returned projection (pj["S"]) is never changed.
     """
     K, tev, ntrk = ctx["K"], ctx["tev"], ctx["ntrk"]
     maj_tp, foreign_keys, cls = ctx["maj_tp"], ctx["foreign_keys"], ctx["cls"]
@@ -669,6 +672,8 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True, fallback=
     m0 = rows[np.argmin(dist, 1)]
     p0 = project_with_cov(a[ti], C[ti], s0[ti], geo, m0)
     tr = np.nan_to_num(p0["S"][:, 0, 0]) + np.nan_to_num(p0["S"][:, 1, 1])
+    if add_var is not None:
+        tr = tr + add_var[0] + add_var[1]
     r_ell = BOUND_SIGMA_MARGIN * nsig * np.sqrt(np.clip(tr, 0, None))
     if fallback == "all":
         r_ell = np.where(p0["ok"], r_ell, np.inf)
@@ -708,6 +713,8 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True, fallback=
     pj = project_with_cov(a[pt_], C[pt_], s0[pt_], geo, pm_)
     su = np.sqrt(np.clip(pj["S"][:, 0, 0], 0, None))
     sv = np.sqrt(np.clip(pj["S"][:, 1, 1], 0, None))
+    if add_var is not None:
+        su, sv = np.sqrt(su ** 2 + add_var[0]), np.sqrt(sv ** 2 + add_var[1])
     overlap = pj["ok"] & (np.abs(pj["u"]) <= geo["hw"][pm_] + nsig * su) \
         & (np.abs(pj["v"]) <= geo["hl"][pm_] + nsig * sv)
     lands = pj["ok"] & (np.abs(pj["u"]) <= geo["hw"][pm_]) & (np.abs(pj["v"]) <= geo["hl"][pm_])
@@ -730,6 +737,10 @@ def evaluate_surface(ctx, a, C, S, geo, nsig, use, truth_modules=True, fallback=
     du = K["localX"][ci] - pj["u"][pq]
     dv = K["localY"][ci] - pj["v"][pq]
     Suv = pj["S"][pq][:, :2, :2]
+    if add_var is not None:
+        Suv = Suv.copy()
+        Suv[:, 0, 0] += add_var[0]
+        Suv[:, 1, 1] += add_var[1]
     det = Suv[:, 0, 0] * Suv[:, 1, 1] - Suv[:, 0, 1] ** 2
     with np.errstate(divide="ignore", invalid="ignore"):
         m2 = (Suv[:, 1, 1] * du * du - 2 * Suv[:, 0, 1] * du * dv

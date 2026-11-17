@@ -1,0 +1,2909 @@
+{
+ "what": "arm registry of the SmartPixels output-bits refit study (PLAN.md section 5)",
+ "not_in_this_scan": [
+  "skip price re-derived at the 16-bit point (needs the cut fit; a separate run)",
+  "the direct network-position point above 50 GeV (helix + drawn position residual)"
+ ],
+ "group_order": [
+  "priority",
+  "fixed",
+  "scan_up",
+  "allocations",
+  "scan_down",
+  "controls",
+  "bending"
+ ],
+ "arms": [
+  {
+   "name": "implemented_now",
+   "group": "priority",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "today",
+    "cap": false
+   }
+  },
+  {
+   "name": "implemented_now_sizeblind",
+   "group": "priority",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "today",
+    "cap": false,
+    "pos_err": "sizeblind"
+   }
+  },
+  {
+   "name": "implemented_now_newtable",
+   "group": "priority",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "today",
+    "cap": false,
+    "ang_err": "linktable"
+   }
+  },
+  {
+   "name": "network_float",
+   "group": "priority",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444",
+   "group": "priority",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444_wholesensor",
+   "group": "priority",
+   "smartpixels_frame": "x 600um / y 600um / alpha 4b / beta 4b",
+   "code_frame": "localY 600um / localX 600um / code beta 4b / code alpha 4b",
+   "position_range": "whole sensor (9.6 mm)",
+   "spec": {
+    "step_x_um": 600.0,
+    "step_y_um": 600.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6604",
+   "group": "priority",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 4b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_float",
+   "group": "priority",
+   "smartpixels_frame": "x F / y F / alpha 0 / beta F",
+   "code_frame": "localY F / localX F / code beta 0 / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6604_wholesensor",
+   "group": "fixed",
+   "smartpixels_frame": "x 150um / y 150um / alpha 0 / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 0 / code alpha 4b",
+   "position_range": "whole sensor (9.6 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_2b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 600um / alpha F / beta F",
+   "code_frame": "localY F / localX 600um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 600.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_3b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 300um / alpha F / beta F",
+   "code_frame": "localY F / localX 300um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 300.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_4b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 150um / alpha F / beta F",
+   "code_frame": "localY F / localX 150um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_5b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 75um / alpha F / beta F",
+   "code_frame": "localY F / localX 75um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 75.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_6b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 37.5um / alpha F / beta F",
+   "code_frame": "localY F / localX 37.5um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_7b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 18.75um / alpha F / beta F",
+   "code_frame": "localY F / localX 18.75um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_8b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 9.375um / alpha F / beta F",
+   "code_frame": "localY F / localX 9.375um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 9.375,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_9b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 4.6875um / alpha F / beta F",
+   "code_frame": "localY F / localX 4.6875um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 4.6875,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_y_10b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y 2.34375um / alpha F / beta F",
+   "code_frame": "localY F / localX 2.34375um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 2.34375,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_x_2b",
+   "group": "scan_down",
+   "smartpixels_frame": "x 600um / y F / alpha F / beta F",
+   "code_frame": "localY 600um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 600.0,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_x_3b",
+   "group": "scan_down",
+   "smartpixels_frame": "x 300um / y F / alpha F / beta F",
+   "code_frame": "localY 300um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 300.0,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_x_4b",
+   "group": "scan_down",
+   "smartpixels_frame": "x 150um / y F / alpha F / beta F",
+   "code_frame": "localY 150um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_x_5b",
+   "group": "scan_down",
+   "smartpixels_frame": "x 75um / y F / alpha F / beta F",
+   "code_frame": "localY 75um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_x_6b",
+   "group": "scan_down",
+   "smartpixels_frame": "x 37.5um / y F / alpha F / beta F",
+   "code_frame": "localY 37.5um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_x_7b",
+   "group": "scan_down",
+   "smartpixels_frame": "x 18.75um / y F / alpha F / beta F",
+   "code_frame": "localY 18.75um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 18.75,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_x_8b",
+   "group": "scan_down",
+   "smartpixels_frame": "x 9.375um / y F / alpha F / beta F",
+   "code_frame": "localY 9.375um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 9.375,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_alpha_2b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha 2b / beta F",
+   "code_frame": "localY F / localX F / code beta 2b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_alpha_3b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha 3b / beta F",
+   "code_frame": "localY F / localX F / code beta 3b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 3,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_alpha_4b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha 4b / beta F",
+   "code_frame": "localY F / localX F / code beta 4b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_alpha_5b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha 5b / beta F",
+   "code_frame": "localY F / localX F / code beta 5b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 5,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_alpha_6b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha 6b / beta F",
+   "code_frame": "localY F / localX F / code beta 6b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 6,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_alpha_7b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha 7b / beta F",
+   "code_frame": "localY F / localX F / code beta 7b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 7,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_alpha_notsent",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha 0 / beta F",
+   "code_frame": "localY F / localX F / code beta 0 / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_beta_2b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha F / beta 2b",
+   "code_frame": "localY F / localX F / code beta F / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 2,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_beta_3b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha F / beta 3b",
+   "code_frame": "localY F / localX F / code beta F / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_beta_4b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha F / beta 4b",
+   "code_frame": "localY F / localX F / code beta F / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_beta_5b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha F / beta 5b",
+   "code_frame": "localY F / localX F / code beta F / code alpha 5b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 5,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_beta_6b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha F / beta 6b",
+   "code_frame": "localY F / localX F / code beta F / code alpha 6b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 6,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_beta_7b",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha F / beta 7b",
+   "code_frame": "localY F / localX F / code beta F / code alpha 7b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 7,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "down_beta_notsent",
+   "group": "scan_down",
+   "smartpixels_frame": "x F / y F / alpha F / beta 0",
+   "code_frame": "localY F / localX F / code beta F / code alpha 0",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_2b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 600um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 600um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 600.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_3b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 300um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 300um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 300.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_5b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 75um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 75um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 75.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_6b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 37.5um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 37.5um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_7b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 18.75um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 18.75um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_8b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 9.375um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 9.375um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 9.375,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_9b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 4.6875um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 4.6875um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 4.6875,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_10b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 2.34375um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 2.34375um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 2.34375,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_2b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 600um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 600um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 600.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_3b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 300um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 300um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 300.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_5b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 75um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 75um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_6b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 37.5um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 37.5um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_7b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 18.75um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 18.75um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 18.75,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_8b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 9.375um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 9.375um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 9.375,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_2b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 2b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 2b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_3b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 3b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 3b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 3,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_5b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 5b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 5b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 5,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_6b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 6b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 6b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 6,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_7b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 7b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 7b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 7,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_notsent",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 0 / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_2b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 2b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 2,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_3b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 3b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_5b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 5b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 5b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 5,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_6b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 6b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 6b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 6,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_7b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 7b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 7b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 7,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_notsent",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 0",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 0",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_9b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 4.6875um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 4.6875um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 4.6875,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_11b",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 1.17188um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 1.17188um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 1.171875,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_x_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x F / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY F / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_y_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y F / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX F / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_alpha_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha F / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta F / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "up_beta_float",
+   "group": "scan_up",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta F",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_2b",
+   "group": "bending",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 2b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 2,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_3b",
+   "group": "bending",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 3b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_5b",
+   "group": "bending",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 5b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 5b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 5,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_6b",
+   "group": "bending",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 6b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 6b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 6,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_7b",
+   "group": "bending",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 7b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 7b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 7,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_xy_4b",
+   "group": "bending",
+   "smartpixels_frame": "x 150um / y 150um / alpha 0 / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_xy_5b",
+   "group": "bending",
+   "smartpixels_frame": "x 75um / y 75um / alpha 0 / beta 4b",
+   "code_frame": "localY 75um / localX 75um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 75.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_xy_7b",
+   "group": "bending",
+   "smartpixels_frame": "x 18.75um / y 18.75um / alpha 0 / beta 4b",
+   "code_frame": "localY 18.75um / localX 18.75um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 18.75,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_xy_8b",
+   "group": "bending",
+   "smartpixels_frame": "x 9.375um / y 9.375um / alpha 0 / beta 4b",
+   "code_frame": "localY 9.375um / localX 9.375um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 9.375,
+    "step_y_um": 9.375,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_5533",
+   "group": "allocations",
+   "smartpixels_frame": "x 75um / y 75um / alpha 3b / beta 3b",
+   "code_frame": "localY 75um / localX 75um / code beta 3b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 75.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 3,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6622",
+   "group": "allocations",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 2b / beta 2b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 2b / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 2,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_5623",
+   "group": "allocations",
+   "smartpixels_frame": "x 75um / y 37.5um / alpha 2b / beta 3b",
+   "code_frame": "localY 75um / localX 37.5um / code beta 2b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4633",
+   "group": "allocations",
+   "smartpixels_frame": "x 150um / y 37.5um / alpha 3b / beta 3b",
+   "code_frame": "localY 150um / localX 37.5um / code beta 3b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 3,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4723",
+   "group": "allocations",
+   "smartpixels_frame": "x 150um / y 18.75um / alpha 2b / beta 3b",
+   "code_frame": "localY 150um / localX 18.75um / code beta 2b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_5722",
+   "group": "allocations",
+   "smartpixels_frame": "x 75um / y 18.75um / alpha 2b / beta 2b",
+   "code_frame": "localY 75um / localX 18.75um / code beta 2b / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 2,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6703",
+   "group": "allocations",
+   "smartpixels_frame": "x 37.5um / y 18.75um / alpha 0 / beta 3b",
+   "code_frame": "localY 37.5um / localX 18.75um / code beta 0 / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 3,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_7702",
+   "group": "allocations",
+   "smartpixels_frame": "x 18.75um / y 18.75um / alpha 0 / beta 2b",
+   "code_frame": "localY 18.75um / localX 18.75um / code beta 0 / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 18.75,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 2,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_8800",
+   "group": "allocations",
+   "smartpixels_frame": "x 9.375um / y 9.375um / alpha 0 / beta 0",
+   "code_frame": "localY 9.375um / localX 9.375um / code beta 0 / code alpha 0",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 9.375,
+    "step_y_um": 9.375,
+    "angles": "network",
+    "cap": "pt",
+    "send": [],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6604_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 4b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_5533_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 75um / y 75um / alpha 3b / beta 3b",
+   "code_frame": "localY 75um / localX 75um / code beta 3b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 75.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 3,
+    "bits_beta": 3,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6622_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 2b / beta 2b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 2b / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 2,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_5623_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 75um / y 37.5um / alpha 2b / beta 3b",
+   "code_frame": "localY 75um / localX 37.5um / code beta 2b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 3,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4633_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 37.5um / alpha 3b / beta 3b",
+   "code_frame": "localY 150um / localX 37.5um / code beta 3b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 3,
+    "bits_beta": 3,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4723_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 18.75um / alpha 2b / beta 3b",
+   "code_frame": "localY 150um / localX 18.75um / code beta 2b / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 3,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_5722_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 75um / y 18.75um / alpha 2b / beta 2b",
+   "code_frame": "localY 75um / localX 18.75um / code beta 2b / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 75.0,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 2,
+    "bits_beta": 2,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6703_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 18.75um / alpha 0 / beta 3b",
+   "code_frame": "localY 37.5um / localX 18.75um / code beta 0 / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 3,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_7702_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 18.75um / y 18.75um / alpha 0 / beta 2b",
+   "code_frame": "localY 18.75um / localX 18.75um / code beta 0 / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 18.75,
+    "step_y_um": 18.75,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 2,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_2b_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 2b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 2b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 2,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_3b_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 3b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 3b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 3,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_5b_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 5b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 5b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 5,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_6b_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 6b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 6b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 6,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_beta_7b_globalrange",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 7b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 7b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 7,
+    "range": "global",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444_v3window",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": false,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444_flagunusable",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "unusable"
+   }
+  },
+  {
+   "name": "alloc_4444_allsent",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": false,
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6604_v3window",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 4b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": false,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6604_flagunusable",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 4b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "unusable"
+   }
+  },
+  {
+   "name": "alloc_6604_allsent",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 4b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": false,
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "network_float_allsent",
+   "group": "controls",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": false,
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444_wholesensor_allsent",
+   "group": "controls",
+   "smartpixels_frame": "x 600um / y 600um / alpha 4b / beta 4b",
+   "code_frame": "localY 600um / localX 600um / code beta 4b / code alpha 4b",
+   "position_range": "whole sensor (9.6 mm)",
+   "spec": {
+    "step_x_um": 600.0,
+    "step_y_um": 600.0,
+    "angles": "network",
+    "cap": false,
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "bending_float_allsent",
+   "group": "controls",
+   "smartpixels_frame": "x F / y F / alpha 0 / beta F",
+   "code_frame": "localY F / localX F / code beta 0 / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": false,
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "noise_x_4b",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y F / alpha F / beta F",
+   "code_frame": "localY 150um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided",
+    "noise": true
+   }
+  },
+  {
+   "name": "noise_x_6b",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y F / alpha F / beta F",
+   "code_frame": "localY 37.5um / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided",
+    "noise": true
+   }
+  },
+  {
+   "name": "noise_y_4b",
+   "group": "controls",
+   "smartpixels_frame": "x F / y 150um / alpha F / beta F",
+   "code_frame": "localY F / localX 150um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided",
+    "noise": true
+   }
+  },
+  {
+   "name": "noise_y_6b",
+   "group": "controls",
+   "smartpixels_frame": "x F / y 37.5um / alpha F / beta F",
+   "code_frame": "localY F / localX 37.5um / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided",
+    "noise": true
+   }
+  },
+  {
+   "name": "positions_only_float",
+   "group": "controls",
+   "smartpixels_frame": "x F / y F / alpha 0 / beta 0",
+   "code_frame": "localY F / localX F / code beta 0 / code alpha 0",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "network_float_caprandom",
+   "group": "controls",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "random",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_4444_caprandom",
+   "group": "controls",
+   "smartpixels_frame": "x 150um / y 150um / alpha 4b / beta 4b",
+   "code_frame": "localY 150um / localX 150um / code beta 4b / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 150.0,
+    "step_y_um": 150.0,
+    "angles": "network",
+    "cap": "random",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": 4,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "alloc_6604_caprandom",
+   "group": "controls",
+   "smartpixels_frame": "x 37.5um / y 37.5um / alpha 0 / beta 4b",
+   "code_frame": "localY 37.5um / localX 37.5um / code beta 0 / code alpha 4b",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": 37.5,
+    "step_y_um": 37.5,
+    "angles": "network",
+    "cap": "random",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": 4,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided"
+   }
+  },
+  {
+   "name": "forecast_network_float",
+   "group": "controls",
+   "smartpixels_frame": "x F / y F / alpha F / beta F",
+   "code_frame": "localY F / localX F / code beta F / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "alpha",
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided",
+    "pos_err_scale_x": 0.6178861788617885,
+    "pos_err_scale_y": 0.6451612903225806
+   }
+  },
+  {
+   "name": "forecast_bending_float",
+   "group": "controls",
+   "smartpixels_frame": "x F / y F / alpha 0 / beta F",
+   "code_frame": "localY F / localX F / code beta 0 / code alpha F",
+   "position_range": "sub-area (2.4 mm)",
+   "spec": {
+    "step_x_um": null,
+    "step_y_um": null,
+    "angles": "network",
+    "cap": "pt",
+    "send": [
+     "beta"
+    ],
+    "pos_err": "sizeblind",
+    "ang_err": "linktable",
+    "bits_alpha": null,
+    "bits_beta": null,
+    "range": "link",
+    "window_add": true,
+    "flag": "onesided",
+    "pos_err_scale_x": 0.6178861788617885,
+    "pos_err_scale_y": 0.6451612903225806
+   }
+  }
+ ]
+}

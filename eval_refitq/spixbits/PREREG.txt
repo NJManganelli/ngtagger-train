@@ -1,0 +1,13 @@
+SmartPixels output bits -> track refit: the scan (doc-archive/spix-bits-refit-study/PLAN.md revision 1, sections 4-6, 8, 9).
+Definitions and versions: replay refit v3 (arms.v3) on canon_v5 study-tier nanos, TTbar files 5, 7, 8, 9, 10 x AAAA / AAAI / IAAA;
+the pinned v3 payload set v1 (v3cmssw/spec/payload, sha256 in scratch_local/spixbits/cache/checksums.json); the producer's kpt;
+float32 geometry. Arms: eval_refitq/spixbits/arms.json (114 arms, each named in the SmartPixels and the code frame), every arm also
+refit on the clusters "implemented now" accepted. Per-link angle ranges (99.5 %) and angle-error tables: cache/link_tables.json,
+fitted in-sample on AAAA files 1-10. Population: OT tracks with a tracking particle, pT >= 2 GeV, |eta| < 2.4, paired by (run,
+lumi, event, OT track index); a track whose refit does not run keeps its outer-tracker values.
+Expected outcome: d0 and z0 68 % half-widths degrade monotonically with coarser steps and fewer angle bits; near full resolution
+the curves flatten on today's position base; the planted defects (separate runs on file 4) show their pre-declared signatures.
+Bias: in-sample with respect to the v3 calibrations, the ranges and the angle table; the angles are placeholders (the network on
+barrel and discs, the CNN stand-in for clusters without angle truth); skip prices, seed model and material are today's in every arm.
+First check (file 4): material by the letter of the rule because of the cluster table's 16-bit stored positions; the ruling is
+with the physicist. No study result is read or reported before that ruling.
